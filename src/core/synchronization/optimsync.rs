@@ -176,7 +176,7 @@ impl OptimSync {
                 let end = std::cmp::min(start + segment_size, rank_nms.len());
 
                 // Find the maximum value within the current interval along with its index.
-                let max_pair = rank_nms[start..end]
+                let max_pair = rank_nms.get(start..end)?
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
