@@ -53,8 +53,6 @@ MenuItem {
     }
 
     Component.onCompleted: {
-        controller.load_profiles(true);
-
         QT_TRANSLATE_NOOP("TableList", "Camera");
         QT_TRANSLATE_NOOP("TableList", "Lens");
         QT_TRANSLATE_NOOP("TableList", "Setting");
@@ -198,13 +196,31 @@ MenuItem {
         settings.setValue("lensProfileFavorites", Object.keys(favorites).filter(v => v).join(","));
     }
 
+    LinkButton {
+        id: showSearchBtn;
+        visible: root.hasAutoLens && !root.manualExpand;
+        text: qsTr("Search for lens profile");
+        anchors.horizontalCenter: parent.horizontalCenter;
+        onClicked: {
+            root.manualExpand = true;
+            if (!root.lensProfilesListPrepared) {
+                controller.load_profiles(true);
+            }
+        }
+    }
     SearchField {
         id: search;
-        placeholderText: qsTr("Search...");
+        visible: !root.hasAutoLens || root.manualExpand;
+        placeholderText: root.lensProfilesListPrepared ? qsTr("Search...") : qsTr("Loading lens profiles...");
         height: 25 * dpiScale;
         width: parent.width;
         topPadding: 5 * dpiScale;
         profilesMenu: root;
+        onActiveFocusChanged: {
+            if (activeFocus && !root.lensProfilesListPrepared) {
+                controller.load_profiles(true);
+            }
+        }
         onSelected: (item) => {
             const lensPathOrId = item[1];
             if (lensPathOrId.endsWith(".gyroflow")) {
@@ -294,6 +310,48 @@ MenuItem {
         id: info;
         copyable: true;
         model: ({ })
+    }
+
+    property bool hasLensParams: false;
+    property bool hasFocalLength: false;
+    property bool hasUnitPixelFocalLength: false;
+    property bool hasBuiltinProfile: false;
+    property bool hasAutoLens: hasLensParams || hasBuiltinProfile;
+    property bool manualExpand: false;
+
+    Connections {
+        target: controller;
+        function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
+            if (is_main_video) {
+                root.hasLensParams  = !!additional_data.has_lens_params;
+                root.hasFocalLength = !!additional_data.has_focal_length;
+                root.hasUnitPixelFocalLength = additional_data.hasOwnProperty("unit_pixel_focal_length");
+                root.hasBuiltinProfile = !!additional_data.has_builtin_profile;
+                root.manualExpand = false;
+                userFocalLength.value = 0;
+            }
+        }
+    }
+
+    Label {
+        id: focalLengthLabel;
+        text: qsTr("Focal length (mm)");
+        visible: root.hasUnitPixelFocalLength && !root.hasFocalLength && root.distortionCoeffs.length < 4;
+
+        NumberField {
+            id: userFocalLength;
+            width: parent.width;
+            precision: 2;
+            value: 0;
+            from: 0;
+            unit: "mm";
+            tooltip: qsTr("Enter focal length for manual lenses or lenses without electronic contacts");
+            onValueChanged: {
+                if (value > 0) {
+                    controller.set_user_focal_length(value);
+                }
+            }
+        }
     }
 
     AdvancedSection {

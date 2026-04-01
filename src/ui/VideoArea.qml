@@ -238,7 +238,7 @@ Item {
                 vidInfo.updateEntry("Contains gyro", additional_data.contains_motion? "Yes" : "No");
                 // If source was detected, but gyro data is empty
                 if (camera) {
-                    if (!additional_data.contains_motion && !additional_data.contains_quats) {
+                    if (!additional_data.contains_motion && !additional_data.contains_quats && !additional_data.has_lens_params && !additional_data.hasOwnProperty("unit_pixel_focal_length")) {
                         messageBox(Modal.Warning, qsTr("File format was detected, but no motion data was found.\nThe camera probably doesn't record motion data in this particular shooting mode."), [ { "text": qsTr("Ok") } ]);
                     }
                     if (additional_data.unsupported_lens) {
@@ -387,6 +387,17 @@ Item {
         if (!skip_detection) {
             let newUrl;
             if (newUrl = detectImageSequence(folder, filename)) {
+                // DNG: try to get frame rate from telemetry, skip dialog if successful
+                if (/\.dng$/i.test(filename)) {
+                    const firstFileUrl = filesystem.get_file_url(folder, filename, false);
+                    const detectedFps = controller.get_image_sequence_fps(firstFileUrl);
+                    if (detectedFps > 0) {
+                        controller.image_sequence_fps = detectedFps;
+                        loadFile(newUrl, true);
+                        vid.setFrameRate(detectedFps);
+                        return;
+                    }
+                }
                 const dlg = messageBox(Modal.Info, qsTr("Image sequence has been detected.\nPlease provide frame rate: "), [
                     { text: qsTr("Ok"), accent: true, clicked: function() {
                         const fps = dlg.mainColumn.children[1].value;
@@ -446,7 +457,11 @@ Item {
             window.exportSettings.updateCodecParams();
         }
         if (!root.pendingGyroflowData) {
-            const gfFilename = filesystem.filename_with_extension(filename, "gyroflow");
+            let gfBaseFilename = filename;
+            if (gfBaseFilename.includes("%0")) {
+                gfBaseFilename = gfBaseFilename.replace(/%0(\d+)d/, (_, len) => controller.image_sequence_start.toString().padStart(parseInt(len), '0'));
+            }
+            const gfFilename = filesystem.filename_with_extension(gfBaseFilename, "gyroflow");
             if (filesystem.exists_in_folder(folder, gfFilename)) {
                 messageBox(Modal.Question, qsTr("There's a %1 file associated with this video, do you want to load it?").arg("<b>" + gfFilename + "</b>"), [
                     { text: qsTr("Yes"), clicked: function() {

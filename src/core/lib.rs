@@ -169,6 +169,13 @@ impl StabilizationManager {
     }
 
     pub fn load_gyro_data<T: Read + Seek, F: Fn(f64)>(&self, stream: &mut T, filesize: usize, url: &str, is_main_video: bool, options: &gyro_source::FileLoadOptions, progress_cb: F, cancel_flag: Arc<AtomicBool>) -> std::result::Result<(), GyroflowCoreError> {
+        let backup_lens_data = if !is_main_video {
+            let gyro = self.gyro.read();
+            let fm = gyro.file_metadata.read();
+            Some((fm.lens_params.clone(), fm.lens_positions.clone(), fm.lens_profile.clone()))
+        } else {
+            None
+        };
         {
             let params = self.params.read();
             let mut gyro = self.gyro.write();
@@ -223,6 +230,41 @@ impl StabilizationManager {
                     let db = self.lens_profile_db.read();
                     l.resolve_interpolations(&db);
                 }
+            } else if !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some() {
+                // Auto-generate a synthetic LensProfile from telemetry lens_params
+                let mut l = self.lens.write();
+                *l = Default::default();
+                let (w, h) = { let p = self.params.read(); p.size };
+                if let Some(ref cam_id) = md.camera_identifier {
+                    l.camera_brand = cam_id.brand.clone();
+                    l.camera_model = cam_id.model.clone();
+                    l.lens_model = cam_id.lens_model.clone();
+                    l.focal_length = cam_id.focal_length;
+                } else {
+                    let detected = md.detected_source.as_deref().unwrap_or("");
+                    let parts: Vec<&str> = detected.splitn(2, ' ').collect();
+                    l.camera_brand = parts.first().unwrap_or(&"").to_string();
+                    l.camera_model = parts.get(1).unwrap_or(&"").to_string();
+                }
+                l.calib_dimension = crate::lens_profile::Dimensions { w, h };
+                l.orig_dimension  = crate::lens_profile::Dimensions { w, h };
+                l.calibrated_by = "NiYien".to_string();
+                l.camera_setting = String::new();
+                if let Some(first_lp) = md.lens_params.values().next() {
+                    if let Some(pfl) = first_lp.pixel_focal_length {
+                        l.fisheye_params.camera_matrix = vec![
+                            [pfl as f64, 0.0, w as f64 / 2.0],
+                            [0.0, pfl as f64, h as f64 / 2.0],
+                            [0.0, 0.0, 1.0],
+                        ];
+                    }
+                    l.focal_length = first_lp.focal_length.map(|v| v as f64);
+                }
+                if let Some(rt) = md.frame_readout_time {
+                    l.frame_readout_time = Some(rt);
+                }
+                l.official = true;
+                log::info!("Auto-generated lens profile from telemetry: {} {} - {}", l.camera_brand, l.camera_model, l.lens_model);
             }
             if let Some(md_fps) = md.frame_rate {
                 let fps = self.params.read().fps;
@@ -253,6 +295,12 @@ impl StabilizationManager {
         } else {
             log::info!("Not a main video, clearing {} per-frame offsets", md.per_frame_time_offsets.len());
             md.per_frame_time_offsets.clear();
+        }
+        // Restore lens data from main video if external gyro file doesn't provide its own
+        if let Some((backup_params, backup_positions, backup_profile)) = backup_lens_data {
+            if md.lens_params.is_empty()    { md.lens_params    = backup_params; }
+            if md.lens_positions.is_empty() { md.lens_positions  = backup_positions; }
+            if md.lens_profile.is_none()    { md.lens_profile    = backup_profile; }
         }
         let camera_id = md.camera_identifier.clone();
         if !cancel_flag.load(SeqCst) {
@@ -1009,6 +1057,51 @@ impl StabilizationManager {
         }
     }
 
+    pub fn set_user_focal_length(&self, focal_length_mm: f64) {
+        let (w, h, frame_count, fps) = {
+            let p = self.params.read();
+            (p.size.0, p.size.1, p.frame_count, p.fps)
+        };
+        let gyro = self.gyro.read();
+        let mut md = gyro.file_metadata.0.write();
+        if let Some(upfl) = md.unit_pixel_focal_length {
+            let pfl = (focal_length_mm * upfl) as f32;
+
+            if md.lens_params.is_empty() {
+                // Create lens_params entries for all frames
+                for i in 0..frame_count {
+                    let timestamp_us = (i as f64 * 1000000.0 / fps).round() as i64;
+                    md.lens_params.insert(timestamp_us, gyro_source::LensParams {
+                        pixel_focal_length: Some(pfl),
+                        focal_length: Some(focal_length_mm as f32),
+                        ..Default::default()
+                    });
+                }
+            } else {
+                for (_ts, params) in md.lens_params.iter_mut() {
+                    params.pixel_focal_length = Some(pfl);
+                    params.focal_length = Some(focal_length_mm as f32);
+                }
+            }
+        }
+        drop(md);
+        drop(gyro);
+
+        // Update the synthetic lens profile
+        let mut l = self.lens.write();
+        l.focal_length = Some(focal_length_mm);
+        if let Some(upfl) = { let g = self.gyro.read(); g.file_metadata.read().unit_pixel_focal_length } {
+            let pfl = focal_length_mm * upfl;
+            l.fisheye_params.camera_matrix = vec![
+                [pfl, 0.0, w as f64 / 2.0],
+                [0.0, pfl, h as f64 / 2.0],
+                [0.0, 0.0, 1.0],
+            ];
+        }
+        l.calib_dimension = crate::lens_profile::Dimensions { w, h };
+        l.orig_dimension  = crate::lens_profile::Dimensions { w, h };
+    }
+
     pub fn set_gpu_decoding(&self, v: bool) {
         self.gpu_decoding.store(v, SeqCst);
     }
@@ -1190,6 +1283,7 @@ impl StabilizationManager {
                 "vfr_fps":     params.get_scaled_fps(),
                 "vfr_duration_ms": params.get_scaled_duration_ms(),
                 "created_at"   : params.video_created_at,
+                "timezone"     : params.video_timezone,
             },
             "stabilization": {
                 "fov":                    params.fov,

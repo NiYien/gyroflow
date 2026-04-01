@@ -93,7 +93,8 @@ pub struct StabilizationParams {
     pub speed_ramped_timestamps: Option<BTreeMap<i64, i64>>,
     pub frame_count: usize,
     pub duration_ms: f64,
-    pub video_created_at: Option<u64>,
+    pub video_created_at: Option<i64>,
+    pub video_timezone: Option<String>,
 
     pub trim_ranges: Vec<(f64, f64)>,
 
@@ -179,6 +180,7 @@ impl Default for StabilizationParams {
             frame_count: 0,
             duration_ms: 0.0,
             video_created_at: None,
+            video_timezone: None,
         }
     }
 }

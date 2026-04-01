@@ -40,6 +40,20 @@ pub struct FileLoadOptions {
     pub project_version: u64,
 }
 
+pub fn get_camera_db_path() -> Option<String> {
+    // 1. Next to executable
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            let p = dir.join("camera_db");
+            if p.is_dir() { return Some(p.to_string_lossy().into_owned()); }
+        }
+    }
+    // 2. Relative to source (development)
+    let dev_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../telemetry-parser/camera_db");
+    if dev_path.is_dir() { return Some(dev_path.to_string_lossy().into_owned()); }
+    None
+}
+
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct GyroSource {
     pub file_load_options: FileLoadOptions,
@@ -117,12 +131,15 @@ impl GyroSource {
             }
         }
 
+        let camera_db_path = crate::gyro_source::get_camera_db_path();
+        log::info!("camera_db_path: {:?}", camera_db_path);
         let tpoptions = InputOptions {
             blackbox_gyro_only: true,
             tag_blacklist: [
                 TagFilter::EntireGroup(GroupId::UnknownGroup(0xf000)),
                 TagFilter::EntireGroup(GroupId::UnknownGroup(0x0))
             ].into(),
+            camera_db_path,
             ..Default::default()
         };
         let mut input = Input::from_stream_with_options(stream, filesize, &path, progress_cb, cancel_flag, tpoptions)?;
@@ -138,9 +155,11 @@ impl GyroSource {
         let mut image_orientations = None;
         let mut lens_profile = None;
         let mut frame_rate = None;
+        let mut record_frame_rate = None;
         let mut digital_zoom = None;
         let mut lens_positions = BTreeMap::new();
         let mut lens_params = BTreeMap::new();
+        let mut unit_pixel_focal_length = None;
         let mut additional_data = serde_json::Value::Object(serde_json::Map::new());
 
         if input.camera_type() == "BlackBox" {
@@ -227,6 +246,9 @@ impl GyroSource {
                                 lens_info.pixel_focal_length = Some(*v);
                             }
                         }
+                        if let Some(v) = map.get_t(TagId::Custom("unit_pixel_focal_length".into())) as Option<&f64> {
+                            unit_pixel_focal_length = Some(*v);
+                        }
                     }
                     if lens_info.focal_length.is_none() {
                         if let Some(md) = tag_map.get(&GroupId::Custom("LensDistortion".into())) {
@@ -239,13 +261,19 @@ impl GyroSource {
                             }
                         }
                     }
-                    if lens_info.pixel_pitch.is_some() && lens_info.capture_area_size.is_some() && (lens_info.pixel_focal_length.is_some() || lens_info.focal_length.is_some()) {
+                    if lens_info.pixel_focal_length.is_some() || (lens_info.pixel_pitch.is_some() && lens_info.capture_area_size.is_some() && lens_info.focal_length.is_some()) {
                         lens_params.insert(timestamp_us, lens_info.clone());
                     }
 
                     if let Some(map) = tag_map.get(&GroupId::Default) {
                         if let Some(v) = map.get_t(TagId::FrameRate) as Option<&f64> {
                             frame_rate = Some(*v);
+                        }
+                        if let Some(v) = map.get_t(TagId::RecordFrameRate) as Option<&f64> {
+                            record_frame_rate = Some(*v);
+                        }
+                        if let Some(v) = map.get_t(TagId::ImageStabilizer) as Option<&bool> {
+                            additional_data.as_object_mut().map(|o| o.insert("image_stabilizer".to_owned(), serde_json::Value::Bool(*v)));
                         }
                         if let Some(v) = map.get_t(TagId::Metadata) as Option<&serde_json::Value> {
                             crate::util::merge_json(&mut additional_data, v);
@@ -385,6 +413,28 @@ impl GyroSource {
         let fr = input.frame_readout_time().unwrap_or_default();
         let frame_readout_time = if fr != 0.0 { Some(if fr.abs() > 10000.0 { fr.abs() - 10000.0 } else { fr.abs() }) } else { None };
 
+        // Extract creation date/timezone from telemetry
+        let mut creation_date = None;
+        let mut timezone_offset = None;
+        let mut creation_date_utc = None;
+        if let Some(ref mut samples) = input.samples {
+            if let Some(info) = samples.first() {
+                if let Some(ref tag_map) = info.tag_map {
+                    if let Some(map) = tag_map.get(&GroupId::Default) {
+                        if let Some(v) = map.get_t(TagId::CreationDate) as Option<&String> {
+                            creation_date = Some(v.clone());
+                        }
+                        if let Some(v) = map.get_t(TagId::TimeZoneOffset) as Option<&String> {
+                            timezone_offset = Some(v.clone());
+                        }
+                        if let Some(v) = map.get_t(TagId::CreationDateUtc) as Option<&String> {
+                            creation_date_utc = Some(v.clone());
+                        }
+                    }
+                }
+            }
+        }
+
         let mut md = FileMetadata {
             imu_orientation,
             detected_source: Some(detected_source),
@@ -401,15 +451,26 @@ impl GyroSource {
                 if fr.abs() > 10000.0 { ReadoutDirection::LeftToRight } else { ReadoutDirection::TopToBottom }
             },
             frame_rate,
+            record_frame_rate,
             lens_profile,
             camera_identifier,
             has_accurate_timestamps,
+            creation_date,
+            timezone_offset,
+            creation_date_utc,
             additional_data,
             per_frame_time_offsets: Vec::new(),
+            unit_pixel_focal_length,
             digital_zoom,
             camera_stab_data: Vec::new(),
             mesh_correction:  Vec::new(),
         };
+
+        log::info!("Telemetry parsed: lens_params={}, lens_positions={}, unit_px_fl={:?}, frame_readout_time={:?}, detected={}",
+            md.lens_params.len(), md.lens_positions.len(), md.unit_pixel_focal_length, md.frame_readout_time, md.detected_source.as_deref().unwrap_or("?"));
+        if let Some((_ts, lp)) = md.lens_params.iter().next() {
+            log::info!("First lens_param: pixel_focal_length={:?}, focal_length={:?}", lp.pixel_focal_length, lp.focal_length);
+        }
 
         let sample_rate = Self::get_sample_rate(&md);
         let mut original_sample_rate = sample_rate;

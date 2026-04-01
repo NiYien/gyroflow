@@ -21,6 +21,7 @@ MenuItem {
     property bool hasAccessToInputDirectory: true;
     property alias infoList: list;
     property var orgModel: [];
+    property bool hasTelemetryTime: false;
 
     Component.onCompleted: {
         QT_TRANSLATE_NOOP("TableList", "Created at");
@@ -95,10 +96,11 @@ MenuItem {
         list.model["Pixel format"] = root.pixelFormat;
         list.model["Rotation"]     = (root.videoRotation) + " °";
         list.model["Audio"]        = getAudio(md) || "---";
+        root.hasTelemetryTime = false;
         if (md["metadata.creation_time"]) {
             const created_at = (new Date(Date.parse(md["metadata.creation_time"])));
             list.model["Created at"] = created_at.toLocaleString();
-            controller.set_video_created_at(created_at.getTime() / 1000);
+            controller.set_video_created_at(created_at.getTime());
         } else {
             delete list.model["Created at"];
         }
@@ -152,6 +154,36 @@ MenuItem {
         const rate = md["stream.audio[0].codec.sample_rate"]? (md["stream.audio[0].codec.sample_rate"] + " Hz") : "";
 
         return format + (format? " " : "") + rate;
+    }
+
+    Connections {
+        target: controller;
+        function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
+            if (is_main_video && additional_data.creation_date_utc) {
+                root.hasTelemetryTime = true;
+                // Display local time with timezone if available, otherwise UTC
+                // Strip subsecond part (e.g. ".875") for display
+                let displayStr = (additional_data.creation_date || additional_data.creation_date_utc).replace(/\.\d+$/, "");
+                if (additional_data.timezone_offset) {
+                    displayStr += " (" + additional_data.timezone_offset + ")";
+                }
+                list.model["Created at"] = displayStr;
+            }
+            if (is_main_video && additional_data.realtime_fps) {
+                const realtimeFps = +additional_data.realtime_fps;
+                list.model["Frame rate"] = realtimeFps.toFixed(3) + " fps";
+                root.fps = realtimeFps;
+            } else if (is_main_video && additional_data.telemetry_fps && root.fps == 0) {
+                const telFps = +additional_data.telemetry_fps;
+                list.model["Frame rate"] = telFps.toFixed(3) + " fps";
+                root.fps = telFps;
+                root.org_fps = telFps;
+            }
+            if (is_main_video && additional_data.image_stabilizer !== undefined) {
+                list.model["Image stabilization"] = additional_data.image_stabilizer ? "On" : "Off";
+            }
+            list.modelChanged();
+        }
     }
 
     Button {

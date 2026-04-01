@@ -777,7 +777,11 @@ Rectangle {
             return saveProjectToUrl(controller.project_file_url, type);
 
         const folder = filesystem.get_folder(controller.input_file_url);
-        const filename = filesystem.filename_with_extension(filesystem.get_filename(controller.input_file_url), "gyroflow");
+        let rawFilename = filesystem.get_filename(controller.input_file_url);
+        if (rawFilename.includes("%0")) {
+            rawFilename = rawFilename.replace(/%0(\d+)d/, (_, len) => controller.image_sequence_start.toString().padStart(parseInt(len), '0'));
+        }
+        const filename = filesystem.filename_with_extension(rawFilename, "gyroflow");
 
         if (!filesystem.exists_in_folder(folder, filename)) {
             getSaveFileUrl(folder, filename, function(url) { saveProjectToUrl(url, type); }, type);

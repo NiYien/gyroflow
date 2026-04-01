@@ -14,3 +14,9 @@ gyroflow.log
 resources/camera_presets
 *.exe
 .qmlls.ini
+/.claude
+CLAUDE.md
+/openspec
+/.github/skills
+/.github/prompts
+/docs

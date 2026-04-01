@@ -117,7 +117,7 @@ impl FindOffsetsRssync<'_> {
                     from_ts = a_t;
                 }
                 to_ts = b_t;
-                let a = undistort_points_for_optical_flow(&a_p, from_ts, &params, frame_size);
+                let a = undistort_points_for_optical_flow(&a_p, a_t, &params, frame_size);
                 let b = undistort_points_for_optical_flow(&b_p, to_ts,   &params, frame_size);
 
                 let mut points3d_a = Vec::new();

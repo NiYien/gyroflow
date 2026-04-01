@@ -168,7 +168,9 @@ impl CameraIdentifier {
                                 id.focal_length = Some(*v as f64);
                             }
                             if brand != "Runcam" {
-                                if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| map.get_t(TagId::Name) as Option<&String>) {
+                                if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| map.get_t(TagId::DisplayName) as Option<&String>) {
+                                    id.lens_model = v.clone();
+                                } else if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| map.get_t(TagId::Name) as Option<&String>) {
                                     id.lens_model = v.clone();
                                 }
                             }

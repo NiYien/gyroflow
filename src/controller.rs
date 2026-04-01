@@ -53,6 +53,7 @@ pub struct Controller {
     load_video: qt_method!(fn(&self, url: QUrl, player: QJSValue)),
     video_file_loaded: qt_method!(fn(&self, player: QJSValue)),
     load_telemetry: qt_method!(fn(&self, url: QUrl, is_video: bool, player: QJSValue, sample_index: i32, project_version: u32)),
+    get_image_sequence_fps: qt_method!(fn(&self, url: QUrl) -> f64),
     load_lens_profile: qt_method!(fn(&mut self, url_or_id: QString)),
     get_preset_contents: qt_method!(fn(&mut self, url_or_id: QString) -> QString),
     export_lens_profile: qt_method!(fn(&mut self, url: QUrl, info: QJsonObject, upload: bool)),
@@ -115,7 +116,7 @@ pub struct Controller {
     get_org_duration_ms: qt_method!(fn(&self) -> f64),
     get_scaled_duration_ms: qt_method!(fn(&self) -> f64),
     get_scaled_fps: qt_method!(fn(&self) -> f64),
-    set_video_created_at: qt_method!(fn(&self, timestamp: u64)),
+    set_video_created_at: qt_method!(fn(&self, timestamp_ms: f64)),
 
     recompute_threaded: qt_method!(fn(&mut self)),
     request_recompute: qt_signal!(),
@@ -157,6 +158,7 @@ pub struct Controller {
 
     lens_loaded: qt_property!(bool; NOTIFY lens_changed),
     set_lens_param: qt_method!(fn(&self, param: QString, value: f64)),
+    set_user_focal_length: qt_method!(fn(&self, focal_length_mm: f64)),
     lens_changed: qt_signal!(),
 
     gyro_loaded: qt_property!(bool; NOTIFY gyro_changed),
@@ -314,8 +316,27 @@ impl Controller {
         }
     }
 
+    fn get_image_sequence_fps(&self, url: QUrl) -> f64 {
+        let url = util::qurl_to_encoded(url);
+        if let Ok(mut file) = filesystem::open_file(&url, false, false) {
+            let filesize = file.size;
+            let options = gyroflow_core::gyro_source::FileLoadOptions::default();
+            let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            if let Ok(md) = gyroflow_core::gyro_source::GyroSource::parse_telemetry_file(
+                file.get_file(), filesize, &url, &options, (0, 0), 0.0, |_| {}, cancel_flag
+            ) {
+                if let Some(fps) = md.frame_rate {
+                    return fps;
+                }
+            }
+        }
+        0.0
+    }
+
     fn load_video(&mut self, url: QUrl, player: QJSValue) {
         self.stabilizer.clear();
+        *self.stabilizer.lens.write() = Default::default();
+        self.lens_loaded = false;
         let url = util::qurl_to_encoded(url.clone());
         let filename = filesystem::get_filename(&url);
 
@@ -686,10 +707,17 @@ impl Controller {
 
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
-            let duration_ms = vid.duration;
-            let fps = vid.frameRate;
+            let mut duration_ms = vid.duration;
+            let mut fps = vid.frameRate;
             let frame_count = vid.frameCount as usize;
             let video_size = (vid.videoWidth as usize, vid.videoHeight as usize);
+
+            // For image sequences, MDK may report wrong fps/duration (defaults to 25fps).
+            // Use the fps from telemetry or user input instead.
+            if self.image_sequence_fps > 0.0 && frame_count > 0 {
+                fps = self.image_sequence_fps;
+                duration_ms = frame_count as f64 * 1000.0 / fps;
+            }
 
             self.set_preview_resolution(self.preview_resolution, player);
 
@@ -709,12 +737,18 @@ impl Controller {
 
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
-            let duration_ms = vid.duration;
-            let fps = vid.frameRate;
+            let mut duration_ms = vid.duration;
+            let mut fps = vid.frameRate;
             let frame_count = vid.frameCount as usize;
             let video_size = (vid.videoWidth as usize, vid.videoHeight as usize);
             self.cancel_flag.store(false, SeqCst);
             let cancel_flag = self.cancel_flag.clone();
+
+            // For image sequences, MDK may report wrong fps/duration (defaults to 25fps).
+            if self.image_sequence_fps > 0.0 && frame_count > 0 {
+                fps = self.image_sequence_fps;
+                duration_ms = frame_count as f64 * 1000.0 / fps;
+            }
 
             if is_main_video {
                 self.set_preview_resolution(self.preview_resolution, player);
@@ -752,7 +786,7 @@ impl Controller {
             });
             let reload_lens = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _| {
                 let lens = this.stabilizer.lens.read();
-                if this.lens_loaded || !lens.path_to_file.is_empty() {
+                if this.lens_loaded || !lens.path_to_file.is_empty() || !lens.fisheye_params.camera_matrix.is_empty() || !lens.camera_brand.is_empty() {
                     this.lens_loaded = true;
                     this.lens_changed();
                     let json = lens.get_json().unwrap_or_default();
@@ -807,11 +841,43 @@ impl Controller {
                     additional_obj.insert("has_accurate_timestamps".to_owned(), serde_json::Value::Bool(file_metadata.has_accurate_timestamps));
                     additional_obj.insert("sample_rate".to_owned(),       serde_json::to_value(gyroflow_core::gyro_source::GyroSource::get_sample_rate(&*file_metadata)).unwrap());
                     let has_builtin_profile = file_metadata.lens_profile.as_ref().map(|y| y.is_object()).unwrap_or_default();
+                    let has_lens_params = !file_metadata.lens_params.is_empty();
+                    let has_focal_length = file_metadata.lens_params.values().next().and_then(|p| p.focal_length).is_some();
+                    let unit_px_fl = file_metadata.unit_pixel_focal_length;
+                    additional_obj.insert("has_lens_params".to_owned(), serde_json::Value::Bool(has_lens_params));
+                    additional_obj.insert("has_builtin_profile".to_owned(), serde_json::Value::Bool(has_builtin_profile));
+                    additional_obj.insert("has_focal_length".to_owned(), serde_json::Value::Bool(has_focal_length));
+                    if let Some(upfl) = unit_px_fl {
+                        additional_obj.insert("unit_pixel_focal_length".to_owned(), serde_json::Number::from_f64(upfl).unwrap().into());
+                    }
+                    // Pass telemetry creation time to UI and set video_created_at
+                    if let Some(ref utc_str) = file_metadata.creation_date_utc {
+                        additional_obj.insert("creation_date_utc".to_owned(), serde_json::Value::String(utc_str.clone()));
+                        if is_main_video {
+                            if let Some(ms) = parse_creation_date_to_millis(utc_str) {
+                                stab.params.write().video_created_at = Some(ms);
+                            }
+                        }
+                    }
+                    if let Some(ref tz) = file_metadata.timezone_offset {
+                        additional_obj.insert("timezone_offset".to_owned(), serde_json::Value::String(tz.clone()));
+                        if is_main_video {
+                            stab.params.write().video_timezone = Some(tz.clone());
+                        }
+                    }
+                    if let Some(ref local) = file_metadata.creation_date {
+                        additional_obj.insert("creation_date".to_owned(), serde_json::Value::String(local.clone()));
+                    }
+
                     let md_data = file_metadata.additional_data.clone();
                     if let Some(md_fps) = file_metadata.frame_rate {
+                        additional_obj.insert("telemetry_fps".to_owned(), serde_json::Number::from_f64(md_fps).unwrap().into());
+                    }
+                    if let Some(rec_fps) = file_metadata.record_frame_rate {
                         let fps = stab.params.read().fps;
-                        if (md_fps - fps).abs() > 1.0 {
-                            additional_obj.insert("realtime_fps".to_owned(), serde_json::Number::from_f64(md_fps).unwrap().into());
+                        let ratio = rec_fps / fps;
+                        if ratio > 1.2 || ratio < 1.0 / 1.2 {
+                            additional_obj.insert("realtime_fps".to_owned(), serde_json::Number::from_f64(rec_fps).unwrap().into());
                         }
                     }
                     drop(file_metadata);
@@ -821,12 +887,23 @@ impl Controller {
 
                     let id_str = camera_id.as_ref().map(|v| v.get_identifier_for_autoload()).unwrap_or_default();
                     if is_main_video && !id_str.is_empty() && !has_builtin_profile {
-                        let mut db = stab.lens_profile_db.write();
-                        db.on_loaded(move |db| {
-                            if db.contains_id(&id_str) {
-                                load_lens(id_str);
-                            }
-                        });
+                        let needs_load = {
+                            let mut db = stab.lens_profile_db.write();
+                            db.on_loaded(move |db| {
+                                if db.contains_id(&id_str) {
+                                    load_lens(id_str);
+                                }
+                            });
+                            !db.loaded
+                        };
+                        if needs_load {
+                            let db = stab.lens_profile_db.clone();
+                            core::run_threaded(move || {
+                                let mut new_db = core::lens_profile_database::LensProfileDatabase::default();
+                                new_db.load_all();
+                                db.write().set_from_db(new_db);
+                            });
+                        }
                     }
                     if is_main_video {
                         reload_lens(());
@@ -1475,7 +1552,7 @@ impl Controller {
     fn get_scaled_fps        (&self) -> f64 { self.stabilizer.params.read().get_scaled_fps() }
     fn get_scaling_ratio     (&self) -> f64 { self.stabilizer.get_scaling_ratio() }
     fn get_min_fov           (&self) -> f64 { self.stabilizer.get_min_fov() }
-    fn set_video_created_at  (&self, timestamp: u64) { self.stabilizer.params.write().video_created_at = if timestamp > 0 { Some(timestamp) } else { None }; }
+    fn set_video_created_at  (&self, timestamp_ms: f64) { self.stabilizer.params.write().video_created_at = if timestamp_ms > 0.0 { Some(timestamp_ms as i64) } else { None }; }
 
     fn set_trim_ranges(&self, ranges: QString) {
         let ranges = ranges.to_string()
@@ -1548,6 +1625,19 @@ impl Controller {
     }
     fn set_lens_param(&self, param: QString, value: f64) {
         self.stabilizer.set_lens_param(param.to_string().as_str(), value);
+        self.request_recompute();
+    }
+    fn set_user_focal_length(&mut self, focal_length_mm: f64) {
+        self.stabilizer.set_user_focal_length(focal_length_mm);
+        // Update UI with new lens data
+        let lens = self.stabilizer.lens.read();
+        let json = lens.get_json().unwrap_or_default();
+        let filepath = lens.path_to_file.clone();
+        let checksum = lens.checksum.clone().unwrap_or_default();
+        drop(lens);
+        self.lens_loaded = true;
+        self.lens_changed();
+        self.lens_profile_loaded(QString::from(json), QString::from(filepath), QString::from(checksum));
         self.request_recompute();
     }
 
@@ -2547,4 +2637,22 @@ impl Filesystem {
         }
         QUrl::default()
     }
+}
+
+/// Parse telemetry creation date string "yyyy:MM:dd HH:mm:ss" or "yyyy:MM:dd HH:mm:ss.SSS" to Unix milliseconds.
+fn parse_creation_date_to_millis(date_str: &str) -> Option<i64> {
+    let (base, subsec_ms) = if let Some(dot_pos) = date_str.rfind('.') {
+        let subsec_str = &date_str[dot_pos + 1..];
+        let ms: i64 = match subsec_str.len() {
+            1 => subsec_str.parse::<i64>().ok()? * 100,
+            2 => subsec_str.parse::<i64>().ok()? * 10,
+            3 => subsec_str.parse::<i64>().ok()?,
+            _ => subsec_str[..3].parse::<i64>().ok()?,
+        };
+        (&date_str[..dot_pos], ms)
+    } else {
+        (date_str, 0i64)
+    };
+    let naive = chrono::NaiveDateTime::parse_from_str(base, "%Y:%m:%d %H:%M:%S").ok()?;
+    Some(naive.and_utc().timestamp_millis() + subsec_ms)
 }
