@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::collections::{ HashMap, HashSet };
 use parking_lot::RwLock;
 use regex::Regex;
+use core::gyro_source::GyroSource;
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
 pub struct RenderQueueItem {
@@ -184,6 +185,16 @@ impl RenderOptions {
     }
 }
 
+#[derive(Default, Clone, Debug)]
+struct GyroFileInfo {
+    path: String,
+    filename: String,
+    created_at_ms: Option<i64>,
+    duration_ms: Option<f64>,
+    parsed: bool,
+    error: Option<String>,
+}
+
 #[derive(Default, QObject)]
 pub struct RenderQueue {
     base: qt_base_class!(trait QObject),
@@ -274,6 +285,35 @@ pub struct RenderQueue {
     stabilizer: Arc<StabilizationManager>,
 
     processing_resolution: i32,
+
+    // Batch gyro matching
+    gyro_files: Vec<GyroFileInfo>,
+    match_results: Option<core::gyro_match::BatchMatchResult>,
+    pairing_mode_gyro_index: Option<usize>,
+    original_job_order: Vec<u32>,
+    manual_pairs: Vec<core::gyro_match::ManualCalibrationPair>,
+
+    add_gyro_file: qt_method!(fn(&mut self, url: String)),
+    remove_gyro_file: qt_method!(fn(&mut self, index: usize)),
+    clear_gyro_files: qt_method!(fn(&mut self)),
+    get_gyro_file_count: qt_method!(fn(&self) -> usize),
+    get_gyro_file_info_json: qt_method!(fn(&self, index: usize) -> QString),
+    has_gyro_files: qt_method!(fn(&self) -> bool),
+    batch_match_gyro: qt_method!(fn(&mut self)),
+    apply_match_results: qt_method!(fn(&mut self)),
+    manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
+    get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
+    unpair_video: qt_method!(fn(&mut self, job_id: u32)),
+    get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
+    enter_pairing_mode: qt_method!(fn(&mut self, gyro_index: usize)),
+    exit_pairing_mode: qt_method!(fn(&mut self)),
+    is_in_pairing_mode: qt_method!(fn(&self) -> bool),
+    sort_jobs_by_created_at: qt_method!(fn(&mut self)),
+    restore_original_order: qt_method!(fn(&mut self)),
+
+    pub gyro_files_changed: qt_signal!(),
+    pub match_results_changed: qt_signal!(),
+    pub pairing_mode_changed: qt_signal!(),
 }
 
 macro_rules! update_model {
@@ -887,6 +927,12 @@ impl RenderQueue {
 
                 let is_queue_active = this.status == "active".into();
                 if finished {
+                    // Update project_data with sync offsets before releasing stab
+                    if let Some(job) = this.jobs.get_mut(&job_id) {
+                        if let Some(ref stab) = job.stab {
+                            job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                        }
+                    }
                     // Release StabilizationManager to reclaim GPU memory
                     if let Some(job) = this.jobs.get_mut(&job_id) {
                         job.stab = None;
@@ -1548,6 +1594,8 @@ impl RenderQueue {
                                     gyro.remove_offsets_near(new_ts, 100.0);
                                     gyro.set_offset(new_ts, x.1);
                                 }
+                                // Switch from Complementary to VQF after sync completes
+                                gyro.integration_method = 2; // VQF
                                 gyro.prevent_recompute = false;
                                 gyro.adjust_offsets();
                                 stab2.keyframes.write().update_gyro(&gyro);
@@ -1790,4 +1838,663 @@ impl RenderQueue {
             stab.lens.write().sync_settings = Some(sync_settings);
         }
     }
+
+    // --- Batch gyro matching methods ---
+
+    fn get_ordered_job_ids(&self) -> Vec<u32> {
+        if let Ok(queue) = self.queue.try_borrow() {
+            (0..queue.row_count())
+                .map(|i| queue[i as usize].job_id)
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    // T1: Add a gyro file to the list and start background parsing (T2).
+    fn add_gyro_file(&mut self, url: String) {
+        let filename = url.rsplit('/').next()
+            .or_else(|| url.rsplit('\\').next())
+            .unwrap_or(&url)
+            .to_string();
+        let index = self.gyro_files.len();
+        self.gyro_files.push(GyroFileInfo {
+            path: url.clone(),
+            filename,
+            ..Default::default()
+        });
+        self.gyro_files_changed();
+
+        // T2: Background metadata parsing
+        let on_parsed = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, result: (Option<i64>, Option<f64>, Option<String>)| {
+            if let Some(info) = this.gyro_files.get_mut(index) {
+                info.created_at_ms = result.0;
+                info.duration_ms = result.1;
+                info.error = result.2.clone();
+                info.parsed = true;
+            }
+            this.gyro_files_changed();
+        });
+
+        core::run_threaded(move || {
+            let t = std::time::Instant::now();
+            match parse_gyro_metadata(&url) {
+                Ok((created_at, duration)) => {
+                    ::log::info!("[add_gyro_file] parsed '{}': {:.1}ms (created_at={}, duration={:.0}ms)",
+                        filesystem::get_filename(&url), t.elapsed().as_secs_f64() * 1000.0, created_at, duration);
+                    on_parsed((Some(created_at), Some(duration), None));
+                }
+                Err(e) => {
+                    ::log::warn!("[add_gyro_file] parse failed '{}': {:.1}ms {:?}",
+                        filesystem::get_filename(&url), t.elapsed().as_secs_f64() * 1000.0, e);
+                    on_parsed((None, None, Some(e.to_string())));
+                }
+            }
+        });
+    }
+
+    fn remove_gyro_file(&mut self, index: usize) {
+        if index < self.gyro_files.len() {
+            self.gyro_files.remove(index);
+            self.match_results = None;
+            self.gyro_files_changed();
+            self.match_results_changed();
+        }
+    }
+
+    fn clear_gyro_files(&mut self) {
+        // Clear external gyro data from all jobs
+        for (_, job) in &self.jobs {
+            if let Some(stab) = &job.stab {
+                let is_external = {
+                    let gyro = stab.gyro.read();
+                    !gyro.file_url.is_empty() && gyro.file_url != stab.input_file.read().url
+                };
+                if is_external {
+                    let mut gyro = stab.gyro.write();
+                    gyro.clear();
+                    gyro.file_url.clear();
+                }
+            }
+        }
+        // Update project_data for all jobs
+        for (_, job) in &mut self.jobs {
+            if let Some(ref stab) = job.stab {
+                job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+            }
+        }
+
+        self.gyro_files.clear();
+        self.match_results = None;
+        self.manual_pairs.clear();
+        self.restore_original_order();
+        self.gyro_files_changed();
+        self.match_results_changed();
+    }
+
+    fn get_gyro_file_count(&self) -> usize { self.gyro_files.len() }
+
+    fn has_gyro_files(&self) -> bool { !self.gyro_files.is_empty() }
+
+    fn get_gyro_file_info_json(&self, index: usize) -> QString {
+        if let Some(info) = self.gyro_files.get(index) {
+            QString::from(serde_json::json!({
+                "path": info.path,
+                "filename": info.filename,
+                "created_at_ms": info.created_at_ms,
+                "duration_ms": info.duration_ms,
+                "parsed": info.parsed,
+                "error": info.error,
+            }).to_string())
+        } else {
+            QString::default()
+        }
+    }
+
+    // T3: Collect metadata and run batch matching algorithm.
+    fn batch_match_gyro(&mut self) {
+        let t_total = std::time::Instant::now();
+        let t0 = std::time::Instant::now();
+        let job_ids = self.get_ordered_job_ids();
+
+        // Collect video metadata from jobs
+        let mut videos = Vec::new();
+        for &job_id in &job_ids {
+            if let Some(job) = self.jobs.get(&job_id) {
+                if let Some(stab) = &job.stab {
+                    let params = stab.params.read();
+                    videos.push(core::gyro_match::VideoMatchInfo {
+                        path: stab.input_file.read().url.clone(),
+                        duration_ms: params.duration_ms,
+                        created_at_ms: params.video_created_at,
+                        pre_recording_ms: 0.0,
+                    });
+                } else {
+                    // Placeholder for jobs without stab
+                    videos.push(core::gyro_match::VideoMatchInfo {
+                        path: String::new(),
+                        duration_ms: 0.0,
+                        created_at_ms: None,
+                        pre_recording_ms: 0.0,
+                    });
+                }
+            }
+        }
+
+        // Collect gyro metadata (only parsed files with valid data)
+        let gyros: Vec<_> = self.gyro_files.iter()
+            .filter(|g| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+            .map(|g| core::gyro_match::GyroMatchInfo {
+                path: g.path.clone(),
+                duration_ms: g.duration_ms.unwrap(),
+                created_at_ms: g.created_at_ms.unwrap(),
+            })
+            .collect();
+        ::log::info!("[batch_match] collect metadata: {:.1}ms ({} videos, {} gyros parsed/{} total)",
+            t0.elapsed().as_secs_f64() * 1000.0, videos.len(), gyros.len(), self.gyro_files.len());
+
+        let manual = if self.manual_pairs.is_empty() { None } else { Some(self.manual_pairs.as_slice()) };
+
+        let t1 = std::time::Instant::now();
+        let result = core::gyro_match::batch_match(&videos, &gyros, manual);
+        ::log::info!("[batch_match] algorithm: {:.1}ms (offset={:?}, error={:?})",
+            t1.elapsed().as_secs_f64() * 1000.0, result.global_offset_ms, result.error);
+        for r in &result.results {
+            if r.gyro_index.is_some() {
+                ::log::info!("[batch_match]   video[{}] -> gyro[{}] {:?} range=[{:.0?}..{:.0?}]",
+                    r.video_index, r.gyro_index.unwrap(), r.status, r.gyro_start_ms, r.gyro_end_ms);
+            }
+        }
+        self.match_results = Some(result);
+        self.match_results_changed();
+
+        let t2 = std::time::Instant::now();
+        self.apply_match_results();
+        ::log::info!("[batch_match] apply_match_results setup: {:.1}ms", t2.elapsed().as_secs_f64() * 1000.0);
+        ::log::info!("[batch_match] total (main thread): {:.1}ms", t_total.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    // T4: Apply match results by loading gyro data into each matched job.
+    // Runs heavy gyro parsing on a background thread to avoid blocking the UI.
+    fn apply_match_results(&mut self) {
+        let results = match &self.match_results {
+            Some(r) => r.results.clone(),
+            None => return,
+        };
+
+        let job_ids = self.get_ordered_job_ids();
+
+        // Build a mapping from parsed gyro index back to gyro_files index.
+        let parsed_gyro_indices: Vec<usize> = self.gyro_files.iter()
+            .enumerate()
+            .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+            .map(|(i, _)| i)
+            .collect();
+
+        // Collect all info needed for background processing
+        struct ApplyInfo {
+            job_id: u32,
+            gyro_files_idx: usize,
+            gyro_start_ms: Option<f64>,
+            gyro_end_ms: Option<f64>,
+            stab: Arc<StabilizationManager>,
+            gyro_path: String,
+        }
+        let mut apply_items: Vec<ApplyInfo> = Vec::new();
+        let mut unique_gyro_paths: HashMap<usize, (String, f64, (usize, usize))> = HashMap::new();
+
+        for result in &results {
+            let gyro_batch_idx = match result.gyro_index {
+                Some(idx) => idx,
+                None => continue,
+            };
+            if result.status == core::gyro_match::MatchStatus::Unmatched
+               || result.status == core::gyro_match::MatchStatus::NoCreationTime {
+                continue;
+            }
+            let gyro_files_idx = match parsed_gyro_indices.get(gyro_batch_idx) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+            let job_id = match job_ids.get(result.video_index) {
+                Some(&id) => id,
+                None => continue,
+            };
+            let (stab, gyro_path) = match self.jobs.get(&job_id) {
+                Some(job) => match (&job.stab, self.gyro_files.get(gyro_files_idx)) {
+                    (Some(stab), Some(gyro_info)) => (stab.clone(), gyro_info.path.clone()),
+                    _ => continue,
+                },
+                None => continue,
+            };
+
+            // Record unique gyro files to parse
+            if !unique_gyro_paths.contains_key(&gyro_files_idx) {
+                let (fps, size) = {
+                    let params = stab.params.read();
+                    (params.fps, params.size)
+                };
+                unique_gyro_paths.insert(gyro_files_idx, (gyro_path.clone(), fps, size));
+            }
+
+            apply_items.push(ApplyInfo {
+                job_id,
+                gyro_files_idx,
+                gyro_start_ms: result.gyro_start_ms,
+                gyro_end_ms: result.gyro_end_ms,
+                stab,
+                gyro_path,
+            });
+        }
+
+        // Run heavy work on background thread
+        let on_done = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, applied_job_ids: Vec<u32>| {
+            // T9: Enable autosync with dynamic sync parameters for matched jobs
+            // (must run before T8 so sync_settings are included in project_data)
+            for &job_id in &applied_job_ids {
+                if let Some(job) = this.jobs.get(&job_id) {
+                    if let Some(ref stab) = job.stab {
+                        let (duration_s, fps) = {
+                            let params = stab.params.read();
+                            (params.duration_ms / 1000.0, params.fps)
+                        };
+                        // Dynamic max_sync_points based on video duration (matching NiYien Tool logic)
+                        let max_sync_points = if duration_s > 30.0 * 60.0 { 5 }
+                            else if duration_s > 10.0 * 60.0 { 4 }
+                            else { 2 };
+                        // Dynamic every_nth_frame based on fps
+                        let every_nth_frame = ((fps / 49.0).floor() as i64).max(1);
+
+                        // Use Complementary integration for sync (will switch to VQF after sync)
+                        stab.gyro.write().integration_method = 1; // Complementary
+
+                        let mut lens = stab.lens.write();
+                        // Always overwrite sync_settings with correct parameters for batch match
+                        let new_sync = serde_json::json!({
+                            "do_autosync": true,
+                            "max_sync_points": max_sync_points,
+                            "search_size": 5.0,
+                            "time_per_syncpoint": 2.5,
+                            "every_nth_frame": every_nth_frame,
+                            "initial_offset": 0.0,
+                            "pose_method": 0,
+                            "of_method": 2,
+                            "offset_method": 2
+                        });
+                        lens.sync_settings = Some(new_sync);
+                        drop(lens);
+                        // Re-integrate gyro data with the new integration method
+                        stab.recompute_gyro();
+                    }
+                }
+            }
+            // T8+T19: Update project_data (Simple mode, filepath now points to GCSV)
+            for &job_id in &applied_job_ids {
+                if let Some(job) = this.jobs.get_mut(&job_id) {
+                    if let Some(ref stab) = job.stab {
+                        job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                    }
+                }
+            }
+            this.sort_jobs_by_created_at();
+            this.match_results_changed();
+        });
+
+        core::run_threaded(move || {
+            let t_bg = std::time::Instant::now();
+
+            // T3: Cache parsed gyro FileMetadata by gyro_files_idx
+            let mut gyro_cache: HashMap<usize, core::gyro_source::FileMetadata> = HashMap::new();
+            for (gyro_files_idx, (gyro_path, fps, size)) in &unique_gyro_paths {
+                let t_parse = std::time::Instant::now();
+                if let Ok(mut file) = filesystem::open_file(gyro_path, false, false) {
+                    let filesize = file.size;
+                    if let Ok(md) = GyroSource::parse_telemetry_file(
+                        file.get_file(), filesize, gyro_path,
+                        &Default::default(), *size, *fps, |_| {},
+                        Arc::new(AtomicBool::new(false))
+                    ) {
+                        ::log::info!("[apply_match] parse gyro[{}] '{}': {:.1}ms ({} imu samples)",
+                            gyro_files_idx, filesystem::get_filename(gyro_path),
+                            t_parse.elapsed().as_secs_f64() * 1000.0, md.raw_imu.len());
+                        gyro_cache.insert(*gyro_files_idx, md);
+                    }
+                }
+            }
+            ::log::info!("[apply_match] all gyro parsing: {:.1}ms ({} unique files)",
+                t_bg.elapsed().as_secs_f64() * 1000.0, gyro_cache.len());
+
+            // Apply cached gyro data to each job
+            let t_apply = std::time::Instant::now();
+            for (idx, item) in apply_items.iter().enumerate() {
+                let t_item = std::time::Instant::now();
+                if let Some(cached_md) = gyro_cache.get(&item.gyro_files_idx) {
+                    let mut md = cached_md.clone();
+                    md.per_frame_time_offsets.clear();
+
+                    // Backup and restore lens data from main video
+                    let backup_lens_data = {
+                        let gyro = item.stab.gyro.read();
+                        let fm = gyro.file_metadata.read();
+                        (fm.lens_params.clone(), fm.lens_positions.clone(), fm.lens_profile.clone())
+                    };
+                    if md.lens_params.is_empty()    { md.lens_params    = backup_lens_data.0.clone(); }
+                    if md.lens_positions.is_empty() { md.lens_positions  = backup_lens_data.1.clone(); }
+                    if md.lens_profile.is_none()    { md.lens_profile    = backup_lens_data.2.clone(); }
+
+                    {
+                        let params = item.stab.params.read();
+                        let mut gyro = item.stab.gyro.write();
+                        gyro.init_from_params(&params);
+                        gyro.clear();
+                        gyro.file_url = item.gyro_path.clone();
+                        gyro.file_metadata = Default::default();
+                        drop(params);
+                        gyro.load_from_telemetry(md);
+                        gyro.file_load_options = Default::default();
+
+                        // Trim gyro data to the matched time range
+                        if let (Some(start), Some(end)) = (item.gyro_start_ms, item.gyro_end_ms) {
+                            let start_us = (start * 1000.0) as i64;
+                            let end_us = (end * 1000.0) as i64;
+                            gyro.trim_to_time_range(start_us, end_us);
+
+                            // Zero-base timestamps in file_metadata so that .gyroflow export has correct timestamps
+                            {
+                                let mut fm = gyro.file_metadata.write();
+                                if let Some(first_ts_ms) = fm.raw_imu.first().map(|x| x.timestamp_ms) {
+                                    let first_ts_us = (first_ts_ms * 1000.0).round() as i64;
+                                    for sample in fm.raw_imu.iter_mut() {
+                                        sample.timestamp_ms -= first_ts_ms;
+                                    }
+                                    fm.quaternions = fm.quaternions.iter()
+                                        .map(|(&k, &v)| (k - first_ts_us, v))
+                                        .collect();
+                                }
+                            }
+                        }
+                        // T18: Write trimmed gyro data as GCSV file
+                        {
+                            let video_url = item.stab.input_file.read().url.clone();
+                            let gcsv_url = {
+                                // Generate GCSV filename: {video_name}_gyro.gcsv
+                                let base = video_url.rsplitn(2, '.').last().unwrap_or(&video_url);
+                                format!("{}_gyro.gcsv", base)
+                            };
+
+                            let imu_orientation = gyro.imu_transforms.imu_orientation.clone().unwrap_or_default();
+                            // Build GCSV content from original (untransformed) file_metadata raw_imu
+                            // to avoid double-applying orientation when GCSV is reloaded
+                            let gcsv_content = {
+                                let file_metadata = gyro.file_metadata.read();
+                                let raw_imu = &file_metadata.raw_imu;
+                                if !raw_imu.is_empty() {
+                                    use std::fmt::Write;
+                                    let mut content = String::new();
+                                    writeln!(content, "GYROFLOW IMU LOG").unwrap();
+                                    writeln!(content, "version,1.3").unwrap();
+                                    writeln!(content, "id,gyroflow-batch-match").unwrap();
+                                    writeln!(content, "orientation,{}", if imu_orientation.is_empty() { "YxZ" } else { &imu_orientation }).unwrap();
+                                    writeln!(content, "tscale,0.001").unwrap();
+                                    writeln!(content, "gscale,0.017453292519943295").unwrap(); // PI/180, so parser's 1/gscale*PI/180 = 1.0 (data already in rad/s)
+                                    writeln!(content, "ascale,1.0").unwrap();
+                                    writeln!(content, "t,gx,gy,gz,ax,ay,az").unwrap();
+                                    let t_offset = raw_imu.first().map(|x| x.timestamp_ms).unwrap_or(0.0);
+                                    for imu in raw_imu {
+                                        writeln!(content, "{},{},{},{},{},{},{}",
+                                            imu.timestamp_ms - t_offset,
+                                            imu.gyro.map(|g| g[0]).unwrap_or(0.0),
+                                            imu.gyro.map(|g| g[1]).unwrap_or(0.0),
+                                            imu.gyro.map(|g| g[2]).unwrap_or(0.0),
+                                            imu.accl.map(|a| a[0]).unwrap_or(0.0),
+                                            imu.accl.map(|a| a[1]).unwrap_or(0.0),
+                                            imu.accl.map(|a| a[2]).unwrap_or(0.0),
+                                        ).unwrap();
+                                    }
+                                    Some((content, raw_imu.len()))
+                                } else {
+                                    None
+                                }
+                            }; // file_metadata read lock dropped here
+                            if let Some((content, sample_count)) = gcsv_content {
+                                if let Err(e) = filesystem::write(&gcsv_url, content.as_bytes()) {
+                                    ::log::warn!("[apply_match] Failed to write GCSV {}: {:?}", gcsv_url, e);
+                                } else {
+                                    ::log::info!("[apply_match] Wrote GCSV '{}' ({} samples)",
+                                        filesystem::get_filename(&gcsv_url), sample_count);
+                                    gyro.file_url = gcsv_url;
+                                }
+                            }
+                        }
+                    }
+
+                    item.stab.invalidate_smoothing();
+                    item.stab.invalidate_zooming();
+                    ::log::info!("[apply_match] job[{}] gyro[{}] clone+load+trim: {:.1}ms",
+                        idx, item.gyro_files_idx, t_item.elapsed().as_secs_f64() * 1000.0);
+                }
+            }
+            ::log::info!("[apply_match] all jobs apply: {:.1}ms ({} items)", t_apply.elapsed().as_secs_f64() * 1000.0, apply_items.len());
+            ::log::info!("[apply_match] background total: {:.1}ms", t_bg.elapsed().as_secs_f64() * 1000.0);
+
+            let applied_job_ids: Vec<u32> = apply_items.iter().map(|item| item.job_id).collect();
+            on_done(applied_job_ids);
+        });
+    }
+
+    // T5: Sort jobs by video creation time (ascending), no-timestamp jobs at the end.
+    fn sort_jobs_by_created_at(&mut self) {
+        // Save original order on first call
+        if self.original_job_order.is_empty() {
+            self.original_job_order = self.get_ordered_job_ids();
+        }
+
+        // Collect (job_id, created_at) pairs
+        let mut items: Vec<(u32, Option<i64>)> = {
+            if let Ok(queue) = self.queue.try_borrow() {
+                (0..queue.row_count())
+                    .map(|i| {
+                        let job_id = queue[i as usize].job_id;
+                        let created_at = self.jobs.get(&job_id)
+                            .and_then(|j| j.stab.as_ref())
+                            .and_then(|s| s.params.read().video_created_at);
+                        (job_id, created_at)
+                    })
+                    .collect()
+            } else {
+                return;
+            }
+        };
+
+        // Sort: timestamped ascending, no-timestamp at end
+        items.sort_by(|a, b| {
+            match (a.1, b.1) {
+                (Some(ta), Some(tb)) => ta.cmp(&tb),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            }
+        });
+
+        // Reorder the queue model to match the sorted order
+        self.reorder_queue_by_job_ids(&items.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+        self.queue_changed();
+    }
+
+    fn restore_original_order(&mut self) {
+        if self.original_job_order.is_empty() { return; }
+        let order = self.original_job_order.clone();
+        self.reorder_queue_by_job_ids(&order);
+        self.original_job_order.clear();
+        self.queue_changed();
+    }
+
+    /// Reorder the queue model to match the given job_id sequence.
+    fn reorder_queue_by_job_ids(&mut self, desired_order: &[u32]) {
+        if let Ok(mut q) = self.queue.try_borrow_mut() {
+            let count = q.row_count() as usize;
+            if desired_order.len() != count { return; }
+
+            // Build a position lookup from current queue
+            for target_pos in 0..count {
+                let desired_id = desired_order[target_pos];
+                // Find where this job_id currently is in the queue
+                let current_pos = (target_pos..count)
+                    .find(|&i| q[i].job_id == desired_id);
+                if let Some(current_pos) = current_pos {
+                    if current_pos != target_pos {
+                        let itm = q[current_pos].clone();
+                        q.remove(current_pos);
+                        q.insert(target_pos, itm);
+                    }
+                }
+            }
+
+            // Update all job indices
+            for (i, v) in q.iter().enumerate() {
+                if let Some(job) = self.jobs.get_mut(&v.job_id) {
+                    job.queue_index = i;
+                }
+            }
+        }
+    }
+
+    // T6: Manually pair a video job with a specific gyro file.
+    fn manual_set_calibration_pair(&mut self, job_id: u32, gyro_index: usize) {
+        let job_ids = self.get_ordered_job_ids();
+        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
+            // Update or add manual calibration pair (mark only, no calculation)
+            self.manual_pairs.retain(|p| p.video_index != video_index);
+            self.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+                video_index,
+                gyro_index,
+            });
+            self.match_results_changed();
+        }
+    }
+
+    fn get_manual_pair_gyro_index(&self, job_id: u32) -> i32 {
+        let job_ids = self.get_ordered_job_ids();
+        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
+            if let Some(pair) = self.manual_pairs.iter().find(|p| p.video_index == video_index) {
+                return pair.gyro_index as i32;
+            }
+        }
+        -1
+    }
+
+    // T7: Unpair a video job, clearing its external gyro data.
+    fn unpair_video(&mut self, job_id: u32) {
+        // Clear gyro data from the job
+        if let Some(job) = self.jobs.get(&job_id) {
+            if let Some(stab) = &job.stab {
+                stab.gyro.write().clear();
+            }
+        }
+        // Remove from manual pairs
+        let job_ids = self.get_ordered_job_ids();
+        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
+            self.manual_pairs.retain(|p| p.video_index != video_index);
+        }
+        // Update match results
+        if let Some(ref mut results) = self.match_results {
+            if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
+                if let Some(r) = results.results.iter_mut().find(|r| r.video_index == video_index) {
+                    r.status = core::gyro_match::MatchStatus::Unmatched;
+                    r.gyro_index = None;
+                    r.gyro_start_ms = None;
+                    r.gyro_end_ms = None;
+                }
+            }
+        }
+        self.match_results_changed();
+    }
+
+    fn enter_pairing_mode(&mut self, gyro_index: usize) {
+        self.pairing_mode_gyro_index = Some(gyro_index);
+        self.pairing_mode_changed();
+    }
+
+    fn exit_pairing_mode(&mut self) {
+        self.pairing_mode_gyro_index = None;
+        self.pairing_mode_changed();
+    }
+
+    fn is_in_pairing_mode(&self) -> bool {
+        self.pairing_mode_gyro_index.is_some()
+    }
+
+    fn get_match_status_json(&self, job_id: u32) -> QString {
+        let job_ids = self.get_ordered_job_ids();
+        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
+            if let Some(ref results) = self.match_results {
+                if let Some(r) = results.results.iter().find(|r| r.video_index == video_index) {
+                    // Build a mapping from parsed gyro index back to gyro_files index
+                    let parsed_gyro_indices: Vec<usize> = self.gyro_files.iter()
+                        .enumerate()
+                        .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+                        .map(|(i, _)| i)
+                        .collect();
+
+                    let gyro_filename = r.gyro_index
+                        .and_then(|gi| parsed_gyro_indices.get(gi))
+                        .and_then(|&fi| self.gyro_files.get(fi))
+                        .map(|g| g.filename.as_str())
+                        .unwrap_or("");
+
+                    return QString::from(serde_json::json!({
+                        "status": format!("{:?}", r.status),
+                        "gyro_index": r.gyro_index,
+                        "gyro_start_ms": r.gyro_start_ms,
+                        "gyro_end_ms": r.gyro_end_ms,
+                        "gyro_filename": gyro_filename,
+                    }).to_string());
+                }
+            }
+        }
+        QString::from("{\"status\":\"none\"}")
+    }
+}
+
+/// Parse telemetry creation date string "yyyy:MM:dd HH:mm:ss" or "yyyy:MM:dd HH:mm:ss.SSS" to Unix milliseconds.
+fn parse_creation_date_to_millis(date_str: &str) -> Option<i64> {
+    let (base, subsec_ms) = if let Some(dot_pos) = date_str.rfind('.') {
+        let subsec_str = &date_str[dot_pos + 1..];
+        let ms: i64 = match subsec_str.len() {
+            1 => subsec_str.parse::<i64>().ok()? * 100,
+            2 => subsec_str.parse::<i64>().ok()? * 10,
+            3 => subsec_str.parse::<i64>().ok()?,
+            _ => subsec_str[..3].parse::<i64>().ok()?,
+        };
+        (&date_str[..dot_pos], ms)
+    } else {
+        (date_str, 0i64)
+    };
+    let naive = chrono::NaiveDateTime::parse_from_str(base, "%Y:%m:%d %H:%M:%S").ok()?;
+    Some(naive.and_utc().timestamp_millis() + subsec_ms)
+}
+
+/// Parse gyro file metadata (creation date and IMU duration) using telemetry-parser.
+fn parse_gyro_metadata(url: &str) -> Result<(i64, f64), Box<dyn std::error::Error + Send + Sync>> {
+    let mut file = filesystem::open_file(url, false, false)?;
+    let filesize = file.size;
+    let md = GyroSource::parse_telemetry_file(
+        file.get_file(), filesize, url,
+        &Default::default(), (0, 0), 0.0,
+        |_| {}, Arc::new(AtomicBool::new(false))
+    )?;
+
+    let created_at = md.creation_date_utc.as_ref()
+        .and_then(|s| parse_creation_date_to_millis(s))
+        .ok_or("No creation date found in gyro file")?;
+
+    let duration = if !md.raw_imu.is_empty() {
+        let first = md.raw_imu.first().unwrap().timestamp_ms;
+        let last = md.raw_imu.last().unwrap().timestamp_ms;
+        last - first
+    } else {
+        0.0
+    };
+
+    Ok((created_at, duration))
 }

@@ -13,6 +13,50 @@ Item {
     property alias dt: dt;
     property alias isDragging: lv.isDragging;
     property bool shown: false;
+
+    // --- Batch gyro match state ---
+    property var gyroFilesInfo: []
+    property var gyroColors: ["#76baed", "#70e574", "#f6a00b", "#e87de8", "#ed7676", "#5ce0d8"]
+    property bool hasGyroFiles: render_queue.has_gyro_files()
+    property int pairingGyroIndex: -1
+    property string pairingGyroFilename: ""
+    property string matchWarning: ""
+    property bool allGyroParsed: {
+        if (gyroFilesInfo.length === 0) return false;
+        for (let i = 0; i < gyroFilesInfo.length; i++) {
+            if (!gyroFilesInfo[i].parsed) return false;
+        }
+        return true;
+    }
+
+    Connections {
+        target: render_queue;
+        function onGyro_files_changed(): void {
+            let infos = [];
+            for (let i = 0; i < render_queue.get_gyro_file_count(); i++) {
+                infos.push(JSON.parse(render_queue.get_gyro_file_info_json(i)));
+            }
+            root.gyroFilesInfo = infos;
+            root.hasGyroFiles = render_queue.has_gyro_files();
+            // T4: Sort when gyro files are added, restore when cleared
+            if (root.hasGyroFiles) {
+                render_queue.sort_jobs_by_created_at();
+            } else {
+                render_queue.restore_original_order();
+            }
+        }
+        function onMatch_results_changed(): void {
+            // Trigger repaint of match status in delegates
+            lv.model = null;
+            lv.model = render_queue.queue;
+        }
+        function onPairing_mode_changed(): void {
+            if (!render_queue.is_in_pairing_mode()) {
+                root.pairingGyroIndex = -1;
+                root.pairingGyroFilename = "";
+            }
+        }
+    }
     opacity: shown? 1 : 0;
     visible: opacity > 0;
     anchors.bottomMargin: (shown? 10 : 30) * dpiScale;
@@ -233,14 +277,86 @@ Item {
         }
     }
 
-    ListView {
-        id: lv;
+    // T7: Pairing mode banner
+    Rectangle {
+        id: pairingBanner;
         x: 10 * dpiScale;
         anchors.top: progressRow.bottom;
-        anchors.bottom: parent.bottom;
-        anchors.margins: 15 * dpiScale;
-        anchors.bottomMargin: 30 * dpiScale;
-        width: parent.width - 2*x;
+        anchors.topMargin: 5 * dpiScale;
+        width: parent.width - 20 * dpiScale;
+        height: 0;
+        visible: height > 0;
+        clip: true;
+        Ease on height { }
+        color: styleAccentColor;
+        radius: 4 * dpiScale;
+        Row {
+            anchors.centerIn: parent;
+            spacing: 8 * dpiScale;
+            BasicText {
+                text: qsTr("Pairing: %1 — Click a video to pair").arg("<b>" + root.pairingGyroFilename + "</b>");
+                color: styleTextColorOnAccent;
+                font.pixelSize: 12 * dpiScale;
+                anchors.verticalCenter: parent.verticalCenter;
+            }
+            LinkButton {
+                text: qsTr("Cancel");
+                textColor: styleTextColorOnAccent;
+                font.pixelSize: 12 * dpiScale;
+                anchors.verticalCenter: parent.verticalCenter;
+                onClicked: {
+                    render_queue.exit_pairing_mode();
+                    root.pairingGyroIndex = -1;
+                    root.pairingGyroFilename = "";
+                }
+            }
+        }
+    }
+
+    // T10: Match warning message
+    Rectangle {
+        id: matchWarningBar;
+        x: 10 * dpiScale;
+        anchors.top: pairingBanner.bottom;
+        anchors.topMargin: root.matchWarning.length > 0 ? 5 * dpiScale : 0;
+        width: parent.width - 20 * dpiScale;
+        height: root.matchWarning.length > 0 ? 28 * dpiScale : 0;
+        visible: height > 0;
+        clip: true;
+        Ease on height { }
+        color: "#40f6a00b";
+        border.color: "#f6a00b";
+        border.width: 1;
+        radius: 4 * dpiScale;
+        Row {
+            anchors.centerIn: parent;
+            spacing: 8 * dpiScale;
+            BasicText {
+                text: root.matchWarning;
+                color: "#f6a00b";
+                font.pixelSize: 12 * dpiScale;
+                anchors.verticalCenter: parent.verticalCenter;
+            }
+            LinkButton {
+                text: "✕";
+                textColor: "#f6a00b";
+                font.pixelSize: 12 * dpiScale;
+                anchors.verticalCenter: parent.verticalCenter;
+                onClicked: root.matchWarning = "";
+            }
+        }
+    }
+
+    ListView {
+        id: lv;
+        anchors.left: parent.left;
+        anchors.leftMargin: 10 * dpiScale;
+        anchors.right: parent.right;
+        anchors.rightMargin: 10 * dpiScale;
+        anchors.top: matchWarningBar.bottom;
+        anchors.topMargin: 5 * dpiScale;
+        anchors.bottom: gyroButtonRow.top;
+        anchors.bottomMargin: 5 * dpiScale;
         clip: true;
         model: render_queue.queue;
         Timer {
@@ -298,6 +414,25 @@ Item {
             property bool isProcessing: processing_progress > 0.0 && processing_progress < 1.0;
             property string errorString: error_string;
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
+
+            // T5: Match status for this delegate
+            property var matchStatus: root.hasGyroFiles ? JSON.parse(render_queue.get_match_status_json(job_id)) : ({status: "none"})
+            property string matchState: matchStatus.status || "none"
+            property int matchGyroIndex: matchStatus.gyro_index !== undefined && matchStatus.gyro_index !== null ? matchStatus.gyro_index : -1
+            property string matchColor: matchGyroIndex >= 0 ? root.gyroColors[matchGyroIndex % root.gyroColors.length] : "transparent"
+            property string gyroFilename: matchStatus.gyro_filename || ""
+            property int manualGyroIndex: render_queue.get_manual_pair_gyro_index(job_id)
+            // Check if adjacent items share the same gyro
+            property bool sameGyroAsPrev: {
+                if (index <= 0 || matchGyroIndex < 0) return false;
+                const prevItem = lv.itemAtIndex(index - 1);
+                return prevItem && prevItem.matchGyroIndex === matchGyroIndex;
+            }
+            property bool sameGyroAsNext: {
+                if (matchGyroIndex < 0) return false;
+                const nextItem = lv.itemAtIndex(index + 1);
+                return nextItem && nextItem.matchGyroIndex === matchGyroIndex;
+            }
             onProgressChanged: {
                 const times = Util.calculateTimesAndFps(progress, current_frame, start_timestamp);
                 if (times !== false) {
@@ -325,7 +460,8 @@ Item {
             }
 
             property bool dragging: false;
-            opacity: dragging? 0.5 : 1;
+            // T7: Lower opacity for already-paired items when in pairing mode
+            opacity: dragging ? 0.5 : (root.pairingGyroIndex >= 0 && dlg.matchState === "Matched" ? 0.5 : 1);
             Ease on opacity { }
 
             ContextMenuMouseArea {
@@ -333,6 +469,14 @@ Item {
                 onContextMenu: (isHold, x, y) => contextMenu.popup(dlg, x, y)
 
                 onPressed: (mouse) => {
+                    // T8: Handle pairing mode click
+                    if (root.pairingGyroIndex >= 0 && mouse.button === Qt.LeftButton) {
+                        render_queue.manual_set_calibration_pair(job_id, root.pairingGyroIndex);
+                        render_queue.exit_pairing_mode();
+                        root.pairingGyroIndex = -1;
+                        root.pairingGyroFilename = "";
+                        return;
+                    }
                     if ((mouse.modifiers & Qt.ControlModifier) && mouse.button === Qt.LeftButton) {
                         dragIndicator.y = lv.mapFromItem(dlg, 0, 0).y;
                         lv.isDragging = dlg.dragging = true;
@@ -405,6 +549,40 @@ Item {
                     enabled: isError || isFinished || isQuestion || isInProgress;
                     onTriggered: render_queue.reset_job(job_id);
                 }
+                // T14: Manual gyro pairing sub-menu
+                Menu {
+                    id: gyroSubMenu;
+                    title: qsTr("Pair with Gyro");
+                    enabled: root.hasGyroFiles;
+                    width: 300 * dpiScale;
+                    onAboutToShow: {
+                        // Clear old items
+                        while (gyroSubMenu.count > 0) {
+                            gyroSubMenu.removeItem(gyroSubMenu.itemAt(0));
+                        }
+                        // Add items for each gyro file
+                        for (let i = 0; i < root.gyroFilesInfo.length; i++) {
+                            const info = root.gyroFilesInfo[i];
+                            const label = info.filename + (info.duration_ms ? " (" + (info.duration_ms / 1000).toFixed(1) + "s)" : "");
+                            const item = Qt.createQmlObject(
+                                'import QtQuick.Controls; MenuItem { text: "' +
+                                label.replace(/\\/g, '\\\\').replace(/"/g, '\\"') +
+                                '"; property int gyroIdx: ' + i + ' }',
+                                gyroSubMenu
+                            );
+                            item.triggered.connect(function() {
+                                render_queue.manual_set_calibration_pair(job_id, item.gyroIdx);
+                            });
+                            gyroSubMenu.addItem(item);
+                        }
+                    }
+                }
+                // T9: Unpair action
+                Action {
+                    text: qsTr("Unpair");
+                    enabled: dlg.matchState === "Matched" || dlg.matchState === "CalibrationPair";
+                    onTriggered: render_queue.unpair_video(job_id);
+                }
             }
 
             Rectangle {
@@ -414,6 +592,38 @@ Item {
                 radius: 5 * dpiScale;
                 border.width: window.isMobileLayout && !statusBg.shown? 1 * dpiScale : 0;
                 border.color: "#70ffffff";
+            }
+            // T5: Embedded gyro color bar
+            Rectangle {
+                id: gyroColorBar;
+                visible: width > 0;
+                width: root.hasGyroFiles && dlg.matchGyroIndex >= 0 && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime" ? 6 * dpiScale : 0;
+                anchors.left: parent.left;
+                anchors.top: parent.top;
+                anchors.bottom: parent.bottom;
+                anchors.topMargin: dlg.sameGyroAsPrev ? -lv.spacing : 0;
+                color: dlg.matchColor;
+                radius: (dlg.sameGyroAsPrev || dlg.sameGyroAsNext) ? 0 : 3 * dpiScale;
+                Ease on width { }
+
+                // T6: Tooltip showing gyro filename and time range
+                MouseArea {
+                    anchors.fill: parent;
+                    hoverEnabled: true;
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton;
+                    // T11: Right-click to enter pairing mode
+                    onClicked: (mouse) => {
+                        if (mouse.button === Qt.RightButton && dlg.matchGyroIndex >= 0) {
+                            root.pairingGyroIndex = dlg.matchGyroIndex;
+                            root.pairingGyroFilename = dlg.gyroFilename;
+                            render_queue.enter_pairing_mode(dlg.matchGyroIndex);
+                        }
+                    }
+                    ToolTip {
+                        text: dlg.gyroFilename + (dlg.matchStatus.gyro_start_ms !== undefined ? "\n" + (dlg.matchStatus.gyro_start_ms / 1000).toFixed(1) + "s - " + (dlg.matchStatus.gyro_end_ms / 1000).toFixed(1) + "s" : "");
+                        visible: parent.containsMouse && dlg.gyroFilename;
+                    }
+                }
             }
             Item {
                 height: parent.height;
@@ -537,8 +747,8 @@ Item {
             }
             Item {
                 id: innerItm;
-                x: 5 * dpiScale;
-                width: parent.width - 2*x;
+                x: 5 * dpiScale + gyroColorBar.width;
+                width: parent.width - x - 5 * dpiScale;
                 height: textColumn.height + 20 * dpiScale;
                 Image {
                     x: 5 * dpiScale;
@@ -584,6 +794,32 @@ Item {
                     }
                     BasicText { text: qsTr("Save to: %1").arg("<b>" + display_output_path + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
                     BasicText { text: qsTr("Export settings: %1").arg("<b>" + export_settings + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
+                    // T5+T6: Match status annotation with gyro filename
+                    Row {
+                        visible: root.hasGyroFiles && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"));
+                        spacing: 5 * dpiScale;
+                        BasicText {
+                            visible: dlg.manualGyroIndex >= 0;
+                            text: "⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "");
+                            color: "#f0c040";
+                            font.pixelSize: basicTextSize;
+                            font.bold: true;
+                        }
+                        BasicText {
+                            visible: dlg.manualGyroIndex < 0 && dlg.matchState === "Matched";
+                            text: "✓ " + dlg.gyroFilename;
+                            color: "#70e574";
+                            font.pixelSize: basicTextSize;
+                            font.bold: true;
+                        }
+                        BasicText {
+                            visible: dlg.manualGyroIndex < 0 && dlg.matchState === "CalibrationPair";
+                            text: qsTr("Calibration") + " · " + dlg.gyroFilename;
+                            color: "#76baed";
+                            font.pixelSize: basicTextSize;
+                            font.bold: true;
+                        }
+                    }
                 }
 
                 Column {
@@ -683,12 +919,64 @@ Item {
         }
     }
 
+    // T6: Auto match and clear gyro buttons
+    Row {
+        id: gyroButtonRow;
+        x: 10 * dpiScale;
+        anchors.bottom: parent.bottom;
+        anchors.bottomMargin: 30 * dpiScale;
+        height: root.hasGyroFiles ? 35 * dpiScale : 0;
+        visible: height > 0;
+        clip: true;
+        Ease on height { }
+        spacing: 10 * dpiScale;
+        width: parent.width - 20 * dpiScale;
+
+        Button {
+            text: qsTr("Auto match");
+            enabled: root.hasGyroFiles && root.allGyroParsed;
+            accent: true;
+            height: 25 * dpiScale;
+            font.pixelSize: 12 * dpiScale;
+            leftPadding: 12 * dpiScale;
+            rightPadding: 12 * dpiScale;
+            onClicked: {
+                root.matchWarning = "";
+                render_queue.batch_match_gyro();
+                // T10: Check for unmatched items after matching
+                Qt.callLater(function() {
+                    let unmatchedCount = 0;
+                    for (let i = 0; i < lv.count; i++) {
+                        let status = JSON.parse(render_queue.get_match_status_json(render_queue.queue[i].job_id));
+                        if (status.status === "Unmatched" || status.status === "NoCreationTime") {
+                            unmatchedCount++;
+                        }
+                    }
+                    if (unmatchedCount > 0) {
+                        root.matchWarning = qsTr("No calibration pair found for %1 video(s). Please pair manually.").arg(unmatchedCount);
+                    }
+                });
+            }
+        }
+        Button {
+            text: qsTr("Clear gyro");
+            height: 25 * dpiScale;
+            font.pixelSize: 12 * dpiScale;
+            leftPadding: 12 * dpiScale;
+            rightPadding: 12 * dpiScale;
+            onClicked: {
+                render_queue.clear_gyro_files();
+                root.matchWarning = "";
+            }
+        }
+    }
+
     DropTarget {
         id: dt;
         color: styleBackground2;
         anchors.margins: 0 * dpiScale;
         anchors.topMargin: lv.y;
-        extensions: fileDialog.extensions;
+        extensions: fileDialog.extensions.concat(["bin"]);
         visible: !lv.isDragging;
         function add(outFolder: string, urls: list<url>): void {
             let foldersWithoutAccess = [];
@@ -744,10 +1032,21 @@ Item {
         }
         onLoadFiles: (urls) => {
             if (!urls.length) return;
-            if (filesystem.get_filename(urls[0]).toLowerCase().endsWith(".gyroflow")) {
-                add("", urls);
+            // T1: Classify files — .bin goes to gyro, others to video queue
+            let videoUrls = [];
+            for (const url of urls) {
+                const fname = filesystem.get_filename(url).toLowerCase();
+                if (fname.endsWith(".bin")) {
+                    render_queue.add_gyro_file(url.toString());
+                } else {
+                    videoUrls.push(url);
+                }
+            }
+            if (!videoUrls.length) return;
+            if (filesystem.get_filename(videoUrls[0]).toLowerCase().endsWith(".gyroflow")) {
+                add("", videoUrls);
             } else {
-                window.videoArea.askForOutputLocation(window.outputFile.folderUrl, "", true, function(outFolder, _, __) { add(outFolder, urls); });
+                window.videoArea.askForOutputLocation(window.outputFile.folderUrl, "", true, function(outFolder, _, __) { add(outFolder, videoUrls); });
             }
         }
     }

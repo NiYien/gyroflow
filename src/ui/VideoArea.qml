@@ -93,8 +93,12 @@ Item {
             root.pendingGyroflowData = obj;
             root.pendingQueueJobId = +queueJobId;
             console.log("Loading gyro file", urls[1]);
+            // When restoring a project (pendingGyroflowData flow), always load as main video
+            // so telemetry_loaded fires with is_main_video=true, triggering full UI update
+            // (display mode, "Contains gyro", chart view, etc.)
+            const is_main = true;
             window.motionData.lastSelectedFile = urls[1];
-            controller.load_telemetry(urls[1], urls[0] == urls[1] || window.motionData.allMetadata, window.videoArea.vid, -1, project_version);
+            controller.load_telemetry(urls[1], is_main, window.videoArea.vid, -1, project_version);
             return;
         }
 

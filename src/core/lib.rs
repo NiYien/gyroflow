@@ -21,6 +21,7 @@ pub mod gyro_export;
 pub mod settings;
 
 pub mod gpu;
+pub mod gyro_match;
 
 pub mod util;
 pub mod stabilization_params;
@@ -1495,6 +1496,13 @@ impl StabilizationManager {
 
                 let built_in_gyro: std::io::Result<crate::gyro_source::FileMetadata> = util::decompress_from_base91_cbor(obj.get("file_metadata").and_then(|x| x.as_str()).unwrap_or_default());
 
+                ::log::info!("[import_gyroflow] gyro_source: org_gyro_url='{}', gyro_url='{}', is_main_video={}, is_compressed={}, built_in_gyro_has_motion={}, has_raw_imu={}, has_quats={}, file_exists={}, blocking={}",
+                    filesystem::get_filename(&org_gyro_url), filesystem::get_filename(&gyro_url),
+                    is_main_video, is_compressed,
+                    built_in_gyro.as_ref().map(|x| x.has_motion()).unwrap_or(false),
+                    obj.contains_key("raw_imu"), obj.contains_key("quaternions"),
+                    filesystem::exists(&gyro_url), blocking);
+
                 // Load IMU data only if it's from another file or we are sure that built_in_gyro contains motion data
                 if (!org_gyro_url.is_empty() && org_gyro_url != org_video_url) || built_in_gyro.as_ref().map(|x| x.has_motion()).unwrap_or_default() {
                     let mut raw_imu = Vec::new();
@@ -1549,6 +1557,7 @@ impl StabilizationManager {
                     }
 
                     if !raw_imu.is_empty() {
+                        ::log::info!("[import_gyroflow] → branch A: embedded raw_imu ({} samples, {} quats)", raw_imu.len(), quaternions.len());
                         let md = crate::gyro_source::FileMetadata {
                             imu_orientation: obj.get("imu_orientation").and_then(|x| x.as_str().map(|x| x.to_string())),
                             detected_source: Some(obj.get("detected_source").and_then(|x| x.as_str()).unwrap_or("Gyroflow file").to_string()),
@@ -1561,22 +1570,34 @@ impl StabilizationManager {
 
                         let mut gyro = self.gyro.write();
                         gyro.load_from_telemetry(md);
-                    } else if let Ok(md) = built_in_gyro {
+                    } else if let Ok(ref md) = built_in_gyro {
+                        ::log::info!("[import_gyroflow] → branch B: built_in_gyro (raw_imu={}, quats={}, has_motion={})", md.raw_imu.len(), md.quaternions.len(), md.has_motion());
                         let mut gyro = self.gyro.write();
-                        gyro.load_from_telemetry(md);
+                        ::log::info!("[import_gyroflow] → branch B: gyro.duration_ms={}, imu_orientation={:?}", gyro.duration_ms, md.imu_orientation);
+                        gyro.load_from_telemetry(built_in_gyro.unwrap());
+                        {
+                            let fm = gyro.file_metadata.read();
+                            ::log::info!("[import_gyroflow] → branch B after load: raw_imu={}, quats={}, self.raw_imu_len={}", fm.raw_imu.len(), gyro.quaternions.len(), gyro.raw_imu(&fm).len());
+                        }
                     } else if filesystem::exists(&gyro_url) && blocking {
+                        ::log::info!("[import_gyroflow] → branch C: load from file '{}'", filesystem::get_filename(&gyro_url));
                         let mut file = filesystem::open_file(&gyro_url, false, false)?;
                         let filesize = file.size;
                         if let Err(e) = self.load_gyro_data(file.get_file(), filesize, &gyro_url, is_main_video, &load_options, progress_cb, cancel_flag) {
                             ::log::warn!("Failed to load gyro data from {:?}: {:?}", gyro_url, e);
                         }
+                    } else {
+                        ::log::warn!("[import_gyroflow] → branch D: no gyro loaded! file_exists={} blocking={}", filesystem::exists(&gyro_url), blocking);
                     }
                 } else if filesystem::exists(&gyro_url) && blocking {
+                    ::log::info!("[import_gyroflow] → branch E: is_main_video load from file '{}'", filesystem::get_filename(&gyro_url));
                     let mut file = filesystem::open_file(&gyro_url, false, false)?;
                     let filesize = file.size;
                     if let Err(e) = self.load_gyro_data(file.get_file(), filesize, &gyro_url, is_main_video, &load_options, progress_cb, cancel_flag) {
                         ::log::warn!("Failed to load gyro data from {:?}: {:?}", gyro_url, e);
                     }
+                } else {
+                    ::log::warn!("[import_gyroflow] → branch F: skipped gyro loading entirely");
                 }
 
                 let mut gyro = self.gyro.write();

@@ -116,6 +116,9 @@ impl ReadOnlyFileMetadata {
     pub fn set_raw_imu(&mut self, v: Vec<TimeIMU>) {
         self.0.write().raw_imu = v;
     }
+    pub fn write(&self) -> parking_lot::RwLockWriteGuard<'_, FileMetadata> {
+        self.0.write()
+    }
 }
 impl serde::Serialize for ReadOnlyFileMetadata {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {

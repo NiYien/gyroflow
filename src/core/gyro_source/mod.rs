@@ -121,6 +121,54 @@ impl GyroSource {
         self.duration_ms = stabilization_params.get_scaled_duration_ms();
     }
 
+    /// Trim all IMU data and quaternions to the given time range [start_us, end_us].
+    /// Timestamps are in microseconds. If start > end, all data is cleared.
+    pub fn trim_to_time_range(&mut self, start_us: i64, end_us: i64) {
+        if start_us > end_us {
+            self.raw_imu.clear();
+            self.quaternions.clear();
+            self.smoothed_quaternions.clear();
+            self.duration_ms = 0.0;
+            return;
+        }
+
+        let start_ms = start_us as f64 / 1000.0;
+        let end_ms = end_us as f64 / 1000.0;
+
+        // Filter raw_imu (timestamp_ms is f64, convert bounds to ms)
+        self.raw_imu.retain(|sample| {
+            sample.timestamp_ms >= start_ms && sample.timestamp_ms <= end_ms
+        });
+
+        // Rebuild quaternions from BTreeMap range (keys are in microseconds)
+        self.quaternions = self.quaternions.range(start_us..=end_us)
+            .map(|(&k, &v)| (k, v))
+            .collect();
+
+        self.smoothed_quaternions = self.smoothed_quaternions.range(start_us..=end_us)
+            .map(|(&k, &v)| (k, v))
+            .collect();
+
+        // Also trim file_metadata so that recompute/integrate won't restore untrimmed data
+        {
+            let mut fm = self.file_metadata.write();
+            fm.raw_imu.retain(|sample| {
+                sample.timestamp_ms >= start_ms && sample.timestamp_ms <= end_ms
+            });
+            fm.quaternions = fm.quaternions.range(start_us..=end_us)
+                .map(|(&k, &v)| (k, v))
+                .collect();
+            if let Some(ref mut gv) = fm.gravity_vectors {
+                *gv = gv.range(start_us..=end_us)
+                    .map(|(&k, &v)| (k, v))
+                    .collect();
+            }
+        }
+
+        // Update duration
+        self.duration_ms = end_ms - start_ms;
+    }
+
     pub fn parse_telemetry_file<T: Read + Seek, P: AsRef<std::path::Path>, F: Fn(f64)>(stream: &mut T, filesize: usize, path: P, options: &FileLoadOptions, size: (usize, usize), fps: f64, progress_cb: F, cancel_flag: Arc<AtomicBool>) -> Result<FileMetadata, crate::GyroflowCoreError> {
         let key = format!("{}{options:?}{size:?}{fps}", path.as_ref().display());
         static CACHE: RwLock<BTreeMap<String, FileMetadata>> = RwLock::new(BTreeMap::new());
