@@ -9,9 +9,10 @@ MenuItem {
     id: root;
     text: qsTr("Stabilization");
     iconName: "gyroflow";
-    innerItem.enabled: window.videoArea.vid.loaded;
+    innerItem.enabled: window.videoArea.vid.loaded || root._batchActive;
     objectName: "stabilization";
 
+    signal smoothnessChanged(real value);  // emitted when the Default smoothness slider changes
     property alias horizonCb: horizonCb;
     property alias horizonRollSlider: horizonRollSlider;
     property alias fovSlider: fov;
@@ -21,6 +22,10 @@ MenuItem {
     property alias zoomingCenterY: zoomingCenterY;
     property alias croppingMode: croppingMode;
     property alias automaticHorizonLock: autoLockCb.checked;
+    property alias correctionAmount: correctionAmount;
+    property alias horizonSlider: horizonSlider;
+
+    readonly property bool _batchActive: window.batchState && window.batchState.active
 
     Item {
         id: sett;
@@ -159,6 +164,8 @@ MenuItem {
     }
 
     function setSmoothingParam(name: string, value: real): void {
+        if (name === "smoothness") root.smoothnessChanged(value);
+        if (window.batchState && window.batchState.active) return;
         settings.setValue("smoothing-" + smoothingMethod.currentIndex + "-" + name, value);
         controller.set_smoothing_param(name, value);
     }
@@ -189,6 +196,7 @@ MenuItem {
 
 
     function updateHorizonLock(): void {
+        if (window.batchState && window.batchState.active) return;
         const lockAmount = horizonCb.checked? (autoLockCb.checked ? 100.0 : horizonSlider.value) : 0.0;
         const roll = horizonCb.checked? horizonRollSlider.value : 0.0;
         const pitch = horizonCb.checked && lockPitchCb.checked? horizonPitchSlider.value : 0.0;
@@ -287,6 +295,7 @@ MenuItem {
         font.pixelSize: 12 * dpiScale;
         width: parent.width;
         currentIndex: 1;
+        enabled: !root._batchActive;
         Component.onCompleted: currentIndexChanged();
         onCurrentIndexChanged: {
             // Clear current params
@@ -428,6 +437,7 @@ MenuItem {
             id: lockPitchCb;
             text: qsTr("Lock pitch angle");
             checked: false;
+            enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
             onCheckedChanged: Qt.callLater(updateHorizonLock);
         }
 
@@ -454,6 +464,7 @@ MenuItem {
             text: qsTr("Use gravity vectors");
             checked: false;
             visible: controller.has_gravity_vectors;
+            enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
             onCheckedChanged: Qt.callLater(updateHorizonLock);
         }
 
@@ -462,6 +473,7 @@ MenuItem {
             text: qsTr("Integration method");
             property bool usesQuats: window.motionData.hasQuaternions && window.motionData.hasRawGyro && window.motionData.integrationMethod === 0;
             visible: usesQuats;
+            enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
 
             ComboBox {
                 id: integrationMethod;
@@ -477,6 +489,7 @@ MenuItem {
         CheckBoxWithContent {
             id: autoLockCb;
             text: qsTr("Automatic lock");
+            enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
             cb.onCheckedChanged: {
                 horizonSlider.enabled = !cb.checked;
                 if (cb.checked) horizonSlider.value = 100;
@@ -617,6 +630,7 @@ MenuItem {
         model: [QT_TRANSLATE_NOOP("Popup", "No zooming"), QT_TRANSLATE_NOOP("Popup", "Dynamic zooming"), QT_TRANSLATE_NOOP("Popup", "Static zoom")];
         Component.onCompleted: currentIndexChanged();
         onCurrentIndexChanged: {
+            if (window.batchState && window.batchState.active) return;
             switch (currentIndex) {
                 case 0: controller.adaptive_zoom = 0.0; break;
                 case 1: controller.adaptive_zoom = adaptiveZoom.value; break;
@@ -633,6 +647,7 @@ MenuItem {
         visible: smoothingMethod.currentIndex == 1 || smoothingMethod.currentIndex == 2;
         position: Label.LeftPosition;
         tooltip: qsTr("Zoom limit is calculated approximately.\nIf you need more accuracy, increase the number of iterations in \"Advanced\" below.");
+        enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
         SliderWithField {
             id: maxZoomSlider;
             value: 130;
@@ -651,6 +666,7 @@ MenuItem {
         text: qsTr("Zooming speed");
         visible: croppingMode.currentIndex == 1;
         position: Label.LeftPosition;
+        enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
         SliderWithField {
             id: adaptiveZoom;
             value: 4;
@@ -680,11 +696,29 @@ MenuItem {
             width: parent.width;
             keyframe: "LensCorrectionStrength";
             scaler: 100.0;
-            onValueChanged: Qt.callLater(() => { controller.lens_correction_amount = value; });
+            onValueChanged: Qt.callLater(() => { if (!(window.batchState && window.batchState.active)) controller.lens_correction_amount = value; });
+        }
+    }
+
+    // Batch-only: framerate override
+    Label {
+        visible: root._batchActive;
+        position: Label.LeftPosition;
+        text: qsTr("Frame rate (0=unchanged)");
+        width: parent.width;
+        NumberField {
+            id: batchFramerateField;
+            width: parent.width;
+            value: window.batchState ? window.batchState.framerate : 0;
+            defaultValue: 0;
+            from: 0; to: 240;
+            unit: "fps";
+            onValueChanged: { if (window.batchState) window.batchState.framerate = value; }
         }
     }
 
     AdvancedSection {
+        enabled: !root._batchActive; opacity: root._batchActive ? 0.4 : 1.0;
         InfoMessageSmall {
             id: fovWarning;
             show: fov.value > 1.0 && croppingMode.currentIndex > 0;

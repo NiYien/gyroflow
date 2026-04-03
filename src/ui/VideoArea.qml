@@ -1237,7 +1237,7 @@ Item {
     Loader {
         id: queue;
         asynchronous: true;
-        anchors.fill: vidParentParent;
+        anchors.fill: root;
         anchors.margins: 10 * dpiScale;
         sourceComponent: Component {
             RenderQueue {

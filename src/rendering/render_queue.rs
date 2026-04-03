@@ -329,6 +329,9 @@ pub struct RenderQueue {
     get_cached_same_gyro_prev: qt_method!(fn(&self, job_id: u32) -> bool),
     get_cached_same_gyro_next: qt_method!(fn(&self, job_id: u32) -> bool),
 
+    get_job_display_params: qt_method!(fn(&self, job_id: u32) -> QString),
+    batch_update_params: qt_method!(fn(&mut self, job_ids_json: String, params_json: String)),
+
     pub gyro_files_changed: qt_signal!(),
     pub match_results_changed: qt_signal!(),
     // [T22] 匹配+数据加载全部完成时触发（区别于 match_results_changed 可能在算法完成时就触发）
@@ -873,6 +876,95 @@ impl RenderQueue {
         } else {
             QString::default()
         }
+    }
+
+    pub fn get_job_display_params(&self, job_id: u32) -> QString {
+        if let Some(job) = self.jobs.get(&job_id) {
+            if let Some(ref data) = job.project_data {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                    let stab = v.get("stabilization").cloned().unwrap_or_default();
+                    let smoothness = stab.get("smoothing_params")
+                        .and_then(|p| p.as_array())
+                        .and_then(|arr| arr.iter().find(|x| x.get("name").and_then(|n| n.as_str()) == Some("smoothness")))
+                        .and_then(|x| x.get("value").and_then(|v| v.as_f64()))
+                        .unwrap_or(0.5);
+                    let horizon_lock_amount = stab.get("horizon_lock_amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let lens_correction = stab.get("lens_correction_amount").and_then(|v| v.as_f64()).unwrap_or(1.0);
+                    let az = stab.get("adaptive_zoom_window").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let zoom_mode = if az < -0.9 { "static" } else if az > 0.0 { "dynamic" } else { "none" };
+                    let framerate = v.get("video_info").and_then(|vi| vi.get("fps")).and_then(|f| f.as_f64()).unwrap_or(0.0);
+                    let focal_length = v.get("video_info").and_then(|vi| vi.get("focal_length")).and_then(|f| f.as_f64()).unwrap_or(0.0);
+                    let result = serde_json::json!({
+                        "smoothness": smoothness,
+                        "horizon_lock_amount": horizon_lock_amount,
+                        "lens_correction": lens_correction,
+                        "zoom_mode": zoom_mode,
+                        "framerate": framerate,
+                        "focal_length": focal_length,
+                    });
+                    return QString::from(result.to_string());
+                }
+            }
+        }
+        QString::from("{}")
+    }
+
+    pub fn batch_update_params(&mut self, job_ids_json: String, params_json: String) {
+        let job_ids: Vec<u32> = match serde_json::from_str(&job_ids_json) {
+            Ok(ids) => ids,
+            Err(_) => return,
+        };
+        let params: serde_json::Value = match serde_json::from_str(&params_json) {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+
+        for &job_id in &job_ids {
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                if let Some(ref mut data_str) = job.project_data {
+                    if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(data_str) {
+                        let stab = data.get_mut("stabilization")
+                            .and_then(|s| s.as_object_mut());
+                        if let Some(stab) = stab {
+                            if let Some(smoothness) = params.get("smoothness").and_then(|v| v.as_f64()) {
+                                // Update smoothing_params array
+                                if let Some(sp) = stab.get_mut("smoothing_params").and_then(|p| p.as_array_mut()) {
+                                    for p in sp.iter_mut() {
+                                        if p.get("name").and_then(|n| n.as_str()) == Some("smoothness") {
+                                            p.as_object_mut().map(|o| o.insert("value".into(), serde_json::json!(smoothness)));
+                                        }
+                                    }
+                                }
+                            }
+                            if let Some(amount) = params.get("horizon_lock_amount").and_then(|v| v.as_f64()) {
+                                stab.insert("horizon_lock_amount".into(), serde_json::json!(amount));
+                            }
+                            if let Some(zoom_mode) = params.get("zoom_mode").and_then(|v| v.as_str()) {
+                                let az = match zoom_mode {
+                                    "static" => -1.0,
+                                    "dynamic" => 4.0,
+                                    _ => 0.0,
+                                };
+                                stab.insert("adaptive_zoom_window".into(), serde_json::json!(az));
+                            }
+                            if let Some(zoom_speed) = params.get("zoom_speed").and_then(|v| v.as_f64()) {
+                                stab.insert("adaptive_zoom_window".into(), serde_json::json!(zoom_speed));
+                            }
+                            if let Some(lc) = params.get("lens_correction").and_then(|v| v.as_f64()) {
+                                stab.insert("lens_correction_amount".into(), serde_json::json!(lc));
+                            }
+                        }
+                        if let Some(fps) = params.get("framerate").and_then(|v| v.as_f64()) {
+                            if let Some(output) = data.get_mut("output").and_then(|o| o.as_object_mut()) {
+                                output.insert("output_fps".into(), serde_json::json!(fps));
+                            }
+                        }
+                        *data_str = serde_json::to_string(&data).unwrap_or_default();
+                    }
+                }
+            }
+        }
+        self.queue_changed();
     }
 
     pub fn render_job(&mut self, job_id: u32) {

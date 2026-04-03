@@ -7,3 +7,6 @@ MotionData 1.0 MotionData.qml
 Stabilization 1.0 Stabilization.qml
 Synchronization 1.0 Synchronization.qml
 VideoInformation 1.0 VideoInformation.qml
+SimpleStabilization 1.0 SimpleStabilization.qml
+SimpleExport 1.0 SimpleExport.qml
+NlePlugins 1.0 NlePlugins.qml

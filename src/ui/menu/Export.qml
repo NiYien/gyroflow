@@ -14,6 +14,10 @@ MenuItem {
     innerItem.enabled: window.videoArea.vid.loaded;
     objectName: "export";
 
+    property alias codec: codec;
+    property alias codecOptions: codecOptions;
+    property alias sizeMenu: sizeMenu;
+
     function updateCodecParams(): void {
         codec.currentIndexChanged();
     }

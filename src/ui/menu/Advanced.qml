@@ -6,10 +6,15 @@ import QtQuick
 import "../components/"
 
 MenuItem {
+    id: root;
     text: qsTr("Advanced");
     iconName: "settings";
     opened: false;
     objectName: "advanced";
+
+    property alias langList: langList;
+    property alias themeList: themeList;
+    property alias processingDevice: processingDevice;
 
     Item {
         id: sett;

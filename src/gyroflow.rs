@@ -48,7 +48,7 @@ cpp! {{
 }}
 
 fn entry() {
-    let ui_live_reload = false;
+    let ui_live_reload = true; // TODO: revert to false before commit
 
     #[cfg(target_os = "windows")]
     unsafe {

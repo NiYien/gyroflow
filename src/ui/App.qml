@@ -18,15 +18,18 @@ Rectangle {
 
     property QtObject controller: main_controller;
 
+    property bool isSimpleMode: settings.value("simpleMode", "false") == "true";
+    onIsSimpleModeChanged: settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
+
     property bool isLandscape: width > height;
     onIsLandscapeChanged: {
         if (isLandscape) {
             // Landscape layout
             leftPanel.y = 0;
-            rightPanel.x = Qt.binding(() => (window.isMobileLayout? 0 : leftPanel.width) + videoAreaCol.width);
+            rightPanel.x = Qt.binding(() => (window.isMobileLayout || window.isSimpleMode ? 0 : leftPanel.width) + videoAreaCol.width);
             rightPanel.y = 0;
-            videoAreaCol.x = Qt.binding(() => (videoArea.fullScreen || window.isMobileLayout? 0 : leftPanel.width));
-            videoAreaCol.width = Qt.binding(() => mainLayout.width - (videoArea.fullScreen? 0 : (window.isMobileLayout? 0 : leftPanel.width) + rightPanel.width));
+            videoAreaCol.x = Qt.binding(() => (videoArea.fullScreen || window.isMobileLayout || window.isSimpleMode ? 0 : leftPanel.width));
+            videoAreaCol.width = Qt.binding(() => mainLayout.width - (videoArea.fullScreen? 0 : (window.isMobileLayout || window.isSimpleMode ? 0 : leftPanel.width) + rightPanel.width));
             videoAreaCol.height = Qt.binding(() => mainLayout.height);
             leftPanel.fixedWidth = 0;
             rightPanel.fixedWidth = 0;
@@ -71,15 +74,15 @@ Rectangle {
             lensProfileHr.parent = leftPanel.col;
             motionData   .parent = leftPanel.col;
 
-            sync          .parent = rightPanel.col;
-            syncHr        .parent = rightPanel.col;
-            stab          .parent = rightPanel.col;
-            stabHr        .parent = rightPanel.col;
-            exportSettings.parent = rightPanel.col;
-            exportHr      .parent = rightPanel.col;
-            advanced      .parent = rightPanel.col;
-            advancedHr    .parent = rightPanel.col;
-            nlePlugins    .parent = rightPanel.col;
+            sync          .parent = fullModeCol;
+            syncHr        .parent = fullModeCol;
+            stab          .parent = fullModeCol;
+            stabHr        .parent = fullModeCol;
+            exportSettings.parent = fullModeCol;
+            exportHr      .parent = fullModeCol;
+            advanced      .parent = fullModeCol;
+            advancedHr    .parent = fullModeCol;
+            nlePlugins    .parent = fullModeCol;
 
             outputPathLabel.parent = exportbar;
             renderBtnRow   .parent = exportbar;
@@ -95,9 +98,140 @@ Rectangle {
     property alias exportSettings: exportSettings.item;
     property alias advanced: advanced.item;
     property alias renderBtn: renderBtn;
+    property QtObject batchState: batchState;
 
     readonly property bool wasModified: window.videoArea.vid.loaded;
     property bool isDialogOpened: false;
+
+    // ── Task 5: Batch editing state for render queue ──
+    QtObject {
+        id: batchState;
+        property bool active: false;
+        property real smoothness: 50;
+        property bool horizonLock: false;
+        property real horizonLockAmount: 100;  // 0-100
+        property int zoomMode: 1;    // 0=none, 1=dynamic, 2=static
+        property real lensCorrection: 1.0;     // 0.0-1.0
+        property real framerate: 0;            // 0=don't override
+    }
+
+    property bool _queueBatchActive: videoArea.queue
+        && videoArea.queue.shown
+        && videoArea.queue.selectedCount > 0
+
+    on_QueueBatchActiveChanged: {
+        batchState.active = _queueBatchActive;
+        if (_queueBatchActive) loadBatchParams();
+    }
+
+    Connections {
+        target: (videoArea.queue && batchState.active) ? videoArea.queue : null
+        function onSelectedJobsChanged() { window.loadBatchParams(); }
+    }
+
+    function loadBatchParams() {
+        if (!videoArea.queue) return;
+        const keys = Object.keys(videoArea.queue.selectedJobs);
+        if (keys.length === 0) return;
+        try {
+            const p = JSON.parse(render_queue.get_job_display_params(+keys[0]));
+            batchState.smoothness = (p.smoothness || 0.5) * 100;
+            batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
+            batchState.horizonLockAmount = p.horizon_lock_amount || 0;
+            const zm = p.zoom_mode || "dynamic";
+            batchState.zoomMode = zm === "static" ? 2 : zm === "dynamic" ? 1 : 0;
+            batchState.lensCorrection = p.lens_correction !== undefined ? p.lens_correction : 1.0;
+            batchState.framerate = p.framerate || 0;
+            syncBatchToStabPanel();
+        } catch(e) { console.log("loadBatchParams error:", e); }
+    }
+
+    function applyBatchParams() {
+        if (!videoArea.queue) return;
+        let params = {};
+        params.smoothness = batchState.smoothness / 100.0;
+        params.horizon_lock_amount = batchState.horizonLock ? batchState.horizonLockAmount : 0;
+        const modes = ["none", "dynamic", "static"];
+        params.zoom_mode = modes[batchState.zoomMode];
+        params.lens_correction = batchState.lensCorrection;
+        if (batchState.framerate > 0) params.framerate = batchState.framerate;
+
+        const jobIds = Object.keys(videoArea.queue.selectedJobs).map(Number);
+        render_queue.batch_update_params(JSON.stringify(jobIds), JSON.stringify(params));
+        videoArea.queue.matchVersion++;
+    }
+
+    function syncBatchToStabPanel() {
+        // Full mode: Stabilization.qml
+        if (window.stab) {
+            const smoothEl = window.stab.getParamElement("smoothness");
+            if (smoothEl) smoothEl.value = batchState.smoothness / 100.0;  // controller uses 0-1 range
+            window.stab.horizonCb.checked = batchState.horizonLock;
+            if (batchState.horizonLock) window.stab.horizonSlider.value = batchState.horizonLockAmount;
+            window.stab.croppingMode.currentIndex = batchState.zoomMode;
+            window.stab.correctionAmount.value = batchState.lensCorrection;
+        }
+        // Simple mode: SimpleStabilization.qml
+        if (simpleStab) {
+            simpleStab.smoothnessSlider.value = batchState.smoothness;
+            simpleStab.horizonCb.checked = batchState.horizonLock;
+            if (batchState.horizonLock) simpleStab.horizonSlider.value = batchState.horizonLockAmount;
+            simpleStab.croppingMode.currentIndex = batchState.zoomMode;
+            simpleStab.lensCorrectionToggle.checked = batchState.lensCorrection >= 0.5;
+        }
+    }
+
+    // ── Task 8: Sync control changes back to batchState ──
+    // Full mode: Stabilization.qml smoothness (via signal)
+    Connections {
+        target: (window.stab && batchState.active) ? window.stab : null;
+        function onSmoothnessChanged(value) { batchState.smoothness = value * 100; }  // signal emits 0-1, batchState uses 0-100
+    }
+    // Full mode: horizonCb
+    Connections {
+        target: (window.stab && batchState.active) ? window.stab.horizonCb.cb : null;
+        function onCheckedChanged() { batchState.horizonLock = target.checked; }
+    }
+    // Full mode: croppingMode
+    Connections {
+        target: (window.stab && batchState.active) ? window.stab.croppingMode : null;
+        function onCurrentIndexChanged() { batchState.zoomMode = target.currentIndex; }
+    }
+    // Simple mode: smoothnessSlider
+    Connections {
+        target: (simpleStab && batchState.active) ? simpleStab.smoothnessSlider : null;
+        function onValueChanged() { batchState.smoothness = target.value; }
+    }
+    // Simple mode: horizonCb
+    Connections {
+        target: (simpleStab && batchState.active) ? simpleStab.horizonCb.cb : null;
+        function onCheckedChanged() { batchState.horizonLock = target.checked; }
+    }
+    // Simple mode: croppingMode
+    Connections {
+        target: (simpleStab && batchState.active) ? simpleStab.croppingMode : null;
+        function onCurrentIndexChanged() { batchState.zoomMode = target.currentIndex; }
+    }
+    // Full mode: horizonSlider → horizonLockAmount
+    Connections {
+        target: (window.stab && batchState.active) ? window.stab.horizonSlider : null;
+        function onValueChanged() { batchState.horizonLockAmount = target.value; }
+    }
+    // Full mode: correctionAmount → lensCorrection
+    Connections {
+        target: (window.stab && batchState.active) ? window.stab.correctionAmount : null;
+        function onValueChanged() { batchState.lensCorrection = target.value; }
+    }
+    // Simple mode: horizonSlider → horizonLockAmount
+    Connections {
+        target: (simpleStab && batchState.active) ? simpleStab.horizonSlider : null;
+        function onValueChanged() { batchState.horizonLockAmount = target.value; }
+    }
+    // Simple mode: lensCorrectionToggle → lensCorrection
+    Connections {
+        target: (simpleStab && batchState.active) ? simpleStab.lensCorrectionToggle : null;
+        function onCheckedChanged() { batchState.lensCorrection = target.checked ? 1.0 : 0.0; }
+    }
 
     FileDialog {
         id: fileDialog;
@@ -145,7 +279,7 @@ Rectangle {
             id: leftPanel;
             direction: SidePanel.HandleRight;
             topPadding: gflogo.height;
-            visible: !videoArea.fullScreen && !isMobileLayout;
+            visible: !videoArea.fullScreen && !isMobileLayout && !window.isSimpleMode;
             maxWidth: parent.width - rightPanel.width - 50 * dpiScale;
             implicitWidth: settings.value("leftPanelSize", defaultWidth);
             onWidthChanged: settings.setValue("leftPanelSize", width);
@@ -524,12 +658,12 @@ Rectangle {
             maxWidth: parent.width - leftPanel.width - 50 * dpiScale;
             implicitWidth: settings.value("rightPanelSize", defaultWidth);
             onWidthChanged: settings.setValue("rightPanelSize", width);
-            col.visible: !isMobileLayout;
+            col.visible: !isMobileLayout || window.isSimpleMode;
 
             Tabs {
                 id: tabs;
                 Component.onCompleted: { parent = rightPanel; currentIndex = 0; }
-                visible: isMobileLayout;
+                visible: isMobileLayout && !window.isSimpleMode;
                 tabs: [QT_TRANSLATE_NOOP("Tabs", "Inputs"), QT_TRANSLATE_NOOP("Tabs", "Parameters"), QT_TRANSLATE_NOOP("Tabs", "Export")];
                 tabsIcons: ["video", "settings", "save"];
                 tabsIconsSize: [20, 24, 24];
@@ -539,15 +673,342 @@ Rectangle {
                 TabColumn { id: exportTab; parentHeight: rightPanel.height; inner.spacing: 10 * dpiScale; }
             }
 
-            ItemLoader { id: sync; sourceComponent: Component { Menu.Synchronization { } } }
-            Hr { id: syncHr; }
-            ItemLoader { id: stab; sourceComponent: Component { Menu.Stabilization { } } }
-            Hr { id: stabHr; }
-            ItemLoader { id: exportSettings; sourceComponent: Component { Menu.Export { showBtn: !window.isMobileLayout; } } }
-            Hr { id: exportHr; visible: !isMobileLayout; }
-            ItemLoader { id: advanced; sourceComponent: Component { Menu.Advanced { } } }
-            Hr { id: advancedHr; visible: nlePlugins.active }
-            ItemLoader { id: nlePlugins; active: controller.is_nle_installed(); sourceComponent: Component { Menu.NlePlugins { } } }
+            // ── Batch Banner (Full mode) ──
+            Rectangle {
+                id: batchBanner;
+                visible: batchState.active && !window.isSimpleMode;
+                width: parent.width;
+                height: visible ? 40 * dpiScale : 0;
+                color: styleAccentColor;
+                radius: 4 * dpiScale;
+                Ease on height { }
+
+                Row {
+                    anchors.centerIn: parent;
+                    spacing: 10 * dpiScale;
+                    BasicText {
+                        text: qsTr("Batch settings (%1)").arg(
+                            videoArea.queue ? videoArea.queue.selectedCount : 0)
+                        color: "#ffffff";
+                        font.bold: true;
+                        font.pixelSize: 13 * dpiScale;
+                        anchors.verticalCenter: parent.verticalCenter;
+                        leftPadding: 0;
+                    }
+                    Button {
+                        text: qsTr("Apply");
+                        accent: true;
+                        height: 30 * dpiScale;
+                        leftPadding: 16 * dpiScale;
+                        rightPadding: 16 * dpiScale;
+                        onClicked: window.applyBatchParams();
+                    }
+                    Button {
+                        text: qsTr("Exit");
+                        height: 30 * dpiScale;
+                        leftPadding: 16 * dpiScale;
+                        rightPadding: 16 * dpiScale;
+                        onClicked: {
+                            if (videoArea.queue) videoArea.queue.deselectAllJobs();
+                        }
+                    }
+                }
+            }
+
+            // ── Full mode panels ──
+            // ItemLoader has internal visible binding, so we wrap with Item to hide in Simple mode
+            Item {
+                id: fullModePanels;
+                width: parent.width;
+                visible: !window.isSimpleMode;
+                height: visible ? fullModeCol.height : 0;
+                clip: true;
+                Column {
+                    id: fullModeCol;
+                    width: parent.width;
+                    ItemLoader { id: sync; opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Synchronization { } } }
+                    Hr { id: syncHr; }
+                    ItemLoader { id: stab; sourceComponent: Component { Menu.Stabilization { } } }
+                    Hr { id: stabHr; }
+                    ItemLoader { id: exportSettings; opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Export { showBtn: !window.isMobileLayout; } } }
+                    Hr { id: exportHr; visible: !isMobileLayout; }
+                    ItemLoader { id: advanced; opacity: batchState.active ? 0.4 : 1.0; sourceComponent: Component { Menu.Advanced { } } }
+                    Hr { id: advancedHr; visible: nlePlugins.active; }
+                    ItemLoader { id: nlePlugins; opacity: batchState.active ? 0.4 : 1.0; active: controller.is_nle_installed(); sourceComponent: Component { Menu.NlePlugins { } } }
+
+                    // Sync and export/advanced overlays to block interaction in batch mode
+                    MouseArea {
+                        visible: batchState.active;
+                        z: 100;
+                        x: 0; y: sync.y;
+                        width: parent.width;
+                        height: sync.height + syncHr.height;
+                        hoverEnabled: true;
+                    }
+                    MouseArea {
+                        visible: batchState.active;
+                        z: 100;
+                        x: 0; y: exportSettings.y;
+                        width: parent.width;
+                        height: exportSettings.height + exportHr.height + advanced.height + advancedHr.height + nlePlugins.height;
+                        hoverEnabled: true;
+                    }
+                }
+            }
+
+            // ── Simple mode panels ──
+            // Mode switcher moved to bottom (see simpleModeToggle below)
+
+            // ── Simple mode: 4 collapsible sections ──
+            Column {
+                id: simpleModeContainer;
+                width: parent.width;
+                visible: window.isSimpleMode;
+                spacing: 0;
+
+                // ── Batch Banner (Simple mode) ──
+                Rectangle {
+                    id: simpleBatchBanner;
+                    visible: batchState.active && window.isSimpleMode;
+                    width: parent.width;
+                    height: visible ? 40 * dpiScale : 0;
+                    color: styleAccentColor;
+                    radius: 4 * dpiScale;
+                    Ease on height { }
+
+                    Row {
+                        anchors.centerIn: parent;
+                        spacing: 10 * dpiScale;
+                        BasicText {
+                            text: qsTr("Batch settings (%1)").arg(
+                                videoArea.queue ? videoArea.queue.selectedCount : 0)
+                            color: "#ffffff";
+                            font.bold: true;
+                            font.pixelSize: 13 * dpiScale;
+                            anchors.verticalCenter: parent.verticalCenter;
+                            leftPadding: 0;
+                        }
+                        Button {
+                            text: qsTr("Apply");
+                            accent: true;
+                            height: 30 * dpiScale;
+                            leftPadding: 16 * dpiScale;
+                            rightPadding: 16 * dpiScale;
+                            onClicked: window.applyBatchParams();
+                        }
+                        Button {
+                            text: qsTr("Exit");
+                            height: 30 * dpiScale;
+                            leftPadding: 16 * dpiScale;
+                            rightPadding: 16 * dpiScale;
+                            onClicked: {
+                                if (videoArea.queue) videoArea.queue.deselectAllJobs();
+                            }
+                        }
+                    }
+                }
+
+                // Video info — mirror Full mode's vidInfo data
+                MenuItem {
+                    text: qsTranslate("VideoInformation", "Video information");
+                    iconName: "info";
+                    objectName: "simple-info";
+                    opacity: batchState.active ? 0.4 : 1.0;
+                    innerItem.enabled: !batchState.active;
+                    Button {
+                        text: qsTranslate("VideoInformation", "Open file");
+                        iconName: "video";
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        onClicked: fileDialog.open2();
+                    }
+                    TableList {
+                        id: simpleInfoList;
+                        width: parent.width;
+                        model: window.vidInfo ? window.vidInfo.infoList.model : ({});
+                    }
+                }
+                Hr { }
+
+                // ── 1. Data Loading ──
+                MenuItem {
+                    text: qsTranslate("MotionData", "Motion data");
+                    iconName: "axes";
+                    objectName: "simple-data";
+                    opacity: batchState.active ? 0.4 : 1.0;
+                    innerItem.enabled: !batchState.active;
+                    Row {
+                        width: parent.width;
+                        spacing: 8 * dpiScale;
+                        Button {
+                            text: qsTranslate("Synchronization", "Auto sync");
+                            iconName: "spinner";
+                            width: (parent.width - parent.spacing) / 2;
+                            enabled: window.videoArea.vid.loaded;
+                            onClicked: {
+                                if (window.sync) window.sync.autosync.doSync();
+                            }
+                        }
+                        Button {
+                            text: qsTranslate("MotionData", "Open file");
+                            iconName: "folder";
+                            width: (parent.width - parent.spacing) / 2;
+                            enabled: window.videoArea.vid.loaded;
+                            onClicked: {
+                                if (window.motionData) window.motionData.fileDialog.open2();
+                            }
+                        }
+                    }
+                    BasicText {
+                        width: parent.width;
+                        wrapMode: Text.WordWrap;
+                        visible: text.length > 0;
+                        text: window.motionData ? window.motionData.detectedFormat : "";
+                        color: styleTextColor;
+                        opacity: 0.7;
+                        font.pixelSize: 11 * dpiScale;
+                    }
+                }
+                Hr { }
+
+                // ── 2. Stabilization ──
+                MenuItem {
+                    text: qsTranslate("Stabilization", "Stabilization");
+                    iconName: "gyroflow";
+                    objectName: "simple-stab";
+                    innerItem.enabled: window.videoArea.vid.loaded || batchState.active;
+                    Menu.SimpleStabilization {
+                        id: simpleStab;
+                        width: parent.width;
+                    }
+                }
+                Hr { }
+
+                // ── 3. Export ──
+                MenuItem {
+                    text: qsTranslate("Export", "Export settings");
+                    iconName: "save";
+                    objectName: "simple-export";
+                    opacity: batchState.active ? 0.4 : 1.0;
+                    innerItem.enabled: window.videoArea.vid.loaded && !batchState.active;
+                    Menu.SimpleExport {
+                        width: parent.width;
+                    }
+                }
+                Hr { }
+
+                // ── 4. Advanced ──
+                MenuItem {
+                    text: qsTranslate("Advanced", "Advanced");
+                    iconName: "settings";
+                    objectName: "simple-advanced";
+                    opened: false;
+                    opacity: batchState.active ? 0.4 : 1.0;
+                    innerItem.enabled: !batchState.active;
+                    Label {
+                        position: Label.LeftPosition;
+                        text: qsTranslate("Advanced", "Language");
+                        width: parent.width;
+                        ComboBox {
+                            id: simpleLang;
+                            property var langs: window.advanced ? window.advanced.langList.langs : [];
+                            model: langs.map(x => x[0]);
+                            font.pixelSize: 11 * dpiScale;
+                            width: parent.width;
+                            currentIndex: window.advanced ? window.advanced.langList.currentIndex : 0;
+                            onCurrentIndexChanged: {
+                                if (window.advanced && window.advanced.langList.currentIndex !== currentIndex) {
+                                    window.advanced.langList.currentIndex = currentIndex;
+                                }
+                            }
+                        }
+                    }
+                    Label {
+                        position: Label.LeftPosition;
+                        text: qsTranslate("Advanced", "Theme");
+                        width: parent.width;
+                        ComboBox {
+                            id: simpleTheme;
+                            model: window.advanced ? window.advanced.themeList.model : [];
+                            font.pixelSize: 11 * dpiScale;
+                            width: parent.width;
+                            currentIndex: window.advanced ? window.advanced.themeList.currentIndex : 1;
+                            onCurrentIndexChanged: {
+                                if (window.advanced && window.advanced.themeList.currentIndex !== currentIndex) {
+                                    window.advanced.themeList.currentIndex = currentIndex;
+                                }
+                            }
+                        }
+                    }
+                    CheckBox {
+                        id: simpleGpuDecode;
+                        text: qsTranslate("Advanced", "Use GPU decoding");
+                        checked: window.advanced ? window.advanced.gpudecode.checked : true;
+                        onCheckedChanged: {
+                            if (window.advanced) window.advanced.gpudecode.checked = checked;
+                        }
+                    }
+                    Label {
+                        position: Label.LeftPosition;
+                        text: qsTranslate("Advanced", "Default file suffix");
+                        width: parent.width;
+                        TextField {
+                            id: simpleSuffix;
+                            width: parent.width;
+                            text: window.advanced ? window.advanced.defaultSuffix.text : "_stabilized";
+                            onTextChanged: {
+                                if (window.advanced) window.advanced.defaultSuffix.text = text;
+                                render_queue.default_suffix = text;
+                            }
+                        }
+                    }
+                    Label {
+                        position: Label.LeftPosition;
+                        text: qsTranslate("Advanced", "Device for video processing");
+                        visible: window.advanced ? window.advanced.processingDevice.model.length > 0 : false;
+                        width: parent.width;
+                        ComboBox {
+                            id: simpleProcessingDevice;
+                            model: window.advanced ? window.advanced.processingDevice.model : [];
+                            font.pixelSize: 11 * dpiScale;
+                            width: parent.width;
+                            currentIndex: window.advanced ? window.advanced.processingDevice.currentIndex : 0;
+                            onCurrentIndexChanged: {
+                                if (window.advanced && window.advanced.processingDevice.currentIndex !== currentIndex) {
+                                    window.advanced.processingDevice.currentIndex = currentIndex;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── 5. NLE Plugins (if installed) ──
+                Hr { visible: controller.is_nle_installed(); }
+                ItemLoader {
+                    active: controller.is_nle_installed();
+                    sourceComponent: Component { Menu.NlePlugins { } }
+                }
+
+                // Simple→Full toggle at bottom
+                Item { width: 1; height: 5 * dpiScale; }
+                LinkButton {
+                    anchors.horizontalCenter: parent.horizontalCenter;
+                    text: qsTr("Full mode →");
+                    font.pixelSize: 14 * dpiScale;
+                    opacity: 0.7;
+                    onClicked: window.isSimpleMode = false;
+                }
+                Item { width: 1; height: 5 * dpiScale; }
+            }
+
+            // Full→Simple toggle at bottom of rightPanel (only in Full mode)
+            LinkButton {
+                visible: !window.isSimpleMode;
+                anchors.horizontalCenter: parent.horizontalCenter;
+                text: qsTr("← Simple mode");
+                font.pixelSize: 14 * dpiScale;
+                opacity: 0.7;
+                onClicked: window.isSimpleMode = true;
+            }
         }
     }
 

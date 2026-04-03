@@ -27,6 +27,27 @@ Item {
     onMatchExecutedChanged: console.log("[QML T21] matchExecuted changed to:", matchExecuted);
     // [T19] match 版本计数器，每次 match 结果变化时递增，触发 delegate 属性重新求值
     property int matchVersion: 0
+    // ── Batch selection ──
+    property var selectedJobs: ({})
+    property int selectedCount: Object.keys(selectedJobs).length
+    property bool _dragSelecting: false
+    property int _lastClickedIndex: -1
+    function toggleJobSelection(jobId) {
+        let s = Object.assign({}, selectedJobs);
+        if (s[jobId]) delete s[jobId];
+        else s[jobId] = true;
+        selectedJobs = s;
+    }
+    function selectAllJobs() {
+        let s = {};
+        for (let i = 0; i < lv.count; i++) {
+            const item = lv.itemAtIndex(i);
+            if (item && item.jobId) s[item.jobId] = true;
+        }
+        selectedJobs = s;
+    }
+    function deselectAllJobs() { selectedJobs = {}; }
+
     // [queue-gyro-column] 左列宽度，有陀螺仪时展开
     property real gyroColumnWidth: hasGyroFiles ? 65 * dpiScale : 0
     Ease on gyroColumnWidth { }
@@ -125,52 +146,6 @@ Item {
         font.bold: true;
     }
 
-    // [queue-gyro-column T11] Auto match / Clear 按钮移至标题下方独立行
-    Row {
-        id: topGyroButtons;
-        anchors.top: titleText.bottom;
-        anchors.topMargin: 8 * dpiScale;
-        x: 10 * dpiScale;
-        spacing: 8 * dpiScale;
-        height: root.hasGyroFiles ? 30 * dpiScale : 0;
-        visible: height > 0;
-        clip: true;
-        Ease on height { }
-
-        Button {
-            id: autoMatchBtn;
-            // [T21] matching 状态：点击后显示 "Matching..." 并禁用
-            property bool matching: false;
-            text: matching ? qsTr("Matching...") : qsTr("Auto match");
-            enabled: root.hasGyroFiles && root.allGyroParsed && !matching;
-            accent: true;
-            height: 30 * dpiScale;
-            font.pixelSize: 13 * dpiScale;
-            leftPadding: 16 * dpiScale;
-            rightPadding: 16 * dpiScale;
-            onClicked: {
-                matching = true;
-                root.matchWarning = "";
-                // [T22] 显示全屏匹配遮罩
-                loader.text = qsTr("Matching...");
-                loader.active = true;
-                // Timer 延迟让遮罩先显示
-                matchTimer.start();
-            }
-        }
-        Button {
-            text: qsTr("Clear");
-            height: 30 * dpiScale;
-            font.pixelSize: 13 * dpiScale;
-            leftPadding: 16 * dpiScale;
-            rightPadding: 16 * dpiScale;
-            onClicked: {
-                render_queue.clear_gyro_files();
-                root.matchWarning = "";
-            }
-        }
-    }
-
     LinkButton {
         id: closeBtn;
         anchors.right: parent.right;
@@ -184,11 +159,11 @@ Item {
         onClicked: root.shown = false;
     }
 
-    Hr { width: parent.width - 10 * dpiScale; y: 35 * dpiScale + topGyroButtons.height + (topGyroButtons.height > 0 ? 8 * dpiScale : 0); color: "#fff"; opacity: 0.3; }
+    Hr { width: parent.width - 10 * dpiScale; y: 35 * dpiScale; color: "#fff"; opacity: 0.3; }
 
     Row {
         id: progressRow;
-        y: 55 * dpiScale + topGyroButtons.height + (topGyroButtons.height > 0 ? 8 * dpiScale : 0);
+        y: 55 * dpiScale;
         spacing: 10 * dpiScale;
         x: 10 * dpiScale;
         Column {
@@ -448,8 +423,8 @@ Item {
         anchors.rightMargin: 10 * dpiScale;
         anchors.top: matchWarningBar.bottom;
         anchors.topMargin: 5 * dpiScale;
-        anchors.bottom: parent.bottom;
-        anchors.bottomMargin: 30 * dpiScale;  // [queue-gyro-column] 底部按钮已移到顶部，留底部工具栏空间
+        anchors.bottom: batchStatusText.visible ? batchStatusText.top : (topGyroButtons.visible ? topGyroButtons.top : parent.bottom);
+        anchors.bottomMargin: (batchStatusText.visible || topGyroButtons.visible) ? 5 * dpiScale : 30 * dpiScale;
         clip: true;
         model: render_queue.queue;
         // [queue-lifecycle T1] 移除了历史恢复 Timer 和 save Connections
@@ -466,6 +441,9 @@ Item {
             implicitHeight: innerItm.height + 2*innerItm.y + messageAreaParent.height + delegateSpacing;
             width: parent? parent.width : 0;
             id: dlg;
+            property int jobId: job_id;
+            property bool isSelected: !!root.selectedJobs[job_id];
+            property var displayParams: { root.matchVersion; try { return JSON.parse(render_queue.get_job_display_params(job_id)); } catch(e) { return {}; } }
             property real progress: current_frame / total_frames;
             property bool isFinished: current_frame >= total_frames && total_frames > 0;
             property bool isError: error_string.length > 0 && !isQuestion && !isInfo;
@@ -529,6 +507,7 @@ Item {
 
             ContextMenuMouseArea {
                 acceptedButtons: Qt.LeftButton | Qt.RightButton;
+                hoverEnabled: true;
                 onContextMenu: (isHold, x, y) => contextMenu.popup(dlg, x, y)
 
                 onPressed: (mouse) => {
@@ -540,7 +519,40 @@ Item {
                         root.pairingGyroFilename = "";
                         return;
                     }
-                    // [queue-lifecycle T3] 移除了 Ctrl+拖拽重排逻辑
+                    // Batch selection
+                    if (mouse.button === Qt.LeftButton) {
+                        root._dragSelecting = true;
+                        const currentIndex = index;
+                        if (mouse.modifiers & Qt.ShiftModifier && root._lastClickedIndex >= 0) {
+                            // Range select
+                            const from = Math.min(root._lastClickedIndex, currentIndex);
+                            const to = Math.max(root._lastClickedIndex, currentIndex);
+                            let s = Object.assign({}, root.selectedJobs);
+                            for (let i = from; i <= to; i++) {
+                                const item = lv.itemAtIndex(i);
+                                if (item && item.jobId) s[item.jobId] = true;
+                            }
+                            root.selectedJobs = s;
+                        } else if (mouse.modifiers & Qt.ControlModifier) {
+                            root.toggleJobSelection(job_id);
+                        } else {
+                            let s = {};
+                            s[job_id] = true;
+                            root.selectedJobs = s;
+                        }
+                        root._lastClickedIndex = currentIndex;
+                    }
+                }
+                onReleased: {
+                    root._dragSelecting = false;
+                }
+                onEntered: {
+                    // Drag/swipe selection: when mouse enters while dragging, add to selection
+                    if (root._dragSelecting) {
+                        let s = Object.assign({}, root.selectedJobs);
+                        s[job_id] = true;
+                        root.selectedJobs = s;
+                    }
                 }
             }
             Menu {
@@ -838,6 +850,13 @@ Item {
                 }
                 clip: true;
             }
+            // Selection highlight
+            Rectangle {
+                anchors.fill: innerItm;
+                color: dlg.isSelected ? styleAccentColor : "transparent";
+                opacity: 0.1;
+                radius: 5 * dpiScale;
+            }
             Item {
                 id: innerItm;
                 // [T20] x 考虑隔离列宽度
@@ -887,7 +906,34 @@ Item {
                                           : qsTr("Rendering: %1").arg(`<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText}${eta})</small>`);
                     }
                     BasicText { text: qsTr("Save to: %1").arg("<b>" + display_output_path + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
-                    BasicText { text: qsTr("Export settings: %1").arg("<b>" + export_settings + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
+                    // Aligned display params row
+                    Row {
+                        spacing: 10 * dpiScale;
+                        width: parent.width;
+                        BasicText {
+                            text: qsTranslate("Stabilization", "Smoothness") + " <b>" + ((dlg.displayParams.smoothness || 0.5) * 100).toFixed(0) + "%</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            text: qsTranslate("Stabilization", "Lock horizon") + " " + ((dlg.displayParams.horizon_lock_amount || 0) > 0 ? "✓" : "✗");
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            property string zm: dlg.displayParams.zoom_mode || "none";
+                            text: (zm === "static" ? qsTranslate("Popup", "Static zoom") : zm === "dynamic" ? qsTranslate("Popup", "Dynamic zooming") : qsTranslate("Popup", "No zooming"));
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            visible: (dlg.displayParams.framerate || 0) > 0;
+                            text: "<b>" + (dlg.displayParams.framerate || 0).toFixed(0) + "fps</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            visible: (dlg.displayParams.focal_length || 0) > 0;
+                            text: "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                    }
                     // T5+T6: Match status annotation with gyro filename
                     Row {
                         visible: root.hasGyroFiles && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"));
@@ -918,8 +964,8 @@ Item {
                     // [queue-render-skip] 显示跳过原因
                     BasicText {
                         visible: dlg.isSkipped;
-                        text: dlg.skipReason === "no_gyro" ? "⊘ Skipped - no gyro data"
-                            : dlg.skipReason === "calibration" ? "⊘ Skipped - calibration pair"
+                        text: dlg.skipReason === "no_gyro" ? qsTr("Skipped - no gyro data")
+                            : dlg.skipReason === "calibration" ? qsTr("Skipped - calibration pair")
                             : "";
                         color: "#888888";
                         font.pixelSize: basicTextSize;
@@ -1025,7 +1071,64 @@ Item {
         }
     }
 
-    // [queue-gyro-column] 旧的底部 gyroButtonRow 已移至顶部 topGyroButtons
+    // Task 4: 批量模式提示文本
+    BasicText {
+        id: batchStatusText;
+        visible: root.selectedCount > 0;
+        text: qsTr("Batch mode — %1 item(s) selected (edit in sidebar)").arg(root.selectedCount);
+        anchors.horizontalCenter: parent.horizontalCenter;
+        anchors.bottom: topGyroButtons.visible ? topGyroButtons.top : parent.bottom;
+        anchors.bottomMargin: topGyroButtons.visible ? 5 * dpiScale : 30 * dpiScale;
+        color: styleAccentColor;
+        font.pixelSize: 12 * dpiScale;
+        font.bold: true;
+        leftPadding: 0;
+    }
+
+    // Auto match / Clear 按钮（从标题下方移至 ListView 下方居中）
+    Row {
+        id: topGyroButtons;
+        anchors.bottom: parent.bottom;
+        anchors.bottomMargin: 30 * dpiScale;
+        anchors.horizontalCenter: parent.horizontalCenter;
+        spacing: 8 * dpiScale;
+        height: root.hasGyroFiles ? 30 * dpiScale : 0;
+        visible: height > 0;
+        clip: true;
+        Ease on height { }
+
+        Button {
+            id: autoMatchBtn;
+            property bool matching: false;
+            text: matching ? qsTr("Matching...") : qsTr("Auto match");
+            enabled: root.hasGyroFiles && root.allGyroParsed && !matching;
+            accent: true;
+            height: 30 * dpiScale;
+            font.pixelSize: 13 * dpiScale;
+            leftPadding: 16 * dpiScale;
+            rightPadding: 16 * dpiScale;
+            onClicked: {
+                matching = true;
+                root.matchWarning = "";
+                loader.text = qsTr("Matching...");
+                loader.active = true;
+                matchTimer.start();
+            }
+        }
+        Button {
+            text: qsTr("Clear");
+            height: 30 * dpiScale;
+            font.pixelSize: 13 * dpiScale;
+            leftPadding: 16 * dpiScale;
+            rightPadding: 16 * dpiScale;
+            onClicked: {
+                render_queue.clear_gyro_files();
+                root.matchWarning = "";
+            }
+        }
+    }
+
+    // [queue-gyro-column] 旧的 batchEditPanel 和 gyroButtonRow 已删除
 
     // [queue-gyro-column] 空状态拖拽提示
     BasicText {
