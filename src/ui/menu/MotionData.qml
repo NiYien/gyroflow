@@ -69,6 +69,16 @@ MenuItem {
             if (typeof gyro.sample_index === "number") {
                 currentLog.currentIndex = gyro.sample_index + 1;
             }
+            // [Fix1] 从项目数据中恢复文件名和检测格式（batch match 编辑时）
+            if (gyro.detected_source) {
+                root.detectedFormat = gyro.detected_source;
+                info.updateEntry("Detected format", gyro.detected_source);
+            }
+            if (gyro.filepath) {
+                const fn_ = filesystem.get_filename(gyro.filepath);
+                root.filename = fn_;
+                info.updateEntry("File name", fn_);
+            }
         }
         const stab = obj.stabilization || { };
         if (stab && Object.keys(stab).length > 0) {

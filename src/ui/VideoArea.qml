@@ -488,31 +488,10 @@ Item {
         if (urls.length == 1) {
             root.loadFile(urls[0], skip_detection);
         } else if (urls.length > 1) {
+            // [Fix2] 批量拖入直接加入渲染队列，不弹对话框
             const urlsCopy = [...urls];
-            const dlg = messageBox(Modal.Question, qsTr("You have opened multiple files. What do you want to do?"), [
-                { text: qsTr("Add to render queue"), clicked: () => {
-                    queue.item.dt.loadFiles(urlsCopy);
-                    queue.item.shown = true;
-                } },
-                { text: qsTr("Merge them into one video"), clicked: () => {
-                    dlg.btnsRow.children[0].enabled = false;
-                    dlg.btnsRow.children[1].enabled = false;
-                    dlg.btnsRow.children[2].enabled = false;
-                    const filename = filesystem.get_filename(urlsCopy[0]);
-                    const folder = filesystem.get_folder(urlsCopy[0]);
-                    getOutputFile(folder, filename, "_joined", "", true, function(outFolder, outFilename, outFullFileUrl) {
-                        root.mergedFiles = urlsCopy.map(x => x.toString());
-                        controller.mp4_merge(urlsCopy.map(x => x.toString()), outFolder, outFilename);
-                    });
-                    return false;
-                } },
-                { text: qsTr("Open the first file"), clicked: () => {
-                    root.loadFile(urlsCopy[0], skip_detection);
-                } },
-                { text: qsTr("Cancel") },
-            ]);
-            externalSdkModal = dlg;
-            dlg.addLoader();
+            queue.item.dt.loadFiles(urlsCopy);
+            queue.item.shown = true;
         }
     }
 

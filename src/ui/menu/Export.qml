@@ -91,6 +91,8 @@ MenuItem {
         property alias interpolationMethod: interpolationMethod.currentIndex;
         property alias preserveOutputSettings: preserveOutputSettings.checked;
         property alias preserveOutputPath: preserveOutputPath.checked;
+        property alias queueOutputMode: queueOutputMode.currentIndex;
+        property alias queueFixedOutputPath: queueFixedOutputPathField.folderUrl;
 
         Component.onCompleted: settings.init(sett);
         function propChanged() { settings.propChanged(sett); }
@@ -110,6 +112,9 @@ MenuItem {
     property alias preserveOutputSettings: preserveOutputSettings;
     property alias preserveOutputPath: preserveOutputPath;
     property alias exportTrimsSeparately: exportTrimsSeparately;
+    // [queue-batch-streamline T3] 队列输出路径设置
+    property int queueOutputMode: queueOutputMode.currentIndex
+    property string queueFixedOutputPath: queueFixedOutputPathField.folderUrl
     property string outCodecOptions: "";
     property real originalWidth: outWidth;
     property real originalHeight: outHeight;
@@ -511,6 +516,46 @@ MenuItem {
         enabled: enabled2 && enabled3;
     }
 
+    // [queue-batch-streamline T3] 队列默认输出路径设置（顶层可见）
+    Label {
+        position: Label.TopPosition;
+        text: qsTr("Render queue output path");
+        ComboBox {
+            id: queueOutputMode;
+            model: [qsTr("Same as source file"), qsTr("Fixed path")];
+            font.pixelSize: 12 * dpiScale;
+            width: parent.width;
+            currentIndex: 0;
+        }
+    }
+    Row {
+        visible: queueOutputMode.currentIndex === 1;
+        width: parent.width;
+        spacing: 5 * dpiScale;
+        TextField {
+            id: queueFixedOutputPathField;
+            width: parent.width - browseQueueOutputBtn.width - parent.spacing;
+            placeholderText: qsTr("Select output folder...");
+            property string folderUrl: ""
+            text: folderUrl ? filesystem.url_to_path(folderUrl) : ""
+            readOnly: true;
+        }
+        LinkButton {
+            id: browseQueueOutputBtn;
+            height: queueFixedOutputPathField.height;
+            text: qsTr("Browse");
+            onClicked: {
+                const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectQueueOutputFolder");
+                if (queueFixedOutputPathField.folderUrl) dialog.currentFolder = queueFixedOutputPathField.folderUrl;
+                dialog.accepted.connect(function() {
+                    queueFixedOutputPathField.folderUrl = dialog.selectedFolder.toString();
+                    filesystem.folder_access_granted(dialog.selectedFolder);
+                });
+                dialog.open();
+            }
+        }
+    }
+
     AdvancedSection {
         Label {
             position: Label.TopPosition;
@@ -707,5 +752,6 @@ MenuItem {
             Component.onCompleted: contentItem.wrapMode = Text.WordWrap;
             onCheckedChanged: Qt.callLater(renderingDevice.updateController);
         }
+
     }
 }

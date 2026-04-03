@@ -32,6 +32,7 @@ pub struct RenderQueueItem {
     pub end_timestamp: u64,
     pub error_string: QString,
     pub processing_progress: f64,
+    pub skip_reason: QString,
 
     frame_times: std::collections::VecDeque<(u64, u64)>,
 
@@ -47,7 +48,8 @@ pub enum JobStatus {
     Queued,
     Rendering,
     Finished,
-    Error
+    Error,
+    Skipped
 }
 struct Job {
     queue_index: usize,
@@ -483,6 +485,20 @@ impl RenderQueue {
 
         let editing = self.jobs.contains_key(&job_id);
 
+        // [queue-batch-streamline T5] 输入视频去重：非编辑模式下跳过重复视频
+        if !editing {
+            let new_url_normalized = filesystem::url_to_path(&video_url);
+            let q = self.queue.borrow();
+            for itm in q.iter() {
+                let existing_normalized = filesystem::url_to_path(&itm.input_file.to_string());
+                if existing_normalized == new_url_normalized {
+                    ::log::info!("[queue-batch-streamline T5] 跳过重复视频: {}", video_url);
+                    return;
+                }
+            }
+            drop(q);
+        }
+
         if editing {
             update_model!(self, job_id, itm {
                 itm.output_folder = QString::from(render_options.output_folder.as_str());
@@ -519,6 +535,7 @@ impl RenderQueue {
                 end_timestamp: 0,
                 processing_progress: 0.0,
                 error_string: QString::default(),
+                skip_reason: QString::default(),
                 frame_times: Default::default(),
                 status: JobStatus::Queued,
             });
@@ -796,6 +813,7 @@ impl RenderQueue {
 
         update_model!(self, job_id, itm {
             itm.error_string = QString::default();
+            itm.skip_reason = QString::default();
             itm.current_frame = 0;
             itm.frame_times.clear();
             itm.status = JobStatus::Queued;
@@ -864,8 +882,8 @@ impl RenderQueue {
                 if job.queue_index < q.row_count() as usize {
                     //let mut itm = &mut q[job.queue_index];
                     let mut itm = q[job.queue_index].clone();
-                    if itm.status == JobStatus::Rendering || itm.status == JobStatus::Finished {
-                        ::log::warn!("Job is already rendering {}", job_id);
+                    if itm.status == JobStatus::Rendering || itm.status == JobStatus::Finished || itm.status == JobStatus::Skipped {
+                        ::log::warn!("Job is already rendering or skipped {}", job_id);
                         return;
                     }
                     itm.status = JobStatus::Rendering;
@@ -2007,6 +2025,23 @@ impl RenderQueue {
     // T3: Collect metadata and run batch matching algorithm.
     fn batch_match_gyro(&mut self) {
         let t_total = std::time::Instant::now();
+
+        // [queue-render-skip] 重新 match 前，清除所有已有的 Skipped 标记
+        {
+            let q = self.queue.borrow();
+            let skipped_ids: Vec<u32> = q.iter()
+                .filter(|v| v.status == JobStatus::Skipped)
+                .map(|v| v.job_id)
+                .collect();
+            drop(q);
+            for job_id in skipped_ids {
+                update_model!(self, job_id, itm {
+                    itm.skip_reason = QString::default();
+                    itm.status = JobStatus::Queued;
+                });
+            }
+        }
+
         let t0 = std::time::Instant::now();
         let job_ids = self.get_ordered_job_ids();
         ::log::info!("[batch_match T16] ordered job_ids at match start: {:?}", job_ids);
@@ -2247,6 +2282,23 @@ impl RenderQueue {
             for &job_id in &applied_job_ids {
                 if let Some(job) = this.jobs.get_mut(&job_id) {
                     if let Some(ref stab) = job.stab {
+                        // [Fix1] 将匹配的 gyro 文件名写入 file_url，使导出 JSON 的 filepath 不为空
+                        if let Some(ref mr) = this.match_results {
+                            let parsed_indices: Vec<usize> = this.gyro_files.iter()
+                                .enumerate()
+                                .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+                                .map(|(i, _)| i).collect();
+                            if let Some(gyro_fn) = mr.results.iter()
+                                .find(|r| r.job_id == Some(job_id))
+                                .and_then(|r| r.gyro_index)
+                                .and_then(|gi| parsed_indices.get(gi).copied())
+                                .and_then(|fi| this.gyro_files.get(fi))
+                                .map(|g| g.filename.as_str())
+                            {
+                                stab.gyro.write().file_url = gyro_fn.to_string();
+                            }
+                        }
+
                         let mut additional_data = job.additional_data.clone();
                         if let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
                             if let Ok(output) = serde_json::to_value(&job.render_options) {
@@ -2271,6 +2323,35 @@ impl RenderQueue {
             // [T22] 排序完成后构建 sameGyro 缓存
             this.build_same_gyro_cache();
             ::log::info!("[apply_match] build_same_gyro_cache: {:.1}ms", t_cache.elapsed().as_secs_f64() * 1000.0);
+
+            // [queue-render-skip] 标记无陀螺仪数据和校准对的视频为 Skipped
+            if let Some(ref match_results) = this.match_results {
+                let job_ids_now = this.get_ordered_job_ids();
+                for result in &match_results.results {
+                    let job_id = result.job_id
+                        .or_else(|| job_ids_now.get(result.video_index).copied());
+                    if let Some(job_id) = job_id {
+                        match result.status {
+                            core::gyro_match::MatchStatus::Unmatched
+                            | core::gyro_match::MatchStatus::NoCreationTime => {
+                                update_model!(this, job_id, itm {
+                                    itm.skip_reason = QString::from("no_gyro");
+                                    itm.status = JobStatus::Skipped;
+                                });
+                                ::log::info!("[queue-render-skip] job {} marked Skipped (no_gyro)", job_id);
+                            }
+                            core::gyro_match::MatchStatus::CalibrationPair => {
+                                update_model!(this, job_id, itm {
+                                    itm.skip_reason = QString::from("calibration");
+                                    itm.status = JobStatus::Skipped;
+                                });
+                                ::log::info!("[queue-render-skip] job {} marked Skipped (calibration)", job_id);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
 
             this.match_results_changed();
             // [T22] 数据加载全部完成，触发专用信号（遮罩在此关闭）
@@ -2553,10 +2634,18 @@ impl RenderQueue {
                     .map(|(i, _)| i)
                     .collect();
 
-                let gyro_filename = r.gyro_index
+                let matched_gyro = r.gyro_index
                     .and_then(|gi| parsed_gyro_indices.get(gi))
-                    .and_then(|&fi| self.gyro_files.get(fi))
+                    .and_then(|&fi| self.gyro_files.get(fi));
+
+                let gyro_filename = matched_gyro
                     .map(|g| g.filename.as_str())
+                    .unwrap_or("");
+
+                // [queue-batch-streamline T1] 从 cached_metadata 提取 detected_source
+                let detected_source = matched_gyro
+                    .and_then(|g| g.cached_metadata.as_ref())
+                    .and_then(|md| md.detected_source.as_deref())
                     .unwrap_or("");
 
                 return QString::from(serde_json::json!({
@@ -2565,6 +2654,7 @@ impl RenderQueue {
                     "gyro_start_ms": r.gyro_start_ms,
                     "gyro_end_ms": r.gyro_end_ms,
                     "gyro_filename": gyro_filename,
+                    "detected_source": detected_source,
                 }).to_string());
             }
         }

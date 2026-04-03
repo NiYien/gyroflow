@@ -471,8 +471,10 @@ Item {
             property bool isError: error_string.length > 0 && !isQuestion && !isInfo;
             property bool isInfo: error_string == "uses_cpu";
             property bool isQuestion: error_string.startsWith("convert_format:") || error_string.startsWith("file_exists:");
-            property bool isInProgress: (!isFinished && !isError && !isQuestion && total_frames > 0) && (current_frame > 0 || isProcessing);
+            property bool isInProgress: (!isFinished && !isError && !isSkipped && !isQuestion && total_frames > 0) && (current_frame > 0 || isProcessing);
             property bool isProcessing: processing_progress > 0.0 && processing_progress < 1.0;
+            property bool isSkipped: skip_reason.length > 0;
+            property string skipReason: skip_reason;
             property string errorString: error_string;
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
 
@@ -548,7 +550,11 @@ Item {
                     iconName: "play";
                     text: qsTr("Render now");
                     enabled: !isFinished && !isInProgress;
-                    onTriggered: render_queue.render_job(job_id);
+                    onTriggered: {
+                        // [queue-render-skip] Skipped 状态先重置再渲染
+                        if (isSkipped) render_queue.reset_job(job_id);
+                        render_queue.render_job(job_id);
+                    }
                 }
                 Action {
                     iconName: "pencil";
@@ -566,7 +572,7 @@ Item {
                 Action {
                     iconName: isInProgress? "close" : "spinner";
                     text: isInProgress? qsTr("Stop") : qsTr("Reset status");
-                    enabled: isError || isFinished || isQuestion || isInProgress;
+                    enabled: isError || isFinished || isQuestion || isInProgress || isSkipped;
                     onTriggered: render_queue.reset_job(job_id);
                 }
                 // T14: Manual gyro pairing sub-menu
@@ -734,9 +740,9 @@ Item {
                 radius: 5 * dpiScale;
                 opacity: shown? 0.8 : 0;
                 Ease on opacity { }
-                property bool shown: isFinished || isError || isQuestion;
+                property bool shown: isFinished || isError || isQuestion || isSkipped;
                 visible: opacity > 0;
-                border.color: isFinished? "#70e574" : isError? "#ed7676" : isQuestion? styleAccentColor : "transparent";
+                border.color: isSkipped? "#888888" : isFinished? "#70e574" : isError? "#ed7676" : isQuestion? styleAccentColor : "transparent";
                 border.width: 1;
             }
 
@@ -895,7 +901,8 @@ Item {
                         }
                         BasicText {
                             visible: dlg.manualGyroIndex < 0 && dlg.matchState === "Matched";
-                            text: "✓ " + dlg.gyroFilename;
+                            // [queue-batch-streamline T2] 显示 detected_source
+                            text: "✓ " + dlg.gyroFilename + (dlg.matchStatus.detected_source ? " (" + dlg.matchStatus.detected_source + ")" : "");
                             color: "#70e574";
                             font.pixelSize: basicTextSize;
                             font.bold: true;
@@ -908,6 +915,16 @@ Item {
                             font.bold: true;
                         }
                     }
+                    // [queue-render-skip] 显示跳过原因
+                    BasicText {
+                        visible: dlg.isSkipped;
+                        text: dlg.skipReason === "no_gyro" ? "⊘ Skipped - no gyro data"
+                            : dlg.skipReason === "calibration" ? "⊘ Skipped - calibration pair"
+                            : "";
+                        color: "#888888";
+                        font.pixelSize: basicTextSize;
+                        font.bold: true;
+                    }
                 }
 
                 Column {
@@ -915,8 +932,8 @@ Item {
                     anchors.rightMargin: 10 * dpiScale;
                     spacing: 6 * dpiScale;
                     anchors.verticalCenter: parent.verticalCenter;
-                    // [T19] 渲染完成后隐藏进度/时间信息
-                    visible: !window.isMobileLayout && !dlg.isFinished;
+                    // [T19] 渲染完成或跳过后隐藏进度/时间信息
+                    visible: !window.isMobileLayout && !dlg.isFinished && !dlg.isSkipped;
 
                     BasicText {
                         leftPadding: 0;
@@ -1107,7 +1124,13 @@ Item {
             if (filesystem.get_filename(videoUrls[0]).toLowerCase().endsWith(".gyroflow")) {
                 add("", videoUrls);
             } else {
-                window.videoArea.askForOutputLocation(window.outputFile.folderUrl, "", true, function(outFolder, _, __) { add(outFolder, videoUrls); });
+                // [queue-batch-streamline T4] 使用 Export 设置的默认路径，跳过弹窗
+                let outFolder = "";
+                if (window.exportSettings && window.exportSettings.queueOutputMode === 1) {
+                    const fixedPath = window.exportSettings.queueFixedOutputPath;
+                    if (fixedPath) outFolder = fixedPath;
+                }
+                add(outFolder, videoUrls);
             }
         }
     }

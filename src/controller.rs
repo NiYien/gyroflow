@@ -812,7 +812,6 @@ impl Controller {
                             if is_main_video {
                                 // Ignore the error here, video file may not contain the telemetry and it's ok
                                 let _ = stab.load_gyro_data(file.get_file(), filesize, &url, is_main_video, &load_options, progress, cancel_flag);
-
                                 stab.recompute_undistortion();
                             } else {
                                 if sample_index > -1 {
