@@ -168,6 +168,7 @@ MenuItem {
                     displayStr += " (" + additional_data.timezone_offset + ")";
                 }
                 list.model["Created at"] = displayStr;
+                list.modelChanged();
             }
             if (is_main_video && additional_data.realtime_fps) {
                 const realtimeFps = +additional_data.realtime_fps;

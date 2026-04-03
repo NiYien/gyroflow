@@ -1,0 +1,57 @@
+just -f _scripts/windows.just run 
+cargo run --release -- 
+warning: variable does not need to be mutable
+   --> src\core\calibration\mod.rs:180:45
+    |
+180 | ...                   if let Some(mut pt2) = digital.undistort_point((pt.x, pt.y), &kernel_params) {
+    |                                   ----^^^
+    |                                   |
+    |                                   help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: variable does not need to be mutable
+   --> src\core\calibration\mod.rs:217:13
+    |
+217 |         let mut width = self.width as i32;
+    |             ----^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: unused variable: `digital`
+   --> src\core\calibration\mod.rs:218:21
+    |
+218 |         if let Some(digital) = self.digital_lens.as_ref().map(|x| DistortionModel::from_name(&x)) {
+    |                     ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_digital`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `distortion_model`
+  --> src\core\stabilization\cpu_undistort.rs:91:98
+   |
+91 | ...ms: &KernelParams, distortion_model: &DistortionModel, digital_lens: Option<&DistortionModel>, matrices: &[[f32; 14]], drawing: &[u8])...
+   |                       ^^^^^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_distortion_model`
+
+warning: unused variable: `digital_lens`
+  --> src\core\stabilization\cpu_undistort.rs:91:134
+   |
+91 | ...del: &DistortionModel, digital_lens: Option<&DistortionModel>, matrices: &[[f32; 14]], drawing: &[u8]) -> bool {
+   |                           ^^^^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_digital_lens`
+
+warning: field `calibration_gyro_indices` is never read
+   --> src\core\gyro_match.rs:157:5
+    |
+153 | struct OffsetResult {
+    |        ------------ field in this struct
+...
+157 |     calibration_gyro_indices: Vec<usize>,
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `gyroflow-core` (lib) generated 6 warnings (run `cargo fix --lib -p gyroflow-core` to apply 5 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.93s
+     Running `target\release\gyroflow.exe`
+__cdecl ThreadLocal<std::function<void *(const char *)>>::Data::~Data(void) thread: 46364
+__cdecl ThreadLocal<std::function<void *(const char *)>>::Data::~Data(void) thread: 46364
+__cdecl ThreadLocal<std::function<void *(const char *)>>::Data::~Data(void) thread: 46364

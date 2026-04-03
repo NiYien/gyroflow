@@ -466,17 +466,51 @@ Rectangle {
                             }
                         }
                     }
-                    LinkButton {
+                    // [queue-gyro-column T12] 渲染队列入口按钮：增大图标 + 数量角标 + 移动端暗色主题增强
+                    Item {
                         id: queueBtn;
-                        leftPadding: 10 * dpiScale;
-                        rightPadding: 10 * dpiScale;
-                        icon.width: 25 * dpiScale;
-                        icon.height: 25 * dpiScale;
-                        // textColor: styleTextColor;
+                        width: 44 * dpiScale;
+                        height: 44 * dpiScale;
                         anchors.verticalCenter: parent.verticalCenter;
-                        iconName: "queue";
-                        tooltip: qsTr("Render queue");
-                        onClicked: videoArea.queue.shown = !videoArea.queue.shown;
+                        // [T17] 移除了移动端圆形背景 Rectangle
+                        LinkButton {
+                            anchors.centerIn: parent;
+                            leftPadding: 10 * dpiScale;
+                            rightPadding: 10 * dpiScale;
+                            icon.width: 30 * dpiScale;
+                            icon.height: 30 * dpiScale;
+                            iconName: "queue";
+                            tooltip: qsTr("Render queue");
+                            onClicked: videoArea.queue.shown = !videoArea.queue.shown;
+                        }
+                        // [queue-gyro-column] 待处理数量角标
+                        property int queueItemCount: 0
+                        Connections {
+                            target: render_queue;
+                            function onQueue_changed(): void {
+                                queueBtn.queueItemCount = render_queue.queue.rowCount();
+                            }
+                        }
+                        Rectangle {
+                            visible: queueBtn.queueItemCount > 0;
+                            anchors.right: parent.right;
+                            anchors.top: parent.top;
+                            anchors.rightMargin: 2 * dpiScale;
+                            anchors.topMargin: 2 * dpiScale;
+                            width: Math.max(16 * dpiScale, badgeText.contentWidth + 8 * dpiScale);
+                            height: 16 * dpiScale;
+                            radius: 8 * dpiScale;
+                            color: styleAccentColor;
+                            BasicText {
+                                id: badgeText;
+                                anchors.centerIn: parent;
+                                text: queueBtn.queueItemCount;
+                                color: "#ffffff";
+                                font.pixelSize: 10 * dpiScale;
+                                font.bold: true;
+                                leftPadding: 0;
+                            }
+                        }
                     }
                 }
             }

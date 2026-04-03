@@ -196,45 +196,6 @@ MenuItem {
         settings.setValue("lensProfileFavorites", Object.keys(favorites).filter(v => v).join(","));
     }
 
-    LinkButton {
-        id: showSearchBtn;
-        visible: root.hasAutoLens && !root.manualExpand;
-        text: qsTr("Search for lens profile");
-        anchors.horizontalCenter: parent.horizontalCenter;
-        onClicked: {
-            root.manualExpand = true;
-            if (!root.lensProfilesListPrepared) {
-                controller.load_profiles(true);
-            }
-        }
-    }
-    SearchField {
-        id: search;
-        visible: !root.hasAutoLens || root.manualExpand;
-        placeholderText: root.lensProfilesListPrepared ? qsTr("Search...") : qsTr("Loading lens profiles...");
-        height: 25 * dpiScale;
-        width: parent.width;
-        topPadding: 5 * dpiScale;
-        profilesMenu: root;
-        onActiveFocusChanged: {
-            if (activeFocus && !root.lensProfilesListPrepared) {
-                controller.load_profiles(true);
-            }
-        }
-        onSelected: (item) => {
-            const lensPathOrId = item[1];
-            if (lensPathOrId.endsWith(".gyroflow")) {
-                window.videoArea.loadGyroflowData(JSON.parse(controller.get_preset_contents(lensPathOrId)), 0);
-            } else {
-                root.selected_manually = true;
-                controller.load_lens_profile(lensPathOrId);
-            }
-        }
-        popup.lv.delegate: LensProfileSearchDelegate {
-            popup: search.popup;
-            profilesMenu: root;
-        }
-    }
     Row {
         anchors.horizontalCenter: parent.horizontalCenter;
         spacing: 10 * dpiScale;
@@ -317,7 +278,6 @@ MenuItem {
     property bool hasUnitPixelFocalLength: false;
     property bool hasBuiltinProfile: false;
     property bool hasAutoLens: hasLensParams || hasBuiltinProfile;
-    property bool manualExpand: false;
 
     Connections {
         target: controller;
@@ -327,7 +287,6 @@ MenuItem {
                 root.hasFocalLength = !!additional_data.has_focal_length;
                 root.hasUnitPixelFocalLength = additional_data.hasOwnProperty("unit_pixel_focal_length");
                 root.hasBuiltinProfile = !!additional_data.has_builtin_profile;
-                root.manualExpand = false;
                 userFocalLength.value = 0;
             }
         }

@@ -36,8 +36,11 @@ Rectangle {
         enabled: root.visible;
         onEntered: (drag) => {
             if (!drag.urls.length) return;
-            const ext = drag.urls[0].toString().split(".").pop().toLowerCase();
-            drag.accepted = root.extensions.indexOf(ext) > -1;
+            const url = drag.urls[0].toString();
+            const ext = url.split(".").pop().toLowerCase();
+            // [queue-pair-ux T5] 无扩展名（可能是文件夹）也允许拖入
+            const hasExtension = url.includes(".");
+            drag.accepted = !hasExtension || root.extensions.indexOf(ext) > -1;
         }
         onDropped: (drop) => {
             root.loadFiles(drop.urls);

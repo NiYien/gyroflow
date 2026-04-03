@@ -22,8 +22,11 @@ pub struct GyroMatchInfo {
     pub created_at_ms: i64,
 }
 
-/// Input: manually specified calibration pair (video index + gyro index).
+/// Input: manually specified calibration pair (job_id + gyro index).
+/// 使用 job_id 而非 video_index，避免 remove/sort 后队列位置变化导致 pair 断裂。
+/// 调用 batch_match 前需将 job_id 转换为当前队列中的 video_index。
 pub struct ManualCalibrationPair {
+    pub job_id: u32,
     pub video_index: usize,
     pub gyro_index: usize,
 }
@@ -41,6 +44,7 @@ pub enum MatchStatus {
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     pub video_index: usize,
+    pub job_id: Option<u32>,  // [queue-lifecycle T4] 用于在 remove 后按 job_id 查找
     pub gyro_index: Option<usize>,
     pub status: MatchStatus,
     pub global_offset_ms: Option<i64>,
@@ -360,6 +364,7 @@ fn assign_gyro_to_videos(
                 None => {
                     return MatchResult {
                         video_index: vi,
+                        job_id: None,
                         gyro_index: None,
                         status: MatchStatus::NoCreationTime,
                         global_offset_ms: Some(global_offset),
@@ -398,6 +403,7 @@ fn assign_gyro_to_videos(
 
                     return MatchResult {
                         video_index: vi,
+                        job_id: None,
                         gyro_index: Some(gi),
                         status,
                         global_offset_ms: Some(global_offset),
@@ -409,6 +415,7 @@ fn assign_gyro_to_videos(
 
             MatchResult {
                 video_index: vi,
+                job_id: None,
                 gyro_index: None,
                 status: MatchStatus::Unmatched,
                 global_offset_ms: Some(global_offset),
@@ -541,6 +548,7 @@ pub fn batch_match(
                 .enumerate()
                 .map(|(i, v)| MatchResult {
                     video_index: i,
+                    job_id: None,
                     gyro_index: None,
                     status: if v.created_at_ms.is_some() {
                         MatchStatus::Unmatched

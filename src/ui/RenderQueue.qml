@@ -21,6 +21,24 @@ Item {
     property int pairingGyroIndex: -1
     property string pairingGyroFilename: ""
     property string matchWarning: ""
+    // [T14] 全局 matchExecuted 标志：是否已执行过 match
+    property bool matchExecuted: false
+    // [T21] debug: 追踪 matchExecuted 变化
+    onMatchExecutedChanged: console.log("[QML T21] matchExecuted changed to:", matchExecuted);
+    // [T19] match 版本计数器，每次 match 结果变化时递增，触发 delegate 属性重新求值
+    property int matchVersion: 0
+    // [queue-gyro-column] 左列宽度，有陀螺仪时展开
+    property real gyroColumnWidth: hasGyroFiles ? 65 * dpiScale : 0
+    Ease on gyroColumnWidth { }
+
+    // [queue-gyro-column] 格式化陀螺仪文件创建时间
+    function formatGyroTime(gyroIndex) {
+        if (gyroIndex < 0 || gyroIndex >= gyroFilesInfo.length) return "";
+        var ms = gyroFilesInfo[gyroIndex].created_at_ms;
+        if (ms === null || ms === undefined) return "??:??:??";
+        var d = new Date(ms);
+        return Qt.formatTime(d, "HH:mm:ss");
+    }
     property bool allGyroParsed: {
         if (gyroFilesInfo.length === 0) return false;
         for (let i = 0; i < gyroFilesInfo.length; i++) {
@@ -38,17 +56,36 @@ Item {
             }
             root.gyroFilesInfo = infos;
             root.hasGyroFiles = render_queue.has_gyro_files();
-            // T4: Sort when gyro files are added, restore when cleared
-            if (root.hasGyroFiles) {
-                render_queue.sort_jobs_by_created_at();
-            } else {
-                render_queue.restore_original_order();
-            }
+            // [T14] gyro 清除时重置 matchExecuted
+            if (!root.hasGyroFiles) root.matchExecuted = false;
+            // [queue-lifecycle T2] 始终按创建时间排序
+            render_queue.sort_jobs_by_created_at();
         }
         function onMatch_results_changed(): void {
-            // Trigger repaint of match status in delegates
-            lv.model = null;
-            lv.model = render_queue.queue;
+            // [T14] 更新全局 matchExecuted 标志
+            root.matchExecuted = render_queue.has_match_results();
+            // [T19] 递增版本计数器触发 delegate 属性重新求值（不重建 delegate）
+            root.matchVersion++;
+            // [T22] 只重置 matching 状态（遮罩由 match_apply_finished 关闭）
+            autoMatchBtn.matching = false;
+            // 检查未匹配项
+            Qt.callLater(function() {
+                let unmatchedCount = 0;
+                for (let i = 0; i < lv.count; i++) {
+                    let status = JSON.parse(render_queue.get_match_status_json(render_queue.queue[i].job_id));
+                    if (status.status === "Unmatched" || status.status === "NoCreationTime") {
+                        unmatchedCount++;
+                    }
+                }
+                if (unmatchedCount > 0) {
+                    root.matchWarning = qsTr("No calibration pair found for %1 video(s). Please pair manually.").arg(unmatchedCount);
+                }
+            });
+        }
+        // [T22] 匹配+数据加载全部完成时关闭遮罩
+        function onMatch_apply_finished(): void {
+            loader.active = false;
+            console.log("[QML T22] match_apply_finished: loader closed");
         }
         function onPairing_mode_changed(): void {
             if (!render_queue.is_in_pairing_mode()) {
@@ -80,6 +117,7 @@ Item {
     }
 
     BasicText {
+        id: titleText;
         y: 12 * dpiScale;
         x: 5 * dpiScale;
         text: qsTr("Render queue");
@@ -87,7 +125,54 @@ Item {
         font.bold: true;
     }
 
+    // [queue-gyro-column T11] Auto match / Clear 按钮移至标题下方独立行
+    Row {
+        id: topGyroButtons;
+        anchors.top: titleText.bottom;
+        anchors.topMargin: 8 * dpiScale;
+        x: 10 * dpiScale;
+        spacing: 8 * dpiScale;
+        height: root.hasGyroFiles ? 30 * dpiScale : 0;
+        visible: height > 0;
+        clip: true;
+        Ease on height { }
+
+        Button {
+            id: autoMatchBtn;
+            // [T21] matching 状态：点击后显示 "Matching..." 并禁用
+            property bool matching: false;
+            text: matching ? qsTr("Matching...") : qsTr("Auto match");
+            enabled: root.hasGyroFiles && root.allGyroParsed && !matching;
+            accent: true;
+            height: 30 * dpiScale;
+            font.pixelSize: 13 * dpiScale;
+            leftPadding: 16 * dpiScale;
+            rightPadding: 16 * dpiScale;
+            onClicked: {
+                matching = true;
+                root.matchWarning = "";
+                // [T22] 显示全屏匹配遮罩
+                loader.text = qsTr("Matching...");
+                loader.active = true;
+                // Timer 延迟让遮罩先显示
+                matchTimer.start();
+            }
+        }
+        Button {
+            text: qsTr("Clear");
+            height: 30 * dpiScale;
+            font.pixelSize: 13 * dpiScale;
+            leftPadding: 16 * dpiScale;
+            rightPadding: 16 * dpiScale;
+            onClicked: {
+                render_queue.clear_gyro_files();
+                root.matchWarning = "";
+            }
+        }
+    }
+
     LinkButton {
+        id: closeBtn;
         anchors.right: parent.right;
         width: 34 * dpiScale;
         height: 34 * dpiScale;
@@ -99,11 +184,11 @@ Item {
         onClicked: root.shown = false;
     }
 
-    Hr { width: parent.width - 10 * dpiScale; y: 35 * dpiScale; color: "#fff"; opacity: 0.3; }
+    Hr { width: parent.width - 10 * dpiScale; y: 35 * dpiScale + topGyroButtons.height + (topGyroButtons.height > 0 ? 8 * dpiScale : 0); color: "#fff"; opacity: 0.3; }
 
     Row {
         id: progressRow;
-        y: 55 * dpiScale;
+        y: 55 * dpiScale + topGyroButtons.height + (topGyroButtons.height > 0 ? 8 * dpiScale : 0);
         spacing: 10 * dpiScale;
         x: 10 * dpiScale;
         Column {
@@ -173,6 +258,10 @@ Item {
             function onAdded(job_id: real): void {
                 delete loader.pendingJobs[job_id];
                 loader.updateStatus();
+                if (r3dSeqLoader.waiting) {
+                    r3dSeqLoader.waiting = false;
+                    r3dSeqLoader.loadNext();
+                }
             }
             function onError(job_id: real, text: string, arg: string, callback: string): void {
                 if (job_id == render_queue.main_job_id || loader.pendingJobs[job_id]) {
@@ -185,6 +274,10 @@ Item {
                 }
                 delete loader.pendingJobs[job_id];
                 loader.updateStatus();
+                if (r3dSeqLoader.waiting) {
+                    r3dSeqLoader.waiting = false;
+                    r3dSeqLoader.loadNext();
+                }
             }
             function onRender_progress(job_id: real, progress: real, frame: int, total_frames: int, finished: bool, start_time: real, is_conversion: bool): void {
                 if (job_id == render_queue.main_job_id) {
@@ -355,54 +448,22 @@ Item {
         anchors.rightMargin: 10 * dpiScale;
         anchors.top: matchWarningBar.bottom;
         anchors.topMargin: 5 * dpiScale;
-        anchors.bottom: gyroButtonRow.top;
-        anchors.bottomMargin: 5 * dpiScale;
+        anchors.bottom: parent.bottom;
+        anchors.bottomMargin: 30 * dpiScale;  // [queue-gyro-column] 底部按钮已移到顶部，留底部工具栏空间
         clip: true;
         model: render_queue.queue;
-        Timer {
-            interval: 100;
-            running: !isCalibrator && window.exportSettings != null && window.sync != null;
-            onTriggered: {
-                Qt.callLater(() => {
-                    if (render_queue.restore_render_queue(window.getAdditionalProjectDataJson())) {
-                        messageBox(Modal.Info, qsTr("You have unfinished tasks in the render queue."), [
-                            { text: qsTr("Open render queue"), accent: true, clicked: function() {
-                                videoArea.queue.shown = true;
-                            } },
-                            { text: qsTr("Ok") }
-                        ]);
-                    }
-                });
-            }
-        }
-
-        Connections {
-            target: render_queue;
-            function onQueue_changed(): void {
-                render_queue.save_render_queue();
-            }
-            function onStatus_changed(): void {
-                render_queue.save_render_queue();
-            }
-        }
-        spacing: 5 * dpiScale;
+        // [queue-lifecycle T1] 移除了历史恢复 Timer 和 save Connections
+        // [T20] spacing 改为 0，间距由 delegate 内部 spacer 控制，确保同组颜色条连续
+        spacing: 0;
         QQC.ScrollIndicator.vertical: QQC.ScrollIndicator { }
 
-        property bool isDragging: false;
-        property int dragTargetIndex: -1;
-        Rectangle {
-            id: dragIndicator;
-            width: parent.width;
-            height: 3 * dpiScale;
-            radius: 2 * dpiScale;
-            color: styleAccentColor;
-            visible: opacity > 0;
-            opacity: lv.isDragging? 0.9 : 0;
-            Ease on opacity { duration: 300; }
-        }
+        // [queue-lifecycle T3] 移除了 isDragging / dragTargetIndex / dragIndicator（手动拖拽重排）
+        property bool isDragging: false  // 保留为常量 false，供外部引用（VideoArea.qml）
         delegate: Item {
             // https://doc.qt.io/qt-6/qtquick-tutorials-dynamicview-dynamicview3-example.html
-            implicitHeight: innerItm.height + 2*innerItm.y + messageAreaParent.height;
+            // [T20] 内部间距：同组(sameGyroAsNext)时无间距，否则 5px 间距
+            property real delegateSpacing: (dlg.isMatched && dlg.sameGyroAsNext) ? 0 : 5 * dpiScale
+            implicitHeight: innerItm.height + 2*innerItm.y + messageAreaParent.height + delegateSpacing;
             width: parent? parent.width : 0;
             id: dlg;
             property real progress: current_frame / total_frames;
@@ -416,23 +477,23 @@ Item {
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
 
             // T5: Match status for this delegate
-            property var matchStatus: root.hasGyroFiles ? JSON.parse(render_queue.get_match_status_json(job_id)) : ({status: "none"})
+            // [T19] matchVersion 依赖触发器：match 结果变化时强制重新求值
+            property var matchStatus: { root.matchVersion; return root.hasGyroFiles ? JSON.parse(render_queue.get_match_status_json(job_id)) : ({status: "none"}); }
             property string matchState: matchStatus.status || "none"
             property int matchGyroIndex: matchStatus.gyro_index !== undefined && matchStatus.gyro_index !== null ? matchStatus.gyro_index : -1
             property string matchColor: matchGyroIndex >= 0 ? root.gyroColors[matchGyroIndex % root.gyroColors.length] : "transparent"
             property string gyroFilename: matchStatus.gyro_filename || ""
-            property int manualGyroIndex: render_queue.get_manual_pair_gyro_index(job_id)
-            // Check if adjacent items share the same gyro
-            property bool sameGyroAsPrev: {
-                if (index <= 0 || matchGyroIndex < 0) return false;
-                const prevItem = lv.itemAtIndex(index - 1);
-                return prevItem && prevItem.matchGyroIndex === matchGyroIndex;
-            }
-            property bool sameGyroAsNext: {
-                if (matchGyroIndex < 0) return false;
-                const nextItem = lv.itemAtIndex(index + 1);
-                return nextItem && nextItem.matchGyroIndex === matchGyroIndex;
-            }
+            property int manualGyroIndex: { root.matchVersion; return render_queue.get_manual_pair_gyro_index(job_id); }
+            // [queue-gyro-column T8, T14] 双模式属性：已匹配 vs 未匹配
+            // isMatched 改为全局 matchExecuted（执行过 match 后所有 delegate 进入已匹配模式）
+            property bool isMatched: root.matchExecuted
+            property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
+            property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
+            // [T15] 通过 Rust 端直接判断相邻 item 是否同一 gyro 组，
+            // 避免 QML 绑定时序问题和 delegate 创建顺序问题。
+            // [T22] 从缓存读取 sameGyro 状态（match 完成后一次性计算，不受渲染/queue变化影响）
+            property bool sameGyroAsPrev: { root.matchVersion; return root.matchExecuted && render_queue.get_cached_same_gyro_prev(job_id); }
+            property bool sameGyroAsNext: { root.matchVersion; return root.matchExecuted && render_queue.get_cached_same_gyro_next(job_id); }
             onProgressChanged: {
                 const times = Util.calculateTimesAndFps(progress, current_frame, start_timestamp);
                 if (times !== false) {
@@ -459,9 +520,9 @@ Item {
                 }
             }
 
-            property bool dragging: false;
+            // [queue-lifecycle T3] 移除了 dragging 属性（不再支持拖拽重排）
             // T7: Lower opacity for already-paired items when in pairing mode
-            opacity: dragging ? 0.5 : (root.pairingGyroIndex >= 0 && dlg.matchState === "Matched" ? 0.5 : 1);
+            opacity: (root.pairingGyroIndex >= 0 && dlg.matchState === "Matched" ? 0.5 : 1);
             Ease on opacity { }
 
             ContextMenuMouseArea {
@@ -477,39 +538,7 @@ Item {
                         root.pairingGyroFilename = "";
                         return;
                     }
-                    if ((mouse.modifiers & Qt.ControlModifier) && mouse.button === Qt.LeftButton) {
-                        dragIndicator.y = lv.mapFromItem(dlg, 0, 0).y;
-                        lv.isDragging = dlg.dragging = true;
-                        lv.dragTargetIndex = index;
-                    }
-                }
-                onReleased: {
-                    if (dlg.dragging) {
-                        let diff = lv.dragTargetIndex - index;
-                        if (lv.dragTargetIndex > index) {
-                            diff--;
-                        }
-                        render_queue.move_item(job_id, diff);
-                    }
-                    lv.isDragging = dlg.dragging = false;
-                    lv.dragTargetIndex = -1;
-                }
-
-                drag.target: dlg.dragging? parent : undefined;
-                drag.axis: Drag.YAxis;
-            }
-            Drag.active: dragging;
-            DropArea {
-                anchors.fill: parent;
-                enabled: lv.isDragging;
-                onEntered: (drag) => {
-                    if (drag.y > dlg.height / 2) {
-                        lv.dragTargetIndex = index + 1;
-                        dragIndicator.y = lv.mapFromItem(dlg, 0, dlg.height + lv.spacing).y;
-                    } else {
-                        lv.dragTargetIndex = index;
-                        dragIndicator.y = lv.mapFromItem(dlg, 0, 0).y;
-                    }
+                    // [queue-lifecycle T3] 移除了 Ctrl+拖拽重排逻辑
                 }
             }
             Menu {
@@ -533,16 +562,7 @@ Item {
                         root.shown = false;
                     }
                 }
-                Action {
-                    iconName: "arrow-up";
-                    text: qsTr("Move up");
-                    onTriggered: render_queue.move_item(job_id, -1);
-                }
-                Action {
-                    iconName: "arrow-down";
-                    text: qsTr("Move down");
-                    onTriggered: render_queue.move_item(job_id, 1);
-                }
+                // [queue-lifecycle T3] 移除了 "Move up" / "Move down" 手动排序选项
                 Action {
                     iconName: isInProgress? "close" : "spinner";
                     text: isInProgress? qsTr("Stop") : qsTr("Reset status");
@@ -577,12 +597,7 @@ Item {
                         }
                     }
                 }
-                // T9: Unpair action
-                Action {
-                    text: qsTr("Unpair");
-                    enabled: dlg.matchState === "Matched" || dlg.matchState === "CalibrationPair";
-                    onTriggered: render_queue.unpair_video(job_id);
-                }
+                // [queue-pair-ux T2] Unpair 选项已移除，Rust 端 unpair_video() 保留
             }
 
             Rectangle {
@@ -593,18 +608,57 @@ Item {
                 border.width: window.isMobileLayout && !statusBg.shown? 1 * dpiScale : 0;
                 border.color: "#70ffffff";
             }
-            // T5: Embedded gyro color bar
-            Rectangle {
-                id: gyroColorBar;
+            // [queue-gyro-column] 左列 gyro 区域（从 gyroColorBar 改造而来）
+            // [queue-gyro-column T8] 双模式：已匹配时按 matchGyroIndex 对齐，未匹配时按行 index 填入
+            Item {
+                id: gyroArea;
                 visible: width > 0;
-                width: root.hasGyroFiles && dlg.matchGyroIndex >= 0 && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime" ? 6 * dpiScale : 0;
+                width: root.gyroColumnWidth;
                 anchors.left: parent.left;
                 anchors.top: parent.top;
+                // [T22] 颜色条填满整个 delegate 高度（含 spacing 区域），
+                // 同组时 delegateSpacing=0 自然无间隙，不同组时 spacing 区域也着色避免视觉断裂
                 anchors.bottom: parent.bottom;
-                anchors.topMargin: dlg.sameGyroAsPrev ? -lv.spacing : 0;
-                color: dlg.matchColor;
-                radius: (dlg.sameGyroAsPrev || dlg.sameGyroAsNext) ? 0 : 3 * dpiScale;
                 Ease on width { }
+
+                // 颜色背景（半透明），独立 Rectangle 避免影响文字 opacity
+                // [queue-gyro-column T8] 已匹配用 matchColor/0.3，未匹配用 gyroColors[unmatchedGyroIndex]/0.15
+                Rectangle {
+                    anchors.fill: parent;
+                    color: {
+                        if (dlg.isMatched) return dlg.matchColor;
+                        if (dlg.unmatchedGyroIndex >= 0) return root.gyroColors[dlg.unmatchedGyroIndex % root.gyroColors.length];
+                        return "transparent";
+                    }
+                    opacity: {
+                        if (dlg.isMatched) return (style === "light" ? 0.2 : 0.3);
+                        if (dlg.unmatchedGyroIndex >= 0) return (style === "light" ? 0.1 : 0.15);
+                        return 0;
+                    }
+                    radius: (dlg.isMatched && (dlg.sameGyroAsPrev || dlg.sameGyroAsNext)) ? 0 : 3 * dpiScale;
+                    Ease on opacity { }
+                }
+
+                // [queue-gyro-column T8+T10] 时间文字叠加，置顶对齐
+                // 已匹配: 仅组内第一行显示（!sameGyroAsPrev）
+                // 未匹配: 每行都显示（每个 gyro 独占一行）
+                BasicText {
+                    id: gyroTimeText;
+                    anchors.top: parent.top;
+                    anchors.topMargin: 4 * dpiScale;
+                    anchors.horizontalCenter: parent.horizontalCenter;
+                    visible: root.hasGyroFiles && dlg.displayGyroIndex >= 0
+                             && (dlg.isMatched ? (dlg.matchGyroIndex >= 0 && !dlg.sameGyroAsPrev) : true);
+                    // [T22] debug: 追踪时间文字可见性变化
+                    onVisibleChanged: if (visible && dlg.isMatched) console.log("[QML T22] gyroTimeText VISIBLE job_id=" + job_id + " matchGyroIdx=" + dlg.matchGyroIndex + " sameAsPrev=" + dlg.sameGyroAsPrev + " file=" + input_filename);
+                    text: root.formatGyroTime(dlg.displayGyroIndex);
+                    color: style === "light" ? "#111111" : "#ffffff";
+                    font.pixelSize: 11 * dpiScale;
+                    font.bold: true;
+                    leftPadding: 0;
+                }
+
+                // [T20] 断开分隔条已移至 gyroArea 外部的 separatorCol
 
                 // T6: Tooltip showing gyro filename and time range
                 MouseArea {
@@ -613,15 +667,48 @@ Item {
                     acceptedButtons: Qt.LeftButton | Qt.RightButton;
                     // T11: Right-click to enter pairing mode
                     onClicked: (mouse) => {
-                        if (mouse.button === Qt.RightButton && dlg.matchGyroIndex >= 0) {
-                            root.pairingGyroIndex = dlg.matchGyroIndex;
-                            root.pairingGyroFilename = dlg.gyroFilename;
-                            render_queue.enter_pairing_mode(dlg.matchGyroIndex);
+                        if (mouse.button === Qt.RightButton && dlg.displayGyroIndex >= 0) {
+                            let gIdx = dlg.displayGyroIndex;
+                            root.pairingGyroIndex = gIdx;
+                            root.pairingGyroFilename = dlg.isMatched ? dlg.gyroFilename
+                                : (gIdx < root.gyroFilesInfo.length ? root.gyroFilesInfo[gIdx].filename : "");
+                            render_queue.enter_pairing_mode(gIdx);
                         }
                     }
                     ToolTip {
-                        text: dlg.gyroFilename + (dlg.matchStatus.gyro_start_ms !== undefined ? "\n" + (dlg.matchStatus.gyro_start_ms / 1000).toFixed(1) + "s - " + (dlg.matchStatus.gyro_end_ms / 1000).toFixed(1) + "s" : "");
-                        visible: parent.containsMouse && dlg.gyroFilename;
+                        text: {
+                            if (dlg.isMatched) {
+                                return dlg.gyroFilename + (dlg.matchStatus.gyro_start_ms !== undefined ? "\n" + (dlg.matchStatus.gyro_start_ms / 1000).toFixed(1) + "s - " + (dlg.matchStatus.gyro_end_ms / 1000).toFixed(1) + "s" : "");
+                            } else if (dlg.unmatchedGyroIndex >= 0 && dlg.unmatchedGyroIndex < root.gyroFilesInfo.length) {
+                                return root.gyroFilesInfo[dlg.unmatchedGyroIndex].filename;
+                            }
+                            return "";
+                        }
+                        visible: parent.containsMouse && text.length > 0;
+                    }
+                }
+            }
+            // [T20] 隔离列：gyroArea 和视频列之间，未匹配时显示斜线纹理
+            Item {
+                id: separatorCol;
+                property bool shouldShow: root.hasGyroFiles && !dlg.isMatched && dlg.unmatchedGyroIndex >= 0;
+                visible: shouldShow;
+                onShouldShowChanged: if (shouldShow) console.log("[QML T21] separatorCol visible for job_id=" + job_id + " isMatched=" + dlg.isMatched + " matchExecuted=" + root.matchExecuted + " unmatchedGyroIndex=" + dlg.unmatchedGyroIndex);
+                width: visible ? 12 * dpiScale : 0;
+                anchors.left: gyroArea.right;
+                anchors.top: parent.top;
+                anchors.bottom: parent.bottom;
+                clip: true;
+                // 斜线纹理背景
+                Repeater {
+                    model: Math.ceil(separatorCol.height / (6 * dpiScale)) + 1
+                    Rectangle {
+                        x: 0;
+                        y: index * 6 * dpiScale;
+                        width: separatorCol.width;
+                        height: 3 * dpiScale;
+                        color: styleTextColor;
+                        opacity: index % 2 === 0 ? 0.15 : 0;
                     }
                 }
             }
@@ -747,7 +834,8 @@ Item {
             }
             Item {
                 id: innerItm;
-                x: 5 * dpiScale + gyroColorBar.width;
+                // [T20] x 考虑隔离列宽度
+                x: 5 * dpiScale + gyroArea.width + separatorCol.width;
                 width: parent.width - x - 5 * dpiScale;
                 height: textColumn.height + 20 * dpiScale;
                 Image {
@@ -800,7 +888,7 @@ Item {
                         spacing: 5 * dpiScale;
                         BasicText {
                             visible: dlg.manualGyroIndex >= 0;
-                            text: "⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "");
+                            text: qsTr("Manual") + " ⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "");
                             color: "#f0c040";
                             font.pixelSize: basicTextSize;
                             font.bold: true;
@@ -827,7 +915,8 @@ Item {
                     anchors.rightMargin: 10 * dpiScale;
                     spacing: 6 * dpiScale;
                     anchors.verticalCenter: parent.verticalCenter;
-                    visible: !window.isMobileLayout;
+                    // [T19] 渲染完成后隐藏进度/时间信息
+                    visible: !window.isMobileLayout && !dlg.isFinished;
 
                     BasicText {
                         leftPadding: 0;
@@ -919,56 +1008,17 @@ Item {
         }
     }
 
-    // T6: Auto match and clear gyro buttons
-    Row {
-        id: gyroButtonRow;
-        x: 10 * dpiScale;
-        anchors.bottom: parent.bottom;
-        anchors.bottomMargin: 30 * dpiScale;
-        height: root.hasGyroFiles ? 35 * dpiScale : 0;
-        visible: height > 0;
-        clip: true;
-        Ease on height { }
-        spacing: 10 * dpiScale;
-        width: parent.width - 20 * dpiScale;
+    // [queue-gyro-column] 旧的底部 gyroButtonRow 已移至顶部 topGyroButtons
 
-        Button {
-            text: qsTr("Auto match");
-            enabled: root.hasGyroFiles && root.allGyroParsed;
-            accent: true;
-            height: 25 * dpiScale;
-            font.pixelSize: 12 * dpiScale;
-            leftPadding: 12 * dpiScale;
-            rightPadding: 12 * dpiScale;
-            onClicked: {
-                root.matchWarning = "";
-                render_queue.batch_match_gyro();
-                // T10: Check for unmatched items after matching
-                Qt.callLater(function() {
-                    let unmatchedCount = 0;
-                    for (let i = 0; i < lv.count; i++) {
-                        let status = JSON.parse(render_queue.get_match_status_json(render_queue.queue[i].job_id));
-                        if (status.status === "Unmatched" || status.status === "NoCreationTime") {
-                            unmatchedCount++;
-                        }
-                    }
-                    if (unmatchedCount > 0) {
-                        root.matchWarning = qsTr("No calibration pair found for %1 video(s). Please pair manually.").arg(unmatchedCount);
-                    }
-                });
-            }
-        }
-        Button {
-            text: qsTr("Clear gyro");
-            height: 25 * dpiScale;
-            font.pixelSize: 12 * dpiScale;
-            leftPadding: 12 * dpiScale;
-            rightPadding: 12 * dpiScale;
-            onClicked: {
-                render_queue.clear_gyro_files();
-                root.matchWarning = "";
-            }
-        }
+    // [queue-gyro-column] 空状态拖拽提示
+    BasicText {
+        visible: lv.count === 0;
+        text: qsTr("Drop video files or gyroscope data here");
+        anchors.centerIn: lv;
+        color: styleTextColor;
+        opacity: 0.5;
+        font.pixelSize: 14 * dpiScale;
+        leftPadding: 0;
     }
 
     DropTarget {
@@ -1024,20 +1074,31 @@ Item {
             const nc = (a,b) => ne(a).localeCompare(ne(b));
             urls.sort(nc);
 
-            for (const url of urls) {
+            // R3D files must be loaded sequentially (REDline SDK doesn't support concurrent decoding)
+            const r3dUrls = urls.filter(u => u.toString().toLowerCase().endsWith(".r3d"));
+            const otherUrls = urls.filter(u => !u.toString().toLowerCase().endsWith(".r3d"));
+            for (const url of otherUrls) {
                 const job_id = render_queue.add_file(url.toString(), "", additional);
                 loader.pendingJobs[job_id] = true;
             }
-            loader.updateStatus();
+            if (otherUrls.length > 0) loader.updateStatus();
+            if (r3dUrls.length > 0) {
+                r3dSeqLoader.startSequential(r3dUrls, additional);
+            }
+            // [queue-lifecycle T2] 添加文件后按创建时间自动排序
+            render_queue.sort_jobs_by_created_at();
         }
         onLoadFiles: (urls) => {
             if (!urls.length) return;
-            // T1: Classify files — .bin goes to gyro, others to video queue
+            // [queue-pair-ux T4] 分类文件：.bin 为陀螺仪文件，无扩展名尝试作为文件夹，其他为视频
             let videoUrls = [];
             for (const url of urls) {
                 const fname = filesystem.get_filename(url).toLowerCase();
                 if (fname.endsWith(".bin")) {
                     render_queue.add_gyro_file(url.toString());
+                } else if (!fname.includes(".")) {
+                    // 无扩展名，可能是文件夹，交给 Rust 端判断
+                    render_queue.add_gyro_folder(url.toString());
                 } else {
                     videoUrls.push(url);
                 }
@@ -1160,10 +1221,47 @@ Item {
             Action { checked: settings.value("showQueueWhenAdding", true); text: qsTr("Show queue when adding an item"); onTriggered: { checked = !checked; settings.setValue("showQueueWhenAdding", checked); } }
             Action { text: qsTr("Clear render queue"); onTriggered: {
                 messageBox(Modal.Warning, qsTr("Are you sure you want to remove all items from the render queue?"), [
-                    { text: qsTr("Yes"), clicked: render_queue.clear },
+                    { text: qsTr("Yes"), clicked: function() {
+                        render_queue.clear();
+                        // [queue-lifecycle T5] 清空队列时同时清空陀螺仪和 match 警告
+                        render_queue.clear_gyro_files();
+                        root.matchWarning = "";
+                    }},
                     { text: qsTr("No"), accent: true },
                 ]);
             } }
+        }
+    }
+
+    // [T22] 匹配延迟 Timer，放在 root 级别避免 Button 嵌套问题
+    Timer {
+        id: matchTimer;
+        interval: 100;
+        onTriggered: render_queue.batch_match_gyro();
+    }
+
+    // R3D sequential loader: loads R3D files one at a time to avoid REDline SDK concurrent crash
+    QtObject {
+        id: r3dSeqLoader;
+        property var queue: []
+        property string additional: ""
+        property bool waiting: false
+        function startSequential(urls: list<url>, additionalData: string): void {
+            queue = [...urls];
+            additional = additionalData;
+            waiting = false;
+            loadNext();
+        }
+        function loadNext(): void {
+            if (queue.length === 0) {
+                render_queue.sort_jobs_by_created_at();
+                return;
+            }
+            waiting = true;
+            const url = queue.shift();
+            const job_id = render_queue.add_file(url.toString(), "", additional);
+            loader.pendingJobs[job_id] = true;
+            loader.updateStatus();
         }
     }
 

@@ -55,7 +55,9 @@ struct Job {
     additional_data: String,
     cancel_flag: Arc<AtomicBool>,
     project_data: Option<String>,
-    stab: Option<Arc<StabilizationManager>>
+    stab: Option<Arc<StabilizationManager>>,
+    // [T20] 保存 video_created_at，stab 释放后排序仍可用
+    video_created_at: Option<i64>,
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -193,6 +195,8 @@ struct GyroFileInfo {
     duration_ms: Option<f64>,
     parsed: bool,
     error: Option<String>,
+    /// 缓存完整的 telemetry 数据，避免重复解析原始文件
+    cached_metadata: Option<Arc<core::gyro_source::FileMetadata>>,
 }
 
 #[derive(Default, QObject)]
@@ -290,10 +294,15 @@ pub struct RenderQueue {
     gyro_files: Vec<GyroFileInfo>,
     match_results: Option<core::gyro_match::BatchMatchResult>,
     pairing_mode_gyro_index: Option<usize>,
+    // [queue-lifecycle T2] original_job_order 已废弃，不再保存/恢复原始顺序
+    #[allow(dead_code)]
     original_job_order: Vec<u32>,
     manual_pairs: Vec<core::gyro_match::ManualCalibrationPair>,
+    // [T22] 缓存每个 job 的 sameGyroAsPrev/Next，match 完成后一次性计算
+    same_gyro_cache: HashMap<u32, (bool, bool)>,  // job_id -> (sameAsPrev, sameAsNext)
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
+    add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
     remove_gyro_file: qt_method!(fn(&mut self, index: usize)),
     clear_gyro_files: qt_method!(fn(&mut self)),
     get_gyro_file_count: qt_method!(fn(&self) -> usize),
@@ -305,14 +314,23 @@ pub struct RenderQueue {
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
+    get_adjacent_gyro_index: qt_method!(fn(&self, job_id: u32, offset: i32) -> i32),
     enter_pairing_mode: qt_method!(fn(&mut self, gyro_index: usize)),
     exit_pairing_mode: qt_method!(fn(&mut self)),
     is_in_pairing_mode: qt_method!(fn(&self) -> bool),
     sort_jobs_by_created_at: qt_method!(fn(&mut self)),
     restore_original_order: qt_method!(fn(&mut self)),
+    has_match_results: qt_method!(fn(&self) -> bool),
+    is_same_gyro_as_prev: qt_method!(fn(&self, job_id: u32) -> bool),
+    is_same_gyro_as_next: qt_method!(fn(&self, job_id: u32) -> bool),
+    // [T22] 缓存版：从 same_gyro_cache 读取，不实时查询
+    get_cached_same_gyro_prev: qt_method!(fn(&self, job_id: u32) -> bool),
+    get_cached_same_gyro_next: qt_method!(fn(&self, job_id: u32) -> bool),
 
     pub gyro_files_changed: qt_signal!(),
     pub match_results_changed: qt_signal!(),
+    // [T22] 匹配+数据加载全部完成时触发（区别于 match_results_changed 可能在算法完成时就触发）
+    pub match_apply_finished: qt_signal!(),
     pub pairing_mode_changed: qt_signal!(),
 }
 
@@ -512,13 +530,16 @@ impl RenderQueue {
         render_options.input_url = stab.input_file.read().url.clone();
         render_options.input_filename = filesystem::get_filename(&stab.input_file.read().url);
 
+        // [T20] 在 stab 释放前保存 video_created_at
+        let video_created_at = stab.params.read().video_created_at;
         self.jobs.insert(job_id, Job {
             queue_index: 0,
             render_options,
             additional_data,
             cancel_flag: Default::default(),
             project_data,
-            stab: Some(stab.clone())
+            stab: Some(stab.clone()),
+            video_created_at,
         });
         self.update_queue_indices();
 
@@ -794,41 +815,11 @@ impl RenderQueue {
     }
 
     pub fn save_render_queue(&self) {
-        let mut all = Vec::new();
-        for v in self.queue.borrow().iter() {
-            if v.total_frames > 0 && v.status != JobStatus::Finished {
-                if let Ok(data) = serde_json::from_str(&self.get_gyroflow_data(v.job_id).to_string()) as serde_json::Result<serde_json::Value> {
-                    all.push(data);
-                }
-            }
-        }
-        gyroflow_core::settings::set("renderQueue", serde_json::to_value(&all).unwrap_or_default());
+        // [queue-lifecycle T1] 不再持久化队列状态
     }
 
-    pub fn restore_render_queue(&mut self, additional_data: String) -> bool {
-        let rq = gyroflow_core::settings::get("renderQueue", Default::default());
-        let rqv = match rq {
-            serde_json::Value::String(v) => serde_json::from_str(&v) as serde_json::Result<Vec<serde_json::Value>>,
-            serde_json::Value::Array(v) => Ok(v),
-            _ => return false
-        };
-        if let Ok(val) = rqv {
-            for x in &val {
-                if let Some(project) = x.get("project_file").and_then(|x| x.as_str()) {
-                    #[allow(unused_mut)]
-                    let mut project = project.to_string();
-                    #[cfg(any(target_os = "macos", target_os = "ios"))]
-                    if let Some(bookmark) = x.get("project_file_bookmark").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
-                        let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(bookmark, None);
-                        if !resolved.is_empty() { project = resolved; }
-                    }
-                    self.add_file(project, String::new(), additional_data.clone());
-                } else if let Ok(data) = serde_json::to_string(&x) {
-                    self.add_file(data, String::new(), additional_data.clone());
-                }
-            }
-            return !val.is_empty();
-        }
+    pub fn restore_render_queue(&mut self, _additional_data: String) -> bool {
+        // [queue-lifecycle T1] 不再从 settings 恢复历史队列
         false
     }
 
@@ -1441,6 +1432,15 @@ impl RenderQueue {
                                         let _ = stab.load_gyro_data(file.get_file(), filesize, &gyro_url, is_main_video, &Default::default(), |_|(), Arc::new(AtomicBool::new(false)));
                                     }
                                 }
+                                // Prefer telemetry-parser's creation_date_utc over ffmpeg's creation_time
+                                {
+                                    let file_metadata = stab.gyro.read().file_metadata.read().clone();
+                                    if let Some(ref utc_str) = file_metadata.creation_date_utc {
+                                        if let Some(ms) = parse_creation_date_to_millis(utc_str) {
+                                            stab.params.write().video_created_at = Some(ms);
+                                        }
+                                    }
+                                }
 
                                 let camera_id = stab.camera_id.read();
 
@@ -1893,6 +1893,58 @@ impl RenderQueue {
         });
     }
 
+    // [queue-pair-ux T3] 文件夹递归遍历，添加所有 *_mix.bin 陀螺仪文件
+    fn add_gyro_folder(&mut self, folder_url: String) {
+        let path = filesystem::url_to_path(&folder_url);
+        let dir = std::path::Path::new(&path);
+        if !dir.is_dir() {
+            ::log::warn!("[add_gyro_folder] 路径不是目录，忽略: {}", path);
+            return;
+        }
+        ::log::info!("[add_gyro_folder] 开始扫描文件夹: {}", path);
+        let files = self.scan_gyro_folder(dir, 0);
+        ::log::info!("[add_gyro_folder] 扫描完成，共找到 {} 个 _mix.bin 文件", files.len());
+        for f in files {
+            let url = filesystem::path_to_url(&f.to_string_lossy());
+            self.add_gyro_file(url);
+        }
+    }
+
+    fn scan_gyro_folder(&self, dir: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
+        let mut result = Vec::new();
+        if depth > 3 { return result; }
+        match std::fs::read_dir(dir) {
+            Ok(entries) => {
+                let mut files: Vec<std::path::PathBuf> = Vec::new();
+                let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        subdirs.push(p);
+                    } else if p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|n| n.ends_with("_mix.bin"))
+                        .unwrap_or(false)
+                    {
+                        files.push(p);
+                    }
+                }
+                files.sort();
+                subdirs.sort();
+                ::log::info!("[scan_gyro_folder] depth={}, dir={}, 文件={}, 子目录={}",
+                    depth, dir.display(), files.len(), subdirs.len());
+                result.extend(files);
+                for d in subdirs {
+                    result.extend(self.scan_gyro_folder(&d, depth + 1));
+                }
+            }
+            Err(e) => {
+                ::log::warn!("[scan_gyro_folder] 无法读取目录 {}: {:?}", dir.display(), e);
+            }
+        }
+        result
+    }
+
     fn remove_gyro_file(&mut self, index: usize) {
         if index < self.gyro_files.len() {
             self.gyro_files.remove(index);
@@ -1924,6 +1976,7 @@ impl RenderQueue {
             }
         }
 
+        ::log::info!("[clear_gyro_files] cleared {} gyro files and caches", self.gyro_files.len());
         self.gyro_files.clear();
         self.match_results = None;
         self.manual_pairs.clear();
@@ -1956,25 +2009,32 @@ impl RenderQueue {
         let t_total = std::time::Instant::now();
         let t0 = std::time::Instant::now();
         let job_ids = self.get_ordered_job_ids();
+        ::log::info!("[batch_match T16] ordered job_ids at match start: {:?}", job_ids);
 
         // Collect video metadata from jobs
         let mut videos = Vec::new();
-        for &job_id in &job_ids {
+        for (vi, &job_id) in job_ids.iter().enumerate() {
             if let Some(job) = self.jobs.get(&job_id) {
                 if let Some(stab) = &job.stab {
                     let params = stab.params.read();
+                    let created_at = params.video_created_at;
+                    ::log::info!("[batch_match T20] video[{}] job_id={}, created_at={:?}, file={}",
+                        vi, job_id, created_at, filesystem::get_filename(&stab.input_file.read().url));
                     videos.push(core::gyro_match::VideoMatchInfo {
                         path: stab.input_file.read().url.clone(),
                         duration_ms: params.duration_ms,
-                        created_at_ms: params.video_created_at,
+                        created_at_ms: created_at,
                         pre_recording_ms: 0.0,
                     });
                 } else {
-                    // Placeholder for jobs without stab
+                    // [T20] stab 已释放（渲染完成后），使用 job.video_created_at fallback
+                    let created_at = job.video_created_at;
+                    ::log::info!("[batch_match T20] video[{}] job_id={}, created_at={:?} (stab released, using cached)",
+                        vi, job_id, created_at);
                     videos.push(core::gyro_match::VideoMatchInfo {
-                        path: String::new(),
+                        path: job.render_options.input_url.clone(),
                         duration_ms: 0.0,
-                        created_at_ms: None,
+                        created_at_ms: created_at,
                         pre_recording_ms: 0.0,
                     });
                 }
@@ -1993,10 +2053,25 @@ impl RenderQueue {
         ::log::info!("[batch_match] collect metadata: {:.1}ms ({} videos, {} gyros parsed/{} total)",
             t0.elapsed().as_secs_f64() * 1000.0, videos.len(), gyros.len(), self.gyro_files.len());
 
-        let manual = if self.manual_pairs.is_empty() { None } else { Some(self.manual_pairs.as_slice()) };
+        // 将 manual_pairs 中的 job_id 转换为当前队列中的 video_index
+        // 这样即使 remove/sort 改变了队列顺序，pair 关系仍然正确
+        let mut resolved_pairs: Vec<core::gyro_match::ManualCalibrationPair> = Vec::new();
+        for p in &self.manual_pairs {
+            if let Some(video_index) = job_ids.iter().position(|&id| id == p.job_id) {
+                resolved_pairs.push(core::gyro_match::ManualCalibrationPair {
+                    job_id: p.job_id,
+                    video_index,
+                    gyro_index: p.gyro_index,
+                });
+                ::log::info!("[batch_match] manual pair: job_id={} -> video_index={}, gyro_index={}", p.job_id, video_index, p.gyro_index);
+            } else {
+                ::log::warn!("[batch_match] manual pair job_id={} not found in queue, skipping", p.job_id);
+            }
+        }
+        let manual = if resolved_pairs.is_empty() { None } else { Some(resolved_pairs.as_slice()) };
 
         let t1 = std::time::Instant::now();
-        let result = core::gyro_match::batch_match(&videos, &gyros, manual);
+        let mut result = core::gyro_match::batch_match(&videos, &gyros, manual);
         ::log::info!("[batch_match] algorithm: {:.1}ms (offset={:?}, error={:?})",
             t1.elapsed().as_secs_f64() * 1000.0, result.global_offset_ms, result.error);
         for r in &result.results {
@@ -2004,6 +2079,10 @@ impl RenderQueue {
                 ::log::info!("[batch_match]   video[{}] -> gyro[{}] {:?} range=[{:.0?}..{:.0?}]",
                     r.video_index, r.gyro_index.unwrap(), r.status, r.gyro_start_ms, r.gyro_end_ms);
             }
+        }
+        // [queue-lifecycle T4] 为每个 match result 填入 job_id，以便 remove 后仍能按 job_id 查找
+        for r in &mut result.results {
+            r.job_id = job_ids.get(r.video_index).copied();
         }
         self.match_results = Some(result);
         self.match_results_changed();
@@ -2038,10 +2117,9 @@ impl RenderQueue {
             gyro_start_ms: Option<f64>,
             gyro_end_ms: Option<f64>,
             stab: Arc<StabilizationManager>,
-            gyro_path: String,
         }
         let mut apply_items: Vec<ApplyInfo> = Vec::new();
-        let mut unique_gyro_paths: HashMap<usize, (String, f64, (usize, usize))> = HashMap::new();
+        let mut unique_gyro_paths: HashMap<usize, (String, f64, (usize, usize), Option<(f64, f64)>)> = HashMap::new();
 
         for result in &results {
             let gyro_batch_idx = match result.gyro_index {
@@ -2068,13 +2146,25 @@ impl RenderQueue {
                 None => continue,
             };
 
-            // Record unique gyro files to parse
-            if !unique_gyro_paths.contains_key(&gyro_files_idx) {
+            // Record unique gyro files to parse, with merged time range across all videos
+            if let Some(entry) = unique_gyro_paths.get_mut(&gyro_files_idx) {
+                // Merge time range: expand to cover all videos using this gyro file
+                if let (Some(start), Some(end)) = (result.gyro_start_ms, result.gyro_end_ms) {
+                    entry.3 = Some((
+                        entry.3.map_or(start, |(s, _)| s.min(start)),
+                        entry.3.map_or(end, |(_, e)| e.max(end)),
+                    ));
+                }
+            } else {
                 let (fps, size) = {
                     let params = stab.params.read();
                     (params.fps, params.size)
                 };
-                unique_gyro_paths.insert(gyro_files_idx, (gyro_path.clone(), fps, size));
+                let time_range = match (result.gyro_start_ms, result.gyro_end_ms) {
+                    (Some(s), Some(e)) => Some((s, e)),
+                    _ => None,
+                };
+                unique_gyro_paths.insert(gyro_files_idx, (gyro_path.clone(), fps, size, time_range));
             }
 
             apply_items.push(ApplyInfo {
@@ -2083,14 +2173,34 @@ impl RenderQueue {
                 gyro_start_ms: result.gyro_start_ms,
                 gyro_end_ms: result.gyro_end_ms,
                 stab,
-                gyro_path,
             });
         }
 
+        // 收集已有缓存的 FileMetadata，传入后台线程避免重复解析
+        let existing_caches: HashMap<usize, Arc<core::gyro_source::FileMetadata>> = unique_gyro_paths.keys()
+            .filter_map(|&idx| {
+                self.gyro_files.get(idx)
+                    .and_then(|info| info.cached_metadata.as_ref().map(|md| (idx, Arc::clone(md))))
+            })
+            .collect();
+
+        // 缓存回写回调：将后台线程新解析的 FileMetadata 存回 GyroFileInfo
+        let on_cache = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (idx, md): (usize, Arc<core::gyro_source::FileMetadata>)| {
+            if let Some(info) = this.gyro_files.get_mut(idx) {
+                let imu_count = md.raw_imu.len();
+                info.cached_metadata = Some(md);
+                ::log::info!("[apply_match] cached metadata stored for gyro {idx}, {imu_count} IMU samples");
+            }
+        });
+
         // Run heavy work on background thread
-        let on_done = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, applied_job_ids: Vec<u32>| {
+        let on_done = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (applied_job_ids, t_bg_end): (Vec<u32>, std::time::Instant)| {
+            let t_cb = std::time::Instant::now();
+            ::log::info!("[apply_match] bg->main callback delay: {:.1}ms", (t_cb - t_bg_end).as_secs_f64() * 1000.0);
+
             // T9: Enable autosync with dynamic sync parameters for matched jobs
             // (must run before T8 so sync_settings are included in project_data)
+            let t_sync = std::time::Instant::now();
             for &job_id in &applied_job_ids {
                 if let Some(job) = this.jobs.get(&job_id) {
                     if let Some(ref stab) = job.stab {
@@ -2128,41 +2238,86 @@ impl RenderQueue {
                     }
                 }
             }
-            // T8+T19: Update project_data (Simple mode, filepath now points to GCSV)
+            ::log::info!("[apply_match] sync settings: {:.1}ms ({} jobs)", t_sync.elapsed().as_secs_f64() * 1000.0, applied_job_ids.len());
+
+            // [T20] Update project_data with embedded gyro data (WithGyroData mode)
+            // 因为 file_url 已清空，Simple 模式不包含 raw_imu 数据，
+            // 必须使用 WithGyroData 模式将 gyro 数据内嵌到 project_data 中。
+            let t_export = std::time::Instant::now();
             for &job_id in &applied_job_ids {
                 if let Some(job) = this.jobs.get_mut(&job_id) {
                     if let Some(ref stab) = job.stab {
-                        job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                        let mut additional_data = job.additional_data.clone();
+                        if let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
+                            if let Ok(output) = serde_json::to_value(&job.render_options) {
+                                obj.insert("output".into(), output);
+                            }
+                            additional_data = serde_json::to_string(&obj).unwrap_or_default();
+                        }
+                        if let Ok(data) = stab.export_gyroflow_data(core::GyroflowProjectType::WithGyroData, &additional_data, None) {
+                            ::log::info!("[apply_match T20] job {} project_data updated with embedded gyro data ({} bytes)", job_id, data.len());
+                            job.project_data = Some(data);
+                        }
                     }
                 }
             }
+            ::log::info!("[apply_match] export_gyroflow_data: {:.1}ms ({} jobs)", t_export.elapsed().as_secs_f64() * 1000.0, applied_job_ids.len());
+
+            let t_sort = std::time::Instant::now();
             this.sort_jobs_by_created_at();
+            ::log::info!("[apply_match] sort_jobs_by_created_at: {:.1}ms", t_sort.elapsed().as_secs_f64() * 1000.0);
+
+            let t_cache = std::time::Instant::now();
+            // [T22] 排序完成后构建 sameGyro 缓存
+            this.build_same_gyro_cache();
+            ::log::info!("[apply_match] build_same_gyro_cache: {:.1}ms", t_cache.elapsed().as_secs_f64() * 1000.0);
+
             this.match_results_changed();
+            // [T22] 数据加载全部完成，触发专用信号（遮罩在此关闭）
+            this.match_apply_finished();
+            ::log::info!("[apply_match] on_done callback total: {:.1}ms", t_cb.elapsed().as_secs_f64() * 1000.0);
         });
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
 
             // T3: Cache parsed gyro FileMetadata by gyro_files_idx
+            // 优先使用已有缓存，未缓存的才从文件解析
             let mut gyro_cache: HashMap<usize, core::gyro_source::FileMetadata> = HashMap::new();
-            for (gyro_files_idx, (gyro_path, fps, size)) in &unique_gyro_paths {
+            let mut cache_hit = 0usize;
+            let mut cache_miss = 0usize;
+            for (gyro_files_idx, (gyro_path, fps, size, time_range)) in &unique_gyro_paths {
+                if let Some(cached) = existing_caches.get(gyro_files_idx) {
+                    ::log::info!("[apply_match] using cached metadata for gyro {gyro_files_idx}");
+                    gyro_cache.insert(*gyro_files_idx, cached.as_ref().clone());
+                    cache_hit += 1;
+                    continue;
+                }
+                ::log::info!("[apply_match] parsing gyro file {gyro_files_idx} time_range={:?}", time_range);
                 let t_parse = std::time::Instant::now();
                 if let Ok(mut file) = filesystem::open_file(gyro_path, false, false) {
                     let filesize = file.size;
+                    let load_options = core::gyro_source::FileLoadOptions {
+                        time_range_ms: *time_range,
+                        ..Default::default()
+                    };
                     if let Ok(md) = GyroSource::parse_telemetry_file(
                         file.get_file(), filesize, gyro_path,
-                        &Default::default(), *size, *fps, |_| {},
+                        &load_options, *size, *fps, |_| {},
                         Arc::new(AtomicBool::new(false))
                     ) {
                         ::log::info!("[apply_match] parse gyro[{}] '{}': {:.1}ms ({} imu samples)",
                             gyro_files_idx, filesystem::get_filename(gyro_path),
                             t_parse.elapsed().as_secs_f64() * 1000.0, md.raw_imu.len());
+                        // 通过回调将新解析的数据缓存回 GyroFileInfo
+                        on_cache((*gyro_files_idx, Arc::new(md.clone())));
                         gyro_cache.insert(*gyro_files_idx, md);
+                        cache_miss += 1;
                     }
                 }
             }
-            ::log::info!("[apply_match] all gyro parsing: {:.1}ms ({} unique files)",
-                t_bg.elapsed().as_secs_f64() * 1000.0, gyro_cache.len());
+            ::log::info!("[apply_match] all gyro parsing: {:.1}ms ({} unique files, {} cached, {} parsed)",
+                t_bg.elapsed().as_secs_f64() * 1000.0, gyro_cache.len(), cache_hit, cache_miss);
 
             // Apply cached gyro data to each job
             let t_apply = std::time::Instant::now();
@@ -2187,16 +2342,28 @@ impl RenderQueue {
                         let mut gyro = item.stab.gyro.write();
                         gyro.init_from_params(&params);
                         gyro.clear();
-                        gyro.file_url = item.gyro_path.clone();
+                        // [T18] gyro.file_url 清空：数据已通过 load_from_telemetry 加载到内存，
+                        // 不引用外部文件，.gyroflow 项目保存时 filepath 为空。
+                        gyro.file_url = String::new();
+                        ::log::info!("[apply_match T18] job[{}] gyro.file_url cleared (data in memory)", idx);
                         gyro.file_metadata = Default::default();
                         drop(params);
                         gyro.load_from_telemetry(md);
                         gyro.file_load_options = Default::default();
 
-                        // Trim gyro data to the matched time range
+                        // Trim gyro data to the matched time range.
+                        // When telemetry-parser zero-bases timestamps (accurate_ts=false),
+                        // the parsed data starts at ~0ms instead of the original gyro file time.
+                        // The trim ranges from assign_gyro_to_videos are in the original time domain,
+                        // so we must subtract the time_range start offset to align with the zero-based data.
                         if let (Some(start), Some(end)) = (item.gyro_start_ms, item.gyro_end_ms) {
-                            let start_us = (start * 1000.0) as i64;
-                            let end_us = (end * 1000.0) as i64;
+                            let range_offset_ms = unique_gyro_paths.get(&item.gyro_files_idx)
+                                .and_then(|(_path, _fps, _size, tr)| tr.map(|(s, _)| s.max(0.0)))
+                                .unwrap_or(0.0);
+                            let adjusted_start = start - range_offset_ms;
+                            let adjusted_end = end - range_offset_ms;
+                            let start_us = (adjusted_start * 1000.0) as i64;
+                            let end_us = (adjusted_end * 1000.0) as i64;
                             gyro.trim_to_time_range(start_us, end_us);
 
                             // Zero-base timestamps in file_metadata so that .gyroflow export has correct timestamps
@@ -2213,59 +2380,6 @@ impl RenderQueue {
                                 }
                             }
                         }
-                        // T18: Write trimmed gyro data as GCSV file
-                        {
-                            let video_url = item.stab.input_file.read().url.clone();
-                            let gcsv_url = {
-                                // Generate GCSV filename: {video_name}_gyro.gcsv
-                                let base = video_url.rsplitn(2, '.').last().unwrap_or(&video_url);
-                                format!("{}_gyro.gcsv", base)
-                            };
-
-                            let imu_orientation = gyro.imu_transforms.imu_orientation.clone().unwrap_or_default();
-                            // Build GCSV content from original (untransformed) file_metadata raw_imu
-                            // to avoid double-applying orientation when GCSV is reloaded
-                            let gcsv_content = {
-                                let file_metadata = gyro.file_metadata.read();
-                                let raw_imu = &file_metadata.raw_imu;
-                                if !raw_imu.is_empty() {
-                                    use std::fmt::Write;
-                                    let mut content = String::new();
-                                    writeln!(content, "GYROFLOW IMU LOG").unwrap();
-                                    writeln!(content, "version,1.3").unwrap();
-                                    writeln!(content, "id,gyroflow-batch-match").unwrap();
-                                    writeln!(content, "orientation,{}", if imu_orientation.is_empty() { "YxZ" } else { &imu_orientation }).unwrap();
-                                    writeln!(content, "tscale,0.001").unwrap();
-                                    writeln!(content, "gscale,0.017453292519943295").unwrap(); // PI/180, so parser's 1/gscale*PI/180 = 1.0 (data already in rad/s)
-                                    writeln!(content, "ascale,1.0").unwrap();
-                                    writeln!(content, "t,gx,gy,gz,ax,ay,az").unwrap();
-                                    let t_offset = raw_imu.first().map(|x| x.timestamp_ms).unwrap_or(0.0);
-                                    for imu in raw_imu {
-                                        writeln!(content, "{},{},{},{},{},{},{}",
-                                            imu.timestamp_ms - t_offset,
-                                            imu.gyro.map(|g| g[0]).unwrap_or(0.0),
-                                            imu.gyro.map(|g| g[1]).unwrap_or(0.0),
-                                            imu.gyro.map(|g| g[2]).unwrap_or(0.0),
-                                            imu.accl.map(|a| a[0]).unwrap_or(0.0),
-                                            imu.accl.map(|a| a[1]).unwrap_or(0.0),
-                                            imu.accl.map(|a| a[2]).unwrap_or(0.0),
-                                        ).unwrap();
-                                    }
-                                    Some((content, raw_imu.len()))
-                                } else {
-                                    None
-                                }
-                            }; // file_metadata read lock dropped here
-                            if let Some((content, sample_count)) = gcsv_content {
-                                if let Err(e) = filesystem::write(&gcsv_url, content.as_bytes()) {
-                                    ::log::warn!("[apply_match] Failed to write GCSV {}: {:?}", gcsv_url, e);
-                                } else {
-                                    ::log::info!("[apply_match] Wrote GCSV '{}' ({} samples)",
-                                        filesystem::get_filename(&gcsv_url), sample_count);
-                                    gyro.file_url = gcsv_url;
-                                }
-                            }
-                        }
                     }
 
                     item.stab.invalidate_smoothing();
@@ -2278,26 +2392,22 @@ impl RenderQueue {
             ::log::info!("[apply_match] background total: {:.1}ms", t_bg.elapsed().as_secs_f64() * 1000.0);
 
             let applied_job_ids: Vec<u32> = apply_items.iter().map(|item| item.job_id).collect();
-            on_done(applied_job_ids);
+            let t_bg_end = std::time::Instant::now();
+            on_done((applied_job_ids, t_bg_end));
         });
     }
 
-    // T5: Sort jobs by video creation time (ascending), no-timestamp jobs at the end.
+    // [queue-lifecycle T2] 按视频创建时间排序（升序），无时间戳的排最后
     fn sort_jobs_by_created_at(&mut self) {
-        // Save original order on first call
-        if self.original_job_order.is_empty() {
-            self.original_job_order = self.get_ordered_job_ids();
-        }
-
         // Collect (job_id, created_at) pairs
         let mut items: Vec<(u32, Option<i64>)> = {
             if let Ok(queue) = self.queue.try_borrow() {
                 (0..queue.row_count())
                     .map(|i| {
                         let job_id = queue[i as usize].job_id;
+                        // [T20] 使用 job.video_created_at（stab 释放后仍可用）
                         let created_at = self.jobs.get(&job_id)
-                            .and_then(|j| j.stab.as_ref())
-                            .and_then(|s| s.params.read().video_created_at);
+                            .and_then(|j| j.video_created_at);
                         (job_id, created_at)
                     })
                     .collect()
@@ -2306,7 +2416,11 @@ impl RenderQueue {
             }
         };
 
+        // [T16] log 排序前的顺序
+        let before_ids: Vec<_> = items.iter().map(|(id, _)| *id).collect();
+
         // Sort: timestamped ascending, no-timestamp at end
+        // Rust sort_by 是稳定排序，相同创建时间的 job 保持原有相对顺序
         items.sort_by(|a, b| {
             match (a.1, b.1) {
                 (Some(ta), Some(tb)) => ta.cmp(&tb),
@@ -2317,16 +2431,14 @@ impl RenderQueue {
         });
 
         // Reorder the queue model to match the sorted order
-        self.reorder_queue_by_job_ids(&items.iter().map(|(id, _)| *id).collect::<Vec<_>>());
+        let sorted_ids: Vec<_> = items.iter().map(|(id, _)| *id).collect();
+        ::log::info!("[queue-lifecycle T16] sort_jobs_by_created_at: before={:?}, after={:?}", before_ids, sorted_ids);
+        self.reorder_queue_by_job_ids(&sorted_ids);
         self.queue_changed();
     }
 
     fn restore_original_order(&mut self) {
-        if self.original_job_order.is_empty() { return; }
-        let order = self.original_job_order.clone();
-        self.reorder_queue_by_job_ids(&order);
-        self.original_job_order.clear();
-        self.queue_changed();
+        // [queue-lifecycle T2] 不再需要恢复原始顺序，永远按时间排序
     }
 
     /// Reorder the queue model to match the given job_id sequence.
@@ -2360,25 +2472,24 @@ impl RenderQueue {
     }
 
     // T6: Manually pair a video job with a specific gyro file.
+    // 使用 job_id 标识视频，避免 remove/sort 后 video_index 错位
     fn manual_set_calibration_pair(&mut self, job_id: u32, gyro_index: usize) {
-        let job_ids = self.get_ordered_job_ids();
-        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
-            // Update or add manual calibration pair (mark only, no calculation)
-            self.manual_pairs.retain(|p| p.video_index != video_index);
-            self.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
-                video_index,
-                gyro_index,
-            });
-            self.match_results_changed();
-        }
+        // 直接按 job_id 去重并存储，不依赖队列位置
+        self.manual_pairs.retain(|p| p.job_id != job_id);
+        self.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+            job_id,
+            video_index: 0, // 占位，batch_match 前会重新计算
+            gyro_index,
+        });
+        ::log::info!("[manual_pair] set: job_id={}, gyro_index={}", job_id, gyro_index);
+        self.match_results_changed();
     }
 
     fn get_manual_pair_gyro_index(&self, job_id: u32) -> i32 {
-        let job_ids = self.get_ordered_job_ids();
-        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
-            if let Some(pair) = self.manual_pairs.iter().find(|p| p.video_index == video_index) {
-                return pair.gyro_index as i32;
-            }
+        // 直接按 job_id 查找，不再依赖队列位置
+        if let Some(pair) = self.manual_pairs.iter().find(|p| p.job_id == job_id) {
+            ::log::debug!("[manual_pair] found: job_id={}, gyro_index={}", job_id, pair.gyro_index);
+            return pair.gyro_index as i32;
         }
         -1
     }
@@ -2391,20 +2502,21 @@ impl RenderQueue {
                 stab.gyro.write().clear();
             }
         }
-        // Remove from manual pairs
-        let job_ids = self.get_ordered_job_ids();
-        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
-            self.manual_pairs.retain(|p| p.video_index != video_index);
-        }
-        // Update match results
+        // 直接按 job_id 移除 manual pair
+        self.manual_pairs.retain(|p| p.job_id != job_id);
+        // [queue-lifecycle T4] 按 job_id 查找 match result，避免 remove 后 video_index 错位
+        let ordered_ids = self.get_ordered_job_ids();
         if let Some(ref mut results) = self.match_results {
-            if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
-                if let Some(r) = results.results.iter_mut().find(|r| r.video_index == video_index) {
-                    r.status = core::gyro_match::MatchStatus::Unmatched;
-                    r.gyro_index = None;
-                    r.gyro_start_ms = None;
-                    r.gyro_end_ms = None;
-                }
+            let idx = results.results.iter().position(|r| r.job_id == Some(job_id))
+                .or_else(|| {
+                    let video_index = ordered_ids.iter().position(|&id| id == job_id)?;
+                    results.results.iter().position(|r| r.video_index == video_index)
+                });
+            if let Some(i) = idx {
+                results.results[i].status = core::gyro_match::MatchStatus::Unmatched;
+                results.results[i].gyro_index = None;
+                results.results[i].gyro_start_ms = None;
+                results.results[i].gyro_end_ms = None;
             }
         }
         self.match_results_changed();
@@ -2425,34 +2537,140 @@ impl RenderQueue {
     }
 
     fn get_match_status_json(&self, job_id: u32) -> QString {
-        let job_ids = self.get_ordered_job_ids();
-        if let Some(video_index) = job_ids.iter().position(|&id| id == job_id) {
-            if let Some(ref results) = self.match_results {
-                if let Some(r) = results.results.iter().find(|r| r.video_index == video_index) {
-                    // Build a mapping from parsed gyro index back to gyro_files index
-                    let parsed_gyro_indices: Vec<usize> = self.gyro_files.iter()
-                        .enumerate()
-                        .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
-                        .map(|(i, _)| i)
-                        .collect();
+        // [queue-lifecycle T4] 优先按 job_id 查找（remove 后 video_index 会错位）
+        if let Some(ref results) = self.match_results {
+            let r_opt = results.results.iter().find(|r| r.job_id == Some(job_id))
+                .or_else(|| {
+                    // 兼容 fallback：job_id 未设置时按 video_index 查找
+                    let job_ids = self.get_ordered_job_ids();
+                    let video_index = job_ids.iter().position(|&id| id == job_id)?;
+                    results.results.iter().find(|r| r.video_index == video_index)
+                });
+            if let Some(r) = r_opt {
+                let parsed_gyro_indices: Vec<usize> = self.gyro_files.iter()
+                    .enumerate()
+                    .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+                    .map(|(i, _)| i)
+                    .collect();
 
-                    let gyro_filename = r.gyro_index
-                        .and_then(|gi| parsed_gyro_indices.get(gi))
-                        .and_then(|&fi| self.gyro_files.get(fi))
-                        .map(|g| g.filename.as_str())
-                        .unwrap_or("");
+                let gyro_filename = r.gyro_index
+                    .and_then(|gi| parsed_gyro_indices.get(gi))
+                    .and_then(|&fi| self.gyro_files.get(fi))
+                    .map(|g| g.filename.as_str())
+                    .unwrap_or("");
 
-                    return QString::from(serde_json::json!({
-                        "status": format!("{:?}", r.status),
-                        "gyro_index": r.gyro_index,
-                        "gyro_start_ms": r.gyro_start_ms,
-                        "gyro_end_ms": r.gyro_end_ms,
-                        "gyro_filename": gyro_filename,
-                    }).to_string());
-                }
+                return QString::from(serde_json::json!({
+                    "status": format!("{:?}", r.status),
+                    "gyro_index": r.gyro_index,
+                    "gyro_start_ms": r.gyro_start_ms,
+                    "gyro_end_ms": r.gyro_end_ms,
+                    "gyro_filename": gyro_filename,
+                }).to_string());
             }
         }
         QString::from("{\"status\":\"none\"}")
+    }
+
+    /// 获取相邻 job 的 matchGyroIndex，用于 QML 判断同组 gyro。
+    /// offset=-1 为前一个 job，offset=1 为后一个 job。
+    /// 返回 -1 表示不存在或无匹配。
+    fn get_adjacent_gyro_index(&self, job_id: u32, offset: i32) -> i32 {
+        let job_ids = self.get_ordered_job_ids();
+        let pos = match job_ids.iter().position(|&id| id == job_id) {
+            Some(p) => p as i32,
+            None => {
+                ::log::debug!("[queue-gyro-column T9] get_adjacent_gyro_index: job_id {} not found in ordered_ids", job_id);
+                return -1;
+            }
+        };
+        let adj_pos = pos + offset;
+        if adj_pos < 0 || adj_pos >= job_ids.len() as i32 {
+            return -1;
+        }
+        let adj_job_id = job_ids[adj_pos as usize];
+        // 复用 get_match_status_json 的查找逻辑：优先按 job_id，再 fallback video_index
+        let result = if let Some(ref results) = self.match_results {
+            let r_opt = results.results.iter().find(|r| r.job_id == Some(adj_job_id))
+                .or_else(|| {
+                    let video_index = job_ids.iter().position(|&id| id == adj_job_id)?;
+                    results.results.iter().find(|r| r.video_index == video_index)
+                });
+            if let Some(r) = r_opt {
+                r.gyro_index.map(|gi| gi as i32).unwrap_or(-1)
+            } else {
+                -1
+            }
+        } else {
+            -1
+        };
+        ::log::debug!("[queue-gyro-column T9] get_adjacent_gyro_index: job_id={}, offset={}, adj_job_id={}, result={}", job_id, offset, adj_job_id, result);
+        result
+    }
+
+    // [T14] 全局 matchExecuted 标志：是否已执行过 match
+    fn has_match_results(&self) -> bool {
+        self.match_results.is_some()
+    }
+
+    // [T15] 内部辅助：获取指定 job 的 gyro_index（复用 get_match_status_json 的查找逻辑）
+    fn get_gyro_index_for_job(&self, job_id: u32) -> i32 {
+        if let Some(ref results) = self.match_results {
+            let job_ids = self.get_ordered_job_ids();
+            let r_opt = results.results.iter().find(|r| r.job_id == Some(job_id))
+                .or_else(|| {
+                    let video_index = job_ids.iter().position(|&id| id == job_id)?;
+                    results.results.iter().find(|r| r.video_index == video_index)
+                });
+            if let Some(r) = r_opt {
+                return r.gyro_index.map(|gi| gi as i32).unwrap_or(-1);
+            }
+        }
+        -1
+    }
+
+    // [T15] 判断当前 job 是否和前一个 job 使用相同 gyro
+    fn is_same_gyro_as_prev(&self, job_id: u32) -> bool {
+        let my_idx = self.get_gyro_index_for_job(job_id);
+        let prev_idx = self.get_adjacent_gyro_index(job_id, -1);
+        let result = my_idx >= 0 && my_idx == prev_idx;
+        ::log::debug!("[T15] is_same_gyro_as_prev: job_id={}, my_idx={}, prev_idx={}, result={}", job_id, my_idx, prev_idx, result);
+        result
+    }
+
+    // [T15] 判断当前 job 是否和后一个 job 使用相同 gyro
+    fn is_same_gyro_as_next(&self, job_id: u32) -> bool {
+        let my_idx = self.get_gyro_index_for_job(job_id);
+        let next_idx = self.get_adjacent_gyro_index(job_id, 1);
+        let result = my_idx >= 0 && my_idx == next_idx;
+        ::log::debug!("[T15] is_same_gyro_as_next: job_id={}, my_idx={}, next_idx={}, result={}", job_id, my_idx, next_idx, result);
+        result
+    }
+
+    // [T22] 一次性构建所有 job 的 sameGyro 缓存，排序完成后调用
+    fn build_same_gyro_cache(&mut self) {
+        self.same_gyro_cache.clear();
+        let job_ids = self.get_ordered_job_ids();
+        // 收集每个 job 的 gyro_index
+        let gyro_indices: Vec<i32> = job_ids.iter()
+            .map(|&jid| self.get_gyro_index_for_job(jid))
+            .collect();
+        for (i, &jid) in job_ids.iter().enumerate() {
+            let my_idx = gyro_indices[i];
+            let prev_same = i > 0 && my_idx >= 0 && gyro_indices[i - 1] == my_idx;
+            let next_same = i + 1 < gyro_indices.len() && my_idx >= 0 && gyro_indices[i + 1] == my_idx;
+            self.same_gyro_cache.insert(jid, (prev_same, next_same));
+        }
+        ::log::info!("[T22] build_same_gyro_cache: {} jobs cached", self.same_gyro_cache.len());
+    }
+
+    // [T22] 从缓存读取 sameGyroAsPrev（不实时查询，不受 queue 状态影响）
+    fn get_cached_same_gyro_prev(&self, job_id: u32) -> bool {
+        self.same_gyro_cache.get(&job_id).map(|&(prev, _)| prev).unwrap_or(false)
+    }
+
+    // [T22] 从缓存读取 sameGyroAsNext（不实时查询，不受 queue 状态影响）
+    fn get_cached_same_gyro_next(&self, job_id: u32) -> bool {
+        self.same_gyro_cache.get(&job_id).map(|&(_, next)| next).unwrap_or(false)
     }
 }
 
@@ -2475,12 +2693,17 @@ fn parse_creation_date_to_millis(date_str: &str) -> Option<i64> {
 }
 
 /// Parse gyro file metadata (creation date and IMU duration) using telemetry-parser.
+/// Uses header_only mode for SenseFlow files: reads only 512 bytes, computes duration from filesize.
 fn parse_gyro_metadata(url: &str) -> Result<(i64, f64), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = filesystem::open_file(url, false, false)?;
     let filesize = file.size;
+    let options = core::gyro_source::FileLoadOptions {
+        header_only: true,
+        ..Default::default()
+    };
     let md = GyroSource::parse_telemetry_file(
         file.get_file(), filesize, url,
-        &Default::default(), (0, 0), 0.0,
+        &options, (0, 0), 0.0,
         |_| {}, Arc::new(AtomicBool::new(false))
     )?;
 
@@ -2488,7 +2711,11 @@ fn parse_gyro_metadata(url: &str) -> Result<(i64, f64), Box<dyn std::error::Erro
         .and_then(|s| parse_creation_date_to_millis(s))
         .ok_or("No creation date found in gyro file")?;
 
-    let duration = if !md.raw_imu.is_empty() {
+    // In header_only mode, duration comes from SampleInfo.duration_ms (computed from filesize).
+    // In full parse mode, fall back to raw_imu timestamps.
+    let duration = if md.duration_ms > 0.0 {
+        md.duration_ms
+    } else if !md.raw_imu.is_empty() {
         let first = md.raw_imu.first().unwrap().timestamp_ms;
         let last = md.raw_imu.last().unwrap().timestamp_ms;
         last - first

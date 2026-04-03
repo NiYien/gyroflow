@@ -489,9 +489,6 @@ Item {
             root.loadFile(urls[0], skip_detection);
         } else if (urls.length > 1) {
             const urlsCopy = [...urls];
-            if (urlsCopy[0].toString().toLowerCase().endsWith(".r3d")) {
-                return root.loadFile(urlsCopy[0], true);
-            }
             const dlg = messageBox(Modal.Question, qsTr("You have opened multiple files. What do you want to do?"), [
                 { text: qsTr("Add to render queue"), clicked: () => {
                     queue.item.dt.loadFiles(urlsCopy);
@@ -861,6 +858,7 @@ Item {
             BasicText {
                 id: dropText;
                 property string loadingFile: "";
+                // [queue-gyro-column] 拖拽提示更新，支持陀螺仪数据
                 text: loadingFile? qsTr("Loading %1...").arg(loadingFile) : (Qt.platform.os == "ios" || Qt.platform.os == "android"? qsTr("Click here to open a video file") : qsTr("Drop video file here"));
                 font.pixelSize: (window.isMobileLayout? 23 : 30) * dpiScale;
                 anchors.centerIn: parent;
@@ -894,14 +892,37 @@ Item {
 
             onEntered: (drag) => {
                 if (!drag.urls.length) return;
-                const ext = drag.urls[0].toString().split(".").pop().toLowerCase();
-                drag.accepted = fileDialog.extensions.indexOf(ext) > -1 || ext == "rdc";
+                const url = drag.urls[0].toString();
+                const ext = url.split(".").pop().toLowerCase();
+                // [queue-pair-ux T6] 无扩展名（可能是文件夹）也允许拖入
+                const hasExtension = url.includes(".");
+                drag.accepted = !hasExtension || fileDialog.extensions.indexOf(ext) > -1 || ext == "rdc";
             }
             onDropped: (drop) => {
                 if (isCalibrator) {
                     calibrator_window.loadFiles(drop.urls);
-                } else {
-                    root.loadMultipleFiles(drop.urls, false);
+                    return;
+                }
+                // [queue-pair-ux T6] 分离文件夹和普通文件
+                let fileUrls = [];
+                let hasFolder = false;
+                for (const url of drop.urls) {
+                    const fname = filesystem.get_filename(url).toLowerCase();
+                    if (!fname.includes(".")) {
+                        // 无扩展名，可能是文件夹，交给 Rust 端判断
+                        render_queue.add_gyro_folder(url.toString());
+                        hasFolder = true;
+                    } else {
+                        fileUrls.push(url);
+                    }
+                }
+                // 有文件夹拖入时自动打开渲染队列面板
+                if (hasFolder && queue.item) {
+                    queue.item.shown = true;
+                }
+                // 剩余普通文件走原有逻辑
+                if (fileUrls.length > 0) {
+                    root.loadMultipleFiles(fileUrls, false);
                 }
             }
         }

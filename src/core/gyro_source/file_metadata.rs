@@ -60,6 +60,7 @@ pub struct FileMetadata {
     pub per_frame_time_offsets: Vec<f64>,
     pub camera_stab_data:    Vec<CameraStabData>,
     pub mesh_correction:     Vec<(Vec<f64>, Vec<f32>)>,
+    pub duration_ms:         f64,
 }
 impl FileMetadata {
     pub fn thin(&self) -> Self {
@@ -88,6 +89,7 @@ impl FileMetadata {
             per_frame_time_offsets:  Default::default(),
             camera_stab_data:        Default::default(),
             mesh_correction:         Default::default(),
+            duration_ms:             self.duration_ms,
         }
     }
     pub fn has_motion(&self) -> bool {

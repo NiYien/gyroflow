@@ -38,6 +38,10 @@ pub type TimeVec = BTreeMap<i64, Vector3<f64>>; // key is timestamp_us
 pub struct FileLoadOptions {
     pub sample_index: Option<usize>,
     pub project_version: u64,
+    #[serde(default)]
+    pub header_only: bool,
+    #[serde(default)]
+    pub time_range_ms: Option<(f64, f64)>,
 }
 
 pub fn get_camera_db_path() -> Option<String> {
@@ -188,6 +192,8 @@ impl GyroSource {
                 TagFilter::EntireGroup(GroupId::UnknownGroup(0x0))
             ].into(),
             camera_db_path,
+            header_only: options.header_only,
+            time_range_ms: options.time_range_ms,
             ..Default::default()
         };
         let mut input = Input::from_stream_with_options(stream, filesize, &path, progress_cb, cancel_flag, tpoptions)?;
@@ -512,6 +518,10 @@ impl GyroSource {
             digital_zoom,
             camera_stab_data: Vec::new(),
             mesh_correction:  Vec::new(),
+            duration_ms: input.samples.as_ref()
+                .and_then(|s| s.first())
+                .map(|s| s.duration_ms)
+                .unwrap_or(0.0),
         };
 
         log::info!("Telemetry parsed: lens_params={}, lens_positions={}, unit_px_fl={:?}, frame_readout_time={:?}, detected={}",
