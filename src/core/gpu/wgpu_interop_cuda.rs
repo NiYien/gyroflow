@@ -373,10 +373,15 @@ pub fn create_vk_image_backed_by_cuda_memory(device: &wgpu::Device, size: (usize
 
                 raw_device.bind_image_memory(raw_image, allocated_memory, 0)?;
 
+                let raw_device = raw_device.clone();
+                cuda_mem.additional_drop_func = Some(Box::new(move || {
+                    raw_device.free_memory(allocated_memory, None);
+                }));
+
+                // On Windows, the application retains ownership of NT handles after import and must close them.
+                // On Linux, the fd ownership is transferred to Vulkan on import — closing it would be a spec violation.
                 #[cfg(target_os = "windows")]
                 let _ = windows::Win32::Foundation::CloseHandle(windows::Win32::Foundation::HANDLE(cuda_mem.shared_handle as *mut _));
-                #[cfg(target_os = "linux")]
-                libc::close(cuda_mem.shared_handle as i32);
 
                 Ok::<ash::vk::Image, vk::Result>(raw_image)
             })
@@ -455,10 +460,10 @@ pub fn create_vk_buffer_backed_by_cuda_memory(device: &wgpu::Device, size: (usiz
                     raw_device.free_memory(allocated_memory, None);
                 }));
 
+                // On Windows, the application retains ownership of NT handles after import and must close them.
+                // On Linux, the fd ownership is transferred to Vulkan on import — closing it would be a spec violation.
                 #[cfg(target_os = "windows")]
                 let _ = windows::Win32::Foundation::CloseHandle(windows::Win32::Foundation::HANDLE(cuda_mem.shared_handle as *mut _));
-                #[cfg(target_os = "linux")]
-                libc::close(cuda_mem.shared_handle as i32);
 
                 Ok::<ash::vk::Buffer, vk::Result>(raw_buffer)
             })
