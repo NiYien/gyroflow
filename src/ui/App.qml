@@ -843,9 +843,9 @@ Rectangle {
                             text: qsTranslate("Synchronization", "Auto sync");
                             iconName: "spinner";
                             width: (parent.width - parent.spacing) / 2;
-                            enabled: window.videoArea.vid.loaded;
+                            enabled: window.videoArea.vid.loaded && !controller.sync_in_progress;
                             onClicked: {
-                                if (window.sync) window.sync.autosync.doSync();
+                                if (window.sync) window.sync.runAutosync();
                             }
                         }
                         Button {
@@ -854,7 +854,7 @@ Rectangle {
                             width: (parent.width - parent.spacing) / 2;
                             enabled: window.videoArea.vid.loaded;
                             onClicked: {
-                                if (window.motionData) window.motionData.fileDialog.open2();
+                                if (window.motionData) window.motionData.openFileDialog();
                             }
                         }
                     }

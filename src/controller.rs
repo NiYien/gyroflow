@@ -2,13 +2,13 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 use itertools::{Either, Itertools};
-use qmetaobject::*;
 use nalgebra::Vector4;
-use std::sync::Arc;
+use qmetaobject::*;
 use std::cell::RefCell;
-use std::sync::atomic::{ AtomicBool, AtomicUsize, Ordering::SeqCst };
-use std::collections::{ BTreeMap, BTreeSet, HashSet };
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::str::FromStr;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 
 use qml_video_rs::video_item::MDKVideoItem;
 
@@ -16,19 +16,19 @@ use crate::core;
 use crate::core::StabilizationManager;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
-use crate::core::synchronization::AutosyncProcess;
+use crate::core::filesystem;
+use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
-use crate::core::keyframes::*;
-use crate::core::filesystem;
+use crate::core::synchronization::AutosyncProcess;
+use crate::qt_gpu::qrhi_undistort;
 use crate::rendering;
-use crate::util;
-use crate::wrap_simple_method;
 use crate::rendering::VideoProcessor;
+use crate::ui::components::FrequencyGraph::FrequencyGraph;
 use crate::ui::components::TimelineGyroChart::TimelineGyroChart;
 use crate::ui::components::TimelineKeyframesView::TimelineKeyframesView;
-use crate::ui::components::FrequencyGraph::FrequencyGraph;
-use crate::qt_gpu::qrhi_undistort;
+use crate::util;
+use crate::wrap_simple_method;
 
 #[derive(Default, SimpleListItem)]
 struct OffsetItem {
@@ -52,7 +52,16 @@ pub struct Controller {
     reset_player: qt_method!(fn(&self, player: QJSValue)),
     load_video: qt_method!(fn(&self, url: QUrl, player: QJSValue)),
     video_file_loaded: qt_method!(fn(&self, player: QJSValue)),
-    load_telemetry: qt_method!(fn(&self, url: QUrl, is_video: bool, player: QJSValue, sample_index: i32, project_version: u32)),
+    load_telemetry: qt_method!(
+        fn(
+            &self,
+            url: QUrl,
+            is_video: bool,
+            player: QJSValue,
+            sample_index: i32,
+            project_version: u32,
+        )
+    ),
     get_image_sequence_fps: qt_method!(fn(&self, url: QUrl) -> f64),
     load_lens_profile: qt_method!(fn(&mut self, url_or_id: QString)),
     get_preset_contents: qt_method!(fn(&mut self, url_or_id: QString) -> QString),
@@ -60,17 +69,30 @@ pub struct Controller {
     export_lens_profile_filename: qt_method!(fn(&mut self, info: QJsonObject) -> QString),
 
     set_of_method: qt_method!(fn(&self, v: u32)),
-    start_autosync: qt_method!(fn(&mut self, timestamps_fract: String, sync_params: String, mode: String)),
+    start_autosync:
+        qt_method!(fn(&mut self, timestamps_fract: String, sync_params: String, mode: String)),
     update_chart: qt_method!(fn(&self, chart: QJSValue, series: String) -> bool),
-    update_frequency_graph: qt_method!(fn(&self, graph: QJSValue, idx: usize, ts: f64, sr: f64, fft_size: usize)),
+    update_frequency_graph:
+        qt_method!(fn(&self, graph: QJSValue, idx: usize, ts: f64, sr: f64, fft_size: usize)),
     update_keyframes_view: qt_method!(fn(&self, kfview: QJSValue)),
     rolling_shutter_estimated: qt_signal!(rolling_shutter: f64),
     estimate_bias: qt_method!(fn(&self, timestamp_fract: QString)),
     bias_estimated: qt_signal!(bx: f64, by: f64, bz: f64),
     orientation_guessed: qt_signal!(orientation: QString),
-    get_optimal_sync_points: qt_method!(fn(&mut self, target_sync_points: usize, initial_offset: f64) -> QString),
+    get_optimal_sync_points:
+        qt_method!(fn(&mut self, target_sync_points: usize, initial_offset: f64) -> QString),
 
-    start_autocalibrate: qt_method!(fn(&self, max_points: usize, every_nth_frame: usize, iterations: usize, max_sharpness: f64, custom_timestamp_ms: f64, no_marker: bool)),
+    start_autocalibrate: qt_method!(
+        fn(
+            &self,
+            max_points: usize,
+            every_nth_frame: usize,
+            iterations: usize,
+            max_sharpness: f64,
+            custom_timestamp_ms: f64,
+            no_marker: bool,
+        )
+    ),
 
     telemetry_loaded: qt_signal!(is_main_video: bool, filename: QString, camera: QString, additional_data: QJsonObject),
     lens_profile_loaded: qt_signal!(lens_json: QString, filepath: QString, checksum: QString),
@@ -79,7 +101,20 @@ pub struct Controller {
     get_smoothing_max_angles: qt_method!(fn(&self) -> QJsonArray),
     get_smoothing_status: qt_method!(fn(&self) -> QJsonArray),
     set_smoothing_param: qt_method!(fn(&self, name: QString, val: f64)),
-    set_horizon_lock: qt_method!(fn(&self, lock_percent: f64, roll: f64, lock_pitch: bool, pitch: f64, automatic_lock: bool, turn_threshold: f64, turn_smoothing_ms: f64, turn_multiplier: f64, tilt_accel_limit: f64)),
+    set_horizon_lock: qt_method!(
+        fn(
+            &self,
+            lock_percent: f64,
+            roll: f64,
+            lock_pitch: bool,
+            pitch: f64,
+            automatic_lock: bool,
+            turn_threshold: f64,
+            turn_smoothing_ms: f64,
+            turn_multiplier: f64,
+            tilt_accel_limit: f64,
+        )
+    ),
     get_turn_speed: qt_method!(fn(&self, timestamp_ms: f64) -> f64),
     get_x_angle: qt_method!(fn(&self, timestamp_ms: f64) -> f64),
     set_use_gravity_vectors: qt_method!(fn(&self, v: bool)),
@@ -99,7 +134,15 @@ pub struct Controller {
     load_profiles: qt_method!(fn(&self, reload_from_disk: bool)),
     all_profiles_loaded: qt_signal!(),
     search_lens_profile_finished: qt_signal!(profiles: QVariantList),
-    search_lens_profile: qt_method!(fn(&self, text: QString, favorites: QVariantList, aspect_ratio: i32, aspect_ratio_swapped: i32)),
+    search_lens_profile: qt_method!(
+        fn(
+            &self,
+            text: QString,
+            favorites: QVariantList,
+            aspect_ratio: i32,
+            aspect_ratio_swapped: i32,
+        )
+    ),
     fetch_profiles_from_github: qt_method!(fn(&self)),
     lens_profiles_updated: qt_signal!(reload_from_disk: bool),
 
@@ -164,6 +207,9 @@ pub struct Controller {
     gyro_loaded: qt_property!(bool; NOTIFY gyro_changed),
     gyro_changed: qt_signal!(),
 
+    gyro_has_raw_imu: qt_property!(bool; READ gyro_has_raw_imu NOTIFY gyro_changed),
+    gyro_has_quaternions: qt_property!(bool; READ gyro_has_quaternions NOTIFY gyro_changed),
+    gyro_has_accurate_timestamps: qt_property!(bool; READ gyro_has_accurate_timestamps NOTIFY gyro_changed),
     has_gravity_vectors: qt_property!(bool; READ has_gravity_vectors NOTIFY gyro_changed),
 
     compute_progress: qt_signal!(id: u64, progress: f64),
@@ -212,8 +258,10 @@ pub struct Controller {
     import_gyroflow_file: qt_method!(fn(&mut self, url: QUrl)),
     import_gyroflow_data: qt_method!(fn(&mut self, data: QString)),
     gyroflow_file_loaded: qt_signal!(obj: QJsonObject),
-    export_gyroflow_file: qt_method!(fn(&self, url: QUrl, typ: QString, additional_data: QJsonObject)),
-    export_gyroflow_data: qt_method!(fn(&self, typ: QString, additional_data: QJsonObject) -> QString),
+    export_gyroflow_file:
+        qt_method!(fn(&self, url: QUrl, typ: QString, additional_data: QJsonObject)),
+    export_gyroflow_data:
+        qt_method!(fn(&self, typ: QString, additional_data: QJsonObject) -> QString),
 
     input_file_url: qt_property!(QString; READ get_input_file_url NOTIFY input_file_url_changed),
     input_file_url_changed: qt_signal!(),
@@ -223,7 +271,8 @@ pub struct Controller {
 
     check_updates: qt_method!(fn(&self)),
     updates_available: qt_signal!(version: QString, changelog: QString),
-    rate_profile: qt_method!(fn(&self, name: QString, json: QString, checksum: QString, is_good: bool)),
+    rate_profile:
+        qt_method!(fn(&self, name: QString, json: QString, checksum: QString, is_good: bool)),
     request_profile_ratings: qt_method!(fn(&self)),
 
     set_preview_pipeline: qt_method!(fn(&self, index: i32)),
@@ -241,7 +290,15 @@ pub struct Controller {
     copy_to_clipboard: qt_method!(fn(&self, text: QString)),
 
     image_to_b64: qt_method!(fn(&self, img: QImage) -> QString),
-    export_preset: qt_method!(fn(&self, url: QUrl, data: QJsonObject, save_type: QString, preset_name: QString) -> QString),
+    export_preset: qt_method!(
+        fn(
+            &self,
+            url: QUrl,
+            data: QJsonObject,
+            save_type: QString,
+            preset_name: QString,
+        ) -> QString
+    ),
     export_full_metadata: qt_method!(fn(&self, url: QUrl, gyro_url: QUrl)),
     export_parsed_metadata: qt_method!(fn(&self, url: QUrl)),
     export_gyro_data: qt_method!(fn(&self, url: QUrl, data: QJsonObject)),
@@ -258,7 +315,8 @@ pub struct Controller {
     keyframe_id: qt_method!(fn(&self, typ: String, timestamp_us: i64) -> u32),
     remove_keyframe: qt_method!(fn(&self, typ: String, timestamp_us: i64)),
     clear_keyframes_type: qt_method!(fn(&self, typ: String)),
-    keyframe_value_at_video_timestamp: qt_method!(fn(&self, typ: String, timestamp_ms: f64) -> QJSValue),
+    keyframe_value_at_video_timestamp:
+        qt_method!(fn(&self, typ: String, timestamp_ms: f64) -> QJSValue),
     is_keyframed: qt_method!(fn(&self, typ: String) -> bool),
     set_prevent_recompute: qt_method!(fn(&self, v: bool)),
 
@@ -269,7 +327,9 @@ pub struct Controller {
     install_external_sdk: qt_method!(fn(&self, url: QString)),
     external_sdk_progress: qt_signal!(percent: f64, sdk_name: QString, error_string: QString, url: QString),
 
-    mp4_merge: qt_method!(fn(&self, file_list: QStringList, output_folder: QUrl, output_filename: QString)),
+    mp4_merge: qt_method!(
+        fn(&self, file_list: QStringList, output_folder: QUrl, output_filename: QString)
+    ),
     mp4_merge_progress: qt_signal!(percent: f64, error_string: QString, url: QString),
 
     is_nle_installed: qt_method!(fn(&self) -> bool),
@@ -283,7 +343,6 @@ pub struct Controller {
     // ---------- REDline conversion ----------
     find_redline: qt_method!(fn(&self) -> QString),
     // ---------- REDline conversion ----------
-
     play_sound: qt_method!(fn(&mut self, typ: String)),
     data_folder: qt_method!(fn(&self) -> QUrl),
 
@@ -323,7 +382,14 @@ impl Controller {
             let options = gyroflow_core::gyro_source::FileLoadOptions::default();
             let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             if let Ok(md) = gyroflow_core::gyro_source::GyroSource::parse_telemetry_file(
-                file.get_file(), filesize, &url, &options, (0, 0), 0.0, |_| {}, cancel_flag
+                file.get_file(),
+                filesize,
+                &url,
+                &options,
+                (0, 0),
+                0.0,
+                |_| {},
+                cancel_flag,
             ) {
                 if let Some(fps) = md.frame_rate {
                     return fps;
@@ -337,13 +403,20 @@ impl Controller {
         self.stabilizer.clear();
         *self.stabilizer.lens.write() = Default::default();
         self.lens_loaded = false;
+        self.gyro_loaded = false;
+        self.gyro_changed();
         let url = util::qurl_to_encoded(url.clone());
         let filename = filesystem::get_filename(&url);
 
         // Load current (clean) state to the UI
         if self.stabilizer.lens_calibrator.read().is_none() {
-            if let Ok(current_state) = self.stabilizer.export_gyroflow_data(core::GyroflowProjectType::Simple, "{}", None) {
-                if let Ok(current_state) = serde_json::from_str(current_state.as_str()) as serde_json::Result<serde_json::Value> {
+            if let Ok(current_state) =
+                self.stabilizer
+                    .export_gyroflow_data(core::GyroflowProjectType::Simple, "{}", None)
+            {
+                if let Ok(current_state) = serde_json::from_str(current_state.as_str())
+                    as serde_json::Result<serde_json::Value>
+                {
                     self.gyroflow_file_loaded(util::serde_json_to_qt_object(&current_state));
                 }
             }
@@ -366,7 +439,10 @@ impl Controller {
 
         let mut custom_decoder = String::new(); // eg. BRAW:format=rgba64le
         if self.image_sequence_start > 0 {
-            custom_decoder = format!("FFmpeg:avformat_options=start_number={}", self.image_sequence_start);
+            custom_decoder = format!(
+                "FFmpeg:avformat_options=start_number={}",
+                self.image_sequence_start
+            );
         }
 
         let options = {
@@ -379,10 +455,16 @@ impl Controller {
         };
 
         if filename.to_ascii_lowercase().ends_with("braw") {
-            let gpu = if self.stabilizer.gpu_decoding.load(SeqCst) { "auto" } else { "no" }; // Disable GPU decoding for BRAW
+            let gpu = if self.stabilizer.gpu_decoding.load(SeqCst) {
+                "auto"
+            } else {
+                "no"
+            }; // Disable GPU decoding for BRAW
             custom_decoder = format!("BRAW:gpu={}{}", gpu, options);
         }
-        if filename.to_ascii_lowercase().ends_with("r3d") || filename.to_ascii_lowercase().ends_with("nev") {
+        if filename.to_ascii_lowercase().ends_with("r3d")
+            || filename.to_ascii_lowercase().ends_with("nev")
+        {
             custom_decoder = format!("R3D:gpu=auto{}", options);
         }
         if !custom_decoder.is_empty() {
@@ -393,7 +475,10 @@ impl Controller {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
             filesystem::stop_accessing_url(&util::qurl_to_encoded(vid.url.clone()), false);
             filesystem::start_accessing_url(&url, false);
-            vid.setUrl(QUrl::from(QString::from(url)), QString::from(custom_decoder));
+            vid.setUrl(
+                QUrl::from(QString::from(url)),
+                QString::from(custom_decoder),
+            );
         }
     }
 
@@ -401,24 +486,37 @@ impl Controller {
         QString::from(self.stabilizer.input_file.read().url.clone())
     }
     fn get_project_file_url(&self) -> QString {
-        QString::from(self.stabilizer.input_file.read().project_file_url.as_ref().cloned().unwrap_or_default())
+        QString::from(
+            self.stabilizer
+                .input_file
+                .read()
+                .project_file_url
+                .as_ref()
+                .cloned()
+                .unwrap_or_default(),
+        )
     }
 
     fn start_autosync(&mut self, timestamps_fract: String, sync_params: String, mode: String) {
         rendering::clear_log();
 
-        let sync_params = serde_json::from_str(&sync_params) as serde_json::Result<synchronization::SyncParams>;
+        let sync_params =
+            serde_json::from_str(&sync_params) as serde_json::Result<synchronization::SyncParams>;
         if let Err(e) = sync_params {
             self.sync_in_progress = false;
             self.sync_in_progress_changed();
-            return self.error(QString::from("An error occured: %1"), QString::from(format!("JSON parse error: {}", e)), QString::default());
+            return self.error(
+                QString::from("An error occured: %1"),
+                QString::from(format!("JSON parse error: {}", e)),
+                QString::default(),
+            );
         }
         let mut sync_params = sync_params.unwrap();
 
-        sync_params.initial_offset     *= 1000.0; // s to ms
+        sync_params.initial_offset *= 1000.0; // s to ms
         sync_params.time_per_syncpoint *= 1000.0; // s to ms
-        sync_params.search_size        *= 1000.0; // s to ms
-        sync_params.every_nth_frame     = sync_params.every_nth_frame.max(1);
+        sync_params.search_size *= 1000.0; // s to ms
+        sync_params.every_nth_frame = sync_params.every_nth_frame.max(1);
 
         let for_rs = mode == "estimate_rolling_shutter";
 
@@ -427,66 +525,95 @@ impl Controller {
         self.sync_in_progress = true;
         self.sync_in_progress_changed();
 
-        let timestamps_fract: Vec<f64> = timestamps_fract.split(';').filter_map(|x| x.parse::<f64>().ok()).collect();
+        let timestamps_fract: Vec<f64> = timestamps_fract
+            .split(';')
+            .filter_map(|x| x.parse::<f64>().ok())
+            .collect();
 
-        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (percent, ready, total): (f64, usize, usize)| {
-            this.sync_in_progress = ready < total || percent < 1.0;
-            this.sync_in_progress_changed();
-            this.chart_data_changed();
-            this.sync_progress(percent, ready, total);
-        });
-        let set_offsets = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, offsets: Vec<(f64, f64, f64)>| {
-            if for_rs {
-                if let Some(offs) = offsets.first() {
-                    this.rolling_shutter_estimated(offs.1);
-                }
-            } else {
-                let mut gyro = this.stabilizer.gyro.write();
-                gyro.prevent_recompute = true;
-                for x in offsets {
-                    ::log::info!("Setting offset at {:.4}: {:.4} (cost {:.4})", x.0, x.1, x.2);
-                    let new_ts = ((x.0 - x.1) * 1000.0) as i64;
-                    { // Check the offset
-                        let sync_data = this.stabilizer.sync_data.read();
-                        if !sync_data.rank.is_empty() {
-                            let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0)).round() as usize;
-                            if index < sync_data.rank.len() && sync_data.rank[index] < 13.0 {
-                                continue;
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, (percent, ready, total): (f64, usize, usize)| {
+                this.sync_in_progress = ready < total || percent < 1.0;
+                this.sync_in_progress_changed();
+                this.chart_data_changed();
+                this.sync_progress(percent, ready, total);
+            },
+        );
+        let set_offsets = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, offsets: Vec<(f64, f64, f64)>| {
+                if for_rs {
+                    if let Some(offs) = offsets.first() {
+                        this.rolling_shutter_estimated(offs.1);
+                    }
+                } else {
+                    let mut gyro = this.stabilizer.gyro.write();
+                    gyro.prevent_recompute = true;
+                    for x in offsets {
+                        ::log::info!("Setting offset at {:.4}: {:.4} (cost {:.4})", x.0, x.1, x.2);
+                        let new_ts = ((x.0 - x.1) * 1000.0) as i64;
+                        {
+                            // Check the offset
+                            let sync_data = this.stabilizer.sync_data.read();
+                            if !sync_data.rank.is_empty() {
+                                let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0))
+                                    .round() as usize;
+                                if index < sync_data.rank.len() && sync_data.rank[index] < 13.0 {
+                                    continue;
+                                }
                             }
                         }
+                        // Remove existing offsets within 100ms range
+                        gyro.remove_offsets_near(new_ts, 100.0);
+                        gyro.set_offset(new_ts, x.1);
                     }
-                    // Remove existing offsets within 100ms range
-                    gyro.remove_offsets_near(new_ts, 100.0);
-                    gyro.set_offset(new_ts, x.1);
+                    gyro.prevent_recompute = false;
+                    gyro.adjust_offsets();
+                    this.stabilizer.keyframes.write().update_gyro(&gyro);
+                    this.stabilizer.invalidate_zooming();
                 }
-                gyro.prevent_recompute = false;
-                gyro.adjust_offsets();
-                this.stabilizer.keyframes.write().update_gyro(&gyro);
-                this.stabilizer.invalidate_zooming();
-            }
-            this.update_offset_model();
-            this.request_recompute();
-        });
-        let set_orientation = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, orientation: String| {
-            ::log::info!("Setting orientation {}", &orientation);
-            this.orientation_guessed(QString::from(orientation));
-        });
-        let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (msg, mut arg): (String, String)| {
-            arg.push_str("\n\n");
-            arg.push_str(&rendering::get_log());
+                this.update_offset_model();
+                this.request_recompute();
+            },
+        );
+        let set_orientation = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, orientation: String| {
+                ::log::info!("Setting orientation {}", &orientation);
+                this.orientation_guessed(QString::from(orientation));
+            },
+        );
+        let err = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, (msg, mut arg): (String, String)| {
+                arg.push_str("\n\n");
+                arg.push_str(&rendering::get_log());
 
-            this.error(QString::from(msg), QString::from(arg), QString::default());
+                this.error(QString::from(msg), QString::from(arg), QString::default());
 
-            this.sync_in_progress = false;
-            this.sync_in_progress_changed();
-            this.update_offset_model();
-            this.request_recompute();
-        });
+                this.sync_in_progress = false;
+                this.sync_in_progress_changed();
+                this.update_offset_model();
+                this.request_recompute();
+            },
+        );
         self.sync_progress(0.0, 0, 0);
 
         self.cancel_flag.store(false, SeqCst);
 
-        if let Ok(mut sync) = AutosyncProcess::from_manager(&self.stabilizer, &timestamps_fract, sync_params, mode, self.cancel_flag.clone()) {
+        let sync_failure_detail = synchronization::describe_autosync_init_failure(
+            &self.stabilizer,
+            &timestamps_fract,
+            &sync_params,
+        );
+
+        if let Ok(mut sync) = AutosyncProcess::from_manager(
+            &self.stabilizer,
+            &timestamps_fract,
+            sync_params,
+            mode.clone(),
+            self.cancel_flag.clone(),
+        ) {
             sync.on_progress(move |percent, ready, total| {
                 progress((percent, ready, total));
             });
@@ -494,7 +621,7 @@ impl Controller {
                 match arg {
                     Either::Left(offsets) => set_offsets(offsets),
                     Either::Right(Some(orientation)) => set_orientation(orientation.0),
-                    _=> ()
+                    _ => (),
                 };
             });
 
@@ -511,45 +638,90 @@ impl Controller {
                 let mut decoder_options = ffmpeg_next::Dictionary::new();
                 if input_file.image_sequence_fps > 0.0 {
                     let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
-                    decoder_options.set("framerate", &format!("{}/{}", fps.numerator(), fps.denominator()));
+                    decoder_options.set(
+                        "framerate",
+                        &format!("{}/{}", fps.numerator(), fps.denominator()),
+                    );
                 }
                 if input_file.image_sequence_start > 0 {
-                    decoder_options.set("start_number", &format!("{}", input_file.image_sequence_start));
+                    decoder_options.set(
+                        "start_number",
+                        &format!("{}", input_file.image_sequence_start),
+                    );
                 }
                 if proc_height > 0 {
-                    decoder_options.set("scale", &format!("{}x{}", (proc_height * 16) / 9, proc_height));
+                    decoder_options.set(
+                        "scale",
+                        &format!("{}x{}", (proc_height * 16) / 9, proc_height),
+                    );
                 }
                 ::log::debug!("Decoder options: {:?}", decoder_options);
 
                 let sync = std::rc::Rc::new(sync);
 
-                match VideoProcessor::from_file(&input_file.url, gpu_decoding, 0, Some(decoder_options)) {
+                match VideoProcessor::from_file(
+                    &input_file.url,
+                    gpu_decoding,
+                    0,
+                    Some(decoder_options),
+                ) {
                     Ok(mut proc) => {
                         let err2 = err.clone();
                         let sync2 = sync.clone();
-                        proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
-                            assert!(_output_frame.is_none());
+                        proc.on_frame(
+                            move |timestamp_us,
+                                  input_frame,
+                                  _output_frame,
+                                  converter,
+                                  _rate_control| {
+                                assert!(_output_frame.is_none());
 
-                            if abs_frame_no % every_nth_frame == 0 {
-                                let h = if proc_height > 0 { proc_height as u32 } else { input_frame.height() };
-                                let ratio = input_frame.height() as f64 / h as f64;
-                                let sw = (input_frame.width() as f64 / ratio).round() as u32;
-                                let sh = (input_frame.height() as f64 / (input_frame.width() as f64 / sw as f64)).round() as u32;
-                                match converter.scale(input_frame, ffmpeg_next::format::Pixel::GRAY8, sw, sh) {
-                                    Ok(small_frame) => {
-                                        let (width, height, stride, pixels) = (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data(0));
+                                if abs_frame_no % every_nth_frame == 0 {
+                                    let h = if proc_height > 0 {
+                                        proc_height as u32
+                                    } else {
+                                        input_frame.height()
+                                    };
+                                    let ratio = input_frame.height() as f64 / h as f64;
+                                    let sw = (input_frame.width() as f64 / ratio).round() as u32;
+                                    let sh = (input_frame.height() as f64
+                                        / (input_frame.width() as f64 / sw as f64))
+                                        .round()
+                                        as u32;
+                                    match converter.scale(
+                                        input_frame,
+                                        ffmpeg_next::format::Pixel::GRAY8,
+                                        sw,
+                                        sh,
+                                    ) {
+                                        Ok(small_frame) => {
+                                            let (width, height, stride, pixels) = (
+                                                small_frame.plane_width(0),
+                                                small_frame.plane_height(0),
+                                                small_frame.stride(0),
+                                                small_frame.data(0),
+                                            );
 
-                                        sync2.feed_frame(timestamp_us, frame_no, width, height, stride, pixels);
-                                    },
-                                    Err(e) => {
-                                        err2(("An error occured: %1".to_string(), e.to_string()))
+                                            sync2.feed_frame(
+                                                timestamp_us,
+                                                frame_no,
+                                                width,
+                                                height,
+                                                stride,
+                                                pixels,
+                                            );
+                                        }
+                                        Err(e) => err2((
+                                            "An error occured: %1".to_string(),
+                                            e.to_string(),
+                                        )),
                                     }
+                                    frame_no += 1;
                                 }
-                                frame_no += 1;
-                            }
-                            abs_frame_no += 1;
-                            Ok(())
-                        });
+                                abs_frame_no += 1;
+                                Ok(())
+                            },
+                        );
                         if let Err(e) = proc.start_decoder_only(ranges, cancel_flag.clone()) {
                             err(("An error occured: %1".to_string(), e.to_string()));
                         }
@@ -561,32 +733,55 @@ impl Controller {
                 };
             });
         } else {
-            err(("An error occured: %1".to_string(), "Invalid parameters".to_string()));
+            let detail = format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
+            ::log::warn!("[autosync] start_autosync rejected: {detail}");
+            err(("An error occured: %1".to_string(), detail));
         }
     }
 
     fn estimate_bias(&mut self, timestamps_fract: QString) {
-        let timestamps_fract: Vec<f64> = timestamps_fract.to_string().split(';').filter_map(|x| x.parse::<f64>().ok()).collect();
+        let timestamps_fract: Vec<f64> = timestamps_fract
+            .to_string()
+            .split(';')
+            .filter_map(|x| x.parse::<f64>().ok())
+            .collect();
 
         let org_duration_ms = self.stabilizer.params.read().duration_ms;
 
         // sample 400 ms
-        let ranges_ms: Vec<(f64, f64)> = timestamps_fract.iter().map(|x| {
-            let range = (
-                ((x * org_duration_ms) - (200.0)).max(0.0),
-                ((x * org_duration_ms) + (200.0)).min(org_duration_ms)
-            );
-            (range.0, range.1)
-        }).collect();
+        let ranges_ms: Vec<(f64, f64)> = timestamps_fract
+            .iter()
+            .map(|x| {
+                let range = (
+                    ((x * org_duration_ms) - (200.0)).max(0.0),
+                    ((x * org_duration_ms) + (200.0)).min(org_duration_ms),
+                );
+                (range.0, range.1)
+            })
+            .collect();
 
         if !ranges_ms.is_empty() {
-            let bias = self.stabilizer.gyro.read().find_bias(ranges_ms[0].0, ranges_ms[0].1);
+            let bias = self
+                .stabilizer
+                .gyro
+                .read()
+                .find_bias(ranges_ms[0].0, ranges_ms[0].1);
             self.bias_estimated(bias.0, bias.1, bias.2);
         }
     }
 
-    fn get_optimal_sync_points(&mut self, target_sync_points: usize, initial_offset: f64) -> QString {
-        QString::from(self.stabilizer.get_optimal_sync_points(target_sync_points, initial_offset * 1000.0).into_iter().map(|x| x.to_string()).join(";"))
+    fn get_optimal_sync_points(
+        &mut self,
+        target_sync_points: usize,
+        initial_offset: f64,
+    ) -> QString {
+        QString::from(
+            self.stabilizer
+                .get_optimal_sync_points(target_sync_points, initial_offset * 1000.0)
+                .into_iter()
+                .map(|x| x.to_string())
+                .join(";"),
+        )
     }
 
     fn update_chart(&mut self, chart: QJSValue, series: String) -> bool {
@@ -597,10 +792,11 @@ impl Controller {
         if let Some(chart) = chart.to_qobject::<TimelineGyroChart>() {
             let chart = unsafe { &mut *chart.as_ptr() }; // _self.borrow_mut();
 
-            if self.stabilizer.pose_estimator.estimated_gyro.is_locked() ||
-               self.stabilizer.pose_estimator.estimated_quats.is_locked() ||
-               self.stabilizer.gyro.is_locked() ||
-               self.stabilizer.params.is_locked() {
+            if self.stabilizer.pose_estimator.estimated_gyro.is_locked()
+                || self.stabilizer.pose_estimator.estimated_quats.is_locked()
+                || self.stabilizer.gyro.is_locked()
+                || self.stabilizer.params.is_locked()
+            {
                 ::log::debug!("Chart mutex locked, retrying");
                 return false;
             }
@@ -608,7 +804,9 @@ impl Controller {
             if series.is_empty() {
                 if let Some(est_gyro) = self.stabilizer.pose_estimator.estimated_gyro.try_read() {
                     chart.setSyncResults(&est_gyro);
-                    if let Some(est_quats) = self.stabilizer.pose_estimator.estimated_quats.try_read() {
+                    if let Some(est_quats) =
+                        self.stabilizer.pose_estimator.estimated_quats.try_read()
+                    {
                         chart.setSyncResultsQuats(&est_quats);
                     }
                 }
@@ -626,7 +824,14 @@ impl Controller {
         false
     }
 
-    fn update_frequency_graph(&mut self, graph: QJSValue, idx: usize, ts: f64, sr: f64, fft_size: usize) {
+    fn update_frequency_graph(
+        &mut self,
+        graph: QJSValue,
+        idx: usize,
+        ts: f64,
+        sr: f64,
+        fft_size: usize,
+    ) {
         if let Some(graph) = graph.to_qobject::<FrequencyGraph>() {
             let graph = unsafe { &mut *graph.as_ptr() }; // _self.borrow_mut();
 
@@ -637,8 +842,9 @@ impl Controller {
             if !raw_imu.is_empty() {
                 let dt_ms = 1000.0 / sr;
                 let center_ts = ts - gyro.offset_at_video_timestamp(ts);
-                let last_ts  = center_ts + dt_ms * (fft_size as f64)/2.0;
-                let mut sample_ts = last_ts.min(raw_imu.last().unwrap().timestamp_ms) - (fft_size as f64) * dt_ms;
+                let last_ts = center_ts + dt_ms * (fft_size as f64) / 2.0;
+                let mut sample_ts =
+                    last_ts.min(raw_imu.last().unwrap().timestamp_ms) - (fft_size as f64) * dt_ms;
                 sample_ts = sample_ts.max(0.0);
 
                 let mut prev_ts = 0.0;
@@ -690,11 +896,19 @@ impl Controller {
     }
 
     fn update_offset_model(&mut self) {
-        self.offsets_model = RefCell::new(self.stabilizer.gyro.read().get_offsets_plus_linear().iter().map(|(k, v)| OffsetItem {
-            timestamp_us: *k,
-            offset_ms: v.0,
-            linear_offset_ms: v.1
-        }).collect());
+        self.offsets_model = RefCell::new(
+            self.stabilizer
+                .gyro
+                .read()
+                .get_offsets_plus_linear()
+                .iter()
+                .map(|(k, v)| OffsetItem {
+                    timestamp_us: *k,
+                    offset_ms: v.0,
+                    linear_offset_ms: v.1,
+                })
+                .collect(),
+        );
 
         util::qt_queued_callback(QPointer::from(self as &Self), |this, _| {
             this.offsets_updated();
@@ -728,7 +942,14 @@ impl Controller {
         }
     }
 
-    fn load_telemetry(&mut self, url: QUrl, is_main_video: bool, player: QJSValue, sample_index: i32, project_version: u32) {
+    fn load_telemetry(
+        &mut self,
+        url: QUrl,
+        is_main_video: bool,
+        player: QJSValue,
+        sample_index: i32,
+        project_version: u32,
+    ) {
         let url = util::qurl_to_encoded(url);
         let stab = self.stabilizer.clone();
         let filename = filesystem::get_filename(&url);
@@ -754,45 +975,71 @@ impl Controller {
                 self.set_preview_resolution(self.preview_resolution, player);
             }
 
-            let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (msg, arg): (String, String)| {
-                this.error(QString::from(msg), QString::from(arg), QString::default());
-            });
+            let err = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                |this, (msg, arg): (String, String)| {
+                    this.error(QString::from(msg), QString::from(arg), QString::default());
+                },
+            );
 
-            let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, progress: f64| {
-                this.loading_gyro_in_progress = progress < 1.0;
-                this.loading_gyro_progress(progress);
-                this.loading_gyro_in_progress_changed();
-            });
+            let progress = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, progress: f64| {
+                    this.loading_gyro_in_progress = progress < 1.0;
+                    this.loading_gyro_progress(progress);
+                    this.loading_gyro_in_progress_changed();
+                },
+            );
             let stab2 = stab.clone();
-            let finished = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, params: (bool, QString, QString, bool, serde_json::Value)| {
-                this.gyro_loaded = params.3; // Contains motion
-                this.gyro_changed();
+            let finished = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, params: (bool, QString, QString, bool, serde_json::Value)| {
+                    this.gyro_loaded = params.3; // Contains motion
+                    this.gyro_changed();
 
-                this.loading_gyro_in_progress = false;
-                this.loading_gyro_progress(1.0);
-                this.loading_gyro_in_progress_changed();
+                    this.loading_gyro_in_progress = false;
+                    this.loading_gyro_progress(1.0);
+                    this.loading_gyro_in_progress_changed();
 
-                this.update_offset_model();
-                this.chart_data_changed();
+                    this.update_offset_model();
+                    this.chart_data_changed();
 
-                this.telemetry_loaded(params.0, params.1, params.2, util::serde_json_to_qt_object(&params.4));
+                    this.telemetry_loaded(
+                        params.0,
+                        params.1,
+                        params.2,
+                        util::serde_json_to_qt_object(&params.4),
+                    );
 
-                stab2.invalidate_ongoing_computations();
-                stab2.invalidate_smoothing();
-                this.request_recompute();
-            });
-            let load_lens = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, path: String| {
-                this.load_lens_profile(path.into());
-            });
-            let reload_lens = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _| {
-                let lens = this.stabilizer.lens.read();
-                if this.lens_loaded || !lens.path_to_file.is_empty() || !lens.fisheye_params.camera_matrix.is_empty() || !lens.camera_brand.is_empty() {
-                    this.lens_loaded = true;
-                    this.lens_changed();
-                    let json = lens.get_json().unwrap_or_default();
-                    this.lens_profile_loaded(QString::from(json), QString::from(lens.path_to_file.as_str()), QString::from(lens.checksum.clone().unwrap_or_default()));
-                }
-            });
+                    stab2.invalidate_ongoing_computations();
+                    stab2.invalidate_smoothing();
+                    this.request_recompute();
+                },
+            );
+            let load_lens = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, path: String| {
+                    this.load_lens_profile(path.into());
+                },
+            );
+            let reload_lens =
+                util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _| {
+                    let lens = this.stabilizer.lens.read();
+                    if this.lens_loaded
+                        || !lens.path_to_file.is_empty()
+                        || !lens.fisheye_params.camera_matrix.is_empty()
+                        || !lens.camera_brand.is_empty()
+                    {
+                        this.lens_loaded = true;
+                        this.lens_changed();
+                        let json = lens.get_json().unwrap_or_default();
+                        this.lens_profile_loaded(
+                            QString::from(json),
+                            QString::from(lens.path_to_file.as_str()),
+                            QString::from(lens.checksum.clone().unwrap_or_default()),
+                        );
+                    }
+                });
 
             if duration_ms > 0.0 && fps > 0.0 {
                 if is_main_video {
@@ -811,14 +1058,30 @@ impl Controller {
                             let filesize = file.size;
                             if is_main_video {
                                 // Ignore the error here, video file may not contain the telemetry and it's ok
-                                let _ = stab.load_gyro_data(file.get_file(), filesize, &url, is_main_video, &load_options, progress, cancel_flag);
+                                let _ = stab.load_gyro_data(
+                                    file.get_file(),
+                                    filesize,
+                                    &url,
+                                    is_main_video,
+                                    &load_options,
+                                    progress,
+                                    cancel_flag,
+                                );
                                 stab.recompute_undistortion();
                             } else {
                                 if sample_index > -1 {
                                     load_options.sample_index = Some(sample_index as usize);
                                 }
 
-                                if let Err(e) = stab.load_gyro_data(file.get_file(), filesize, &url, is_main_video, &load_options, progress, cancel_flag) {
+                                if let Err(e) = stab.load_gyro_data(
+                                    file.get_file(),
+                                    filesize,
+                                    &url,
+                                    is_main_video,
+                                    &load_options,
+                                    progress,
+                                    cancel_flag,
+                                ) {
                                     err(("An error occured: %1".to_string(), e.to_string()));
                                 }
                             }
@@ -829,29 +1092,85 @@ impl Controller {
 
                     let gyro = stab.gyro.read();
                     let file_metadata = gyro.file_metadata.read();
-                    let detected = file_metadata.detected_source.as_ref().map(String::clone).unwrap_or_default();
+                    let detected = file_metadata
+                        .detected_source
+                        .as_ref()
+                        .map(String::clone)
+                        .unwrap_or_default();
                     let has_raw_gyro = !file_metadata.raw_imu.is_empty();
                     let has_quats = !file_metadata.quaternions.is_empty();
                     let has_motion = has_raw_gyro || has_quats;
-                    additional_obj.insert("imu_orientation".to_owned(),   serde_json::Value::String(gyro.imu_transforms.imu_orientation.clone().unwrap_or_else(|| "XYZ".into())));
-                    additional_obj.insert("contains_raw_gyro".to_owned(), serde_json::Value::Bool(has_raw_gyro));
-                    additional_obj.insert("contains_quats".to_owned(),    serde_json::Value::Bool(has_quats));
-                    additional_obj.insert("contains_motion".to_owned(),   serde_json::Value::Bool(has_motion));
-                    additional_obj.insert("has_accurate_timestamps".to_owned(), serde_json::Value::Bool(file_metadata.has_accurate_timestamps));
-                    additional_obj.insert("sample_rate".to_owned(),       serde_json::to_value(gyroflow_core::gyro_source::GyroSource::get_sample_rate(&*file_metadata)).unwrap());
-                    let has_builtin_profile = file_metadata.lens_profile.as_ref().map(|y| y.is_object()).unwrap_or_default();
+                    additional_obj.insert(
+                        "imu_orientation".to_owned(),
+                        serde_json::Value::String(
+                            gyro.imu_transforms
+                                .imu_orientation
+                                .clone()
+                                .unwrap_or_else(|| "XYZ".into()),
+                        ),
+                    );
+                    additional_obj.insert(
+                        "contains_raw_gyro".to_owned(),
+                        serde_json::Value::Bool(has_raw_gyro),
+                    );
+                    additional_obj.insert(
+                        "contains_quats".to_owned(),
+                        serde_json::Value::Bool(has_quats),
+                    );
+                    additional_obj.insert(
+                        "contains_motion".to_owned(),
+                        serde_json::Value::Bool(has_motion),
+                    );
+                    additional_obj.insert(
+                        "has_accurate_timestamps".to_owned(),
+                        serde_json::Value::Bool(file_metadata.has_accurate_timestamps),
+                    );
+                    additional_obj.insert(
+                        "sample_rate".to_owned(),
+                        serde_json::to_value(
+                            gyroflow_core::gyro_source::GyroSource::get_sample_rate(
+                                &*file_metadata,
+                            ),
+                        )
+                        .unwrap(),
+                    );
+                    let has_builtin_profile = file_metadata
+                        .lens_profile
+                        .as_ref()
+                        .map(|y| y.is_object())
+                        .unwrap_or_default();
                     let has_lens_params = !file_metadata.lens_params.is_empty();
-                    let has_focal_length = file_metadata.lens_params.values().next().and_then(|p| p.focal_length).is_some();
+                    let has_focal_length = file_metadata
+                        .lens_params
+                        .values()
+                        .next()
+                        .and_then(|p| p.focal_length)
+                        .is_some();
                     let unit_px_fl = file_metadata.unit_pixel_focal_length;
-                    additional_obj.insert("has_lens_params".to_owned(), serde_json::Value::Bool(has_lens_params));
-                    additional_obj.insert("has_builtin_profile".to_owned(), serde_json::Value::Bool(has_builtin_profile));
-                    additional_obj.insert("has_focal_length".to_owned(), serde_json::Value::Bool(has_focal_length));
+                    additional_obj.insert(
+                        "has_lens_params".to_owned(),
+                        serde_json::Value::Bool(has_lens_params),
+                    );
+                    additional_obj.insert(
+                        "has_builtin_profile".to_owned(),
+                        serde_json::Value::Bool(has_builtin_profile),
+                    );
+                    additional_obj.insert(
+                        "has_focal_length".to_owned(),
+                        serde_json::Value::Bool(has_focal_length),
+                    );
                     if let Some(upfl) = unit_px_fl {
-                        additional_obj.insert("unit_pixel_focal_length".to_owned(), serde_json::Number::from_f64(upfl).unwrap().into());
+                        additional_obj.insert(
+                            "unit_pixel_focal_length".to_owned(),
+                            serde_json::Number::from_f64(upfl).unwrap().into(),
+                        );
                     }
                     // Pass telemetry creation time to UI and set video_created_at
                     if let Some(ref utc_str) = file_metadata.creation_date_utc {
-                        additional_obj.insert("creation_date_utc".to_owned(), serde_json::Value::String(utc_str.clone()));
+                        additional_obj.insert(
+                            "creation_date_utc".to_owned(),
+                            serde_json::Value::String(utc_str.clone()),
+                        );
                         if is_main_video {
                             if let Some(ms) = parse_creation_date_to_millis(utc_str) {
                                 stab.params.write().video_created_at = Some(ms);
@@ -859,24 +1178,36 @@ impl Controller {
                         }
                     }
                     if let Some(ref tz) = file_metadata.timezone_offset {
-                        additional_obj.insert("timezone_offset".to_owned(), serde_json::Value::String(tz.clone()));
+                        additional_obj.insert(
+                            "timezone_offset".to_owned(),
+                            serde_json::Value::String(tz.clone()),
+                        );
                         if is_main_video {
                             stab.params.write().video_timezone = Some(tz.clone());
                         }
                     }
                     if let Some(ref local) = file_metadata.creation_date {
-                        additional_obj.insert("creation_date".to_owned(), serde_json::Value::String(local.clone()));
+                        additional_obj.insert(
+                            "creation_date".to_owned(),
+                            serde_json::Value::String(local.clone()),
+                        );
                     }
 
                     let md_data = file_metadata.additional_data.clone();
                     if let Some(md_fps) = file_metadata.frame_rate {
-                        additional_obj.insert("telemetry_fps".to_owned(), serde_json::Number::from_f64(md_fps).unwrap().into());
+                        additional_obj.insert(
+                            "telemetry_fps".to_owned(),
+                            serde_json::Number::from_f64(md_fps).unwrap().into(),
+                        );
                     }
                     if let Some(rec_fps) = file_metadata.record_frame_rate {
                         let fps = stab.params.read().fps;
                         let ratio = rec_fps / fps;
                         if ratio > 1.2 || ratio < 1.0 / 1.2 {
-                            additional_obj.insert("realtime_fps".to_owned(), serde_json::Number::from_f64(rec_fps).unwrap().into());
+                            additional_obj.insert(
+                                "realtime_fps".to_owned(),
+                                serde_json::Number::from_f64(rec_fps).unwrap().into(),
+                            );
                         }
                     }
                     drop(file_metadata);
@@ -884,7 +1215,10 @@ impl Controller {
 
                     let camera_id = stab.camera_id.read();
 
-                    let id_str = camera_id.as_ref().map(|v| v.get_identifier_for_autoload()).unwrap_or_default();
+                    let id_str = camera_id
+                        .as_ref()
+                        .map(|v| v.get_identifier_for_autoload())
+                        .unwrap_or_default();
                     if is_main_video && !id_str.is_empty() && !has_builtin_profile {
                         let needs_load = {
                             let mut db = stab.lens_profile_db.write();
@@ -898,7 +1232,8 @@ impl Controller {
                         if needs_load {
                             let db = stab.lens_profile_db.clone();
                             core::run_threaded(move || {
-                                let mut new_db = core::lens_profile_database::LensProfileDatabase::default();
+                                let mut new_db =
+                                    core::lens_profile_database::LensProfileDatabase::default();
                                 new_db.load_all();
                                 db.write().set_from_db(new_db);
                             });
@@ -909,7 +1244,10 @@ impl Controller {
                     }
 
                     if let Some(cam_id) = camera_id.as_ref() {
-                        additional_obj.insert("camera_identifier".to_owned(), serde_json::to_value(cam_id).unwrap());
+                        additional_obj.insert(
+                            "camera_identifier".to_owned(),
+                            serde_json::to_value(cam_id).unwrap(),
+                        );
                     }
                     drop(camera_id);
 
@@ -917,10 +1255,22 @@ impl Controller {
                         gyroflow_core::util::merge_json(&mut additional_data, &md_data);
                     }
 
-                    additional_data.as_object_mut().unwrap().insert("frame_readout_time".to_owned(), serde_json::to_value(stab.params.read().frame_readout_time.abs()).unwrap());
-                    additional_data.as_object_mut().unwrap().insert("frame_readout_direction".to_owned(), serde_json::to_value(stab.params.read().frame_readout_direction).unwrap());
+                    additional_data.as_object_mut().unwrap().insert(
+                        "frame_readout_time".to_owned(),
+                        serde_json::to_value(stab.params.read().frame_readout_time.abs()).unwrap(),
+                    );
+                    additional_data.as_object_mut().unwrap().insert(
+                        "frame_readout_direction".to_owned(),
+                        serde_json::to_value(stab.params.read().frame_readout_direction).unwrap(),
+                    );
 
-                    finished((is_main_video, filename.into(), QString::from(detected.trim()), has_motion, additional_data));
+                    finished((
+                        is_main_video,
+                        filename.into(),
+                        QString::from(detected.trim()),
+                        has_motion,
+                        additional_data,
+                    ));
                 });
             }
         }
@@ -928,30 +1278,52 @@ impl Controller {
     fn load_lens_profile(&mut self, url_or_id: QString) {
         let (json, filepath, checksum) = {
             if let Err(e) = self.stabilizer.load_lens_profile(&url_or_id.to_string()) {
-                self.error(QString::from("An error occured: %1"), QString::from(e.to_string()), QString::default());
+                self.error(
+                    QString::from("An error occured: %1"),
+                    QString::from(e.to_string()),
+                    QString::default(),
+                );
             }
             let lens = self.stabilizer.lens.read();
-            (lens.get_json().unwrap_or_default(), lens.path_to_file.clone(), lens.checksum.clone().unwrap_or_default())
+            (
+                lens.get_json().unwrap_or_default(),
+                lens.path_to_file.clone(),
+                lens.checksum.clone().unwrap_or_default(),
+            )
         };
         self.lens_loaded = true;
         self.lens_changed();
-        self.lens_profile_loaded(QString::from(json), QString::from(filepath), QString::from(checksum));
+        self.lens_profile_loaded(
+            QString::from(json),
+            QString::from(filepath),
+            QString::from(checksum),
+        );
         self.request_recompute();
     }
     fn load_default_preset(&mut self) {
         // Assumes regular filesystem
-        let local_path = gyroflow_core::lens_profile_database::LensProfileDatabase::get_path().join("default.gyroflow");
+        let local_path = gyroflow_core::lens_profile_database::LensProfileDatabase::get_path()
+            .join("default.gyroflow");
 
-        let settings_path = gyroflow_core::settings::data_dir().join("lens_profiles").join("default.gyroflow");
+        let settings_path = gyroflow_core::settings::data_dir()
+            .join("lens_profiles")
+            .join("default.gyroflow");
         if settings_path.exists() {
-            self.import_gyroflow_file(QUrl::from(QString::from(filesystem::path_to_url(&settings_path.to_string_lossy()))));
+            self.import_gyroflow_file(QUrl::from(QString::from(filesystem::path_to_url(
+                &settings_path.to_string_lossy(),
+            ))));
         } else if local_path.exists() {
-            self.import_gyroflow_file(QUrl::from(QString::from(filesystem::path_to_url(&local_path.to_string_lossy()))));
+            self.import_gyroflow_file(QUrl::from(QString::from(filesystem::path_to_url(
+                &local_path.to_string_lossy(),
+            ))));
         }
     }
     fn get_preset_contents(&mut self, url_or_id: QString) -> QString {
         let db = self.stabilizer.lens_profile_db.read();
-        QString::from(db.get_preset_by_id(&url_or_id.to_string()).unwrap_or_default())
+        QString::from(
+            db.get_preset_by_id(&url_or_id.to_string())
+                .unwrap_or_default(),
+        )
     }
 
     fn set_preview_resolution(&mut self, target_height: i32, player: QJSValue) {
@@ -962,10 +1334,15 @@ impl Controller {
             // fn aligned_to_8(mut x: u32) -> u32 { if x % 8 != 0 { x += 8 - x % 8; } x }
 
             if !self.stabilizer.input_file.read().url.is_empty() {
-                let h = if target_height > 0 { target_height as u32 } else { vid.videoHeight };
+                let h = if target_height > 0 {
+                    target_height as u32
+                } else {
+                    vid.videoHeight
+                };
                 let ratio = vid.videoHeight as f64 / h as f64;
                 let new_w = (vid.videoWidth as f64 / ratio).floor() as u32;
-                let new_h = (vid.videoHeight as f64 / (vid.videoWidth as f64 / new_w as f64)).floor() as u32;
+                let new_h = (vid.videoHeight as f64 / (vid.videoWidth as f64 / new_w as f64))
+                    .floor() as u32;
                 ::log::info!("surface size: {}x{}", new_w, new_h);
 
                 self.chart_data_changed();
@@ -1023,10 +1400,8 @@ impl Controller {
     fn reset_player(&self, player: QJSValue) {
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
-            vid.onResize(Box::new(|_, _| { }));
-            vid.onProcessTexture(Box::new(|_, _, _, _, _, _, _, _, _, _| -> bool {
-                false
-            }));
+            vid.onResize(Box::new(|_, _| {}));
+            vid.onProcessTexture(Box::new(|_, _, _, _, _, _, _, _, _, _| -> bool { false }));
             vid.onProcessPixels(Box::new(|_, _, _, _, _, _| -> (u32, u32, u32, *mut u8) {
                 (0, 0, 0, std::ptr::null_mut())
             }));
@@ -1041,15 +1416,22 @@ impl Controller {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
 
             let bg_color = vid.getBackgroundColor().get_rgba_f();
-            self.stabilizer.params.write().background = Vector4::new(bg_color.0 as f32, bg_color.1 as f32, bg_color.2 as f32, bg_color.3 as f32);
+            self.stabilizer.params.write().background = Vector4::new(
+                bg_color.0 as f32,
+                bg_color.1 as f32,
+                bg_color.2 as f32,
+                bg_color.3 as f32,
+            );
             {
                 let mut stab = self.stabilizer.stabilization.write();
-                stab.kernel_flags.set(KernelParamsFlags::DRAWING_ENABLED, true);
+                stab.kernel_flags
+                    .set(KernelParamsFlags::DRAWING_ENABLED, true);
                 stab.cache_frame_transform = true;
             }
-            let request_recompute = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
-                this.request_recompute();
-            });
+            let request_recompute =
+                util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
+                    this.request_recompute();
+                });
             let stab = self.stabilizer.clone();
             vid.onResize(Box::new(move |width, height| {
                 let current_size = stab.params.read().size;
@@ -1059,7 +1441,7 @@ impl Controller {
                 }
             }));
 
-            use gyroflow_core::gpu::{ BufferDescription, Buffers, BufferSource };
+            use gyroflow_core::gpu::{BufferDescription, BufferSource, Buffers};
 
             let stab = self.stabilizer.clone();
             vid.readyForProcessing(Box::new(move || -> bool {
@@ -1068,183 +1450,311 @@ impl Controller {
             let stab = self.stabilizer.clone();
             let preview_pipeline = self.preview_pipeline.clone();
             let out_pixels = RefCell::new(Vec::new());
-            let update_info = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (fov, minimal_fov, focal_length, info): (f64, f64, Option<f64>, QString)| {
-                this.current_fov = fov;
-                this.current_minimal_fov = minimal_fov;
-                this.current_focal_length = focal_length.unwrap_or_default();
-                this.processing_info = info;
-                this.processing_info_changed();
-            });
+            let update_info =
+                util::qt_queued_callback_mut(
+                    QPointer::from(self as &Self),
+                    move |this,
+                          (fov, minimal_fov, focal_length, info): (
+                        f64,
+                        f64,
+                        Option<f64>,
+                        QString,
+                    )| {
+                        this.current_fov = fov;
+                        this.current_minimal_fov = minimal_fov;
+                        this.current_focal_length = focal_length.unwrap_or_default();
+                        this.processing_info = info;
+                        this.processing_info_changed();
+                    },
+                );
             let update_info2 = update_info.clone();
 
             #[allow(unused_variables)]
-            vid.onProcessTexture(Box::new(move |frame, timestamp_ms, width, height, backend_id, ptr1, ptr2, ptr3, ptr4, ptr5| -> bool {
-                if width < 4 || height < 4 || backend_id == 0 { return false; }
-
-                if !stab.params.read().stab_enabled { return true; }
-
-                let _time = std::time::Instant::now();
-
-                if preview_pipeline.load(SeqCst) == 0 {
-                    let mut buffers = Buffers{
-                        input:  BufferDescription { size: (width as usize, height as usize, width as usize * 4), ..Default::default() },
-                        output: BufferDescription { size: (width as usize, height as usize, width as usize * 4), ..Default::default() },
-                    };
-
-                    let (offset, fps) = {
-                        let params = stab.params.read();
-                        (params.frame_offset, params.fps)
-                    };
-                    let frame = (frame as i32 + offset).max(0) as u32;
-                    let timestamp_ms = timestamp_ms + (offset as f64 / fps * 1000.0).round();
-
-                    if let Some(ret) = qrhi_undistort::render(vid1.get_mdkplayer(), timestamp_ms, frame as usize, width, height, stab.clone(), &mut buffers) {
-                        update_info2((ret.fov, ret.minimal_fov, ret.focal_length, QString::from(format!("Processing {}x{} using {} took {:.2}ms", width, height, ret.backend, _time.elapsed().as_micros() as f64 / 1000.0))));
-                    } else {
-                        update_info2((1.0, 1.0, None, QString::from("---")));
+            vid.onProcessTexture(Box::new(
+                move |frame,
+                      timestamp_ms,
+                      width,
+                      height,
+                      backend_id,
+                      ptr1,
+                      ptr2,
+                      ptr3,
+                      ptr4,
+                      ptr5|
+                      -> bool {
+                    if width < 4 || height < 4 || backend_id == 0 {
+                        return false;
                     }
-                    return true;
-                }
 
-                if preview_pipeline.load(SeqCst) > 1 { return false; }
+                    if !stab.params.read().stab_enabled {
+                        return true;
+                    }
 
-                let size = (width as usize, height as usize, width as usize * 4);
+                    let _time = std::time::Instant::now();
 
-                let mut buffers =
-                    match backend_id {
-                        1 => { // OpenGL, ptr1: texture, ptr2: opengl context
-                            Some((Buffers {
-                                input: BufferDescription {
-                                    size,
-                                    data: BufferSource::OpenGL {
-                                        texture: ptr1 as u32,
-                                        context: ptr2 as *mut std::ffi::c_void
-                                    }, ..Default::default()
-                                },
-                                output: BufferDescription {
-                                    size,
-                                    data: BufferSource::OpenGL {
-                                        texture: ptr1 as u32,
-                                        context: ptr2 as *mut std::ffi::c_void
-                                    }, ..Default::default()
-                                },
+                    if preview_pipeline.load(SeqCst) == 0 {
+                        let mut buffers = Buffers {
+                            input: BufferDescription {
+                                size: (width as usize, height as usize, width as usize * 4),
+                                ..Default::default()
                             },
-                            "OpenGL"))
-                        },
+                            output: BufferDescription {
+                                size: (width as usize, height as usize, width as usize * 4),
+                                ..Default::default()
+                            },
+                        };
+
+                        let (offset, fps) = {
+                            let params = stab.params.read();
+                            (params.frame_offset, params.fps)
+                        };
+                        let frame = (frame as i32 + offset).max(0) as u32;
+                        let timestamp_ms = timestamp_ms + (offset as f64 / fps * 1000.0).round();
+
+                        if let Some(ret) = qrhi_undistort::render(
+                            vid1.get_mdkplayer(),
+                            timestamp_ms,
+                            frame as usize,
+                            width,
+                            height,
+                            stab.clone(),
+                            &mut buffers,
+                        ) {
+                            update_info2((
+                                ret.fov,
+                                ret.minimal_fov,
+                                ret.focal_length,
+                                QString::from(format!(
+                                    "Processing {}x{} using {} took {:.2}ms",
+                                    width,
+                                    height,
+                                    ret.backend,
+                                    _time.elapsed().as_micros() as f64 / 1000.0
+                                )),
+                            ));
+                        } else {
+                            update_info2((1.0, 1.0, None, QString::from("---")));
+                        }
+                        return true;
+                    }
+
+                    if preview_pipeline.load(SeqCst) > 1 {
+                        return false;
+                    }
+
+                    let size = (width as usize, height as usize, width as usize * 4);
+
+                    let mut buffers = match backend_id {
+                        1 => {
+                            // OpenGL, ptr1: texture, ptr2: opengl context
+                            Some((
+                                Buffers {
+                                    input: BufferDescription {
+                                        size,
+                                        data: BufferSource::OpenGL {
+                                            texture: ptr1 as u32,
+                                            context: ptr2 as *mut std::ffi::c_void,
+                                        },
+                                        ..Default::default()
+                                    },
+                                    output: BufferDescription {
+                                        size,
+                                        data: BufferSource::OpenGL {
+                                            texture: ptr1 as u32,
+                                            context: ptr2 as *mut std::ffi::c_void,
+                                        },
+                                        ..Default::default()
+                                    },
+                                },
+                                "OpenGL",
+                            ))
+                        }
                         #[cfg(any(target_os = "macos", target_os = "ios"))]
-                        2 => { // Metal, ptr1: texture, ptr2: device, ptr3: command queue
-                            Some((Buffers {
-                                input: BufferDescription {
-                                    size,
-                                    data: BufferSource::Metal { texture: ptr1 as *mut std::ffi::c_void, command_queue: ptr3 as *mut std::ffi::c_void }, ..Default::default()
+                        2 => {
+                            // Metal, ptr1: texture, ptr2: device, ptr3: command queue
+                            Some((
+                                Buffers {
+                                    input: BufferDescription {
+                                        size,
+                                        data: BufferSource::Metal {
+                                            texture: ptr1 as *mut std::ffi::c_void,
+                                            command_queue: ptr3 as *mut std::ffi::c_void,
+                                        },
+                                        ..Default::default()
+                                    },
+                                    output: BufferDescription {
+                                        size,
+                                        texture_copy: true,
+                                        data: BufferSource::Metal {
+                                            texture: ptr1 as *mut std::ffi::c_void,
+                                            command_queue: ptr3 as *mut std::ffi::c_void,
+                                        },
+                                        ..Default::default()
+                                    },
                                 },
-                                output: BufferDescription {
-                                    size,
-                                    texture_copy: true,
-                                    data: BufferSource::Metal { texture: ptr1 as *mut std::ffi::c_void, command_queue: ptr3 as *mut std::ffi::c_void }, ..Default::default()
-                                },
-                            },
-                            "Metal"))
-                        },
-                        #[cfg(target_os = "windows")]
-                        3 => { // D3D11, ptr1: texture, ptr2: device, ptr3: device context
-                            Some((Buffers {
-                                input: BufferDescription {
-                                    size,
-                                    texture_copy: true,
-                                    data: BufferSource::DirectX11 {
-                                        texture: ptr1 as *mut std::ffi::c_void,
-                                        device:  ptr2 as *mut std::ffi::c_void,
-                                        device_context: ptr3 as *mut std::ffi::c_void
-                                    }, ..Default::default()
-                                },
-                                output: BufferDescription {
-                                    size,
-                                    texture_copy: true,
-                                    data: BufferSource::DirectX11 {
-                                        texture: ptr1 as *mut std::ffi::c_void,
-                                        device:  ptr2 as *mut std::ffi::c_void,
-                                        device_context: ptr3 as *mut std::ffi::c_void
-                                    }, ..Default::default()
-                                },
-                            },
-                            "DirectX11"))
-                        },
-                        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-                        4 => { // Vulkan, ptr1: VkImage, ptr2: VkDevice, ptr3: VkCommandBuffer, ptr4: VkPhysicalDevice, ptr5: VkInstance
-                            Some((Buffers {
-                                input: BufferDescription {
-                                    size,
-                                    texture_copy: false,
-                                    data: BufferSource::Vulkan { texture: ptr1, device: ptr2, physical_device: ptr4, instance: ptr5 },
-                                    ..Default::default()
-                                },
-                                output: BufferDescription {
-                                    size,
-                                    texture_copy: true,
-                                    data: BufferSource::Vulkan { texture: ptr1, device: ptr2, physical_device: ptr4, instance: ptr5 },
-                                    ..Default::default()
-                                },
-                            },
-                            "Vulkan"))
+                                "Metal",
+                            ))
                         }
-                        _ => None
+                        #[cfg(target_os = "windows")]
+                        3 => {
+                            // D3D11, ptr1: texture, ptr2: device, ptr3: device context
+                            Some((
+                                Buffers {
+                                    input: BufferDescription {
+                                        size,
+                                        texture_copy: true,
+                                        data: BufferSource::DirectX11 {
+                                            texture: ptr1 as *mut std::ffi::c_void,
+                                            device: ptr2 as *mut std::ffi::c_void,
+                                            device_context: ptr3 as *mut std::ffi::c_void,
+                                        },
+                                        ..Default::default()
+                                    },
+                                    output: BufferDescription {
+                                        size,
+                                        texture_copy: true,
+                                        data: BufferSource::DirectX11 {
+                                            texture: ptr1 as *mut std::ffi::c_void,
+                                            device: ptr2 as *mut std::ffi::c_void,
+                                            device_context: ptr3 as *mut std::ffi::c_void,
+                                        },
+                                        ..Default::default()
+                                    },
+                                },
+                                "DirectX11",
+                            ))
+                        }
+                        #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+                        4 => {
+                            // Vulkan, ptr1: VkImage, ptr2: VkDevice, ptr3: VkCommandBuffer, ptr4: VkPhysicalDevice, ptr5: VkInstance
+                            Some((
+                                Buffers {
+                                    input: BufferDescription {
+                                        size,
+                                        texture_copy: false,
+                                        data: BufferSource::Vulkan {
+                                            texture: ptr1,
+                                            device: ptr2,
+                                            physical_device: ptr4,
+                                            instance: ptr5,
+                                        },
+                                        ..Default::default()
+                                    },
+                                    output: BufferDescription {
+                                        size,
+                                        texture_copy: true,
+                                        data: BufferSource::Vulkan {
+                                            texture: ptr1,
+                                            device: ptr2,
+                                            physical_device: ptr4,
+                                            instance: ptr5,
+                                        },
+                                        ..Default::default()
+                                    },
+                                },
+                                "Vulkan",
+                            ))
+                        }
+                        _ => None,
                     };
 
-                if let Some((ref mut buffers, backend)) = buffers {
-                    match stab.process_pixels::<RGBA8>((timestamp_ms * 1000.0).round() as i64, Some(frame as usize), buffers) {
-                        Ok(ret) =>  {
-                            update_info2((ret.fov, ret.minimal_fov, ret.focal_length, QString::from(format!("Processing {}x{} using {backend}->{} took {:.2}ms", width, height, ret.backend, _time.elapsed().as_micros() as f64 / 1000.0))));
-                            return true;
-                        },
-                        Err(e) => {
-                            ::log::error!("Failed to process pixels: {e:?}");
+                    if let Some((ref mut buffers, backend)) = buffers {
+                        match stab.process_pixels::<RGBA8>(
+                            (timestamp_ms * 1000.0).round() as i64,
+                            Some(frame as usize),
+                            buffers,
+                        ) {
+                            Ok(ret) => {
+                                update_info2((
+                                    ret.fov,
+                                    ret.minimal_fov,
+                                    ret.focal_length,
+                                    QString::from(format!(
+                                        "Processing {}x{} using {backend}->{} took {:.2}ms",
+                                        width,
+                                        height,
+                                        ret.backend,
+                                        _time.elapsed().as_micros() as f64 / 1000.0
+                                    )),
+                                ));
+                                return true;
+                            }
+                            Err(e) => {
+                                ::log::error!("Failed to process pixels: {e:?}");
+                            }
                         }
                     }
-                }
 
-                update_info2((1.0, 1.0, None, QString::from("---")));
-                false
-            }));
+                    update_info2((1.0, 1.0, None, QString::from("---")));
+                    false
+                },
+            ));
 
             let stab = self.stabilizer.clone();
             let update_info2 = update_info.clone();
-            vid.onProcessPixels(Box::new(move |frame, timestamp_ms, width, height, stride, pixels: &mut [u8]| -> (u32, u32, u32, *mut u8) {
-                let _time = std::time::Instant::now();
+            vid.onProcessPixels(Box::new(
+                move |frame,
+                      timestamp_ms,
+                      width,
+                      height,
+                      stride,
+                      pixels: &mut [u8]|
+                      -> (u32, u32, u32, *mut u8) {
+                    let _time = std::time::Instant::now();
 
-                // TODO: cache in atomics instead of locking the mutex every time
-                let params = stab.params.read();
-                if !params.stab_enabled { return (0, 0, 0, std::ptr::null_mut()); }
-                let (ow, oh) = params.output_size;
-                let os = ow * 4; // Assume RGBA8 - 4 bytes per pixel
-                drop(params);
-
-                let mut out_pixels = out_pixels.borrow_mut();
-                out_pixels.resize_with(os*oh, u8::default);
-
-                let ret = stab.process_pixels::<RGBA8>((timestamp_ms * 1000.0).round() as i64, Some(frame as usize), &mut Buffers {
-                    input: BufferDescription {
-                        size: (width as usize, height as usize, stride as usize),
-                        data: BufferSource::Cpu { buffer: pixels },
-                        ..Default::default()
-                    },
-                    output: BufferDescription {
-                        size: (ow, oh, os),
-                        data: BufferSource::Cpu { buffer: &mut out_pixels },
-                        ..Default::default()
-                    },
-                });
-                match ret {
-                    Ok(bk) => {
-                        update_info2((bk.fov, bk.minimal_fov, bk.focal_length, QString::from(format!("Processing {}x{} using {} took {:.2}ms", width, height, bk.backend, _time.elapsed().as_micros() as f64 / 1000.0))));
-                        (ow as u32, oh as u32, os as u32, out_pixels.as_mut_ptr())
-                    },
-                    Err(_) => {
-                        update_info2((1.0, 1.0, None, QString::from("---")));
-                        (0, 0, 0, std::ptr::null_mut())
+                    // TODO: cache in atomics instead of locking the mutex every time
+                    let params = stab.params.read();
+                    if !params.stab_enabled {
+                        return (0, 0, 0, std::ptr::null_mut());
                     }
-                }
-            }));
+                    let (ow, oh) = params.output_size;
+                    let os = ow * 4; // Assume RGBA8 - 4 bytes per pixel
+                    drop(params);
+
+                    let mut out_pixels = out_pixels.borrow_mut();
+                    out_pixels.resize_with(os * oh, u8::default);
+
+                    let ret = stab.process_pixels::<RGBA8>(
+                        (timestamp_ms * 1000.0).round() as i64,
+                        Some(frame as usize),
+                        &mut Buffers {
+                            input: BufferDescription {
+                                size: (width as usize, height as usize, stride as usize),
+                                data: BufferSource::Cpu { buffer: pixels },
+                                ..Default::default()
+                            },
+                            output: BufferDescription {
+                                size: (ow, oh, os),
+                                data: BufferSource::Cpu {
+                                    buffer: &mut out_pixels,
+                                },
+                                ..Default::default()
+                            },
+                        },
+                    );
+                    match ret {
+                        Ok(bk) => {
+                            update_info2((
+                                bk.fov,
+                                bk.minimal_fov,
+                                bk.focal_length,
+                                QString::from(format!(
+                                    "Processing {}x{} using {} took {:.2}ms",
+                                    width,
+                                    height,
+                                    bk.backend,
+                                    _time.elapsed().as_micros() as f64 / 1000.0
+                                )),
+                            ));
+                            (ow as u32, oh as u32, os as u32, out_pixels.as_mut_ptr())
+                        }
+                        Err(_) => {
+                            update_info2((1.0, 1.0, None, QString::from("---")));
+                            (0, 0, 0, std::ptr::null_mut())
+                        }
+                    }
+                },
+            ));
         }
     }
 
@@ -1256,7 +1766,12 @@ impl Controller {
             vid.setBackgroundColor(color);
 
             let bg = color.get_rgba_f();
-            self.stabilizer.set_background_color(Vector4::new(bg.0 as f32, bg.1 as f32, bg.2 as f32, bg.3 as f32));
+            self.stabilizer.set_background_color(Vector4::new(
+                bg.0 as f32,
+                bg.1 as f32,
+                bg.2 as f32,
+                bg.3 as f32,
+            ));
             self.request_recompute();
         }
     }
@@ -1276,26 +1791,41 @@ impl Controller {
     wrap_simple_method!(set_use_gravity_vectors, v: bool; recompute; chart_data_changed);
     wrap_simple_method!(set_horizon_lock_integration_method, v: i32; recompute; chart_data_changed);
     pub fn get_smoothing_algs(&self) -> QVariantList {
-        self.stabilizer.get_smoothing_algs().into_iter().map(QString::from).collect()
+        self.stabilizer
+            .get_smoothing_algs()
+            .into_iter()
+            .map(QString::from)
+            .collect()
     }
     fn get_smoothing_status(&self) -> QJsonArray {
         util::serde_json_to_qt_array(&self.stabilizer.get_smoothing_status())
     }
     fn get_smoothing_max_angles(&self) -> QJsonArray {
         let max_angles = self.stabilizer.get_smoothing_max_angles();
-        util::serde_json_to_qt_array(&serde_json::json!([max_angles.0, max_angles.1, max_angles.2]))
+        util::serde_json_to_qt_array(&serde_json::json!([
+            max_angles.0,
+            max_angles.1,
+            max_angles.2
+        ]))
     }
 
     fn recompute_threaded(&mut self) {
-        if self.stabilizer.params.read().duration_ms <= 0.0 { return; }
-        let id = self.stabilizer.recompute_threaded(util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (id, _discarded): (u64, bool)| {
-            if !this.ongoing_computations.contains(&id) {
-                ::log::error!("Unknown compute_id: {}", id);
-            }
-            this.ongoing_computations.remove(&id);
-            let finished = this.ongoing_computations.is_empty();
-            this.compute_progress(id, if finished { 1.0 } else { 0.0 });
-        }));
+        if self.stabilizer.params.read().duration_ms <= 0.0 {
+            return;
+        }
+        let id = self
+            .stabilizer
+            .recompute_threaded(util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                |this, (id, _discarded): (u64, bool)| {
+                    if !this.ongoing_computations.contains(&id) {
+                        ::log::error!("Unknown compute_id: {}", id);
+                    }
+                    this.ongoing_computations.remove(&id);
+                    let finished = this.ongoing_computations.is_empty();
+                    this.compute_progress(id, if finished { 1.0 } else { 0.0 });
+                },
+            ));
         self.ongoing_computations.insert(id);
 
         self.compute_progress(id, 0.0);
@@ -1314,27 +1844,42 @@ impl Controller {
         {
             gyroflow_core::settings::set("lastProject", filesystem::url_to_path(&url).into());
         }
-        let finished = util::qt_queued_callback(QPointer::from(self as &Self), move |this, (res, arg): (&str, String)| {
-            match res {
-                "ok" => this.message(QString::from("Gyroflow file exported to %1."), QString::from(format!("<b>{}</b>", filesystem::display_url(&arg))), QString::default(), QString::from("gyroflow-exported")),
-                "location" => this.request_location(QString::from(arg), typ_str.clone()),
-                "err" => this.error(QString::from("An error occured: %1"), QString::from(arg), QString::default()),
-                _ => { }
-            }
-            this.request_recompute();
-        });
+        let finished = util::qt_queued_callback(
+            QPointer::from(self as &Self),
+            move |this, (res, arg): (&str, String)| {
+                match res {
+                    "ok" => this.message(
+                        QString::from("Gyroflow file exported to %1."),
+                        QString::from(format!("<b>{}</b>", filesystem::display_url(&arg))),
+                        QString::default(),
+                        QString::from("gyroflow-exported"),
+                    ),
+                    "location" => this.request_location(QString::from(arg), typ_str.clone()),
+                    "err" => this.error(
+                        QString::from("An error occured: %1"),
+                        QString::from(arg),
+                        QString::default(),
+                    ),
+                    _ => {}
+                }
+                this.request_recompute();
+            },
+        );
 
         let lens_checksum = self.stabilizer.lens.read().checksum.clone();
 
         let stab = self.stabilizer.clone();
         core::run_threaded(move || {
-
             util::report_lens_profile_usage(lens_checksum);
 
             match stab.export_gyroflow_file(&url, typ, &additional_data.to_json().to_string()) {
                 Ok(_) => finished(("ok", url.to_string())),
-                Err(core::GyroflowCoreError::IOError(ref e)) if e.kind() == std::io::ErrorKind::PermissionDenied => finished(("location", url.to_string())),
-                Err(e) => finished(("err", e.to_string()))
+                Err(core::GyroflowCoreError::IOError(ref e))
+                    if e.kind() == std::io::ErrorKind::PermissionDenied =>
+                {
+                    finished(("location", url.to_string()))
+                }
+                Err(e) => finished(("err", e.to_string())),
             }
         });
     }
@@ -1344,7 +1889,11 @@ impl Controller {
 
         util::report_lens_profile_usage(self.stabilizer.lens.read().checksum.clone());
 
-        QString::from(self.stabilizer.export_gyroflow_data(typ, &additional_data.to_json().to_string(), None).unwrap_or_default())
+        QString::from(
+            self.stabilizer
+                .export_gyroflow_data(typ, &additional_data.to_json().to_string(), None)
+                .unwrap_or_default(),
+        )
     }
 
     fn get_version_from_gyroflow_file(&mut self, url: QUrl) -> u32 {
@@ -1356,7 +1905,9 @@ impl Controller {
                     version = v as u32;
                 }
             } else {
-                ::log::error!("Failed to parse json: {}", unsafe { std::str::from_utf8_unchecked(&data) });
+                ::log::error!("Failed to parse json: {}", unsafe {
+                    std::str::from_utf8_unchecked(&data)
+                });
             }
         }
         version
@@ -1366,14 +1917,24 @@ impl Controller {
         let mut ret = vec![QString::default(); 2];
         if let Ok(data) = filesystem::read(&url) {
             if let Ok(serde_json::Value::Object(obj)) = serde_json::from_slice(&data) {
-                let mut org_video_url = obj.get("videofile").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let mut org_video_url = obj
+                    .get("videofile")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 if !org_video_url.is_empty() && !org_video_url.contains("://") {
                     org_video_url = filesystem::path_to_url(&org_video_url);
                 }
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
-                if let Some(v) = obj.get("videofile_bookmark").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
+                if let Some(v) = obj
+                    .get("videofile_bookmark")
+                    .and_then(|x| x.as_str())
+                    .filter(|x| !x.is_empty())
+                {
                     let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(v, Some(&url));
-                    if !resolved.is_empty() { org_video_url = resolved; }
+                    if !resolved.is_empty() {
+                        org_video_url = resolved;
+                    }
                 }
 
                 if let Some(seq_start) = obj.get("image_sequence_start").and_then(|x| x.as_i64()) {
@@ -1383,28 +1944,49 @@ impl Controller {
                     self.image_sequence_fps = seq_fps;
                 }
                 if !org_video_url.is_empty() {
-                    let video_path = StabilizationManager::get_new_videofile_url(&org_video_url, Some(&url), self.image_sequence_start as u32);
+                    let video_path = StabilizationManager::get_new_videofile_url(
+                        &org_video_url,
+                        Some(&url),
+                        self.image_sequence_start as u32,
+                    );
                     ret[0] = QString::from(video_path);
                 }
 
                 if let Some(serde_json::Value::Object(gyro)) = obj.get("gyro_source") {
-                    let mut gyro_url = gyro.get("filepath").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    let mut gyro_url = gyro
+                        .get("filepath")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if !gyro_url.is_empty() && !gyro_url.contains("://") {
                         gyro_url = filesystem::path_to_url(&gyro_url);
                     }
                     #[cfg(any(target_os = "macos", target_os = "ios"))]
-                    if let Some(v) = obj.get("filepath_bookmark").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
-                        let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(v, Some(&url));
-                        if !resolved.is_empty() { gyro_url = resolved; }
+                    if let Some(v) = obj
+                        .get("filepath_bookmark")
+                        .and_then(|x| x.as_str())
+                        .filter(|x| !x.is_empty())
+                    {
+                        let (resolved, _is_stale) =
+                            filesystem::apple::resolve_bookmark(v, Some(&url));
+                        if !resolved.is_empty() {
+                            gyro_url = resolved;
+                        }
                     }
 
                     if !gyro_url.is_empty() {
-                        let gyro_url = StabilizationManager::get_new_videofile_url(&gyro_url, Some(&url), self.image_sequence_start as u32);
+                        let gyro_url = StabilizationManager::get_new_videofile_url(
+                            &gyro_url,
+                            Some(&url),
+                            self.image_sequence_start as u32,
+                        );
                         ret[1] = QString::from(gyro_url);
                     }
                 }
             } else {
-                ::log::error!("Failed to parse json: {}", unsafe { std::str::from_utf8_unchecked(&data) });
+                ::log::error!("Failed to parse json: {}", unsafe {
+                    std::str::from_utf8_unchecked(&data)
+                });
             }
         }
         QStringList::from_iter(ret.into_iter())
@@ -1412,20 +1994,26 @@ impl Controller {
 
     fn import_gyroflow_file(&mut self, url: QUrl) {
         let url = util::qurl_to_encoded(url);
-        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, progress: f64| {
-            this.loading_gyro_in_progress = progress < 1.0;
-            this.loading_gyro_progress(progress);
-            this.loading_gyro_in_progress_changed();
-        });
-        let finished = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, obj: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>| {
-            this.loading_gyro_in_progress = false;
-            this.loading_gyro_progress(1.0);
-            this.loading_gyro_in_progress_changed();
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, progress: f64| {
+                this.loading_gyro_in_progress = progress < 1.0;
+                this.loading_gyro_progress(progress);
+                this.loading_gyro_in_progress_changed();
+            },
+        );
+        let finished = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, obj: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>| {
+                this.loading_gyro_in_progress = false;
+                this.loading_gyro_progress(1.0);
+                this.loading_gyro_in_progress_changed();
 
-            let obj = this.import_gyroflow_internal(obj);
-            this.gyroflow_file_loaded(obj);
-            this.project_file_url_changed();
-        });
+                let obj = this.import_gyroflow_internal(obj);
+                this.gyroflow_file_loaded(obj);
+                this.project_file_url_changed();
+            },
+        );
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
@@ -1440,19 +2028,25 @@ impl Controller {
         });
     }
     fn import_gyroflow_data(&mut self, data: QString) {
-        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, progress: f64| {
-            this.loading_gyro_in_progress = progress < 1.0;
-            this.loading_gyro_progress(progress);
-            this.loading_gyro_in_progress_changed();
-        });
-        let finished = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, obj: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>| {
-            this.loading_gyro_in_progress = false;
-            this.loading_gyro_progress(1.0);
-            this.loading_gyro_in_progress_changed();
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, progress: f64| {
+                this.loading_gyro_in_progress = progress < 1.0;
+                this.loading_gyro_progress(progress);
+                this.loading_gyro_in_progress_changed();
+            },
+        );
+        let finished = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, obj: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>| {
+                this.loading_gyro_in_progress = false;
+                this.loading_gyro_progress(1.0);
+                this.loading_gyro_in_progress_changed();
 
-            let obj = this.import_gyroflow_internal(obj);
-            this.gyroflow_file_loaded(obj);
-        });
+                let obj = this.import_gyroflow_internal(obj);
+                this.gyroflow_file_loaded(obj);
+            },
+        );
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
@@ -1464,26 +2058,51 @@ impl Controller {
             }
             cancel_flag.store(false, SeqCst);
             let mut is_preset = false;
-            finished(stab.import_gyroflow_data(data.to_string().as_bytes(), false, None, progress, cancel_flag, &mut is_preset, false));
+            finished(stab.import_gyroflow_data(
+                data.to_string().as_bytes(),
+                false,
+                None,
+                progress,
+                cancel_flag,
+                &mut is_preset,
+                false,
+            ));
         });
     }
-    fn import_gyroflow_internal(&mut self, result: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>) -> QJsonObject {
+    fn import_gyroflow_internal(
+        &mut self,
+        result: Result<serde_json::Value, gyroflow_core::GyroflowCoreError>,
+    ) -> QJsonObject {
         match result {
             Ok(thin_obj) => {
-                if thin_obj.as_object().unwrap().contains_key("calibration_data") {
+                if thin_obj
+                    .as_object()
+                    .unwrap()
+                    .contains_key("calibration_data")
+                {
                     self.lens_loaded = true;
                     self.lens_changed();
                     let lens_json = self.stabilizer.lens.read().get_json().unwrap_or_default();
-                    self.lens_profile_loaded(QString::from(lens_json), QString::default(), QString::default());
+                    self.lens_profile_loaded(
+                        QString::from(lens_json),
+                        QString::default(),
+                        QString::default(),
+                    );
                 }
+                self.gyro_loaded = self.gyro_has_raw_imu() || self.gyro_has_quaternions();
+                self.gyro_changed();
                 self.update_offset_model();
                 self.request_recompute();
                 self.chart_data_changed();
                 self.keyframes_changed();
                 util::serde_json_to_qt_object(&thin_obj)
-            },
+            }
             Err(e) => {
-                self.error(QString::from("An error occured: %1"), QString::from(e.to_string()), QString::default());
+                self.error(
+                    QString::from("An error occured: %1"),
+                    QString::from(e.to_string()),
+                    QString::default(),
+                );
                 QJsonObject::default()
             }
         }
@@ -1546,17 +2165,40 @@ impl Controller {
     wrap_simple_method!(recompute_gyro,; recompute; chart_data_changed);
     wrap_simple_method!(set_device, v: i32);
 
-    fn get_org_duration_ms   (&self) -> f64 { self.stabilizer.params.read().duration_ms }
-    fn get_scaled_duration_ms(&self) -> f64 { self.stabilizer.params.read().get_scaled_duration_ms() }
-    fn get_scaled_fps        (&self) -> f64 { self.stabilizer.params.read().get_scaled_fps() }
-    fn get_scaling_ratio     (&self) -> f64 { self.stabilizer.get_scaling_ratio() }
-    fn get_min_fov           (&self) -> f64 { self.stabilizer.get_min_fov() }
-    fn set_video_created_at  (&self, timestamp_ms: f64) { self.stabilizer.params.write().video_created_at = if timestamp_ms > 0.0 { Some(timestamp_ms as i64) } else { None }; }
+    fn get_org_duration_ms(&self) -> f64 {
+        self.stabilizer.params.read().duration_ms
+    }
+    fn get_scaled_duration_ms(&self) -> f64 {
+        self.stabilizer.params.read().get_scaled_duration_ms()
+    }
+    fn get_scaled_fps(&self) -> f64 {
+        self.stabilizer.params.read().get_scaled_fps()
+    }
+    fn get_scaling_ratio(&self) -> f64 {
+        self.stabilizer.get_scaling_ratio()
+    }
+    fn get_min_fov(&self) -> f64 {
+        self.stabilizer.get_min_fov()
+    }
+    fn set_video_created_at(&self, timestamp_ms: f64) {
+        self.stabilizer.params.write().video_created_at = if timestamp_ms > 0.0 {
+            Some(timestamp_ms as i64)
+        } else {
+            None
+        };
+    }
 
     fn set_trim_ranges(&self, ranges: QString) {
-        let ranges = ranges.to_string()
+        let ranges = ranges
+            .to_string()
             .split(';')
-            .filter_map(|x| { let mut x = x.split(':'); Some((x.next()?.parse::<f64>().ok()?, x.next()?.parse::<f64>().ok()?)) })
+            .filter_map(|x| {
+                let mut x = x.split(':');
+                Some((
+                    x.next()?.parse::<f64>().ok()?,
+                    x.next()?.parse::<f64>().ok()?,
+                ))
+            })
             .collect::<Vec<(f64, f64)>>();
         self.stabilizer.set_trim_ranges(ranges);
         self.request_recompute();
@@ -1568,7 +2210,8 @@ impl Controller {
     }
     fn quats_at_timestamp(&self, timestamp_us: i64) -> QVariantList {
         let gyro = self.stabilizer.gyro.read();
-        let ts = timestamp_us as f64 / 1000.0 - gyro.offset_at_video_timestamp(timestamp_us as f64 / 1000.0);
+        let ts = timestamp_us as f64 / 1000.0
+            - gyro.offset_at_video_timestamp(timestamp_us as f64 / 1000.0);
         let sq = gyro.smoothed_quat_at_timestamp(ts);
         let q = gyro.org_quat_at_timestamp(ts);
         QVariantList::from_iter(&[q.w, q.i, q.j, q.k, sq.w, sq.i, sq.j, sq.k]) // scalar first
@@ -1623,7 +2266,8 @@ impl Controller {
         roll.to_degrees()
     }
     fn set_lens_param(&self, param: QString, value: f64) {
-        self.stabilizer.set_lens_param(param.to_string().as_str(), value);
+        self.stabilizer
+            .set_lens_param(param.to_string().as_str(), value);
         self.request_recompute();
     }
     fn set_user_focal_length(&mut self, focal_length_mm: f64) {
@@ -1636,32 +2280,60 @@ impl Controller {
         drop(lens);
         self.lens_loaded = true;
         self.lens_changed();
-        self.lens_profile_loaded(QString::from(json), QString::from(filepath), QString::from(checksum));
+        self.lens_profile_loaded(
+            QString::from(json),
+            QString::from(filepath),
+            QString::from(checksum),
+        );
         self.request_recompute();
     }
 
     fn check_updates(&self) {
-        let update = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (version, changelog): (String, String)| {
-            this.updates_available(QString::from(version), QString::from(changelog))
-        });
+        let update = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, (version, changelog): (String, String)| {
+                this.updates_available(QString::from(version), QString::from(changelog))
+            },
+        );
         core::run_threaded(move || {
-            if let Ok(Ok(body)) = ureq::get("https://api.github.com/repos/gyroflow/gyroflow/releases").call().map(|x| x.into_body().read_to_string()) {
-                if let Ok(v) = serde_json::from_str(&body) as serde_json::Result<serde_json::Value> {
+            if let Ok(Ok(body)) =
+                ureq::get("https://api.github.com/repos/gyroflow/gyroflow/releases")
+                    .call()
+                    .map(|x| x.into_body().read_to_string())
+            {
+                if let Ok(v) = serde_json::from_str(&body) as serde_json::Result<serde_json::Value>
+                {
                     if let Some(v) = v.as_array() {
                         for itm in v {
                             if let Some(obj) = itm.as_object() {
                                 let name = obj.get("name").and_then(|x| x.as_str());
                                 let body = obj.get("body").and_then(|x| x.as_str());
-                                let is_prerelease = obj.get("prerelease").and_then(|x| x.as_bool()).unwrap_or_default();
-                                if is_prerelease { continue; }
+                                let is_prerelease = obj
+                                    .get("prerelease")
+                                    .and_then(|x| x.as_bool())
+                                    .unwrap_or_default();
+                                if is_prerelease {
+                                    continue;
+                                }
 
                                 if let Some(name) = name {
-                                    ::log::info!("Latest version: {}, current version: {}", name, util::get_version());
+                                    ::log::info!(
+                                        "Latest version: {}, current version: {}",
+                                        name,
+                                        util::get_version()
+                                    );
 
-                                    if let Ok(latest_version) = semver::Version::parse(name.trim_start_matches('v')) {
-                                        if let Ok(this_version) = semver::Version::parse(env!("CARGO_PKG_VERSION")) {
+                                    if let Ok(latest_version) =
+                                        semver::Version::parse(name.trim_start_matches('v'))
+                                    {
+                                        if let Ok(this_version) =
+                                            semver::Version::parse(env!("CARGO_PKG_VERSION"))
+                                        {
                                             if latest_version > this_version {
-                                                update((name.to_owned(), body.unwrap_or_default().to_owned()));
+                                                update((
+                                                    name.to_owned(),
+                                                    body.unwrap_or_default().to_owned(),
+                                                ));
                                             }
                                         }
                                     }
@@ -1687,7 +2359,15 @@ impl Controller {
         }
     }
 
-    fn start_autocalibrate(&mut self, max_points: usize, every_nth_frame: usize, iterations: usize, max_sharpness: f64, custom_timestamp_ms: f64, no_marker: bool) {
+    fn start_autocalibrate(
+        &mut self,
+        max_points: usize,
+        every_nth_frame: usize,
+        iterations: usize,
+        max_sharpness: f64,
+        custom_timestamp_ms: f64,
+        no_marker: bool,
+    ) {
         #[cfg(feature = "opencv")]
         {
             rendering::clear_log();
@@ -1698,12 +2378,40 @@ impl Controller {
 
             let stab = self.stabilizer.clone();
 
-            let (fps, frame_count, trim_ranges_ms, trim_ratio, org_size, input_horizontal_stretch, input_vertical_stretch) = {
+            let (
+                fps,
+                frame_count,
+                trim_ranges_ms,
+                trim_ratio,
+                org_size,
+                input_horizontal_stretch,
+                input_vertical_stretch,
+            ) = {
                 let params = stab.params.read();
                 let lens = stab.lens.read();
-                let input_horizontal_stretch = if lens.input_horizontal_stretch > 0.01 { lens.input_horizontal_stretch } else { 1.0 };
-                let input_vertical_stretch = if lens.input_vertical_stretch > 0.01 { lens.input_vertical_stretch } else { 1.0 };
-                (params.fps, params.frame_count, params.trim_ranges.iter().map(|x| (x.0 * params.duration_ms, x.1 * params.duration_ms)).collect(), params.get_trim_ratio(), params.size, input_horizontal_stretch, input_vertical_stretch)
+                let input_horizontal_stretch = if lens.input_horizontal_stretch > 0.01 {
+                    lens.input_horizontal_stretch
+                } else {
+                    1.0
+                };
+                let input_vertical_stretch = if lens.input_vertical_stretch > 0.01 {
+                    lens.input_vertical_stretch
+                } else {
+                    1.0
+                };
+                (
+                    params.fps,
+                    params.frame_count,
+                    params
+                        .trim_ranges
+                        .iter()
+                        .map(|x| (x.0 * params.duration_ms, x.1 * params.duration_ms))
+                        .collect(),
+                    params.get_trim_ratio(),
+                    params.size,
+                    input_horizontal_stretch,
+                    input_vertical_stretch,
+                )
             };
 
             let is_forced = custom_timestamp_ms > -0.5;
@@ -1719,7 +2427,10 @@ impl Controller {
                 let cal = lock.as_mut().unwrap();
                 let saved: BTreeMap<i32, core::calibration::Detected> = {
                     let lock = cal.image_points.read();
-                    cal.forced_frames.iter().filter_map(|f| Some((*f, lock.get(f)?.clone()))).collect()
+                    cal.forced_frames
+                        .iter()
+                        .filter_map(|f| Some((*f, lock.get(f)?.clone())))
+                        .collect()
                 };
                 *cal.image_points.write() = saved;
                 cal.max_images = max_points;
@@ -1727,23 +2438,36 @@ impl Controller {
                 cal.max_sharpness = max_sharpness;
             }
 
-            let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (ready, total, good, rms, sharpness): (usize, usize, usize, f64, f64)| {
-                this.calib_in_progress = ready < total;
-                this.calib_in_progress_changed();
-                this.calib_progress(ready as f64 / total as f64, rms, ready, total, good, sharpness);
-                if rms > 0.0 {
-                    this.update_calib_model();
-                }
-            });
-            let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (msg, mut arg): (String, String)| {
-                arg.push_str("\n\n");
-                arg.push_str(&rendering::get_log());
+            let progress = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                |this, (ready, total, good, rms, sharpness): (usize, usize, usize, f64, f64)| {
+                    this.calib_in_progress = ready < total;
+                    this.calib_in_progress_changed();
+                    this.calib_progress(
+                        ready as f64 / total as f64,
+                        rms,
+                        ready,
+                        total,
+                        good,
+                        sharpness,
+                    );
+                    if rms > 0.0 {
+                        this.update_calib_model();
+                    }
+                },
+            );
+            let err = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                |this, (msg, mut arg): (String, String)| {
+                    arg.push_str("\n\n");
+                    arg.push_str(&rendering::get_log());
 
-                this.error(QString::from(msg), QString::from(arg), QString::default());
+                    this.error(QString::from(msg), QString::from(arg), QString::default());
 
-                this.calib_in_progress = false;
-                this.calib_in_progress_changed();
-            });
+                    this.calib_in_progress = false;
+                    this.calib_in_progress_changed();
+                },
+            );
 
             self.cancel_flag.store(false, SeqCst);
             let cancel_flag = self.cancel_flag.clone();
@@ -1756,22 +2480,39 @@ impl Controller {
 
             let input_file = stab.input_file.read().clone();
             core::run_threaded(move || {
-
                 let mut decoder_options = ffmpeg_next::Dictionary::new();
                 if input_file.image_sequence_fps > 0.0 {
                     let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
-                    decoder_options.set("framerate", &format!("{}/{}", fps.numerator(), fps.denominator()));
+                    decoder_options.set(
+                        "framerate",
+                        &format!("{}/{}", fps.numerator(), fps.denominator()),
+                    );
                 }
                 if input_file.image_sequence_start > 0 {
-                    decoder_options.set("start_number", &format!("{}", input_file.image_sequence_start));
+                    decoder_options.set(
+                        "start_number",
+                        &format!("{}", input_file.image_sequence_start),
+                    );
                 }
                 if processing_resolution > 0 {
-                    decoder_options.set("scale", &format!("{}x{}", (processing_resolution * 16) / 9, processing_resolution));
+                    decoder_options.set(
+                        "scale",
+                        &format!(
+                            "{}x{}",
+                            (processing_resolution * 16) / 9,
+                            processing_resolution
+                        ),
+                    );
                 }
 
                 ::log::debug!("Decoder options: {:?}", decoder_options);
                 let gpu_decoding = stab.gpu_decoding.load(SeqCst);
-                match VideoProcessor::from_file(&input_file.url, gpu_decoding, 0, Some(decoder_options)) {
+                match VideoProcessor::from_file(
+                    &input_file.url,
+                    gpu_decoding,
+                    0,
+                    Some(decoder_options),
+                ) {
                     Ok(mut proc) => {
                         let progress = progress.clone();
                         let err2 = err.clone();
@@ -1780,48 +2521,88 @@ impl Controller {
                         let processed = processed.clone();
                         let cancel_flag2 = cancel_flag.clone();
 
-                        proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
-                            let frame = core::frame_at_timestamp(timestamp_us as f64 / 1000.0, fps);
+                        proc.on_frame(
+                            move |timestamp_us,
+                                  input_frame,
+                                  _output_frame,
+                                  converter,
+                                  _rate_control| {
+                                let frame =
+                                    core::frame_at_timestamp(timestamp_us as f64 / 1000.0, fps);
 
-                            if is_forced && total_read.load(SeqCst) > 0 {
-                                return Ok(());
-                            }
-
-                            if (frame % every_nth_frame as i32) == 0 {
-                                let mut width = (input_frame.width() as f64 * input_horizontal_stretch).round() as u32;
-                                let mut height = (input_frame.height() as f64 * input_vertical_stretch).round() as u32;
-                                let org_size = ((org_size.0 as f64 * input_horizontal_stretch).round() as u32, (org_size.1 as f64 * input_vertical_stretch).round() as u32);
-                                let mut pt_scale = 1.0;
-                                if processing_resolution > 0 && height > processing_resolution as u32 {
-                                    pt_scale = height as f32 / processing_resolution as f32;
-                                    width = (width as f32 / pt_scale).round() as u32;
-                                    height = (height as f32 / pt_scale).round() as u32;
+                                if is_forced && total_read.load(SeqCst) > 0 {
+                                    return Ok(());
                                 }
-                                match converter.scale(input_frame, ffmpeg_next::format::Pixel::GRAY8, width, height) {
-                                    Ok(mut small_frame) => {
-                                        let (width, height, stride, pixels) = (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data_mut(0));
 
-                                        total_read.fetch_add(1, SeqCst);
-                                        let mut lock = cal.write();
-                                        let cal = lock.as_mut().unwrap();
-                                        if is_forced {
-                                            cal.forced_frames.insert(frame);
-                                        }
-                                        cal.no_marker = no_marker;
+                                if (frame % every_nth_frame as i32) == 0 {
+                                    let mut width =
+                                        (input_frame.width() as f64 * input_horizontal_stretch)
+                                            .round() as u32;
+                                    let mut height =
+                                        (input_frame.height() as f64 * input_vertical_stretch)
+                                            .round() as u32;
+                                    let org_size = (
+                                        (org_size.0 as f64 * input_horizontal_stretch).round()
+                                            as u32,
+                                        (org_size.1 as f64 * input_vertical_stretch).round() as u32,
+                                    );
+                                    let mut pt_scale = 1.0;
+                                    if processing_resolution > 0
+                                        && height > processing_resolution as u32
+                                    {
+                                        pt_scale = height as f32 / processing_resolution as f32;
+                                        width = (width as f32 / pt_scale).round() as u32;
+                                        height = (height as f32 / pt_scale).round() as u32;
+                                    }
+                                    match converter.scale(
+                                        input_frame,
+                                        ffmpeg_next::format::Pixel::GRAY8,
+                                        width,
+                                        height,
+                                    ) {
+                                        Ok(mut small_frame) => {
+                                            let (width, height, stride, pixels) = (
+                                                small_frame.plane_width(0),
+                                                small_frame.plane_height(0),
+                                                small_frame.stride(0),
+                                                small_frame.data_mut(0),
+                                            );
 
-                                        let (w, h) = org_size;
-                                        if w > 0 && h > 0 {
-                                            pt_scale = h as f32 / height as f32;
+                                            total_read.fetch_add(1, SeqCst);
+                                            let mut lock = cal.write();
+                                            let cal = lock.as_mut().unwrap();
+                                            if is_forced {
+                                                cal.forced_frames.insert(frame);
+                                            }
+                                            cal.no_marker = no_marker;
+
+                                            let (w, h) = org_size;
+                                            if w > 0 && h > 0 {
+                                                pt_scale = h as f32 / height as f32;
+                                            }
+                                            cal.feed_frame(
+                                                timestamp_us,
+                                                frame,
+                                                (width, height),
+                                                org_size,
+                                                stride,
+                                                pt_scale,
+                                                pixels,
+                                                cancel_flag2.clone(),
+                                                total,
+                                                processed.clone(),
+                                                progress.clone(),
+                                            );
                                         }
-                                        cal.feed_frame(timestamp_us, frame, (width, height), org_size, stride, pt_scale, pixels, cancel_flag2.clone(), total, processed.clone(), progress.clone());
-                                    },
-                                    Err(e) => {
-                                        err2(("An error occured: %1".to_string(), e.to_string()))
+                                        Err(e) => err2((
+                                            "An error occured: %1".to_string(),
+                                            e.to_string(),
+                                        )),
                                     }
                                 }
-                            }
-                            Ok(())
-                        });
+                                Ok(())
+                            },
+                        );
                         if let Err(e) = proc.start_decoder_only(ranges, cancel_flag.clone()) {
                             err(("An error occured: %1".to_string(), e.to_string()));
                         }
@@ -1845,11 +2626,23 @@ impl Controller {
                     if cal.rms < 100.0 {
                         stab.lens.write().set_from_calibrator(cal);
                     }
-                    ::log::debug!("rms: {}, used_frames: {:?}, camera_matrix: {}, coefficients: {}", cal.rms, cal.used_points.keys(), cal.k, cal.d);
+                    ::log::debug!(
+                        "rms: {}, used_frames: {:?}, camera_matrix: {}, coefficients: {}",
+                        cal.rms,
+                        cal.used_points.keys(),
+                        cal.k,
+                        cal.d
+                    );
                 }
 
                 let good = cal.image_points.read().len();
-                progress((total, total, good, cal.rms, *cal.sum_sharpness.read() / good.max(1) as f64));
+                progress((
+                    total,
+                    total,
+                    good,
+                    cal.rms,
+                    *cal.sum_sharpness.read() / good.max(1) as f64,
+                ));
 
                 stab.params.write().is_calibrator = true;
             });
@@ -1861,13 +2654,22 @@ impl Controller {
         {
             let cal = self.stabilizer.lens_calibrator.clone();
 
-            let used_points = cal.read().as_ref().map(|x| x.used_points.clone()).unwrap_or_default();
+            let used_points = cal
+                .read()
+                .as_ref()
+                .map(|x| x.used_points.clone())
+                .unwrap_or_default();
 
-            self.calib_model = RefCell::new(used_points.values().map(|v| CalibrationItem {
-                timestamp_us: v.timestamp_us,
-                sharpness: v.avg_sharpness,
-                is_forced: v.is_forced
-            }).collect());
+            self.calib_model = RefCell::new(
+                used_points
+                    .values()
+                    .map(|v| CalibrationItem {
+                        timestamp_us: v.timestamp_us,
+                        sharpness: v.avg_sharpness,
+                        is_forced: v.is_forced,
+                    })
+                    .collect(),
+            );
 
             util::qt_queued_callback(QPointer::from(self as &Self), |this, _| {
                 this.calib_model_updated();
@@ -1900,7 +2702,13 @@ impl Controller {
                 if cal.calibrate(true).is_ok() {
                     rms = cal.rms;
                     self.stabilizer.lens.write().set_from_calibrator(cal);
-                    ::log::debug!("rms: {}, used_frames: {:?}, camera_matrix: {}, coefficients: {}", cal.rms, cal.used_points.keys(), cal.k, cal.d);
+                    ::log::debug!(
+                        "rms: {}, used_frames: {:?}, camera_matrix: {}, coefficients: {}",
+                        cal.rms,
+                        cal.used_points.keys(),
+                        cal.k,
+                        cal.d
+                    );
                 }
             }
             self.update_calib_model();
@@ -1918,7 +2726,8 @@ impl Controller {
             if let Some(ref cal) = *self.stabilizer.lens_calibrator.read() {
                 profile.set_from_calibrator(cal);
             }
-            let name = profile.get_name()
+            let name = profile
+                .get_name()
                 .replace([':', '|', '*', ':'], "_")
                 .replace(['<', '"', '>', '/', '\\'], "");
             return QString::from(format!("{}.json", name));
@@ -1942,16 +2751,33 @@ impl Controller {
                         ::log::debug!("Lens profile json: {}", json);
                         if upload {
                             core::run_threaded(move || {
-                                if let Ok(Ok(body)) = ureq::post("https://api.gyroflow.xyz/upload_profile").header("Content-Type", "application/json; charset=utf-8").send(&json).map(|x| x.into_body().read_to_string()) {
+                                if let Ok(Ok(body)) =
+                                    ureq::post("https://api.gyroflow.xyz/upload_profile")
+                                        .header("Content-Type", "application/json; charset=utf-8")
+                                        .send(&json)
+                                        .map(|x| x.into_body().read_to_string())
+                                {
                                     ::log::debug!("Lens profile uploaded: {}", body.as_str());
                                 }
                             });
                         }
                     }
-                    Err(e) => { self.error(QString::from("An error occured: %1"), QString::from(format!("{:?}", e)), QString::default()); }
+                    Err(e) => {
+                        self.error(
+                            QString::from("An error occured: %1"),
+                            QString::from(format!("{:?}", e)),
+                            QString::default(),
+                        );
+                    }
                 }
-            },
-            Err(e) => { self.error(QString::from("An error occured: %1"), QString::from(format!("{:?}", e)), QString::default()); }
+            }
+            Err(e) => {
+                self.error(
+                    QString::from("An error occured: %1"),
+                    QString::from(format!("{:?}", e)),
+                    QString::default(),
+                );
+            }
         }
     }
 
@@ -1977,25 +2803,42 @@ impl Controller {
         });
     }
 
-    fn search_lens_profile(&self, text: QString, favorites: QVariantList, aspect_ratio: i32, aspect_ratio_swapped: i32) {
-        let finished = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, profiles: QVariantList| {
-            this.search_lens_profile_finished(profiles);
-        });
+    fn search_lens_profile(
+        &self,
+        text: QString,
+        favorites: QVariantList,
+        aspect_ratio: i32,
+        aspect_ratio_swapped: i32,
+    ) {
+        let finished = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, profiles: QVariantList| {
+                this.search_lens_profile_finished(profiles);
+            },
+        );
         let db = self.stabilizer.lens_profile_db.clone();
         let text = text.to_string();
-        let favorites = HashSet::<String>::from_iter(favorites.into_iter().map(|x| x.to_qbytearray().to_string()));
+        let favorites = HashSet::<String>::from_iter(
+            favorites.into_iter().map(|x| x.to_qbytearray().to_string()),
+        );
         core::run_threaded(move || {
-            let profiles = db.read().search(&text, &favorites, aspect_ratio, aspect_ratio_swapped).into_iter().map(|(name, file, crc, official, rating, aspect_ratio, _author)| {
-                let mut list = QVariantList::from_iter([
-                    QString::from(name),
-                    QString::from(file),
-                    QString::from(crc)
-                ].into_iter());
-                list.push(official.into());
-                list.push(rating.into());
-                list.push(aspect_ratio.into());
-                list
-            }).collect();
+            let profiles = db
+                .read()
+                .search(&text, &favorites, aspect_ratio, aspect_ratio_swapped)
+                .into_iter()
+                .map(
+                    |(name, file, crc, official, rating, aspect_ratio, _author)| {
+                        let mut list = QVariantList::from_iter(
+                            [QString::from(name), QString::from(file), QString::from(crc)]
+                                .into_iter(),
+                        );
+                        list.push(official.into());
+                        list.push(rating.into());
+                        list.push(aspect_ratio.into());
+                        list
+                    },
+                )
+                .collect();
 
             finished(profiles);
         });
@@ -2017,30 +2860,60 @@ impl Controller {
         let current_version = self.stabilizer.lens_profile_db.read().version;
 
         let db_path = LensProfileDatabase::get_path().join("profiles.cbor.gz");
-        if db_path.exists() || gyroflow_core::settings::data_dir().join("lens_profiles").exists() {
+        if db_path.exists()
+            || gyroflow_core::settings::data_dir()
+                .join("lens_profiles")
+                .exists()
+        {
             core::run_threaded(move || {
-                if let Ok(Ok(body)) = ureq::get("https://api.github.com/repos/gyroflow/lens_profiles/releases").call().map(|x| x.into_body().read_to_string()) {
+                if let Ok(Ok(body)) =
+                    ureq::get("https://api.github.com/repos/gyroflow/lens_profiles/releases")
+                        .call()
+                        .map(|x| x.into_body().read_to_string())
+                {
                     (|| -> Option<()> {
                         let v: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
                         if let Some(obj) = v.first() {
                             let obj = obj.as_object()?;
-                            if let Ok(tag) = obj.get("tag_name")?.as_str()?.trim_start_matches("v").parse::<u32>() {
+                            if let Ok(tag) = obj
+                                .get("tag_name")?
+                                .as_str()?
+                                .trim_start_matches("v")
+                                .parse::<u32>()
+                            {
                                 if tag > current_version {
-                                    ::log::info!("Updating lens profile database from v{current_version} to v{tag}.");
-                                    if let Some(download_url) = obj["assets"][0]["browser_download_url"].as_str() {
-                                        if let Ok(mut content) = ureq::get(download_url).call().map(|x| x.into_body().into_reader()) {
+                                    ::log::info!(
+                                        "Updating lens profile database from v{current_version} to v{tag}."
+                                    );
+                                    if let Some(download_url) =
+                                        obj["assets"][0]["browser_download_url"].as_str()
+                                    {
+                                        if let Ok(mut content) = ureq::get(download_url)
+                                            .call()
+                                            .map(|x| x.into_body().into_reader())
+                                        {
                                             let mut updated = false;
                                             if db_path.exists() {
-                                                if let Ok(mut file) = std::fs::File::create(&db_path) {
-                                                    if std::io::copy(&mut content, &mut file).is_ok() {
+                                                if let Ok(mut file) =
+                                                    std::fs::File::create(&db_path)
+                                                {
+                                                    if std::io::copy(&mut content, &mut file)
+                                                        .is_ok()
+                                                    {
                                                         updated = true;
                                                         update(());
                                                     }
                                                 }
                                             }
                                             if !updated {
-                                                if let Ok(mut file) = std::fs::File::create(gyroflow_core::settings::data_dir().join("lens_profiles").join("profiles.cbor.gz")) {
-                                                    if std::io::copy(&mut content, &mut file).is_ok() {
+                                                if let Ok(mut file) = std::fs::File::create(
+                                                    gyroflow_core::settings::data_dir()
+                                                        .join("lens_profiles")
+                                                        .join("profiles.cbor.gz"),
+                                                ) {
+                                                    if std::io::copy(&mut content, &mut file)
+                                                        .is_ok()
+                                                    {
                                                         update(());
                                                     }
                                                 }
@@ -2059,10 +2932,19 @@ impl Controller {
 
     fn rate_profile(&self, name: QString, json: QString, checksum: QString, is_good: bool) {
         core::run_threaded(move || {
-            let mut url = url::Url::parse(&format!("https://api.gyroflow.xyz/rate?good={}&checksum={}", is_good, checksum)).unwrap();
-            url.query_pairs_mut().append_pair("filename", &name.to_string());
+            let mut url = url::Url::parse(&format!(
+                "https://api.gyroflow.xyz/rate?good={}&checksum={}",
+                is_good, checksum
+            ))
+            .unwrap();
+            url.query_pairs_mut()
+                .append_pair("filename", &name.to_string());
 
-            if let Ok(Ok(body)) = ureq::post(url.to_string()).header("Content-Type", "application/json; charset=utf-8").send(&json.to_string()).map(|x| x.into_body().read_to_string()) {
+            if let Ok(Ok(body)) = ureq::post(url.to_string())
+                .header("Content-Type", "application/json; charset=utf-8")
+                .send(&json.to_string())
+                .map(|x| x.into_body().read_to_string())
+            {
                 ::log::debug!("Lens profile rated: {}", body.as_str());
             }
         });
@@ -2073,7 +2955,10 @@ impl Controller {
         });
         let db = self.stabilizer.lens_profile_db.clone();
         core::run_threaded(move || {
-            if let Ok(Ok(body)) = ureq::get("https://api.gyroflow.xyz/rate?get_ratings=1").call().map(|x| x.into_body().read_to_string()) {
+            if let Ok(Ok(body)) = ureq::get("https://api.gyroflow.xyz/rate?get_ratings=1")
+                .call()
+                .map(|x| x.into_body().read_to_string())
+            {
                 db.write().set_profile_ratings(body.as_str());
                 update(());
             }
@@ -2081,50 +2966,85 @@ impl Controller {
     }
 
     fn list_gpu_devices(&self) {
-        let finished = util::qt_queued_callback(QPointer::from(self as &Self), |this, list: Vec<String>| {
-            this.gpu_list_loaded(util::serde_json_to_qt_array(&serde_json::json!(list)))
-        });
+        let finished =
+            util::qt_queued_callback(QPointer::from(self as &Self), |this, list: Vec<String>| {
+                this.gpu_list_loaded(util::serde_json_to_qt_array(&serde_json::json!(list)))
+            });
         self.stabilizer.list_gpu_devices(finished);
     }
     fn set_rendering_gpu_type_from_name(&self, name: String) {
         rendering::set_gpu_type_from_name(&name);
     }
 
-    fn export_preset(&self, url: QUrl, content: QJsonObject, save_type: QString, preset_name: QString) -> QString {
+    fn export_preset(
+        &self,
+        url: QUrl,
+        content: QJsonObject,
+        save_type: QString,
+        preset_name: QString,
+    ) -> QString {
         let save_type = save_type.to_string();
         let mut url = util::qurl_to_encoded(url);
         if url.is_empty() {
             let path = gyroflow_core::settings::data_dir().join("lens_profiles");
             match save_type.as_ref() {
                 "lens" => {
-                    url = filesystem::path_to_url(path.join(&format!("{preset_name}.gyroflow")).to_str().unwrap_or_default())
-                },
-                "default" => {
-                    url = filesystem::path_to_url(path.join("default.gyroflow").to_str().unwrap_or_default())
+                    url = filesystem::path_to_url(
+                        path.join(&format!("{preset_name}.gyroflow"))
+                            .to_str()
+                            .unwrap_or_default(),
+                    )
                 }
-                _ => { ::log::error!("Unknown save_type: {save_type}"); }
+                "default" => {
+                    url = filesystem::path_to_url(
+                        path.join("default.gyroflow").to_str().unwrap_or_default(),
+                    )
+                }
+                _ => {
+                    ::log::error!("Unknown save_type: {save_type}");
+                }
             }
         }
         let contents = content.to_json_pretty();
         if let Err(e) = filesystem::write(&url, contents.to_slice()) {
-            self.error(QString::from("An error occured: %1"), QString::from(e.to_string()), QString::default());
+            self.error(
+                QString::from("An error occured: %1"),
+                QString::from(e.to_string()),
+                QString::default(),
+            );
         }
         QString::from(filesystem::display_url(&url))
     }
 
     fn export_full_metadata(&self, url: QUrl, gyro_url: QUrl) {
         let result = || -> Result<(), core::GyroflowCoreError> {
-            let contents = gyroflow_core::gyro_export::export_full_metadata(&util::qurl_to_encoded(gyro_url), &self.stabilizer)?;
-            Ok(filesystem::write(&util::qurl_to_encoded(url), contents.as_bytes())?)
+            let contents = gyroflow_core::gyro_export::export_full_metadata(
+                &util::qurl_to_encoded(gyro_url),
+                &self.stabilizer,
+            )?;
+            Ok(filesystem::write(
+                &util::qurl_to_encoded(url),
+                contents.as_bytes(),
+            )?)
         };
         if let Err(e) = result() {
-            self.error(QString::from("An error occured: %1"), QString::from(e.to_string()), QString::default());
+            self.error(
+                QString::from("An error occured: %1"),
+                QString::from(e.to_string()),
+                QString::default(),
+            );
         }
     }
     fn export_parsed_metadata(&self, url: QUrl) {
-        if let Ok(contents) = serde_json::to_string_pretty(&self.stabilizer.gyro.read().file_metadata) {
+        if let Ok(contents) =
+            serde_json::to_string_pretty(&self.stabilizer.gyro.read().file_metadata)
+        {
             if let Err(e) = filesystem::write(&util::qurl_to_encoded(url), contents.as_bytes()) {
-                self.error(QString::from("An error occured: %1"), QString::from(e.to_string()), QString::default());
+                self.error(
+                    QString::from("An error occured: %1"),
+                    QString::from(e.to_string()),
+                    QString::default(),
+                );
             }
         }
     }
@@ -2132,9 +3052,17 @@ impl Controller {
         let url = util::qurl_to_encoded(url);
         let filename = filesystem::get_filename(&url).to_ascii_lowercase();
 
-        let contents = gyroflow_core::gyro_export::export_gyro_data(&filename, fields.to_json().to_str().unwrap(), &self.stabilizer);
+        let contents = gyroflow_core::gyro_export::export_gyro_data(
+            &filename,
+            fields.to_json().to_str().unwrap(),
+            &self.stabilizer,
+        );
         if let Err(e) = filesystem::write(&url, contents.as_bytes()) {
-            self.error(QString::from("An error occured: %1"), QString::from(e.to_string()), QString::default());
+            self.error(
+                QString::from("An error occured: %1"),
+                QString::from(e.to_string()),
+                QString::default(),
+            );
         }
     }
 
@@ -2166,7 +3094,8 @@ impl Controller {
     }
     fn set_keyframe_timestamp(&self, typ: String, id: u32, timestamp_us: i64) {
         if let Ok(kf) = KeyframeType::from_str(&typ) {
-            self.stabilizer.set_keyframe_timestamp(&kf, id, timestamp_us);
+            self.stabilizer
+                .set_keyframe_timestamp(&kf, id, timestamp_us);
             self.keyframes_changed();
             self.request_recompute();
             self.chart_data_changed();
@@ -2198,7 +3127,10 @@ impl Controller {
     }
     fn keyframe_value_at_video_timestamp(&self, typ: String, timestamp_ms: f64) -> QJSValue {
         if let Ok(typ) = KeyframeType::from_str(&typ) {
-            if let Some(v) = self.stabilizer.keyframe_value_at_video_timestamp(&typ, timestamp_ms) {
+            if let Some(v) = self
+                .stabilizer
+                .keyframe_value_at_video_timestamp(&typ, timestamp_ms)
+            {
                 return QJSValue::from(v);
             }
         }
@@ -2222,7 +3154,43 @@ impl Controller {
     }
 
     fn has_gravity_vectors(&self) -> bool {
-        self.stabilizer.gyro.read().file_metadata.read().gravity_vectors.as_ref().map(|v| !v.is_empty()).unwrap_or_default()
+        self.stabilizer
+            .gyro
+            .read()
+            .file_metadata
+            .read()
+            .gravity_vectors
+            .as_ref()
+            .map(|v| !v.is_empty())
+            .unwrap_or_default()
+    }
+    fn gyro_has_raw_imu(&self) -> bool {
+        !self
+            .stabilizer
+            .gyro
+            .read()
+            .file_metadata
+            .read()
+            .raw_imu
+            .is_empty()
+    }
+    fn gyro_has_quaternions(&self) -> bool {
+        !self
+            .stabilizer
+            .gyro
+            .read()
+            .file_metadata
+            .read()
+            .quaternions
+            .is_empty()
+    }
+    fn gyro_has_accurate_timestamps(&self) -> bool {
+        self.stabilizer
+            .gyro
+            .read()
+            .file_metadata
+            .read()
+            .has_accurate_timestamps
     }
 
     fn check_external_sdk(&self, filename: QString) -> bool {
@@ -2231,10 +3199,22 @@ impl Controller {
     }
     fn install_external_sdk(&self, url: QString) {
         let url = url.to_string();
-        let filename = if url == "ffmpeg_gpl" { url.clone() } else { filesystem::get_filename(&url) };
-        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (percent, sdk_name, error_string): (f64, &'static str, String)| {
-            this.external_sdk_progress(percent, QString::from(sdk_name), QString::from(error_string), QString::from(url.clone()));
-        });
+        let filename = if url == "ffmpeg_gpl" {
+            url.clone()
+        } else {
+            filesystem::get_filename(&url)
+        };
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, (percent, sdk_name, error_string): (f64, &'static str, String)| {
+                this.external_sdk_progress(
+                    percent,
+                    QString::from(sdk_name),
+                    QString::from(error_string),
+                    QString::from(url.clone()),
+                );
+            },
+        );
         let sdkbase = gyroflow_core::settings::get_str("sdkBase", "");
         crate::external_sdk::install(&filename, &sdkbase, progress);
     }
@@ -2258,9 +3238,16 @@ impl Controller {
         }
         let first_url = file_list.first().unwrap().clone();
         let out = output_url.clone();
-        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (percent, error_string): (f64, String)| {
-            this.mp4_merge_progress(percent, QString::from(error_string), QString::from(out.as_str()));
-        });
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, (percent, error_string): (f64, String)| {
+                this.mp4_merge_progress(
+                    percent,
+                    QString::from(error_string),
+                    QString::from(out.as_str()),
+                );
+            },
+        );
         core::run_threaded(move || {
             let mut vidinfo = None;
             for x in &file_list {
@@ -2271,29 +3258,67 @@ impl Controller {
                             continue;
                         }
                         if let Some(vidinfo) = &vidinfo {
-                            if vidinfo.width != x.width || vidinfo.height != x.height || (vidinfo.fps * 100.0).round() as i32 != (x.fps * 100.0).round() as i32 || vidinfo.rotation != x.rotation {
-                                progress((1.0, format!("Video metadata mismatch: {}x{}@{:.2} {}° vs {}x{}@{:.2} {}°", vidinfo.width, vidinfo.height, vidinfo.fps, vidinfo.rotation, x.width, x.height, x.fps, x.rotation)));
+                            if vidinfo.width != x.width
+                                || vidinfo.height != x.height
+                                || (vidinfo.fps * 100.0).round() as i32
+                                    != (x.fps * 100.0).round() as i32
+                                || vidinfo.rotation != x.rotation
+                            {
+                                progress((
+                                    1.0,
+                                    format!(
+                                        "Video metadata mismatch: {}x{}@{:.2} {}° vs {}x{}@{:.2} {}°",
+                                        vidinfo.width,
+                                        vidinfo.height,
+                                        vidinfo.fps,
+                                        vidinfo.rotation,
+                                        x.width,
+                                        x.height,
+                                        x.fps,
+                                        x.rotation
+                                    ),
+                                ));
                                 return;
                             }
                         }
-                    },
-                    Err(e) => { progress((1.0, format!("Failed to read file metadata: {x}: {e:?}"))); return; }
+                    }
+                    Err(e) => {
+                        progress((1.0, format!("Failed to read file metadata: {x}: {e:?}")));
+                        return;
+                    }
                 }
             }
 
             let mut opened = Vec::with_capacity(file_list.len());
             for x in &file_list {
                 match filesystem::open_file(&x, false, false) {
-                    Ok(x) => { opened.push(x); },
-                    Err(e) => { progress((1.0, format!("Failed to open file: {x}: {e:?}"))); return; }
+                    Ok(x) => {
+                        opened.push(x);
+                    }
+                    Err(e) => {
+                        progress((1.0, format!("Failed to open file: {x}: {e:?}")));
+                        return;
+                    }
                 }
             }
-            let mut file_references: Vec<(&mut std::fs::File, usize)> = opened.iter_mut().map(|x| { let s = x.size; (x.get_file(), s) }).collect();
+            let mut file_references: Vec<(&mut std::fs::File, usize)> = opened
+                .iter_mut()
+                .map(|x| {
+                    let s = x.size;
+                    (x.get_file(), s)
+                })
+                .collect();
             let mut opened_output = match filesystem::open_file(&output_url, true, true) {
-                Ok(x) => { x },
-                Err(e) => { progress((1.0, format!("Failed to create file: {output_url}: {e:?}"))); return; }
+                Ok(x) => x,
+                Err(e) => {
+                    progress((1.0, format!("Failed to create file: {output_url}: {e:?}")));
+                    return;
+                }
             };
-            let res = mp4_merge::join_file_streams(&mut file_references, opened_output.get_file(), |p| progress((p.min(0.9999), String::default())));
+            let res =
+                mp4_merge::join_file_streams(&mut file_references, opened_output.get_file(), |p| {
+                    progress((p.min(0.9999), String::default()))
+                });
             match res {
                 Ok(_) => {
                     if let Err(e) = Self::merge_gcsv(&file_list, &output_folder, &output_filename) {
@@ -2303,13 +3328,17 @@ impl Controller {
                     crate::util::update_file_times(&output_url, &first_url, None);
 
                     progress((1.0, String::default()))
-                },
-                Err(e) => progress((1.0, e.to_string()))
+                }
+                Err(e) => progress((1.0, e.to_string())),
             }
         });
     }
-    fn merge_gcsv(file_list: &[String], output_folder: &str, output_filename: &str) -> Result<(), gyroflow_core::GyroflowCoreError> {
-        use std::io::{ BufRead, Write, Seek, SeekFrom };
+    fn merge_gcsv(
+        file_list: &[String],
+        output_folder: &str,
+        output_filename: &str,
+    ) -> Result<(), gyroflow_core::GyroflowCoreError> {
+        use std::io::{BufRead, Seek, SeekFrom, Write};
         let mut last_diff = 0.0;
         let mut last_timestamp = 0.0;
         let mut add_timestamp = 0.0;
@@ -2322,8 +3351,10 @@ impl Controller {
         let do_add_timestamp = || -> Option<bool> {
             let mut last_timestamp = None;
             for x in file_list {
-                let gcsv_name = filesystem::filename_with_extension(&filesystem::get_filename(x), "gcsv");
-                let gcsv_url = filesystem::get_file_url(&filesystem::get_folder(x), &gcsv_name, false);
+                let gcsv_name =
+                    filesystem::filename_with_extension(&filesystem::get_filename(x), "gcsv");
+                let gcsv_url =
+                    filesystem::get_file_url(&filesystem::get_folder(x), &gcsv_name, false);
                 let mut file = filesystem::open_file(&gcsv_url, false, false).ok()?;
                 let mut is_data = false;
                 for line in std::io::BufReader::new(file.get_file()).lines() {
@@ -2347,7 +3378,8 @@ impl Controller {
                 }
             }
             Some(false)
-        }().unwrap_or(true);
+        }()
+        .unwrap_or(true);
 
         for x in file_list {
             let filename = filesystem::get_filename(x);
@@ -2358,17 +3390,25 @@ impl Controller {
                 let mut is_data = false;
                 if let Ok(mut file) = filesystem::open_file(&gcsv_url, false, false) {
                     if output_gcsv.is_none() {
-                        let out_url = filesystem::get_file_url(&output_folder, &filesystem::filename_with_extension(output_filename, "gcsv"), true);
+                        let out_url = filesystem::get_file_url(
+                            &output_folder,
+                            &filesystem::filename_with_extension(output_filename, "gcsv"),
+                            true,
+                        );
                         output_gcsv = Some(filesystem::open_file(&out_url, true, true)?);
                     }
                     for (i, line) in std::io::BufReader::new(file.get_file()).lines().enumerate() {
                         let mut line = line?;
-                        if i == 0 && !line.contains("GYROFLOW IMU LOG") && !line.contains("CAMERA IMU LOG") {
+                        if i == 0
+                            && !line.contains("GYROFLOW IMU LOG")
+                            && !line.contains("CAMERA IMU LOG")
+                        {
                             return Ok(()); // not a .gcsv file
                         }
                         if !is_data {
                             if line.starts_with("tscale,") {
-                                if let Ok(ts) = line.strip_prefix("tscale,").unwrap().parse::<f64>() {
+                                if let Ok(ts) = line.strip_prefix("tscale,").unwrap().parse::<f64>()
+                                {
                                     time_scale = ts;
                                 }
                             }
@@ -2382,8 +3422,18 @@ impl Controller {
                                     sync_points.push((add_timestamp * time_scale + 2.5) * 1000.0);
                                     continue;
                                 } else {
-                                    headers_end_position = Some(output_gcsv.as_mut().unwrap().get_file().stream_position()?);
-                                    writeln!(output_gcsv.as_mut().unwrap().get_file(), "additional_sync_points,{}", " ".repeat(1024))?; // 1kb of placeholder spaces
+                                    headers_end_position = Some(
+                                        output_gcsv
+                                            .as_mut()
+                                            .unwrap()
+                                            .get_file()
+                                            .stream_position()?,
+                                    );
+                                    writeln!(
+                                        output_gcsv.as_mut().unwrap().get_file(),
+                                        "additional_sync_points,{}",
+                                        " ".repeat(1024)
+                                    )?; // 1kb of placeholder spaces
                                 }
                             }
                         } else if line.contains(',') {
@@ -2391,7 +3441,10 @@ impl Controller {
                                 last_diff = timestamp - last_timestamp;
                                 last_timestamp = timestamp;
                                 let new_timestamp = timestamp + add_timestamp;
-                                line = [new_timestamp.to_string()].into_iter().chain(line.split(',').skip(1).map(str::to_string)).join(",");
+                                line = [new_timestamp.to_string()]
+                                    .into_iter()
+                                    .chain(line.split(',').skip(1).map(str::to_string))
+                                    .join(",");
                             }
                         }
                         if first_file || is_data {
@@ -2409,7 +3462,14 @@ impl Controller {
         if !sync_points.is_empty() && output_gcsv.is_some() && headers_end_position.is_some() {
             let output_gcsv = &mut output_gcsv.as_mut().unwrap().get_file();
             output_gcsv.seek(SeekFrom::Start(headers_end_position.unwrap()))?;
-            write!(output_gcsv, "additional_sync_points,{}", sync_points.into_iter().map(|x| format!("{:.3}", x)).join(";"))?;
+            write!(
+                output_gcsv,
+                "additional_sync_points,{}",
+                sync_points
+                    .into_iter()
+                    .map(|x| format!("{:.3}", x))
+                    .join(";")
+            )?;
         }
         Ok(())
     }
@@ -2422,12 +3482,12 @@ impl Controller {
 
     fn play_sound(&self, typ: String) {
         core::run_threaded(move || {
-            use std::io::{ Cursor, Error, ErrorKind };
+            use std::io::{Cursor, Error, ErrorKind};
             let _ = (|| -> Result<(), Box<dyn std::error::Error>> {
                 let source = match typ.as_ref() {
                     "success" => include_bytes!("../resources/success.ogg") as &[u8],
-                    "error"   => include_bytes!("../resources/error.ogg") as &[u8],
-                    _ => { return Err(Error::new(ErrorKind::Other, "").into()) }
+                    "error" => include_bytes!("../resources/error.ogg") as &[u8],
+                    _ => return Err(Error::new(ErrorKind::Other, "").into()),
                 };
                 {
                     let stream_handle = rodio::DeviceSinkBuilder::open_default_sink()?;
@@ -2443,18 +3503,29 @@ impl Controller {
     fn has_per_frame_lens_data(&self) -> bool {
         let gyro = self.stabilizer.gyro.read();
         let md = gyro.file_metadata.read();
-        md.camera_stab_data.len() > 1 || md.lens_params.len() > 1 || md.lens_positions.len() > 1 || md.mesh_correction.len() > 1
+        md.camera_stab_data.len() > 1
+            || md.lens_params.len() > 1
+            || md.lens_positions.len() > 1
+            || md.mesh_correction.len() > 1
     }
     fn export_stmap(&self, folder_url: QUrl, per_frame: bool) {
         let folder_url = util::qurl_to_encoded(folder_url);
         let frame_count = self.stabilizer.params.read().frame_count;
 
-        let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, (ready, total): (usize, usize)| {
-            this.stmap_progress(ready as f64 / total as f64, ready, total);
-        });
-        let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, msg: String| {
-            this.error(QString::from("An error occured: %1"), QString::from(msg), QString::default());
-        });
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, (ready, total): (usize, usize)| {
+                this.stmap_progress(ready as f64 / total as f64, ready, total);
+            },
+        );
+        let err =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, msg: String| {
+                this.error(
+                    QString::from("An error occured: %1"),
+                    QString::from(msg),
+                    QString::default(),
+                );
+            });
 
         self.cancel_flag.store(false, SeqCst);
         let cancel_flag = self.cancel_flag.clone();
@@ -2466,122 +3537,230 @@ impl Controller {
         {
             let params = stab.params.read();
             if params.size.0 <= 0 || params.size.1 <= 0 {
-                self.error(QString::from("An error occured: %1"), QString::from("Video is not loaded"), QString::default());
+                self.error(
+                    QString::from("An error occured: %1"),
+                    QString::from("Video is not loaded"),
+                    QString::default(),
+                );
                 return;
             }
         }
 
         core::run_threaded(move || {
             progress((0, total));
-            for (fname_base, frame, dist, undist) in gyroflow_core::stmap::generate_stmaps(&stab, per_frame) {
-                if let Err(e) = filesystem::write(&filesystem::get_file_url(&folder_url, &format!("{fname_base}-undistort-{frame}.exr"), true), &undist) {
+            for (fname_base, frame, dist, undist) in
+                gyroflow_core::stmap::generate_stmaps(&stab, per_frame)
+            {
+                if let Err(e) = filesystem::write(
+                    &filesystem::get_file_url(
+                        &folder_url,
+                        &format!("{fname_base}-undistort-{frame}.exr"),
+                        true,
+                    ),
+                    &undist,
+                ) {
                     return err(e.to_string());
                 }
-                if let Err(e) = filesystem::write(&filesystem::get_file_url(&folder_url, &format!("{fname_base}-redistort-{frame}.exr"), true), &dist) {
+                if let Err(e) = filesystem::write(
+                    &filesystem::get_file_url(
+                        &folder_url,
+                        &format!("{fname_base}-redistort-{frame}.exr"),
+                        true,
+                    ),
+                    &dist,
+                ) {
                     return err(e.to_string());
                 }
 
                 processed += 1;
                 progress((processed, total));
 
-                if cancel_flag.load(SeqCst) { break; }
+                if cancel_flag.load(SeqCst) {
+                    break;
+                }
             }
             progress((total, total));
         });
     }
 
     fn is_nle_installed(&self) -> bool {
-        #[cfg(any(target_os = "windows", target_os = "macos"))] {
-            crate::nle_plugins::is_nle_installed("openfx") || crate::nle_plugins::is_nle_installed("adobe")
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
+            crate::nle_plugins::is_nle_installed("openfx")
+                || crate::nle_plugins::is_nle_installed("adobe")
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))] { false }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            false
+        }
     }
     fn nle_plugins(&self, command: QString, typ: QString) -> QString {
-        #[cfg(any(target_os = "windows", target_os = "macos"))] {
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        {
             let typ = typ.to_string();
             let command = command.to_string();
             let result = match command.as_ref() {
                 "install" | "latest_version" => {
                     let command2 = QString::from(command.clone());
-                    let signal = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, r: String| {
-                        this.nle_plugins_result(command2.clone(), QString::from(r));
-                    });
+                    let signal = util::qt_queued_callback_mut(
+                        QPointer::from(self as &Self),
+                        move |this, r: String| {
+                            this.nle_plugins_result(command2.clone(), QString::from(r));
+                        },
+                    );
                     core::run_threaded(move || {
                         let plugins_base = gyroflow_core::settings::get_str("pluginsBase", "");
                         let result = match command.as_ref() {
                             "install" => crate::nle_plugins::install(&typ, plugins_base),
-                            "latest_version" => crate::nle_plugins::latest_version().ok_or(std::io::Error::new(std::io::ErrorKind::Other, "Failed to check version")),
-                            _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unknown command {command}")))
+                            "latest_version" => {
+                                crate::nle_plugins::latest_version().ok_or(std::io::Error::new(
+                                    std::io::ErrorKind::Other,
+                                    "Failed to check version",
+                                ))
+                            }
+                            _ => Err(std::io::Error::new(
+                                std::io::ErrorKind::Other,
+                                format!("Unknown command {command}"),
+                            )),
                         };
                         match result {
                             Ok(r) => signal(r),
-                            Err(e) => signal(format!("An error occured: {e:?}"))
+                            Err(e) => signal(format!("An error occured: {e:?}")),
                         }
                     });
                     Ok(String::new())
                 }
                 "detect" => crate::nle_plugins::detect(&typ),
                 "is_nle_installed" => Ok(format!("{}", crate::nle_plugins::is_nle_installed(&typ))),
-                _ => Err(std::io::Error::new(std::io::ErrorKind::Other, format!("Unknown command {command}")))
+                _ => Err(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("Unknown command {command}"),
+                )),
             };
             match result {
                 Ok(r) => QString::from(r),
-                Err(e) => QString::from(format!("An error occured: {e:?}"))
+                Err(e) => QString::from(format!("An error occured: {e:?}")),
             }
         }
-        #[cfg(not(any(target_os = "windows", target_os = "macos")))] { QString::default() }
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        {
+            QString::default()
+        }
     }
 
     // Utilities
-    fn get_username(&self) -> QString { let realname = whoami::realname().unwrap_or_default(); QString::from(if realname.is_empty() { whoami::username().unwrap_or_default() } else { realname }) }
-    fn image_to_b64(&self, img: QImage) -> QString { util::image_to_b64(img) }
-    fn copy_to_clipboard(&self, text: QString) { util::copy_to_clipboard(text) }
-    fn data_folder(&self) -> QUrl { QUrl::from(QString::from(gyroflow_core::filesystem::path_to_url(gyroflow_core::settings::data_dir().to_str().unwrap_or_default()))) }
+    fn get_username(&self) -> QString {
+        let realname = whoami::realname().unwrap_or_default();
+        QString::from(if realname.is_empty() {
+            whoami::username().unwrap_or_default()
+        } else {
+            realname
+        })
+    }
+    fn image_to_b64(&self, img: QImage) -> QString {
+        util::image_to_b64(img)
+    }
+    fn copy_to_clipboard(&self, text: QString) {
+        util::copy_to_clipboard(text)
+    }
+    fn data_folder(&self) -> QUrl {
+        QUrl::from(QString::from(gyroflow_core::filesystem::path_to_url(
+            gyroflow_core::settings::data_dir()
+                .to_str()
+                .unwrap_or_default(),
+        )))
+    }
 }
 
 #[derive(Default, QObject)]
 pub struct Filesystem {
     base: qt_base_class!(trait QObject),
 
-    exists_in_folder:         qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
-    can_create_file:          qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
-    exists:                   qt_method!(fn(&self, url: QUrl) -> bool),
-    get_filename:             qt_method!(fn(&self, url: QUrl) -> QString),
-    get_folder:               qt_method!(fn(&self, url: QUrl) -> QString),
-    filename_with_extension:  qt_method!(fn(&self, filename: QString, ext: QString) -> QString),
-    filename_with_suffix:     qt_method!(fn(&self, filename: QString, suffix: QString) -> QString),
-    open_file_externally:     qt_method!(fn(&self, url: QUrl)),
-    path_to_url:              qt_method!(fn(&self, path: QString) -> QUrl),
-    get_file_url:             qt_method!(fn(&self, folder: QUrl, filename: String, can_create: bool) -> QUrl),
-    url_to_path:              qt_method!(fn(&self, url: QUrl) -> QString),
-    display_url:              qt_method!(fn(&self, url: QUrl) -> QString),
-    display_folder_filename:  qt_method!(fn(&self, folder: QUrl, filename: QString) -> QString),
-    catch_url_open:           qt_method!(fn(&self, url: QUrl)),
-    remove_file:              qt_method!(fn(&self, url: QUrl)),
-    folder_access_granted:    qt_method!(fn(&self, url: QUrl)),
-    move_to_trash:            qt_method!(fn(&self, url: QUrl)),
-    save_allowed_folders:     qt_method!(fn(&self)),
-    restore_allowed_folders:  qt_method!(fn(&self)),
-    get_next_file_url:        qt_method!(fn(&self, current_url: QUrl, index: i32) -> QUrl),
-    url_opened:               qt_signal!(url: QUrl),
+    exists_in_folder: qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
+    can_create_file: qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
+    exists: qt_method!(fn(&self, url: QUrl) -> bool),
+    get_filename: qt_method!(fn(&self, url: QUrl) -> QString),
+    get_folder: qt_method!(fn(&self, url: QUrl) -> QString),
+    filename_with_extension: qt_method!(fn(&self, filename: QString, ext: QString) -> QString),
+    filename_with_suffix: qt_method!(fn(&self, filename: QString, suffix: QString) -> QString),
+    open_file_externally: qt_method!(fn(&self, url: QUrl)),
+    path_to_url: qt_method!(fn(&self, path: QString) -> QUrl),
+    get_file_url: qt_method!(fn(&self, folder: QUrl, filename: String, can_create: bool) -> QUrl),
+    url_to_path: qt_method!(fn(&self, url: QUrl) -> QString),
+    display_url: qt_method!(fn(&self, url: QUrl) -> QString),
+    display_folder_filename: qt_method!(fn(&self, folder: QUrl, filename: QString) -> QString),
+    catch_url_open: qt_method!(fn(&self, url: QUrl)),
+    remove_file: qt_method!(fn(&self, url: QUrl)),
+    folder_access_granted: qt_method!(fn(&self, url: QUrl)),
+    move_to_trash: qt_method!(fn(&self, url: QUrl)),
+    save_allowed_folders: qt_method!(fn(&self)),
+    restore_allowed_folders: qt_method!(fn(&self)),
+    get_next_file_url: qt_method!(fn(&self, current_url: QUrl, index: i32) -> QUrl),
+    url_opened: qt_signal!(url: QUrl),
 }
 impl Filesystem {
-    fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool { filesystem::exists_in_folder(&util::qurl_to_encoded(folder), &filename.to_string()) }
-    fn can_create_file(&self, folder: QUrl, filename: QString) -> bool { filesystem::can_create_file(&util::qurl_to_encoded(folder), &filename.to_string()) }
-    fn exists(&self, url: QUrl) -> bool { filesystem::exists(&util::qurl_to_encoded(url)) }
-    fn get_filename(&self, url: QUrl) -> QString { QString::from(filesystem::get_filename(&util::qurl_to_encoded(url))) }
-    fn get_folder(&self, url: QUrl) -> QString { QString::from(filesystem::get_folder(&util::qurl_to_encoded(url))) }
-    fn filename_with_extension(&self, filename: QString, ext: QString) -> QString { QString::from(filesystem::filename_with_extension(&filename.to_string(), &ext.to_string())) }
-    fn filename_with_suffix(&self, filename: QString, suffix: QString) -> QString { QString::from(filesystem::filename_with_suffix(&filename.to_string(), &suffix.to_string())) }
-    fn open_file_externally(&self, url: QUrl) { util::open_file_externally(url); }
-    fn path_to_url(&self, path: QString) -> QUrl { QUrl::from(QString::from(filesystem::path_to_url(&path.to_string()))) }
-    fn get_file_url(&self, folder: QUrl, filename: String, can_create: bool) -> QUrl { QUrl::from(QString::from(filesystem::get_file_url(&util::qurl_to_encoded(folder), &filename, can_create))) }
-    fn url_to_path(&self, url: QUrl) -> QString { QString::from(filesystem::url_to_path(&util::qurl_to_encoded(url))) }
-    fn display_url(&self, url: QUrl) -> QString { QString::from(filesystem::display_url(&util::qurl_to_encoded(url))) }
-    fn display_folder_filename(&self, folder: QUrl, filename: QString) -> QString { QString::from(filesystem::display_folder_filename(&util::qurl_to_encoded(folder), &filename.to_string())) }
-    fn catch_url_open(&self, url: QUrl) { util::dispatch_url_event(url.clone()); self.url_opened(url); }
-    fn remove_file(&self, url: QUrl) { let _ = filesystem::remove_file(&util::qurl_to_encoded(url)); }
-    fn folder_access_granted(&self, url: QUrl) { filesystem::folder_access_granted(&util::qurl_to_encoded(url)); }
+    fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
+        filesystem::exists_in_folder(&util::qurl_to_encoded(folder), &filename.to_string())
+    }
+    fn can_create_file(&self, folder: QUrl, filename: QString) -> bool {
+        filesystem::can_create_file(&util::qurl_to_encoded(folder), &filename.to_string())
+    }
+    fn exists(&self, url: QUrl) -> bool {
+        filesystem::exists(&util::qurl_to_encoded(url))
+    }
+    fn get_filename(&self, url: QUrl) -> QString {
+        QString::from(filesystem::get_filename(&util::qurl_to_encoded(url)))
+    }
+    fn get_folder(&self, url: QUrl) -> QString {
+        QString::from(filesystem::get_folder(&util::qurl_to_encoded(url)))
+    }
+    fn filename_with_extension(&self, filename: QString, ext: QString) -> QString {
+        QString::from(filesystem::filename_with_extension(
+            &filename.to_string(),
+            &ext.to_string(),
+        ))
+    }
+    fn filename_with_suffix(&self, filename: QString, suffix: QString) -> QString {
+        QString::from(filesystem::filename_with_suffix(
+            &filename.to_string(),
+            &suffix.to_string(),
+        ))
+    }
+    fn open_file_externally(&self, url: QUrl) {
+        util::open_file_externally(url);
+    }
+    fn path_to_url(&self, path: QString) -> QUrl {
+        QUrl::from(QString::from(filesystem::path_to_url(&path.to_string())))
+    }
+    fn get_file_url(&self, folder: QUrl, filename: String, can_create: bool) -> QUrl {
+        QUrl::from(QString::from(filesystem::get_file_url(
+            &util::qurl_to_encoded(folder),
+            &filename,
+            can_create,
+        )))
+    }
+    fn url_to_path(&self, url: QUrl) -> QString {
+        QString::from(filesystem::url_to_path(&util::qurl_to_encoded(url)))
+    }
+    fn display_url(&self, url: QUrl) -> QString {
+        QString::from(filesystem::display_url(&util::qurl_to_encoded(url)))
+    }
+    fn display_folder_filename(&self, folder: QUrl, filename: QString) -> QString {
+        QString::from(filesystem::display_folder_filename(
+            &util::qurl_to_encoded(folder),
+            &filename.to_string(),
+        ))
+    }
+    fn catch_url_open(&self, url: QUrl) {
+        util::dispatch_url_event(url.clone());
+        self.url_opened(url);
+    }
+    fn remove_file(&self, url: QUrl) {
+        let _ = filesystem::remove_file(&util::qurl_to_encoded(url));
+    }
+    fn folder_access_granted(&self, url: QUrl) {
+        filesystem::folder_access_granted(&util::qurl_to_encoded(url));
+    }
     fn save_allowed_folders(&self) {
         let list = filesystem::get_allowed_folders();
         if !list.is_empty() {
@@ -2589,7 +3768,10 @@ impl Filesystem {
         }
     }
     fn restore_allowed_folders(&self) {
-        if let Ok(saved) = serde_json::from_value::<Vec<String>>(gyroflow_core::settings::get("allowedUrls", Default::default())) {
+        if let Ok(saved) = serde_json::from_value::<Vec<String>>(gyroflow_core::settings::get(
+            "allowedUrls",
+            Default::default(),
+        )) {
             if !saved.is_empty() {
                 filesystem::restore_allowed_folders(&saved);
             }
@@ -2609,7 +3791,7 @@ impl Filesystem {
             let path = filesystem::url_to_path(&util::qurl_to_encoded(url));
             ::log::info!("Moving file to trash: {path}");
             match trash::delete(path) {
-                Ok(_) => { },
+                Ok(_) => {}
                 Err(e) => ::log::error!("Failed to move file to trash: {e:?}"),
             }
         }
@@ -2621,11 +3803,16 @@ impl Filesystem {
         let folder = filesystem::get_folder(&current_url);
         let filename = filesystem::get_filename(&current_url);
 
-        let extensions = [ "mp4", "mov", "mxf", "mkv", "webm", "insv", "braw", "r3d", "nev" ];
+        let extensions = [
+            "mp4", "mov", "mxf", "mkv", "webm", "insv", "braw", "r3d", "nev",
+        ];
 
         let list: Vec<(String, String)> = filesystem::list_folder(&folder)
             .into_iter()
-            .filter(|x| { let x = x.0.to_ascii_lowercase(); extensions.iter().any(|ext| x.ends_with(ext)) })
+            .filter(|x| {
+                let x = x.0.to_ascii_lowercase();
+                extensions.iter().any(|ext| x.ends_with(ext))
+            })
             .sorted_by(|a, b| human_sort::compare(&a.0, &b.0))
             .collect();
 

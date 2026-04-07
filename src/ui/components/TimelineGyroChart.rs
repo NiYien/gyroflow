@@ -5,16 +5,16 @@
 
 use std::collections::BTreeMap;
 
-use gyroflow_core::stabilization_params::StabilizationParams;
-use gyroflow_core::keyframes::{ KeyframeManager, KeyframeType };
-use qmetaobject::*;
-use crate::core::gyro_source::{ GyroSource, TimeIMU, TimeQuat };
+use crate::core::gyro_source::{GyroSource, TimeIMU, TimeQuat};
 use crate::util;
+use gyroflow_core::keyframes::{KeyframeManager, KeyframeType};
+use gyroflow_core::stabilization_params::StabilizationParams;
+use qmetaobject::*;
 
 #[derive(Debug, Clone)]
 pub struct ChartData<const I: usize> {
     pub timestamp_us: i64,
-    pub values: [f64; I]
+    pub values: [f64; I],
 }
 
 #[derive(Default)]
@@ -52,7 +52,7 @@ pub struct TimelineGyroChart {
 
     viewMode: qt_property!(u32; WRITE setViewMode NOTIFY viewModeChanged),
 
-    series: [Series; 4+4+1+1],
+    series: [Series; 4 + 4 + 1 + 1],
 
     sync_points: BTreeMap<i64, (f64, f64)>, // timestamp, (offset, fitted offset)
 
@@ -73,13 +73,36 @@ pub struct TimelineGyroChart {
 }
 
 impl TimelineGyroChart {
-    pub fn setDurationMs(&mut self, v: f64) { self.duration_ms = v; }
-    fn setVisibleAreaLeft (&mut self, v: f64) { self.visibleAreaLeft = v; self.update(); }
-    fn setVisibleAreaRight(&mut self, v: f64) { self.visibleAreaRight = v; self.update(); }
-    fn setAxisVisible     (&mut self, a: usize, v: bool) { if let Some(a) = self.series.get_mut(a) { a.visible = v; self.update(); self.axisVisibleChanged(); } }
-    fn getAxisVisible     (&self, a: usize) -> bool { self.series.get(a).map(|x| x.visible).unwrap_or_default() }
-    fn setVScale          (&mut self, v: f64) { self.vscale = v.max(0.1); self.update(); }
-    fn setViewMode        (&mut self, v: u32) { self.viewMode = v; self.update_data(""); self.viewModeChanged(); }
+    pub fn setDurationMs(&mut self, v: f64) {
+        self.duration_ms = v;
+    }
+    fn setVisibleAreaLeft(&mut self, v: f64) {
+        self.visibleAreaLeft = v;
+        self.update();
+    }
+    fn setVisibleAreaRight(&mut self, v: f64) {
+        self.visibleAreaRight = v;
+        self.update();
+    }
+    fn setAxisVisible(&mut self, a: usize, v: bool) {
+        if let Some(a) = self.series.get_mut(a) {
+            a.visible = v;
+            self.update();
+            self.axisVisibleChanged();
+        }
+    }
+    fn getAxisVisible(&self, a: usize) -> bool {
+        self.series.get(a).map(|x| x.visible).unwrap_or_default()
+    }
+    fn setVScale(&mut self, v: f64) {
+        self.vscale = v.max(0.1);
+        self.update();
+    }
+    fn setViewMode(&mut self, v: u32) {
+        self.viewMode = v;
+        self.update_data("");
+        self.viewModeChanged();
+    }
 
     pub fn setVScaleToVisibleArea(&mut self) {
         let rect = (self as &dyn QQuickItem).bounding_rect();
@@ -89,12 +112,23 @@ impl TimelineGyroChart {
             if serie.visible && !serie.lines.is_empty() {
                 for a in &serie.lines {
                     for b in a {
-                        if b.pt1.x > 0.0 && b.pt1.x < rect.width &&
-                           b.pt2.x > 0.0 && b.pt2.x < rect.width {
-                            if b.pt1.y < min_height { min_height = b.pt1.y; }
-                            if b.pt2.y < min_height { min_height = b.pt2.y; }
-                            if b.pt1.y > max_height { max_height = b.pt1.y; }
-                            if b.pt2.y > max_height { max_height = b.pt2.y; }
+                        if b.pt1.x > 0.0
+                            && b.pt1.x < rect.width
+                            && b.pt2.x > 0.0
+                            && b.pt2.x < rect.width
+                        {
+                            if b.pt1.y < min_height {
+                                min_height = b.pt1.y;
+                            }
+                            if b.pt2.y < min_height {
+                                min_height = b.pt2.y;
+                            }
+                            if b.pt1.y > max_height {
+                                max_height = b.pt1.y;
+                            }
+                            if b.pt2.y > max_height {
+                                max_height = b.pt2.y;
+                            }
                         }
                     }
                 }
@@ -118,9 +152,13 @@ impl TimelineGyroChart {
     fn calculate_lines(&mut self) {
         let rect = (self as &dyn QQuickItem).bounding_rect();
         let half_height = rect.height / 2.0;
-        if rect.width <= 0.0 || rect.height <= 0.0 { return; }
+        if rect.width <= 0.0 || rect.height <= 0.0 {
+            return;
+        }
 
-        let map_to_visible_area = |v: f64| -> f64 { (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft) };
+        let map_to_visible_area = |v: f64| -> f64 {
+            (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft)
+        };
 
         let duration_us = self.duration_ms * 1000.0;
 
@@ -128,7 +166,9 @@ impl TimelineGyroChart {
             if serie.visible && !serie.data.is_empty() {
                 let from_timestamp = ((self.visibleAreaLeft - 0.01) * duration_us).floor() as i64;
                 let mut to_timestamp = ((self.visibleAreaRight + 0.01) * duration_us).ceil() as i64;
-                if from_timestamp >= to_timestamp { to_timestamp = from_timestamp + 1; }
+                if from_timestamp >= to_timestamp {
+                    to_timestamp = from_timestamp + 1;
+                }
 
                 let resolution = rect.width * 10.0;
                 let mut range = serie.data.range(from_timestamp..=to_timestamp);
@@ -136,19 +176,23 @@ impl TimelineGyroChart {
 
                 serie.lines.clear();
                 let vscale = if serie.is_fovs { 1.0 } else { self.vscale };
-                let add_y =  if serie.is_fovs { half_height } else { 0.0 };
+                let add_y = if serie.is_fovs { half_height } else { 0.0 };
                 if num_samples > 1 {
                     if let Some(first_item) = range.next() {
                         let mut line = Vec::new();
-                        let mut prev_point = (*first_item.0, QPointF {
-                            x: map_to_visible_area(*first_item.0 as f64 / duration_us) * rect.width,
-                            y: (1.0 - *first_item.1 * vscale) * half_height + add_y
-                        });
+                        let mut prev_point = (
+                            *first_item.0,
+                            QPointF {
+                                x: map_to_visible_area(*first_item.0 as f64 / duration_us)
+                                    * rect.width,
+                                y: (1.0 - *first_item.1 * vscale) * half_height + add_y,
+                            },
+                        );
                         let step = (num_samples / resolution as usize).max(1);
                         for data in range.step_by(step) {
                             let point = QPointF {
                                 x: map_to_visible_area(*data.0 as f64 / duration_us) * rect.width,
-                                y: (1.0 - *data.1 * vscale) * half_height + add_y
+                                y: (1.0 - *data.1 * vscale) * half_height + add_y,
                             };
 
                             let new_line = serie.is_optflow && *data.0 - prev_point.0 > 100_000;
@@ -156,7 +200,10 @@ impl TimelineGyroChart {
                                 serie.lines.push(line);
                                 line = Vec::new();
                             } else {
-                                line.push(QLineF { pt1: prev_point.1, pt2: point });
+                                line.push(QLineF {
+                                    pt1: prev_point.1,
+                                    pt2: point,
+                                });
                             }
                             prev_point = (*data.0, point);
                         }
@@ -184,7 +231,9 @@ impl TimelineGyroChart {
     fn drawOverlay(&mut self, p: &mut QPainter, a: usize, color: &str) {
         let rect = (self as &dyn QQuickItem).bounding_rect();
 
-        let map_to_visible_area = |v: f64| -> f64 { (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft) };
+        let map_to_visible_area = |v: f64| -> f64 {
+            (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft)
+        };
 
         let mut pen = QPen::from_color(QColor::from_name(color));
         pen.set_width_f(1.5); // TODO * dpiScale
@@ -197,12 +246,18 @@ impl TimelineGyroChart {
         for l in &self.series[a].lines {
             if !l.is_empty() {
                 let mut points = Vec::with_capacity(l.len() * 2);
-                points.push(QPointF { x: -2.0, y: rect.height });
+                points.push(QPointF {
+                    x: -2.0,
+                    y: rect.height,
+                });
                 for line in l {
                     points.push(line.pt1);
                     points.push(line.pt2);
                 }
-                points.push(QPointF { x: rect.width + 2.0, y: rect.height });
+                points.push(QPointF {
+                    x: rect.width + 2.0,
+                    y: rect.height,
+                });
                 p.draw_polygon(&points);
             }
         }
@@ -218,15 +273,17 @@ impl TimelineGyroChart {
             let mut region: Option<QRectF> = None;
             for x in &self.minimal_fovs {
                 if x.values[0] < 0.99 {
-                    let x_pos = map_to_visible_area(x.timestamp_us as f64 / duration_us) * rect.width;
+                    let x_pos =
+                        map_to_visible_area(x.timestamp_us as f64 / duration_us) * rect.width;
                     if let Some(region) = &mut region {
                         region.width = x_pos - region.x;
                     } else {
                         region = Some(QRectF {
-                            x: map_to_visible_area(x.timestamp_us as f64 / duration_us) * rect.width,
+                            x: map_to_visible_area(x.timestamp_us as f64 / duration_us)
+                                * rect.width,
                             y: 0.0,
                             width: 1.0 / (self.visibleAreaRight - self.visibleAreaLeft),
-                            height: rect.height
+                            height: rect.height,
                         });
                     }
                 } else if let Some(region) = region.take() {
@@ -242,13 +299,17 @@ impl TimelineGyroChart {
         p.set_pen(QPen::default());
 
         let rect = (self as &dyn QQuickItem).bounding_rect();
-        if rect.width <= 0.0 || rect.height <= 0.0 || self.sync_points.is_empty() { return; }
+        if rect.width <= 0.0 || rect.height <= 0.0 || self.sync_points.is_empty() {
+            return;
+        }
 
-        let map_to_visible_area = |v: f64| -> f64 { (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft) };
+        let map_to_visible_area = |v: f64| -> f64 {
+            (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft)
+        };
 
         let duration_us = self.duration_ms * 1000.0;
 
-        let mut min =  999999999.0f64;
+        let mut min = 999999999.0f64;
         let mut max = -999999999.0f64;
         for &(offset, _linear_offset) in self.sync_points.values() {
             min = min.min(offset);
@@ -274,8 +335,13 @@ impl TimelineGyroChart {
             };
 
             let bad_syncpoint_distance = 30.0;
-            let validness = ((*offset - *linear_offset).abs()).min(bad_syncpoint_distance) / bad_syncpoint_distance; // 0 - valid (point near the line), 1 - invalid (30ms or more deviation from the line)
-            p.set_brush(QBrush::from_color(QColor::from_hsv_f((112.0 * (1.0 - validness)) / 360.0, 0.84, 0.86)));
+            let validness = ((*offset - *linear_offset).abs()).min(bad_syncpoint_distance)
+                / bad_syncpoint_distance; // 0 - valid (point near the line), 1 - invalid (30ms or more deviation from the line)
+            p.set_brush(QBrush::from_color(QColor::from_hsv_f(
+                (112.0 * (1.0 - validness)) / 360.0,
+                0.84,
+                0.86,
+            )));
             p.draw_ellipse_with_center(pt, 3.0, 3.0);
         }
 
@@ -296,7 +362,7 @@ impl TimelineGyroChart {
                 if let Some(g) = x.gyro.as_ref() {
                     self.sync_results.push(ChartData {
                         timestamp_us: *k,
-                        values: [g[0], g[1], g[2]]
+                        values: [g[0], g[1], g[2]],
                     });
                 }
             }
@@ -313,7 +379,7 @@ impl TimelineGyroChart {
                 let q = q.quaternion().as_vector();
                 self.sync_quats.push(ChartData {
                     timestamp_us: *ts,
-                    values: [q[0], q[1], q[2], q[3]]
+                    values: [q[0], q[1], q[2], q[3]],
                 });
             }
             self.org_sync_quats = self.sync_quats.clone();
@@ -321,7 +387,13 @@ impl TimelineGyroChart {
         }
     }
 
-    pub fn setFromGyroSource(&mut self, gyro: &GyroSource, params: &StabilizationParams, keyframes: &KeyframeManager, series: &str) {
+    pub fn setFromGyroSource(
+        &mut self,
+        gyro: &GyroSource,
+        params: &StabilizationParams,
+        keyframes: &KeyframeManager,
+        series: &str,
+    ) {
         if series.is_empty() {
             self.gyro.clear();
             self.accl.clear();
@@ -338,28 +410,40 @@ impl TimelineGyroChart {
                 for x in raw_imu {
                     if self.viewMode == 0 {
                         if let Some(g) = x.gyro.as_ref() {
-                            if self.gyro.is_empty() { self.gyro.reserve(imu_len); }
+                            if self.gyro.is_empty() {
+                                self.gyro.reserve(imu_len);
+                            }
                             self.gyro.push(ChartData {
-                                timestamp_us: ((x.timestamp_ms + gyro.offset_at_gyro_timestamp(x.timestamp_ms)) * 1000.0) as i64,
-                                values: [g[0], g[1], g[2]]
+                                timestamp_us: ((x.timestamp_ms
+                                    + gyro.offset_at_gyro_timestamp(x.timestamp_ms))
+                                    * 1000.0) as i64,
+                                values: [g[0], g[1], g[2]],
                             });
                         }
                     }
                     if self.viewMode == 1 {
                         if let Some(a) = x.accl.as_ref() {
-                            if self.accl.is_empty() { self.accl.reserve(imu_len); }
+                            if self.accl.is_empty() {
+                                self.accl.reserve(imu_len);
+                            }
                             self.accl.push(ChartData {
-                                timestamp_us: ((x.timestamp_ms + gyro.offset_at_gyro_timestamp(x.timestamp_ms)) * 1000.0) as i64,
-                                values: [a[0], a[1], a[2]]
+                                timestamp_us: ((x.timestamp_ms
+                                    + gyro.offset_at_gyro_timestamp(x.timestamp_ms))
+                                    * 1000.0) as i64,
+                                values: [a[0], a[1], a[2]],
                             });
                         }
                     }
                     if self.viewMode == 2 {
                         if let Some(m) = x.magn.as_ref() {
-                            if self.magn.is_empty() { self.magn.reserve(imu_len); }
+                            if self.magn.is_empty() {
+                                self.magn.reserve(imu_len);
+                            }
                             self.magn.push(ChartData {
-                                timestamp_us: ((x.timestamp_ms + gyro.offset_at_gyro_timestamp(x.timestamp_ms)) * 1000.0) as i64,
-                                values: [m[0], m[1], m[2]]
+                                timestamp_us: ((x.timestamp_ms
+                                    + gyro.offset_at_gyro_timestamp(x.timestamp_ms))
+                                    * 1000.0) as i64,
+                                values: [m[0], m[1], m[2]],
                             });
                         }
                     }
@@ -376,7 +460,7 @@ impl TimelineGyroChart {
                         let q = x.1.as_vector();
                         out_quats.push(ChartData {
                             timestamp_us: (ts * 1000.0) as i64,
-                            values: [q[0], q[1], q[2], q[3]]
+                            values: [q[0], q[1], q[2], q[3]],
                         });
                     }
                 };
@@ -392,14 +476,20 @@ impl TimelineGyroChart {
             }
 
             match self.viewMode {
-                0 => { self.gyro_max = Self::normalize_height(&mut self.gyro, None); },
-                1 => { Self::normalize_height(&mut self.accl, None); },
-                2 => { Self::normalize_height(&mut self.magn, None); },
+                0 => {
+                    self.gyro_max = Self::normalize_height(&mut self.gyro, None);
+                }
+                1 => {
+                    Self::normalize_height(&mut self.accl, None);
+                }
+                2 => {
+                    Self::normalize_height(&mut self.magn, None);
+                }
                 3 => {
                     let qmax = Self::normalize_height(&mut self.quats, None);
                     Self::normalize_height(&mut self.smoothed_quats, qmax);
-                },
-                _ => { }
+                }
+                _ => {}
             }
 
             self.sync_results = self.org_sync_results.clone();
@@ -407,23 +497,42 @@ impl TimelineGyroChart {
         }
         if series.is_empty() || series == "8" {
             let fps = params.get_scaled_fps();
-            let max = *params.fovs.iter().max_by(|a, b| a.total_cmp(b)).unwrap_or(&1.0);
-            self.fovs = params.fovs.iter().enumerate().map(|(i, x)| ChartData {
-                timestamp_us: (gyroflow_core::timestamp_at_frame(i as i32, fps) * 1000.0).round() as i64,
-                values: [max - *x]
-            }).collect();
+            let max = *params
+                .fovs
+                .iter()
+                .max_by(|a, b| a.total_cmp(b))
+                .unwrap_or(&1.0);
+            self.fovs = params
+                .fovs
+                .iter()
+                .enumerate()
+                .map(|(i, x)| ChartData {
+                    timestamp_us: (gyroflow_core::timestamp_at_frame(i as i32, fps) * 1000.0)
+                        .round() as i64,
+                    values: [max - *x],
+                })
+                .collect();
             Self::normalize_height(&mut self.fovs, None);
 
-            self.minimal_fovs = params.minimal_fovs.iter().zip(params.fovs.iter()).enumerate().map(|(i, (min_fov, fov))| {
-                let timestamp_us = (gyroflow_core::timestamp_at_frame(i as i32, fps) * 1000.0).round() as i64;
+            self.minimal_fovs = params
+                .minimal_fovs
+                .iter()
+                .zip(params.fovs.iter())
+                .enumerate()
+                .map(|(i, (min_fov, fov))| {
+                    let timestamp_us =
+                        (gyroflow_core::timestamp_at_frame(i as i32, fps) * 1000.0).round() as i64;
 
-                let fov_scale = keyframes.value_at_video_timestamp(&KeyframeType::Fov, timestamp_us as f64 / 1000.0).unwrap_or(params.fov);
+                    let fov_scale = keyframes
+                        .value_at_video_timestamp(&KeyframeType::Fov, timestamp_us as f64 / 1000.0)
+                        .unwrap_or(params.fov);
 
-                ChartData {
-                    timestamp_us,
-                    values: [min_fov / (fov * fov_scale)]
-                }
-            }).collect();
+                    ChartData {
+                        timestamp_us,
+                        values: [min_fov / (fov * fov_scale)],
+                    }
+                })
+                .collect();
         }
 
         self.update_data(series);
@@ -441,7 +550,8 @@ impl TimelineGyroChart {
                 s.data.clear();
             }
             match self.viewMode {
-                0 => {  // Gyroscope
+                0 => {
+                    // Gyroscope
                     self.series[0].data = Self::get_serie_vector(&self.gyro, 0);
                     self.series[1].data = Self::get_serie_vector(&self.gyro, 1);
                     self.series[2].data = Self::get_serie_vector(&self.gyro, 2);
@@ -454,17 +564,20 @@ impl TimelineGyroChart {
                     self.series[5].is_optflow = true;
                     self.series[6].is_optflow = true;
                 }
-                1 => { // Accelerometer
+                1 => {
+                    // Accelerometer
                     self.series[0].data = Self::get_serie_vector(&self.accl, 0);
                     self.series[1].data = Self::get_serie_vector(&self.accl, 1);
                     self.series[2].data = Self::get_serie_vector(&self.accl, 2);
                 }
-                2 => { // Magnetometer
+                2 => {
+                    // Magnetometer
                     self.series[0].data = Self::get_serie_vector(&self.magn, 0);
                     self.series[1].data = Self::get_serie_vector(&self.magn, 1);
                     self.series[2].data = Self::get_serie_vector(&self.magn, 2);
                 }
-                3 => { // Quaternions
+                3 => {
+                    // Quaternions
                     self.series[0].data = Self::get_serie_vector(&self.quats, 0);
                     self.series[1].data = Self::get_serie_vector(&self.quats, 1);
                     self.series[2].data = Self::get_serie_vector(&self.quats, 2);
@@ -482,7 +595,7 @@ impl TimelineGyroChart {
                     self.series[6].data = Self::get_serie_vector(&self.smoothed_quats, 2);
                     self.series[7].data = Self::get_serie_vector(&self.smoothed_quats, 3);
                 }
-                _ => panic!("Invalid view mode")
+                _ => panic!("Invalid view mode"),
             }
         }
 
@@ -492,12 +605,17 @@ impl TimelineGyroChart {
         self.update();
     }
 
-    fn normalize_height<const I: usize>(data: &mut [ChartData<I>], max: Option<f64>) -> Option<f64> {
+    fn normalize_height<const I: usize>(
+        data: &mut [ChartData<I>],
+        max: Option<f64>,
+    ) -> Option<f64> {
         let max = max.unwrap_or_else(|| {
             let mut max = 0.0;
             for x in data.iter() {
                 for i in 0..I {
-                    if x.values[i].abs() > max { max = x.values[i].abs(); }
+                    if x.values[i].abs() > max {
+                        max = x.values[i].abs();
+                    }
                 }
             }
             max
@@ -539,30 +657,66 @@ impl QQuickPaintedItem for TimelineGyroChart {
     fn paint(&mut self, p: &mut QPainter) {
         p.set_render_hint(QPainterRenderHint::Antialiasing, true);
 
-        let colors = if self.theme == "light" { // Light theme
-            ["#8f4c4c", "#4c8f4d", "#4c7c8f", "#8f4c8f",
-             "#ff8888", "#88ff88", "#88deff", "#ff88ff",
-             "#10000000"
+        let colors = if self.theme == "light" {
+            // Light theme
+            [
+                "#8f4c4c",
+                "#4c8f4d",
+                "#4c7c8f",
+                "#8f4c8f",
+                "#ff8888",
+                "#88ff88",
+                "#88deff",
+                "#ff88ff",
+                "#10000000",
             ]
-        } else { // Dark theme
-            ["#8f4c4c", "#4c8f4d", "#4c7c8f", "#8f4c8f",
-             "#ff8888", "#88ff88", "#88deff", "#ff88ff",
-             "#10ffffff"
+        } else {
+            // Dark theme
+            [
+                "#8f4c4c",
+                "#4c8f4d",
+                "#4c7c8f",
+                "#8f4c8f",
+                "#ff8888",
+                "#88ff88",
+                "#88deff",
+                "#ff88ff",
+                "#10ffffff",
             ]
         };
 
-        if self.series[0].visible { self.drawAxis(p, 0, colors[0]); } // X
-        if self.series[1].visible { self.drawAxis(p, 1, colors[1]); } // Y
-        if self.series[2].visible { self.drawAxis(p, 2, colors[2]); } // Z
-        if self.series[3].visible { self.drawAxis(p, 3, colors[3]); } // Angle
+        if self.series[0].visible {
+            self.drawAxis(p, 0, colors[0]);
+        } // X
+        if self.series[1].visible {
+            self.drawAxis(p, 1, colors[1]);
+        } // Y
+        if self.series[2].visible {
+            self.drawAxis(p, 2, colors[2]);
+        } // Z
+        if self.series[3].visible {
+            self.drawAxis(p, 3, colors[3]);
+        } // Angle
 
-        if self.series[4].visible { self.drawAxis(p, 4, colors[4]); } // Sync X
-        if self.series[5].visible { self.drawAxis(p, 5, colors[5]); } // Sync Y
-        if self.series[6].visible { self.drawAxis(p, 6, colors[6]); } // Sync Z
-        if self.series[7].visible { self.drawAxis(p, 7, colors[7]); } // Sync Angle
+        if self.series[4].visible {
+            self.drawAxis(p, 4, colors[4]);
+        } // Sync X
+        if self.series[5].visible {
+            self.drawAxis(p, 5, colors[5]);
+        } // Sync Y
+        if self.series[6].visible {
+            self.drawAxis(p, 6, colors[6]);
+        } // Sync Z
+        if self.series[7].visible {
+            self.drawAxis(p, 7, colors[7]);
+        } // Sync Angle
 
-        if self.series[8].visible { self.drawOverlay(p, 8, colors[8]); } // FOVs - zooming amount
+        if self.series[8].visible {
+            self.drawOverlay(p, 8, colors[8]);
+        } // FOVs - zooming amount
 
-        if self.series[9].visible { self.drawSyncPoints(p); } // Sync points and line fit
+        if self.series[9].visible {
+            self.drawSyncPoints(p);
+        } // Sync points and line fit
     }
 }

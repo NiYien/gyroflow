@@ -32,6 +32,9 @@ MenuItem {
         type: "video";
         onAccepted: loadFile(selectedFile);
     }
+    function openFileDialog(): void {
+        fileDialog.open2();
+    }
     function loadFile(url: url): void {
         if (!window.videoArea.vid.loaded) {
             messageBox(Modal.Error, qsTr("Video file is not loaded."), [ { text: qsTr("Ok"), accent: true } ]);
@@ -43,6 +46,10 @@ MenuItem {
 
     function loadGyroflow(obj: var): void {
         const gyro = obj.gyro_source || { };
+        integrator.hasRawGyro = controller.gyro_has_raw_imu;
+        integrator.hasQuaternions = !controller.gyro_has_quaternions;
+        integrator.hasQuaternions = controller.gyro_has_quaternions;
+        root.hasAccurateTimestamps = controller.gyro_has_accurate_timestamps;
         if (gyro && Object.keys(gyro).length > 0) {
             if (gyro.rotation && gyro.rotation.length == 3) {
                 p.value = gyro.rotation[0];
@@ -76,6 +83,7 @@ MenuItem {
             }
             if (gyro.filepath) {
                 const fn_ = filesystem.get_filename(gyro.filepath);
+                root.lastSelectedFile = gyro.filepath;
                 root.filename = fn_;
                 info.updateEntry("File name", fn_);
             }
@@ -168,7 +176,7 @@ MenuItem {
         text: qsTr("Open file");
         iconName: "file-empty"
         anchors.horizontalCenter: parent.horizontalCenter;
-        onClicked: fileDialog.open2();
+        onClicked: root.openFileDialog();
     }
     InfoMessageSmall {
         show: Qt.platform.os == "android" && !root.detectedFormat && root.lastSelectedFile.toString();

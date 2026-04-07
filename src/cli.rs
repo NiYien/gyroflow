@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
+use crate::rendering;
+use crate::rendering::render_queue::*;
 use argh::FromArgs;
 use cpp::*;
+use gyroflow_core::filesystem::path_to_url;
 use gyroflow_core::*;
-use std::sync::Arc;
-use std::time::Instant;
+use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
 use qmetaobject::QString;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use crate::rendering;
-use crate::rendering::render_queue::*;
-use indicatif::{ProgressBar, MultiProgress, ProgressState, ProgressStyle};
-use gyroflow_core::filesystem::path_to_url;
+use std::sync::Arc;
+use std::time::Instant;
 
 cpp! {{
     struct TraitObject2 { void *data; void *vtable; };
@@ -26,7 +26,11 @@ cpp! {{
 }}
 macro_rules! connect {
     ($obj_ptr:ident, $obj_borrowed:ident, $signal:ident, $cb:expr) => {
-        qmetaobject::connect($obj_ptr, $obj_borrowed.$signal.to_cpp_representation(&*$obj_borrowed), $cb);
+        qmetaobject::connect(
+            $obj_ptr,
+            $obj_borrowed.$signal.to_cpp_representation(&*$obj_borrowed),
+            $cb,
+        );
     };
 }
 
@@ -138,23 +142,38 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
             return true;
         }
 
-        let absolute_paths: Vec<String> = opts.input.iter().map(|file| {
-            let path = std::path::PathBuf::from(file);
-            if path.is_relative() {
-                std::fs::canonicalize(&path).unwrap_or_else(|_| path).to_string_lossy().to_string()
-            } else {
-                file.clone()
-            }
-        }).collect();
+        let absolute_paths: Vec<String> = opts
+            .input
+            .iter()
+            .map(|file| {
+                let path = std::path::PathBuf::from(file);
+                if path.is_relative() {
+                    std::fs::canonicalize(&path)
+                        .unwrap_or_else(|_| path)
+                        .to_string_lossy()
+                        .to_string()
+                } else {
+                    file.clone()
+                }
+            })
+            .collect();
 
         let (videos, mut lens_profiles, mut presets) = detect_types(&absolute_paths);
         if let Some(mut preset) = opts.preset {
             if !preset.is_empty() {
-                if preset.starts_with('{') { preset = preset.replace('\'', "\""); }
+                if preset.starts_with('{') {
+                    preset = preset.replace('\'', "\"");
+                }
                 *open_preset = if preset.starts_with('{') {
                     preset.clone()
                 } else {
-                    std::fs::read_to_string(std::fs::canonicalize(&preset).unwrap_or_else(|_| preset.clone().into()).to_string_lossy().to_string()).unwrap_or_default()
+                    std::fs::read_to_string(
+                        std::fs::canonicalize(&preset)
+                            .unwrap_or_else(|_| preset.clone().into())
+                            .to_string_lossy()
+                            .to_string(),
+                    )
+                    .unwrap_or_default()
                 };
                 presets.push(preset);
             }
@@ -164,7 +183,10 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
             if !open.is_empty() {
                 let path = std::path::PathBuf::from(&open);
                 *open_file = if path.is_relative() {
-                    std::fs::canonicalize(&path).unwrap_or_else(|_| path).to_string_lossy().to_string()
+                    std::fs::canonicalize(&path)
+                        .unwrap_or_else(|_| path)
+                        .to_string_lossy()
+                        .to_string()
                 } else {
                     open
                 };
@@ -178,7 +200,11 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                 return true;
             }
         }
-        let mut watching = opts.watch.as_ref().map(|x| !x.is_empty()).unwrap_or_default();
+        let mut watching = opts
+            .watch
+            .as_ref()
+            .map(|x| !x.is_empty())
+            .unwrap_or_default();
 
         if !watching {
             if lens_profiles.len() > 1 {
@@ -191,8 +217,12 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
             }
 
             log::info!("Videos: {:?}", videos);
-            if !lens_profiles.is_empty() { log::info!("Lens profiles: {:?}", lens_profiles); }
-            if !presets.is_empty() { log::info!("Presets: {:?}", presets); }
+            if !lens_profiles.is_empty() {
+                log::info!("Lens profiles: {:?}", lens_profiles);
+            }
+            if !presets.is_empty() {
+                log::info!("Presets: {:?}", presets);
+            }
         }
 
         let m = MultiProgress::new();
@@ -205,12 +235,23 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
         // let spinner = ["⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"];
         // let spinner = ["◜","◠","◝","◞","◡","◟"];
         let spinner = [
-            "⢀⠀","⡀⠀","⠄⠀","⢂⠀","⡂⠀","⠅⠀","⢃⠀","⡃⠀","⠍⠀","⢋⠀","⡋⠀","⠍⠁","⢋⠁","⡋⠁","⠍⠉","⠋⠉","⠋⠉","⠉⠙","⠉⠙","⠉⠩","⠈⢙","⠈⡙","⢈⠩","⡀⢙","⠄⡙","⢂⠩","⡂⢘","⠅⡘",
-            "⢃⠨","⡃⢐","⠍⡐","⢋⠠","⡋⢀","⠍⡁","⢋⠁","⡋⠁","⠍⠉","⠋⠉","⠋⠉","⠉⠙","⠉⠙","⠉⠩","⠈⢙","⠈⡙","⠈⠩","⠀⢙","⠀⡙","⠀⠩","⠀⢘","⠀⡘","⠀⠨","⠀⢐","⠀⡐","⠀⠠","⠀⢀","⠀⡀"
+            "⢀⠀", "⡀⠀", "⠄⠀", "⢂⠀", "⡂⠀", "⠅⠀", "⢃⠀", "⡃⠀", "⠍⠀", "⢋⠀", "⡋⠀", "⠍⠁", "⢋⠁", "⡋⠁",
+            "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩", "⠈⢙", "⠈⡙", "⢈⠩", "⡀⢙", "⠄⡙", "⢂⠩", "⡂⢘", "⠅⡘",
+            "⢃⠨", "⡃⢐", "⠍⡐", "⢋⠠", "⡋⢀", "⠍⡁", "⢋⠁", "⡋⠁", "⠍⠉", "⠋⠉", "⠋⠉", "⠉⠙", "⠉⠙", "⠉⠩",
+            "⠈⢙", "⠈⡙", "⠈⠩", "⠀⢙", "⠀⡙", "⠀⠩", "⠀⢘", "⠀⡘", "⠀⠨", "⠀⢐", "⠀⡐", "⠀⠠", "⠀⢀", "⠀⡀",
         ];
 
-        let pbh0 = m.add(ProgressBar::new(1)); pbh0.set_style(ProgressStyle::with_template("{msg}").unwrap()); pbh0.set_message(" ");
-        let pbh = m.add(ProgressBar::new(1)); pbh.set_style(ProgressStyle::with_template("{spinner:.green} {msg:73} Elapsed: {elapsed_precise}").unwrap().tick_strings(&spinner)); pbh.set_message("Queue"); pbh.enable_steady_tick(std::time::Duration::from_millis(70));
+        let pbh0 = m.add(ProgressBar::new(1));
+        pbh0.set_style(ProgressStyle::with_template("{msg}").unwrap());
+        pbh0.set_message(" ");
+        let pbh = m.add(ProgressBar::new(1));
+        pbh.set_style(
+            ProgressStyle::with_template("{spinner:.green} {msg:73} Elapsed: {elapsed_precise}")
+                .unwrap()
+                .tick_strings(&spinner),
+        );
+        pbh.set_message("Queue");
+        pbh.enable_steady_tick(std::time::Duration::from_millis(70));
 
         log::set_max_level(log::LevelFilter::Info);
 
@@ -240,19 +281,31 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
             rendering::set_gpu_type_from_name(&rendering_device.as_str().unwrap_or_default());
         }
 
-
         if let Some(mut outp) = opts.out_params {
             outp = outp.replace('\'', "\"");
-            gyroflow_core::util::merge_json(additional_data.get_mut("output").unwrap(), &serde_json::from_str(&outp).expect("Invalid json"));
+            gyroflow_core::util::merge_json(
+                additional_data.get_mut("output").unwrap(),
+                &serde_json::from_str(&outp).expect("Invalid json"),
+            );
         }
         if let Some(mut x) = opts.sync_params {
             x = x.replace('\'', "\"");
-            gyroflow_core::util::merge_json(additional_data.get_mut("synchronization").unwrap(), &serde_json::from_str(&x).expect("Invalid json"));
+            gyroflow_core::util::merge_json(
+                additional_data.get_mut("synchronization").unwrap(),
+                &serde_json::from_str(&x).expect("Invalid json"),
+            );
         } else if let Some(preset) = presets.first() {
-            let content = if preset.starts_with('{') { preset.clone() } else { std::fs::read_to_string(preset).expect("Reading preset file") };
+            let content = if preset.starts_with('{') {
+                preset.clone()
+            } else {
+                std::fs::read_to_string(preset).expect("Reading preset file")
+            };
             if let Ok(parsed_preset) = serde_json::from_str::<serde_json::Value>(&content) {
                 if let Some(sync) = parsed_preset.get("synchronization") {
-                    gyroflow_core::util::merge_json(additional_data.get_mut("synchronization").unwrap(), sync);
+                    gyroflow_core::util::merge_json(
+                        additional_data.get_mut("synchronization").unwrap(),
+                        sync,
+                    );
                 }
             }
         }
@@ -277,7 +330,8 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                 if let Some((opt, path)) = export_metadata.split_once(':') {
                     if let Ok(opt) = opt.parse::<usize>() {
                         if !path.is_empty() {
-                            queue.export_metadata = Some((opt, path.to_string(), export_metadata_fields));
+                            queue.export_metadata =
+                                Some((opt, path.to_string(), export_metadata_fields));
                         }
                     }
                 }
@@ -298,19 +352,30 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
         let mut pbs = HashMap::<u32, ProgressBar>::new();
 
         let queue = RefCell::new(queue);
-        let queue_ptr = unsafe { qmetaobject::QObjectPinned::new(&queue).get_or_create_cpp_object() };
+        let queue_ptr =
+            unsafe { qmetaobject::QObjectPinned::new(&queue).get_or_create_cpp_object() };
 
         if let Some(watch) = opts.watch {
             watching = watch_folder(watch, |path| {
                 if !path.contains(&suffix) {
                     log::info!("New file detected: {}", path);
-                    let extensions = [ "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "exr", "dng", "braw" ];
-                    let ext = std::path::Path::new(&path).extension().map(|x| x.to_string_lossy().to_ascii_lowercase()).unwrap_or_default();
+                    let extensions = [
+                        "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "exr",
+                        "dng", "braw",
+                    ];
+                    let ext = std::path::Path::new(&path)
+                        .extension()
+                        .map(|x| x.to_string_lossy().to_ascii_lowercase())
+                        .unwrap_or_default();
                     if extensions.contains(&ext.as_str()) {
                         let queue = unsafe { &mut *queue.as_ptr() };
                         let additional_data2 = additional_data.to_string();
                         qmetaobject::single_shot(std::time::Duration::from_millis(1), move || {
-                            queue.add_file(path_to_url(&path), String::new(), additional_data2.clone());
+                            queue.add_file(
+                                path_to_url(&path),
+                                String::new(),
+                                additional_data2.clone(),
+                            );
                         });
                     }
                 }
@@ -323,108 +388,174 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                 let queue = &mut *queue.as_ptr();
                 // log::info!("Status: {}", q.status.to_string());
 
-                if !watching && queue.status.to_string() == "stopped" && queue.get_pending_count() == 0 && queue.get_active_render_count() == 0 {
+                if !watching
+                    && queue.status.to_string() == "stopped"
+                    && queue.get_pending_count() == 0
+                    && queue.get_active_render_count() == 0
+                {
                     cpp!(unsafe [] { qApp->quit(); });
                 }
             });
-            connect!(queue_ptr, q, render_progress, |job_id: &u32, _progress: &f64, current_frame: &usize, total_frames: &usize, _finished: &bool, _start_time: &f64, _is_conversion: &bool| {
-                let pb = pbs.get(job_id).unwrap();
-                let queue = &mut *queue.as_ptr();
-                let qi = queue.queue.borrow();
-                if *current_frame >= *total_frames {
-                    let mut ok = true;
-                    for item in qi.iter() {
-                        if item.job_id == *job_id {
-                            ok = item.error_string.is_empty();
-                            break;
-                        }
-                    }
-                    if ok {
-                        pb.set_message(format!("\x1B[1;32m{}\x1B[0m", pb.message())); // Green
-                        if opts.stdout_progress {
-                            println!("[{:08x}] Rendering completed: {}", job_id, pb.message());
-                        }
-                    } else {
-                        pb.set_message(format!("\x1B[1;31m{}\x1B[0m", pb.message())); // Red
-                        if opts.stdout_progress {
-                            println!("[{:08x}] Rendering failed: {}", job_id, pb.message());
-                        }
-                    }
-                    m.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-                } else if *current_frame > 0 && m.is_hidden() {
-                    pbh.set_message("Rendering:");
-
-                    if !queue_printed {
-                        log::info!("Queue:");
-                        for item in qi.iter() {
-                            log::info!("- [{:08x}] {} -> {}, {}, Frames: {}, Status: {:?} {}", item.job_id, item.input_file, item.display_output_path, item.export_settings, item.total_frames, item.get_status(), item.error_string);
-                        }
-                        queue_printed = true;
-                    }
-
-                    for item in qi.iter() {
-                        if let Some(pb2) = pbs.get(&item.job_id) {
-                            pb2.set_position(item.current_frame);
-                            pb2.set_length(item.total_frames);
-                        }
-                    }
-                    m.set_draw_target(indicatif::ProgressDrawTarget::stdout());
-                }
-
-                if opts.stdout_progress && *current_frame > 0 && *total_frames > 0 {
+            connect!(
+                queue_ptr,
+                q,
+                render_progress,
+                |job_id: &u32,
+                 _progress: &f64,
+                 current_frame: &usize,
+                 total_frames: &usize,
+                 _finished: &bool,
+                 _start_time: &f64,
+                 _is_conversion: &bool| {
                     let pb = pbs.get(job_id).unwrap();
-                    let eta = pb.eta();
-                    println!("[{:08x}] Rendering progress: {}/{} frames ({:.1}%) ETA {:.1}s", job_id, current_frame, total_frames, (*current_frame as f64 / *total_frames as f64) * 100.0, eta.as_secs_f64());
-                }
-
-                pb.set_length(*total_frames as u64);
-                pb.set_position(*current_frame as u64);
-            });
-            connect!(queue_ptr, q, processing_progress, |job_id: &u32, progress: &f64| {
-                let mut any_other_in_progress = false;
-                {
                     let queue = &mut *queue.as_ptr();
                     let qi = queue.queue.borrow();
-                    for item in qi.iter() {
-                        if item.job_id != *job_id && item.processing_progress > 0.0 && item.processing_progress < 1.0 {
-                            any_other_in_progress = true;
-                            break;
+                    if *current_frame >= *total_frames {
+                        let mut ok = true;
+                        for item in qi.iter() {
+                            if item.job_id == *job_id {
+                                ok = item.error_string.is_empty();
+                                break;
+                            }
+                        }
+                        if ok {
+                            pb.set_message(format!("\x1B[1;32m{}\x1B[0m", pb.message())); // Green
+                            if opts.stdout_progress {
+                                println!("[{:08x}] Rendering completed: {}", job_id, pb.message());
+                            }
+                        } else {
+                            pb.set_message(format!("\x1B[1;31m{}\x1B[0m", pb.message())); // Red
+                            if opts.stdout_progress {
+                                println!("[{:08x}] Rendering failed: {}", job_id, pb.message());
+                            }
+                        }
+                        m.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+                    } else if *current_frame > 0 && m.is_hidden() {
+                        pbh.set_message("Rendering:");
+
+                        if !queue_printed {
+                            log::info!("Queue:");
+                            for item in qi.iter() {
+                                log::info!(
+                                    "- [{:08x}] {} -> {}, {}, Frames: {}, Status: {:?} {}",
+                                    item.job_id,
+                                    item.input_file,
+                                    item.display_output_path,
+                                    item.export_settings,
+                                    item.total_frames,
+                                    item.get_status(),
+                                    item.error_string
+                                );
+                            }
+                            queue_printed = true;
+                        }
+
+                        for item in qi.iter() {
+                            if let Some(pb2) = pbs.get(&item.job_id) {
+                                pb2.set_position(item.current_frame);
+                                pb2.set_length(item.total_frames);
+                            }
+                        }
+                        m.set_draw_target(indicatif::ProgressDrawTarget::stdout());
+                    }
+
+                    if opts.stdout_progress && *current_frame > 0 && *total_frames > 0 {
+                        let pb = pbs.get(job_id).unwrap();
+                        let eta = pb.eta();
+                        println!(
+                            "[{:08x}] Rendering progress: {}/{} frames ({:.1}%) ETA {:.1}s",
+                            job_id,
+                            current_frame,
+                            total_frames,
+                            (*current_frame as f64 / *total_frames as f64) * 100.0,
+                            eta.as_secs_f64()
+                        );
+                    }
+
+                    pb.set_length(*total_frames as u64);
+                    pb.set_position(*current_frame as u64);
+                }
+            );
+            connect!(
+                queue_ptr,
+                q,
+                processing_progress,
+                |job_id: &u32, progress: &f64| {
+                    let mut any_other_in_progress = false;
+                    {
+                        let queue = &mut *queue.as_ptr();
+                        let qi = queue.queue.borrow();
+                        for item in qi.iter() {
+                            if item.job_id != *job_id
+                                && item.processing_progress > 0.0
+                                && item.processing_progress < 1.0
+                            {
+                                any_other_in_progress = true;
+                                break;
+                            }
                         }
                     }
-                }
 
-                if *progress == 1.0 && !m.is_hidden() && !any_other_in_progress {
-                    m.set_draw_target(indicatif::ProgressDrawTarget::hidden());
-                    if opts.stdout_progress {
-                        println!("[{:08x}] Synchronization completed", job_id);
+                    if *progress == 1.0 && !m.is_hidden() && !any_other_in_progress {
+                        m.set_draw_target(indicatif::ProgressDrawTarget::hidden());
+                        if opts.stdout_progress {
+                            println!("[{:08x}] Synchronization completed", job_id);
+                        }
+                    } else if *progress > 0.01 && *progress < 1.0 && m.is_hidden() {
+                        pbh.set_message("Synchronizing:");
+                        m.set_draw_target(indicatif::ProgressDrawTarget::stdout());
                     }
-                } else if *progress > 0.01 && *progress < 1.0 && m.is_hidden() {
-                    pbh.set_message("Synchronizing:");
-                    m.set_draw_target(indicatif::ProgressDrawTarget::stdout());
-                }
 
-                if opts.stdout_progress && *progress > 0.01 && *progress < 1.0 {
-                    println!("[{:08x}] Synchronization progress: {:.1}%", job_id, progress * 100.0);
-                }
+                    if opts.stdout_progress && *progress > 0.01 && *progress < 1.0 {
+                        println!(
+                            "[{:08x}] Synchronization progress: {:.1}%",
+                            job_id,
+                            progress * 100.0
+                        );
+                    }
 
-                let pb = pbs.get(job_id).unwrap();
-                if *progress < 0.999 {
-                    pb.set_length(100);
-                    pb.set_position((*progress * 100.0).round() as u64);
+                    let pb = pbs.get(job_id).unwrap();
+                    if *progress < 0.999 {
+                        pb.set_length(100);
+                        pb.set_position((*progress * 100.0).round() as u64);
+                    }
                 }
-            });
-            connect!(queue_ptr, q, convert_format, |job_id: &u32, format: &QString, supported: &QString, _candidate: &QString| {
-                log::error!("[{:08x}] Pixel format {} is not supported. Supported are: {}", job_id, format.to_string(), supported.to_string());
-            });
-            connect!(queue_ptr, q, error, |job_id: &u32, text: &QString, arg: &QString, _callback: &QString| {
-                if opts.overwrite && text.to_string().starts_with("file_exists:") {
-                    let queue = &mut *queue.as_ptr();
-                    queue.reset_job(*job_id);
-                    log::warn!("[{:08x}] File exists, overwriting: {}", job_id, text.to_string().strip_prefix("file_exists:").unwrap());
-                    return;
+            );
+            connect!(
+                queue_ptr,
+                q,
+                convert_format,
+                |job_id: &u32, format: &QString, supported: &QString, _candidate: &QString| {
+                    log::error!(
+                        "[{:08x}] Pixel format {} is not supported. Supported are: {}",
+                        job_id,
+                        format.to_string(),
+                        supported.to_string()
+                    );
                 }
-                log::error!("[{:08x}] Error: {}", job_id, text.to_string().replace("%1", &arg.to_string()));
-            });
+            );
+            connect!(
+                queue_ptr,
+                q,
+                error,
+                |job_id: &u32, text: &QString, arg: &QString, _callback: &QString| {
+                    if opts.overwrite && text.to_string().starts_with("file_exists:") {
+                        let queue = &mut *queue.as_ptr();
+                        queue.reset_job(*job_id);
+                        log::warn!(
+                            "[{:08x}] File exists, overwriting: {}",
+                            job_id,
+                            text.to_string().strip_prefix("file_exists:").unwrap()
+                        );
+                        return;
+                    }
+                    log::error!(
+                        "[{:08x}] Error: {}",
+                        job_id,
+                        text.to_string().replace("%1", &arg.to_string())
+                    );
+                }
+            );
             connect!(queue_ptr, q, added, |job_id: &u32| {
                 let queue = &mut *queue.as_ptr();
                 let fname = queue.get_job_output_filename(*job_id).to_string();
@@ -432,7 +563,9 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                 if let Some(stab) = queue.get_stab_for_job(*job_id) {
                     if let Some(processing_device) = opts.processing_device {
                         stab.set_device(processing_device as i32);
-                    } else if let Some(processing_device) = settings::try_get("processingDeviceIndex").and_then(|x| x.as_u64()) {
+                    } else if let Some(processing_device) =
+                        settings::try_get("processingDeviceIndex").and_then(|x| x.as_u64())
+                    {
                         stab.set_device(processing_device as i32);
                     }
                 }
@@ -443,67 +576,89 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
                 pb.set_message(fname);
                 pbs.insert(*job_id, pb);
             });
-            connect!(queue_ptr, q, processing_done, |job_id: &u32, by_preset: &bool| {
-                let queue = &mut *queue.as_ptr();
-                log::info!("[{:08x}] Processing done", job_id);
+            connect!(
+                queue_ptr,
+                q,
+                processing_done,
+                |job_id: &u32, by_preset: &bool| {
+                    let queue = &mut *queue.as_ptr();
+                    log::info!("[{:08x}] Processing done", job_id);
 
-                if let Some(file) = lens_profiles.first() {
-                    // Apply lens profile
-                    log::info!("Loading lens profile {}", file);
-                    let stab = queue.get_stab_for_job(*job_id).unwrap();
-                    stab.load_lens_profile(file).expect("Loading lens profile");
-                    stab.recompute_blocking();
-                }
+                    if let Some(file) = lens_profiles.first() {
+                        // Apply lens profile
+                        log::info!("Loading lens profile {}", file);
+                        let stab = queue.get_stab_for_job(*job_id).unwrap();
+                        stab.load_lens_profile(file).expect("Loading lens profile");
+                        stab.recompute_blocking();
+                    }
 
-                let fname = queue.get_job_output_filename(*job_id).to_string();
-                pbs.get(job_id).unwrap().set_message(fname);
+                    let fname = queue.get_job_output_filename(*job_id).to_string();
+                    pbs.get(job_id).unwrap().set_message(fname);
 
-                queue.jobs_added.remove(job_id);
+                    queue.jobs_added.remove(job_id);
 
-                let mut applying_preset = false;
+                    let mut applying_preset = false;
 
-                if queue.jobs_added.is_empty() {
-                    // All jobs added and completed processing
+                    if queue.jobs_added.is_empty() {
+                        // All jobs added and completed processing
 
-                    if !by_preset {
-                        // Apply presets
-                        for preset in &presets {
-                            log::info!("Applying preset {}", preset);
-                            if preset.starts_with('{') {
-                                queue.apply_to_all(preset.clone(), additional_data.to_string(), 0);
-                                applying_preset = true;
-                            } else if let Ok(data) = std::fs::read_to_string(preset) {
-                                queue.apply_to_all(data, additional_data.to_string(), 0);
-                                applying_preset = true;
+                        if !by_preset {
+                            // Apply presets
+                            for preset in &presets {
+                                log::info!("Applying preset {}", preset);
+                                if preset.starts_with('{') {
+                                    queue.apply_to_all(
+                                        preset.clone(),
+                                        additional_data.to_string(),
+                                        0,
+                                    );
+                                    applying_preset = true;
+                                } else if let Ok(data) = std::fs::read_to_string(preset) {
+                                    queue.apply_to_all(data, additional_data.to_string(), 0);
+                                    applying_preset = true;
+                                }
                             }
                         }
-                    }
-                    if !watching {
-                        lens_profiles.clear(); // Apply lens profiles only once
-                        presets.clear();
-                    }
+                        if !watching {
+                            lens_profiles.clear(); // Apply lens profiles only once
+                            presets.clear();
+                        }
 
-                    if !applying_preset {
-                        qmetaobject::single_shot(std::time::Duration::from_millis(500), move || {
-                            queue.start(); // Start the rendering queue
-                        });
+                        if !applying_preset {
+                            qmetaobject::single_shot(
+                                std::time::Duration::from_millis(500),
+                                move || {
+                                    queue.start(); // Start the rendering queue
+                                },
+                            );
+                        }
                     }
                 }
-            });
+            );
         }
 
         if !watching {
             let mut queue = queue.borrow_mut();
-            let gyro_file = opts.gyro_file.map(|file| {
-                let path = std::path::PathBuf::from(&file);
-                if path.is_relative() {
-                    std::fs::canonicalize(&path).unwrap_or_else(|_| path).to_string_lossy().to_string()
-                } else {
-                    file.clone()
-                }
-            }).unwrap_or_default();
+            let gyro_file = opts
+                .gyro_file
+                .map(|file| {
+                    let path = std::path::PathBuf::from(&file);
+                    if path.is_relative() {
+                        std::fs::canonicalize(&path)
+                            .unwrap_or_else(|_| path)
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        file.clone()
+                    }
+                })
+                .unwrap_or_default();
             for file in &videos {
-                queue.add_file(path_to_url(file), path_to_url(&gyro_file), additional_data.to_string());
+                queue.add_file(
+                    path_to_url(file),
+                    path_to_url(&gyro_file),
+                    additional_data.to_string(),
+                );
             }
         }
 
@@ -523,21 +678,25 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
     false
 }
 
-fn detect_types(all_files: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) { // -> Videos/projects, lens profiles, presets
+fn detect_types(all_files: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
+    // -> Videos/projects, lens profiles, presets
     let mut videos = Vec::new();
     let mut lens_profiles = Vec::new();
     let mut presets = Vec::new();
     for file in all_files {
-        if file.ends_with(".json") { // Lens profile
+        if file.ends_with(".json") {
+            // Lens profile
             lens_profiles.push(file.clone());
         } else if file.ends_with(".gyroflow") {
             let video_path = || -> Option<String> {
                 let data = std::fs::read(file).ok()?;
                 let obj: serde_json::Value = serde_json::from_slice(&data).ok()?;
                 Some(obj.get("videofile")?.as_str()?.to_string())
-            }().unwrap_or_default();
+            }()
+            .unwrap_or_default();
 
-            if video_path.is_empty() { // It's a preset
+            if video_path.is_empty() {
+                // It's a preset
                 presets.push(file.clone());
             } else {
                 videos.push(file.clone());
@@ -568,7 +727,7 @@ fn setup_defaults(stab: &Arc<StabilizationManager>, queue: &mut RenderQueue) -> 
         0 => stab.set_adaptive_zoom(0.0), // No zooming
         1 => stab.set_adaptive_zoom(settings::get_f64("adaptiveZoom", 4.0)),
         2 => stab.set_adaptive_zoom(-1.0), // Static zoom
-        _ => { }
+        _ => {}
     }
     stab.set_lens_correction_amount(settings::get_f64("correctionAmount", 1.0));
     let smoothing_method = settings::get_u64("smoothingMethod", 1) as usize;
@@ -591,8 +750,22 @@ fn setup_defaults(stab: &Arc<StabilizationManager>, queue: &mut RenderQueue) -> 
     let codec = (settings::get_u64("defaultCodec", 0) as usize).min(codecs.len() - 1);
     let codec_name = codecs[codec];
 
-    let audio_codecs = ["AAC", "PCM (s16le)", "PCM (s16be)", "PCM (s24le)", "PCM (s24be)"];
-    let interpolations = ["Bilinear", "Bicubic", "Lanczos4", "EWA: RobidouxSharp", "EWA: Robidoux", "EWA: Mitchell", "EWA: Catmull-Rom"];
+    let audio_codecs = [
+        "AAC",
+        "PCM (s16le)",
+        "PCM (s16be)",
+        "PCM (s24le)",
+        "PCM (s24be)",
+    ];
+    let interpolations = [
+        "Bilinear",
+        "Bicubic",
+        "Lanczos4",
+        "EWA: RobidouxSharp",
+        "EWA: Robidoux",
+        "EWA: Mitchell",
+        "EWA: Catmull-Rom",
+    ];
 
     // Sync and export settings
     serde_json::json!({
@@ -634,8 +807,13 @@ fn setup_defaults(stab: &Arc<StabilizationManager>, queue: &mut RenderQueue) -> 
 
 // TODO: replace with `notify` crate
 fn watch_folder<F: FnMut(String)>(path: String, cb: F) -> bool {
-    if path.is_empty() { return false; }
-    if !std::path::Path::new(&path).exists() { log::info!("{} doesn't exist.", path); return false; }
+    if path.is_empty() {
+        return false;
+    }
+    if !std::path::Path::new(&path).exists() {
+        log::info!("{} doesn't exist.", path);
+        return false;
+    }
 
     let path = QString::from(path);
     let func: Box<dyn FnMut(String)> = Box::new(cb);

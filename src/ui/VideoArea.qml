@@ -34,6 +34,9 @@ Item {
 
     property var pendingGyroflowData: null;
     property int pendingQueueJobId: 0;
+    property url pendingExternalGyroFallbackUrl: "";
+    property int pendingExternalGyroFallbackProjectVersion: 0;
+    property bool queueEditLoading: false;
     property url loadedFileUrl;
 
     property int fullScreen: 0;
@@ -46,10 +49,18 @@ Item {
     function loadGyroflowData(obj: var, queueJobId: var): void {
         root.pendingGyroflowData = null;
         root.pendingQueueJobId = 0;
+        root.pendingExternalGyroFallbackUrl = "";
+        root.pendingExternalGyroFallbackProjectVersion = 0;
+        const targetQueueJobId = +queueJobId;
+        root.queueEditLoading = targetQueueJobId > 0;
+
+        if (targetQueueJobId > 0 && render_queue.editing_job_id !== targetQueueJobId) {
+            render_queue.editing_job_id = targetQueueJobId;
+        }
 
         if (controller.loading_gyro_in_progress) {
             root.pendingGyroflowData = obj;
-            root.pendingQueueJobId = +queueJobId;
+            root.pendingQueueJobId = targetQueueJobId;
             controller.cancel_current_operation();
             // we'll get called again from telemetry_loaded
             return;
@@ -81,25 +92,19 @@ Item {
 
         if (urls[0] && !isCorrectVideoLoaded) {
             root.pendingGyroflowData = obj;
-            root.pendingQueueJobId = +queueJobId;
+            root.pendingQueueJobId = targetQueueJobId;
             console.log("Loading video file", urls[0]);
-            loadFile(urls[0], false, +queueJobId);
+            loadFile(urls[0], false, targetQueueJobId);
             if (controller.image_sequence_fps > 0) {
                 vid.setFrameRate(controller.image_sequence_fps);
             }
             return;
         }
         if (urls[1] && !isCorrectGyroLoaded && filesystem.exists(urls[1])) {
-            root.pendingGyroflowData = obj;
-            root.pendingQueueJobId = +queueJobId;
-            console.log("Loading gyro file", urls[1]);
-            // When restoring a project (pendingGyroflowData flow), always load as main video
-            // so telemetry_loaded fires with is_main_video=true, triggering full UI update
-            // (display mode, "Contains gyro", chart view, etc.)
-            const is_main = true;
+            console.log("Deferring gyro file fallback", urls[1]);
             window.motionData.lastSelectedFile = urls[1];
-            controller.load_telemetry(urls[1], is_main, window.videoArea.vid, -1, project_version);
-            return;
+            root.pendingExternalGyroFallbackUrl = urls[1];
+            root.pendingExternalGyroFallbackProjectVersion = project_version;
         }
 
         controller.set_prevent_recompute(true);
@@ -111,7 +116,7 @@ Item {
         } else {
             controller.import_gyroflow_data(JSON.stringify(obj));
         }
-        render_queue.editing_job_id = +queueJobId;
+        render_queue.editing_job_id = targetQueueJobId;
     }
     Connections {
         target: controller;
@@ -171,6 +176,21 @@ Item {
                 if (obj.hasOwnProperty("muted")) {
                     videoArea.vid.muted = !!obj.muted;
                 }
+
+                const fallbackUrl = root.pendingExternalGyroFallbackUrl;
+                const fallbackProjectVersion = root.pendingExternalGyroFallbackProjectVersion;
+                root.pendingExternalGyroFallbackUrl = "";
+                root.pendingExternalGyroFallbackProjectVersion = 0;
+                if (fallbackUrl && fallbackUrl.toString() && !controller.gyro_loaded) {
+                    console.log("Falling back to external gyro file", fallbackUrl);
+                    controller.set_prevent_recompute(false);
+                    window.motionData.lastSelectedFile = fallbackUrl;
+                    controller.load_telemetry(fallbackUrl, false, window.videoArea.vid, -1, fallbackProjectVersion);
+                    return;
+                }
+            }
+            if (!root.pendingGyroflowData && render_queue.editing_job_id > 0) {
+                root.queueEditLoading = false;
             }
             controller.set_prevent_recompute(false);
             Qt.callLater(controller.recompute_gyro);
@@ -285,6 +305,9 @@ Item {
             if (is_main_video && window.pendingLoadPreset) {
                 Qt.callLater(loadGyroflowData, JSON.parse(window.pendingLoadPreset), 0);
                 window.pendingLoadPreset = "";
+            }
+            if (!root.pendingGyroflowData && render_queue.editing_job_id > 0) {
+                root.queueEditLoading = false;
             }
         }
         function onChart_data_changed(): void {
@@ -446,7 +469,15 @@ Item {
         vidInfo.loader = true;
         //vid.url = url;
         vid.errorShown = false;
-        render_queue.editing_job_id = 0;
+        if (queueJobId > 0) {
+            render_queue.editing_job_id = queueJobId;
+            root.queueEditLoading = true;
+        } else {
+            render_queue.editing_job_id = 0;
+            root.queueEditLoading = false;
+        }
+        root.pendingExternalGyroFallbackUrl = "";
+        root.pendingExternalGyroFallbackProjectVersion = 0;
         controller.load_video(url, vid);
         if (!isCalibrator) {
             const suffix = window.advanced.defaultSuffix.text;
@@ -701,11 +732,9 @@ Item {
                         controller.video_file_loaded(vid);
                         window.motionData.filename = "";
 
-                        if (root.pendingGyroflowData) {
-                            Qt.callLater(root.loadGyroflowData, root.pendingGyroflowData, root.pendingQueueJobId);
-                        } else {
-                            controller.load_telemetry(root.loadedFileUrl, true, vid, -1, 0);
-                        }
+                        // Always refresh telemetry from the main video first so Video Information
+                        // reflects the video's own telemetry-parser metadata during project restore.
+                        controller.load_telemetry(root.loadedFileUrl, true, vid, -1, 0);
                         vidInfo.loadFromVideoMetadata(md, vid.videoWidth, vid.videoHeight);
                         window.sync.customSyncTimestamps = [];
 

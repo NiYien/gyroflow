@@ -3,8 +3,8 @@
 
 #![allow(non_snake_case)]
 
-use qmetaobject::*;
 use cpp::cpp;
+use qmetaobject::*;
 
 #[derive(Default, QObject)]
 pub struct Settings {
@@ -24,7 +24,10 @@ pub struct Settings {
 impl Settings {
     fn value(&self, key: QString, default: QVariant) -> QVariant {
         let key = key.to_string();
-        serde_json_to_qvariant(gyroflow_core::settings::get(&key, qvariant_to_serde_json(default)))
+        serde_json_to_qvariant(gyroflow_core::settings::get(
+            &key,
+            qvariant_to_serde_json(default),
+        ))
     }
     fn contains(&self, key: QString) -> bool {
         let key = key.to_string();
@@ -42,7 +45,12 @@ impl Settings {
     }
     fn dataDir(&self, path: QString) -> QString {
         let path = path.to_string();
-        QString::from(gyroflow_core::settings::data_dir().join(path).to_string_lossy().to_string())
+        QString::from(
+            gyroflow_core::settings::data_dir()
+                .join(path)
+                .to_string_lossy()
+                .to_string(),
+        )
     }
     ///////////////////////////////////////////////////////////////////
 
@@ -115,17 +123,23 @@ impl Settings {
 
 fn serde_json_to_qvariant(v: serde_json::Value) -> QVariant {
     match v {
-        serde_json::Value::Number(v) => { v.as_f64().unwrap().into() },
-        serde_json::Value::Bool(v)   => { v.into() },
-        serde_json::Value::String(v) => { QString::from(v.clone()).into() },
-        serde_json::Value::Array(v)  => { ::log::error!("Array {v:?}"); QVariant::default() },
-        serde_json::Value::Object(v) => { ::log::error!("Object {v:?}"); QVariant::default() },
-        serde_json::Value::Null      => { QVariant::default() }
+        serde_json::Value::Number(v) => v.as_f64().unwrap().into(),
+        serde_json::Value::Bool(v) => v.into(),
+        serde_json::Value::String(v) => QString::from(v.clone()).into(),
+        serde_json::Value::Array(v) => {
+            ::log::error!("Array {v:?}");
+            QVariant::default()
+        }
+        serde_json::Value::Object(v) => {
+            ::log::error!("Object {v:?}");
+            QVariant::default()
+        }
+        serde_json::Value::Null => QVariant::default(),
     }
 }
 
 fn qvariant_to_serde_json(v: QVariant) -> serde_json::Value {
-    use serde_json::{ Value, Number };
+    use serde_json::{Number, Value};
     let v = &v;
     match v.user_type() {
         0  => Value::Null,

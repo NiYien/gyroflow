@@ -21,7 +21,7 @@ use super::gyro_source::TimeIMU;
 
 pub mod optimsync;
 mod autosync;
-pub use autosync::AutosyncProcess;
+pub use autosync::{ AutosyncProcess, describe_autosync_init_failure };
 use crate::util::MapClosest;
 
 pub type GrayImage = image::GrayImage;

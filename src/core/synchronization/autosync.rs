@@ -33,6 +33,56 @@ pub struct AutosyncProcess {
     thread_pool: rayon::ThreadPool,
 }
 
+pub fn describe_autosync_init_failure(stab: &StabilizationManager, timestamps_fract: &[f64], sync_params: &SyncParams) -> String {
+    let params = stab.params.read();
+    let org_fps = params.fps;
+    let scaled_fps = params.get_scaled_fps();
+    let org_duration_ms = params.duration_ms;
+    let fps_scale = params.fps_scale;
+    let scaled_duration_ms = params.get_scaled_duration_ms();
+
+    let mut time_per_syncpoint = sync_params.time_per_syncpoint;
+    if let Some(scale) = fps_scale {
+        time_per_syncpoint *= scale;
+    }
+    let every_nth_frame = sync_params.every_nth_frame.max(1);
+    let effective_frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps).ceil() as usize)
+        .min(params.frame_count)
+        / every_nth_frame;
+
+    let mut reasons = Vec::new();
+    if scaled_duration_ms < 10.0 {
+        reasons.push(format!("scaled_duration_ms({scaled_duration_ms:.3}) < 10"));
+    }
+    if effective_frame_count < 2 {
+        reasons.push(format!("effective_frame_count({effective_frame_count}) < 2"));
+    }
+    if time_per_syncpoint < 10.0 {
+        reasons.push(format!("time_per_syncpoint_ms({time_per_syncpoint:.3}) < 10"));
+    }
+    if sync_params.search_size < 10.0 {
+        reasons.push(format!("search_size_ms({:.3}) < 10", sync_params.search_size));
+    }
+
+    format!(
+        "reasons=[{}], timestamps={}, org_duration_ms={:.3}, scaled_duration_ms={:.3}, params_frame_count={}, effective_frame_count={}, org_fps={:.6}, scaled_fps={:.6}, fps_scale={:?}, every_nth_frame={}, time_per_syncpoint_ms={:.3}, search_size_ms={:.3}, max_sync_points={}, auto_sync_points={}",
+        if reasons.is_empty() { "none".to_owned() } else { reasons.join(", ") },
+        timestamps_fract.len(),
+        org_duration_ms,
+        scaled_duration_ms,
+        params.frame_count,
+        effective_frame_count,
+        org_fps,
+        scaled_fps,
+        fps_scale,
+        every_nth_frame,
+        time_per_syncpoint,
+        sync_params.search_size,
+        sync_params.max_sync_points,
+        sync_params.auto_sync_points
+    )
+}
+
 impl AutosyncProcess {
     pub fn from_manager(stab: &StabilizationManager, timestamps_fract: &[f64], sync_params: SyncParams, mode: String, cancel_flag: Arc<AtomicBool>) -> Result<Self, ()> {
         let params = stab.params.read();

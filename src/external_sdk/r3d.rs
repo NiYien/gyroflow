@@ -4,7 +4,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
-pub struct REDSdk { }
+pub struct REDSdk {}
 
 impl REDSdk {
     pub fn is_installed() -> bool {
@@ -12,23 +12,20 @@ impl REDSdk {
             let mut path = path.clone();
             path.push("_");
             if cfg!(target_os = "windows") {
-                return
-                    path.with_file_name("REDDecoder-x64.dll").exists() &&
-                    path.with_file_name("REDR3D-x64.dll").exists() &&
-                    path.with_file_name("REDOpenCL-x64.dll").exists() &&
-                    path.with_file_name("REDCuda-x64.dll").exists();
+                return path.with_file_name("REDDecoder-x64.dll").exists()
+                    && path.with_file_name("REDR3D-x64.dll").exists()
+                    && path.with_file_name("REDOpenCL-x64.dll").exists()
+                    && path.with_file_name("REDCuda-x64.dll").exists();
             } else if cfg!(target_os = "macos") {
-                return
-                    path.with_file_name("REDDecoder.dylib").exists() &&
-                    path.with_file_name("REDMetal.dylib").exists() &&
-                    path.with_file_name("REDOpenCL.dylib").exists() &&
-                    path.with_file_name("REDR3D.dylib").exists();
+                return path.with_file_name("REDDecoder.dylib").exists()
+                    && path.with_file_name("REDMetal.dylib").exists()
+                    && path.with_file_name("REDOpenCL.dylib").exists()
+                    && path.with_file_name("REDR3D.dylib").exists();
             } else if cfg!(target_os = "linux") {
-                return
-                    path.with_file_name("REDCuda-x64.so").exists() &&
-                    path.with_file_name("REDDecoder-x64.so").exists() &&
-                    path.with_file_name("REDOpenCL-x64.so").exists() &&
-                    path.with_file_name("REDR3D-x64.so").exists();
+                return path.with_file_name("REDCuda-x64.so").exists()
+                    && path.with_file_name("REDDecoder-x64.so").exists()
+                    && path.with_file_name("REDOpenCL-x64.so").exists()
+                    && path.with_file_name("REDR3D-x64.so").exists();
             }
         }
 
@@ -98,7 +95,16 @@ impl REDSdk {
     }
 
     // Assumes regular filesystem
-    pub fn convert_r3d<F: FnMut((f64, String, String))>(url: &str, format: i32, force_primary: bool, gamma: i32, space: i32, additional_params: &str, mut progress: F, cancel_flag: Arc<AtomicBool>) {
+    pub fn convert_r3d<F: FnMut((f64, String, String))>(
+        url: &str,
+        format: i32,
+        force_primary: bool,
+        gamma: i32,
+        space: i32,
+        additional_params: &str,
+        mut progress: F,
+        cancel_flag: Arc<AtomicBool>,
+    ) {
         let redline = Self::find_redline();
         if !redline.is_empty() {
             let p = std::path::Path::new(&gyroflow_core::filesystem::url_to_path(url)).to_owned();
@@ -107,18 +113,22 @@ impl REDSdk {
 
             cancel_flag.store(false, SeqCst);
 
-            use std::process::{ Command, Stdio };
-            use std::io::{ BufRead, BufReader, Error, ErrorKind, Result };
-            let re_output_name = regex::Regex::new(r#"ProRes Output Filename: (.+?), Codec:"#).unwrap();
-            let re_progress    = regex::Regex::new(r#"Export Job frame complete. [0-9]+ ([0-9\.]+)"#).unwrap();
+            use std::io::{BufRead, BufReader, Error, ErrorKind, Result};
+            use std::process::{Command, Stdio};
+            let re_output_name =
+                regex::Regex::new(r#"ProRes Output Filename: (.+?), Codec:"#).unwrap();
+            let re_progress =
+                regex::Regex::new(r#"Export Job frame complete. [0-9]+ ([0-9\.]+)"#).unwrap();
 
             let result = (|| -> Result<()> {
                 let mut cmd = Command::new(redline);
                 #[cfg(target_os = "windows")]
-                { use std::os::windows::process::CommandExt; cmd.creation_flags(0x08000000); } // CREATE_NO_WINDOW
+                {
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000);
+                } // CREATE_NO_WINDOW
 
-                cmd
-                    .args(["-i", &p.to_string_lossy()])
+                cmd.args(["-i", &p.to_string_lossy()])
                     .args(["-o", &output_file])
                     .args(["--format", "201"])
                     .args(["--PRcodec", &format!("{}", format)])
@@ -132,11 +142,11 @@ impl REDSdk {
                 if !additional_params.is_empty() {
                     cmd.args(additional_params.split_whitespace());
                 }
-                let mut child = cmd
-                    .stderr(Stdio::piped())
-                    .spawn()?;
+                let mut child = cmd.stderr(Stdio::piped()).spawn()?;
 
-                let stderr = child.stderr.take().ok_or_else(|| Error::new(ErrorKind::Other, "Could not capture the command output."))?;
+                let stderr = child.stderr.take().ok_or_else(|| {
+                    Error::new(ErrorKind::Other, "Could not capture the command output.")
+                })?;
 
                 let reader = BufReader::new(stderr);
                 let mut out_filename = None;
@@ -144,7 +154,9 @@ impl REDSdk {
 
                 for line in reader.lines().flatten() {
                     if let Some(m) = re_output_name.captures(&line) {
-                        out_filename = Some(gyroflow_core::filesystem::path_to_url(m.get(1).unwrap().as_str()));
+                        out_filename = Some(gyroflow_core::filesystem::path_to_url(
+                            m.get(1).unwrap().as_str(),
+                        ));
                     }
                     if let Some(m) = re_progress.captures(&line) {
                         if let Ok(p) = m.get(1).unwrap().as_str().parse::<f64>() {
@@ -166,7 +178,11 @@ impl REDSdk {
                 Ok(())
             })();
             if let Err(e) = result {
-                progress((1.0, format!("An error occured: {:?}", e.to_string()), String::new()))
+                progress((
+                    1.0,
+                    format!("An error occured: {:?}", e.to_string()),
+                    String::new(),
+                ))
             }
         }
     }

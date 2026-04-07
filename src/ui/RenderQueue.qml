@@ -93,7 +93,11 @@ Item {
             Qt.callLater(function() {
                 let unmatchedCount = 0;
                 for (let i = 0; i < lv.count; i++) {
-                    let status = JSON.parse(render_queue.get_match_status_json(render_queue.queue[i].job_id));
+                    const queueItem = render_queue.queue[i];
+                    if (!queueItem || queueItem.job_id === undefined) {
+                        continue;
+                    }
+                    let status = JSON.parse(render_queue.get_match_status_json(queueItem.job_id));
                     if (status.status === "Unmatched" || status.status === "NoCreationTime") {
                         unmatchedCount++;
                     }
@@ -1231,7 +1235,17 @@ Item {
                 let outFolder = "";
                 if (window.exportSettings && window.exportSettings.queueOutputMode === 1) {
                     const fixedPath = window.exportSettings.queueFixedOutputPath;
-                    if (fixedPath) outFolder = fixedPath;
+                    if (fixedPath) {
+                        outFolder = fixedPath;
+                    } else {
+                        window.outputFile.selectFolder("", function(folder_url) {
+                            if (window.exportSettings) {
+                                window.exportSettings.queueFixedOutputPath = folder_url;
+                            }
+                            add(folder_url, videoUrls);
+                        });
+                        return;
+                    }
                 }
                 add(outFolder, videoUrls);
             }

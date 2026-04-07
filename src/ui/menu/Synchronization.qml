@@ -41,6 +41,24 @@ MenuItem {
     property var customSyncTimestamps: [];
     property var additionalSyncTimestamps: [];
 
+    function doAutosync(): void {
+        if (controller.sync_in_progress) return;
+        autosync.doSync();
+    }
+    function runAutosync(): void {
+        if (controller.sync_in_progress) return;
+        if (!controller.lens_loaded) {
+            messageBox(Modal.Warning, qsTr("Lens profile is not loaded, synchronization will most likely give wrong results. Are you sure you want to continue?"), [
+                { text: qsTr("Yes"), clicked: function() {
+                    doAutosync();
+                }},
+                { text: qsTr("No"), accent: true },
+            ]);
+        } else {
+            doAutosync();
+        }
+    }
+
     function loadGyroflow(obj: var): void {
         const o = obj.synchronization || { };
         if (o && Object.keys(o).length > 0) {
@@ -63,11 +81,17 @@ MenuItem {
         id: autosyncTimer;
         interval: 200;
         property bool doRun: false;
-        running: controller.lens_loaded && controller.gyro_loaded && !window.isDialogOpened && doRun && render_queue.editing_job_id == 0;
+        running: controller.lens_loaded
+              && controller.gyro_loaded
+              && !controller.loading_gyro_in_progress
+              && !window.isDialogOpened
+              && !window.videoArea.queueEditLoading
+              && doRun
+              && render_queue.editing_job_id == 0;
         onTriggered: {
             doRun = false;
             if (controller.offsets_model.rowCount() == 0 && !window.motionData.hasAccurateTimestamps)
-                autosync.doSync();
+                sync.doAutosync();
         }
     }
     function getSettings(): var {
@@ -183,18 +207,7 @@ MenuItem {
             }
             controller.start_autosync(sync_points, sync.getSettingsJson(), "synchronize");
         }
-        onClicked: {
-            if (!controller.lens_loaded) {
-                messageBox(Modal.Warning, qsTr("Lens profile is not loaded, synchronization will most likely give wrong results. Are you sure you want to continue?"), [
-                    { text: qsTr("Yes"), clicked: function() {
-                        doSync();
-                    }},
-                    { text: qsTr("No"), accent: true },
-                ]);
-            } else {
-                doSync();
-            }
-        }
+        onClicked: sync.runAutosync()
 
         CheckBox {
             id: experimentalAutoSyncPoints;

@@ -95,7 +95,7 @@ MenuItem {
         property alias interpolationMethod: interpolationMethod.currentIndex;
         property alias preserveOutputSettings: preserveOutputSettings.checked;
         property alias preserveOutputPath: preserveOutputPath.checked;
-        property alias queueOutputMode: queueOutputMode.currentIndex;
+        property alias queueOutputMode: queueOutputModeBox.currentIndex;
         property alias queueFixedOutputPath: queueFixedOutputPathField.folderUrl;
 
         Component.onCompleted: settings.init(sett);
@@ -117,13 +117,23 @@ MenuItem {
     property alias preserveOutputPath: preserveOutputPath;
     property alias exportTrimsSeparately: exportTrimsSeparately;
     // [queue-batch-streamline T3] 队列输出路径设置
-    property int queueOutputMode: queueOutputMode.currentIndex
-    property string queueFixedOutputPath: queueFixedOutputPathField.folderUrl
+    property alias queueOutputMode: queueOutputModeBox.currentIndex
+    property alias queueFixedOutputPath: queueFixedOutputPathField.folderUrl
     property string outCodecOptions: "";
     property real originalWidth: outWidth;
     property real originalHeight: outHeight;
 
     property bool canExport: !resolutionWarning.visible && !resolutionWarning2.visible;
+
+    function browseQueueOutputFolder(): void {
+        const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectQueueOutputFolder");
+        if (queueFixedOutputPathField.folderUrl) dialog.currentFolder = queueFixedOutputPathField.folderUrl;
+        dialog.accepted.connect(function() {
+            queueFixedOutputPathField.folderUrl = dialog.selectedFolder.toString();
+            filesystem.folder_access_granted(dialog.selectedFolder);
+        });
+        dialog.open();
+    }
 
     function getExportOptions(): var {
         let encoderOpts = encoderOptions.text.replace("-qscale:v", "-qscale")
@@ -525,7 +535,7 @@ MenuItem {
         position: Label.TopPosition;
         text: qsTr("Render queue output path");
         ComboBox {
-            id: queueOutputMode;
+            id: queueOutputModeBox;
             model: [qsTr("Same as source file"), qsTr("Fixed path")];
             font.pixelSize: 12 * dpiScale;
             width: parent.width;
@@ -533,7 +543,7 @@ MenuItem {
         }
     }
     Row {
-        visible: queueOutputMode.currentIndex === 1;
+        visible: queueOutputModeBox.currentIndex === 1;
         width: parent.width;
         spacing: 5 * dpiScale;
         TextField {
@@ -548,15 +558,7 @@ MenuItem {
             id: browseQueueOutputBtn;
             height: queueFixedOutputPathField.height;
             text: qsTr("Browse");
-            onClicked: {
-                const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectQueueOutputFolder");
-                if (queueFixedOutputPathField.folderUrl) dialog.currentFolder = queueFixedOutputPathField.folderUrl;
-                dialog.accepted.connect(function() {
-                    queueFixedOutputPathField.folderUrl = dialog.selectedFolder.toString();
-                    filesystem.folder_access_granted(dialog.selectedFolder);
-                });
-                dialog.open();
-            }
+            onClicked: root.browseQueueOutputFolder()
         }
     }
 

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-#![recursion_limit="4096"]
+#![recursion_limit = "4096"]
 #![windows_subsystem = "windows"]
 
 use cpp::*;
@@ -10,23 +10,33 @@ use qml_video_rs::video_item::MDKVideoItem;
 use std::cell::RefCell;
 
 pub use gyroflow_core as core;
-pub mod util;
+mod cli;
 pub mod controller;
-pub mod rendering;
 pub mod external_sdk;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub mod nle_plugins;
-mod cli;
+pub mod rendering;
 mod resources;
 #[cfg(not(compiled_qml))]
 mod resources_qml;
-pub mod ui { pub mod ui_tools; pub mod components { pub mod TimelineGyroChart; pub mod TimelineKeyframesView; pub mod FrequencyGraph; pub mod Settings; } }
-pub mod qt_gpu { pub mod qrhi_undistort; }
+pub mod util;
+pub mod ui {
+    pub mod ui_tools;
+    pub mod components {
+        pub mod FrequencyGraph;
+        pub mod Settings;
+        pub mod TimelineGyroChart;
+        pub mod TimelineKeyframesView;
+    }
+}
+pub mod qt_gpu {
+    pub mod qrhi_undistort;
+}
 
-use ui::components::TimelineGyroChart::TimelineGyroChart;
-use ui::components::TimelineKeyframesView::TimelineKeyframesView;
 use ui::components::FrequencyGraph::FrequencyGraph;
 use ui::components::Settings::Settings;
+use ui::components::TimelineGyroChart::TimelineGyroChart;
+use ui::components::TimelineKeyframesView::TimelineKeyframesView;
 use ui::ui_tools::UITools;
 
 #[global_allocator]
@@ -89,9 +99,24 @@ fn entry() {
     crate::resources_qml::rsrc_qml();
 
     qml_video_rs::register_qml_types();
-    qml_register_type::<TimelineGyroChart>(cstr::cstr!("Gyroflow"), 1, 0, cstr::cstr!("TimelineGyroChart"));
-    qml_register_type::<TimelineKeyframesView>(cstr::cstr!("Gyroflow"), 1, 0, cstr::cstr!("TimelineKeyframesView"));
-    qml_register_type::<FrequencyGraph>(cstr::cstr!("Gyroflow"), 1, 0, cstr::cstr!("FrequencyGraph"));
+    qml_register_type::<TimelineGyroChart>(
+        cstr::cstr!("Gyroflow"),
+        1,
+        0,
+        cstr::cstr!("TimelineGyroChart"),
+    );
+    qml_register_type::<TimelineKeyframesView>(
+        cstr::cstr!("Gyroflow"),
+        1,
+        0,
+        cstr::cstr!("TimelineKeyframesView"),
+    );
+    qml_register_type::<FrequencyGraph>(
+        cstr::cstr!("Gyroflow"),
+        1,
+        0,
+        cstr::cstr!("FrequencyGraph"),
+    );
 
     let icons_path = if ui_live_reload {
         QString::from(format!("{}/resources/icons/", env!("CARGO_MANIFEST_DIR")))
@@ -125,21 +150,33 @@ fn entry() {
     }
 
     util::save_exe_location();
-    let sdk_path = external_sdk::SDK_PATH.as_ref().map(|x| x.to_string_lossy().to_string()).unwrap_or_default();
-    ::log::debug!("Executable path: {:?}", gyroflow_core::settings::try_get("exeLocation"));
+    let sdk_path = external_sdk::SDK_PATH
+        .as_ref()
+        .map(|x| x.to_string_lossy().to_string())
+        .unwrap_or_default();
+    ::log::debug!(
+        "Executable path: {:?}",
+        gyroflow_core::settings::try_get("exeLocation")
+    );
     ::log::debug!("SDK path: {:?}", sdk_path);
 
     //crate::core::util::rename_calib_videos();
 
     if cfg!(any(target_os = "android", target_os = "ios")) {
-        MDKVideoItem::setGlobalOption("MDK_KEY", "B75BC812C266C3E2D967840494C8866773E4E5FC596729F7D9895BFB2DB3B9AE2515F306FBF29BF20290E1093E9A5B5796B778F866F5F631831\
-            0431F1E34810348A437EDC2663C1D26987BFB6B37799871E4E984201D0790A0FB349D41DCCEAE15E8C6B790A89ADA30C4B6EB323303B0603B3A2BBF50C294456F377CA8FEF103");
+        MDKVideoItem::setGlobalOption(
+            "MDK_KEY",
+            "B75BC812C266C3E2D967840494C8866773E4E5FC596729F7D9895BFB2DB3B9AE2515F306FBF29BF20290E1093E9A5B5796B778F866F5F631831\
+            0431F1E34810348A437EDC2663C1D26987BFB6B37799871E4E984201D0790A0FB349D41DCCEAE15E8C6B790A89ADA30C4B6EB323303B0603B3A2BBF50C294456F377CA8FEF103",
+        );
         if cfg!(target_os = "ios") {
             MDKVideoItem::setGlobalOption("plugins", "mdk-braw");
         }
     } else {
-        MDKVideoItem::setGlobalOption("MDK_KEY", "47FA7B212D5FF2F649A245E6D8DC2D88BAB67C208282CB3E2DEB95B9B4F9EC575102303FB92448ED49454E027A31B48ED08824EB904B58F693AD\
-            B52FA63A4008B80584DE2D5F0D09B65DBA192723D277B8B67447FBF0A4584184E2659155D95CFBEB08626CBE3C94416B2FC50B1FA1201AA7381CE3E85DF3F3BF9BCB59677808");
+        MDKVideoItem::setGlobalOption(
+            "MDK_KEY",
+            "47FA7B212D5FF2F649A245E6D8DC2D88BAB67C208282CB3E2DEB95B9B4F9EC575102303FB92448ED49454E027A31B48ED08824EB904B58F693AD\
+            B52FA63A4008B80584DE2D5F0D09B65DBA192723D277B8B67447FBF0A4584184E2659155D95CFBEB08626CBE3C94416B2FC50B1FA1201AA7381CE3E85DF3F3BF9BCB59677808",
+        );
         MDKVideoItem::setGlobalOption("plugins", "mdk-braw:mdk-r3d");
     }
 
@@ -159,7 +196,9 @@ fn entry() {
     let settings = RefCell::new(Settings::default());
     let settings_pinned = unsafe { QObjectPinned::new(&settings) };
 
-    let rq = RefCell::new(rendering::render_queue::RenderQueue::new(ctl.borrow().stabilizer.clone()));
+    let rq = RefCell::new(rendering::render_queue::RenderQueue::new(
+        ctl.borrow().stabilizer.clone(),
+    ));
     let rqpinned = unsafe { QObjectPinned::new(&rq) };
 
     let fs = RefCell::new(controller::Filesystem::default());
@@ -193,11 +232,20 @@ fn entry() {
     }
 
     engine.set_property("isStorePackage".into(), util::is_store_package().into());
-    engine.set_property("isMobile".into(), cfg!(any(target_os = "android", target_os = "ios")).into());
-    engine.set_property("isSandboxed".into(), gyroflow_core::filesystem::is_sandboxed().into());
+    engine.set_property(
+        "isMobile".into(),
+        cfg!(any(target_os = "android", target_os = "ios")).into(),
+    );
+    engine.set_property(
+        "isSandboxed".into(),
+        gyroflow_core::filesystem::is_sandboxed().into(),
+    );
 
     // Get smoothing algorithms
-    engine.set_property("smoothingAlgorithms".into(), QVariant::from(ctl.borrow().get_smoothing_algs()));
+    engine.set_property(
+        "smoothingAlgorithms".into(),
+        QVariant::from(ctl.borrow().get_smoothing_algs()),
+    );
 
     let engine_ptr = engine.cpp_ptr();
 
@@ -238,17 +286,33 @@ fn entry() {
         #endif
     });
 
-    ctl.borrow_mut().stabilizer.params.write().framebuffer_inverted = util::is_opengl();
+    ctl.borrow_mut()
+        .stabilizer
+        .params
+        .write()
+        .framebuffer_inverted = util::is_opengl();
 
     rendering::init_log();
 
-    engine.set_property("openFileOnStart".into(), QUrl::from(QString::from(gyroflow_core::filesystem::path_to_url(&open_file))).into());
-    engine.set_property("loadPresetOnStart".into(), QString::from(open_preset).into());
+    engine.set_property(
+        "openFileOnStart".into(),
+        QUrl::from(QString::from(gyroflow_core::filesystem::path_to_url(
+            &open_file,
+        )))
+        .into(),
+    );
+    engine.set_property(
+        "loadPresetOnStart".into(),
+        QString::from(open_preset).into(),
+    );
 
     engine.set_property("defaultInitializedDevice".into(), QString::default().into());
     if let Some((name, list_name)) = core::gpu::initialize_contexts() {
         rendering::set_gpu_type_from_name(&name);
-        engine.set_property("defaultInitializedDevice".into(), QString::from(list_name).into());
+        engine.set_property(
+            "defaultInitializedDevice".into(),
+            QString::from(list_name).into(),
+        );
     }
 
     engine.exec();
@@ -256,10 +320,9 @@ fn entry() {
     util::unregister_url_handlers();
 }
 
-
 #[unsafe(no_mangle)]
 #[cfg(target_os = "android")]
-pub extern fn main(_argc: i32, _argv: *mut *mut i8) -> i32 {
+pub extern "C" fn main(_argc: i32, _argv: *mut *mut i8) -> i32 {
     entry();
     0
 }

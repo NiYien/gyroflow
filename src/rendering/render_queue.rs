@@ -3,16 +3,20 @@
 
 use qmetaobject::*;
 
-use crate::{ core, rendering, util };
 use crate::core::StabilizationManager;
+use crate::{core, rendering, util};
 use core::filesystem;
-use core::stabilization_params::ReadoutDirection;
-use std::sync::{ Arc, atomic::{ AtomicBool, AtomicUsize, Ordering::SeqCst } };
-use std::cell::RefCell;
-use std::collections::{ HashMap, HashSet };
-use parking_lot::RwLock;
-use regex::Regex;
 use core::gyro_source::GyroSource;
+use core::stabilization_params::ReadoutDirection;
+use parking_lot::RwLock;
+use rayon::prelude::*;
+use regex::Regex;
+use std::cell::RefCell;
+use std::collections::{HashMap, HashSet};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+};
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
 pub struct RenderQueueItem {
@@ -36,10 +40,12 @@ pub struct RenderQueueItem {
 
     frame_times: std::collections::VecDeque<(u64, u64)>,
 
-    status: JobStatus
+    status: JobStatus,
 }
 impl RenderQueueItem {
-    pub fn get_status(&self) -> &JobStatus { &self.status }
+    pub fn get_status(&self) -> &JobStatus {
+        &self.status
+    }
 }
 
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
@@ -49,7 +55,7 @@ pub enum JobStatus {
     Rendering,
     Finished,
     Error,
-    Skipped
+    Skipped,
 }
 struct Job {
     queue_index: usize,
@@ -97,13 +103,18 @@ pub struct RenderOptions {
 impl RenderOptions {
     pub fn settings_string(&self, fps: f64) -> String {
         let codec_info = match self.codec.as_ref() {
-            "H.264/AVC" | "H.265/HEVC" | "AV1" => format!("{} {:.0} Mbps", self.codec, self.bitrate),
+            "H.264/AVC" | "H.265/HEVC" | "AV1" => {
+                format!("{} {:.0} Mbps", self.codec, self.bitrate)
+            }
             "DNxHD" => self.codec_options.clone(),
             "ProRes" => format!("{} {}", self.codec, self.codec_options),
-            _ => self.codec.clone()
+            _ => self.codec.clone(),
         };
 
-        format!("{}x{} {:.3}fps | {}", self.output_width, self.output_height, fps, codec_info)
+        format!(
+            "{}x{} {:.3}fps | {}",
+            self.output_width, self.output_height, fps, codec_info
+        )
     }
 
     pub fn get_encoder_options_dict(&self) -> ffmpeg_next::Dictionary<'_> {
@@ -123,31 +134,70 @@ impl RenderOptions {
     }
     pub fn get_metadata_dict(&self) -> ffmpeg_next::Dictionary<'_> {
         let mut metadata = ffmpeg_next::Dictionary::new();
-        metadata.set("comment", format!("Original filename: {}\n{}", self.input_filename, self.metadata.comment).trim());
+        metadata.set(
+            "comment",
+            format!(
+                "Original filename: {}\n{}",
+                self.input_filename, self.metadata.comment
+            )
+            .trim(),
+        );
         metadata
     }
     pub fn update_from_json(&mut self, obj: &serde_json::Value) {
         if let serde_json::Value::Object(obj) = obj {
-            if let Some(v) = obj.get("codec")          .and_then(|x| x.as_str())  { self.codec = v.to_string(); }
-            if let Some(v) = obj.get("codec_options")  .and_then(|x| x.as_str())  { self.codec_options = v.to_string(); }
-            if let Some(v) = obj.get("output_width")   .and_then(|x| x.as_u64())  { self.output_width = v as usize; }
-            if let Some(v) = obj.get("output_height")  .and_then(|x| x.as_u64())  { self.output_height = v as usize; }
-            if let Some(v) = obj.get("bitrate")        .and_then(|x| x.as_f64())  { self.bitrate = v; }
-            if let Some(v) = obj.get("use_gpu")        .and_then(|x| x.as_bool()) { self.use_gpu = v; }
-            if let Some(v) = obj.get("audio")          .and_then(|x| x.as_bool()) { self.audio = v; }
-            if let Some(v) = obj.get("pixel_format")   .and_then(|x| x.as_str())  { self.pixel_format = v.to_string(); }
+            if let Some(v) = obj.get("codec").and_then(|x| x.as_str()) {
+                self.codec = v.to_string();
+            }
+            if let Some(v) = obj.get("codec_options").and_then(|x| x.as_str()) {
+                self.codec_options = v.to_string();
+            }
+            if let Some(v) = obj.get("output_width").and_then(|x| x.as_u64()) {
+                self.output_width = v as usize;
+            }
+            if let Some(v) = obj.get("output_height").and_then(|x| x.as_u64()) {
+                self.output_height = v as usize;
+            }
+            if let Some(v) = obj.get("bitrate").and_then(|x| x.as_f64()) {
+                self.bitrate = v;
+            }
+            if let Some(v) = obj.get("use_gpu").and_then(|x| x.as_bool()) {
+                self.use_gpu = v;
+            }
+            if let Some(v) = obj.get("audio").and_then(|x| x.as_bool()) {
+                self.audio = v;
+            }
+            if let Some(v) = obj.get("pixel_format").and_then(|x| x.as_str()) {
+                self.pixel_format = v.to_string();
+            }
 
             // Advanced
-            if let Some(v) = obj.get("encoder_options")        .and_then(|x| x.as_str())  { self.encoder_options = v.to_string(); }
-            if let Some(v) = obj.get("keyframe_distance")      .and_then(|x| x.as_f64())  { self.keyframe_distance = v; }
-            if let Some(v) = obj.get("preserve_other_tracks")  .and_then(|x| x.as_bool()) { self.preserve_other_tracks = v; }
-            if let Some(v) = obj.get("pad_with_black")         .and_then(|x| x.as_bool()) { self.pad_with_black = v; }
-            if let Some(v) = obj.get("export_trims_separately").and_then(|x| x.as_bool()) { self.export_trims_separately = v; }
-            if let Some(v) = obj.get("audio_codec")            .and_then(|x| x.as_str())  { self.audio_codec = v.to_string(); }
-            if let Some(v) = obj.get("interpolation")          .and_then(|x| x.as_str())  { self.interpolation = v.to_string(); }
+            if let Some(v) = obj.get("encoder_options").and_then(|x| x.as_str()) {
+                self.encoder_options = v.to_string();
+            }
+            if let Some(v) = obj.get("keyframe_distance").and_then(|x| x.as_f64()) {
+                self.keyframe_distance = v;
+            }
+            if let Some(v) = obj.get("preserve_other_tracks").and_then(|x| x.as_bool()) {
+                self.preserve_other_tracks = v;
+            }
+            if let Some(v) = obj.get("pad_with_black").and_then(|x| x.as_bool()) {
+                self.pad_with_black = v;
+            }
+            if let Some(v) = obj.get("export_trims_separately").and_then(|x| x.as_bool()) {
+                self.export_trims_separately = v;
+            }
+            if let Some(v) = obj.get("audio_codec").and_then(|x| x.as_str()) {
+                self.audio_codec = v.to_string();
+            }
+            if let Some(v) = obj.get("interpolation").and_then(|x| x.as_str()) {
+                self.interpolation = v.to_string();
+            }
 
-            if let Some(v) = obj.get("metadata").and_then(|x| x.as_object())  {
-                if let Some(s) = v.get("comment").and_then(|x| x.as_str()) { self.metadata.comment = s.to_string(); }
+            if let Some(v) = obj.get("metadata").and_then(|x| x.as_object()) {
+                if let Some(s) = v.get("comment").and_then(|x| x.as_str()) {
+                    self.metadata.comment = s.to_string();
+                }
             }
 
             // Backwards compatibility
@@ -162,10 +212,17 @@ impl RenderOptions {
                     self.output_filename = filename;
                 }
             }
-            if let Some(v) = obj.get("output_folder").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
+            if let Some(v) = obj
+                .get("output_folder")
+                .and_then(|x| x.as_str())
+                .filter(|x| !x.is_empty())
+            {
                 // If output_folder is a relative path, resolve it to an absolute path
                 if !v.starts_with('/') && !v.contains(":/") && !v.contains(":\\") {
-                    ::log::info!("Resolving relative url: {v}. Current url: {}", self.input_url);
+                    ::log::info!(
+                        "Resolving relative url: {v}. Current url: {}",
+                        self.input_url
+                    );
                     let current_folder = filesystem::get_folder(&self.input_url);
                     let current_path = filesystem::url_to_path(&current_folder);
                     let mut new_folder = current_path.clone();
@@ -182,7 +239,11 @@ impl RenderOptions {
                     self.output_folder = v.to_string();
                 }
             }
-            if let Some(v) = obj.get("output_filename").and_then(|x| x.as_str()).filter(|x| !x.is_empty()) {
+            if let Some(v) = obj
+                .get("output_filename")
+                .and_then(|x| x.as_str())
+                .filter(|x| !x.is_empty())
+            {
                 self.output_filename = v.to_string();
             }
         }
@@ -199,6 +260,14 @@ struct GyroFileInfo {
     error: Option<String>,
     /// 缓存完整的 telemetry 数据，避免重复解析原始文件
     cached_metadata: Option<Arc<core::gyro_source::FileMetadata>>,
+    /// 缓存不同时间区间的 telemetry 数据，避免大文件被整段重复解析
+    cached_metadata_ranges: Vec<CachedGyroMetadataRange>,
+}
+
+#[derive(Clone, Debug)]
+struct CachedGyroMetadataRange {
+    range_ms: Option<(f64, f64)>,
+    metadata: Arc<core::gyro_source::FileMetadata>,
 }
 
 #[derive(Default, QObject)]
@@ -221,11 +290,13 @@ pub struct RenderQueue {
     reset_job: qt_method!(fn(&mut self, job_id: u32)),
     get_gyroflow_data: qt_method!(fn(&self, job_id: u32) -> QString),
 
-    add_file: qt_method!(fn(&mut self, url: String, gyro_url: String, additional_data: String) -> u32),
+    add_file:
+        qt_method!(fn(&mut self, url: String, gyro_url: String, additional_data: String) -> u32),
 
     get_job_output_filename: qt_method!(fn(&self, job_id: u32) -> QString),
     get_job_output_folder: qt_method!(fn(&self, job_id: u32) -> QUrl),
-    set_job_output_filename: qt_method!(fn(&mut self, job_id: u32, new_filename: QString, start: bool)),
+    set_job_output_filename:
+        qt_method!(fn(&mut self, job_id: u32, new_filename: QString, start: bool)),
 
     set_pixel_format: qt_method!(fn(&mut self, job_id: u32, format: String)),
     set_error_string: qt_method!(fn(&mut self, job_id: u32, err: QString)),
@@ -301,7 +372,7 @@ pub struct RenderQueue {
     original_job_order: Vec<u32>,
     manual_pairs: Vec<core::gyro_match::ManualCalibrationPair>,
     // [T22] 缓存每个 job 的 sameGyroAsPrev/Next，match 完成后一次性计算
-    same_gyro_cache: HashMap<u32, (bool, bool)>,  // job_id -> (sameAsPrev, sameAsNext)
+    same_gyro_cache: HashMap<u32, (bool, bool)>, // job_id -> (sameAsPrev, sameAsNext)
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
@@ -376,10 +447,16 @@ impl RenderQueue {
     }
 
     pub fn get_total_frames(&self) -> u64 {
-        self.queue.try_borrow().map(|x| x.iter().map(|v| v.total_frames).sum::<u64>() - self.start_frame).unwrap_or_default()
+        self.queue
+            .try_borrow()
+            .map(|x| x.iter().map(|v| v.total_frames).sum::<u64>() - self.start_frame)
+            .unwrap_or_default()
     }
     pub fn get_current_frame(&self) -> u64 {
-        self.queue.try_borrow().map(|x| x.iter().map(|v| v.current_frame).sum::<u64>() - self.start_frame).unwrap_or_default()
+        self.queue
+            .try_borrow()
+            .map(|x| x.iter().map(|v| v.current_frame).sum::<u64>() - self.start_frame)
+            .unwrap_or_default()
     }
 
     pub fn set_pixel_format(&mut self, job_id: u32, format: String) {
@@ -403,7 +480,11 @@ impl RenderQueue {
         if let Some(job) = self.jobs.get_mut(&job_id) {
             job.render_options.output_filename = new_filename.to_string();
             if let Some(ref stab) = job.stab {
-                job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                job.project_data = Self::get_gyroflow_data_internal(
+                    stab,
+                    &job.additional_data,
+                    &job.render_options,
+                );
             }
         }
         update_model!(self, job_id, itm {
@@ -455,32 +536,58 @@ impl RenderQueue {
             self.queue_changed();
         }
 
-        if let Ok(obj) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
+        if let Ok(obj) =
+            serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value>
+        {
             if let Some(out) = obj.get("output") {
-                if let Ok(mut render_options) = serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions> {
+                if let Ok(mut render_options) =
+                    serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions>
+                {
                     render_options.update_from_json(out);
                     let project_url = self.stabilizer.input_file.read().project_file_url.clone();
                     if let Some(project_url) = project_url {
                         // Save project file on disk
-                        if let Err(e) = self.stabilizer.export_gyroflow_file(&project_url, core::GyroflowProjectType::WithGyroData, &additional_data) {
+                        if let Err(e) = self.stabilizer.export_gyroflow_file(
+                            &project_url,
+                            core::GyroflowProjectType::WithGyroData,
+                            &additional_data,
+                        ) {
                             ::log::warn!("Failed to save project file: {}: {:?}", project_url, e);
                         }
                     }
                     let stab = self.stabilizer.get_cloned();
 
                     // If it's added from main UI, never do the additional autosync
-                    if let Some(ref mut obj) = stab.lens.write().sync_settings { obj.as_object_mut().and_then(|x| x.remove("do_autosync")); }
+                    if let Some(ref mut obj) = stab.lens.write().sync_settings {
+                        obj.as_object_mut().and_then(|x| x.remove("do_autosync"));
+                    }
 
-                    self.add_internal(job_id, Arc::new(stab), render_options, additional_data, thumbnail_url);
+                    self.add_internal(
+                        job_id,
+                        Arc::new(stab),
+                        render_options,
+                        additional_data,
+                        thumbnail_url,
+                    );
                 }
             }
         }
         job_id
     }
 
-    pub fn add_internal(&mut self, job_id: u32, stab: Arc<StabilizationManager>, mut render_options: RenderOptions, additional_data: String, thumbnail_url: QString) {
+    pub fn add_internal(
+        &mut self,
+        job_id: u32,
+        stab: Arc<StabilizationManager>,
+        mut render_options: RenderOptions,
+        additional_data: String,
+        thumbnail_url: QString,
+    ) {
         let size = stab.params.read().size;
-        stab.set_render_params(size, (render_options.output_width, render_options.output_height));
+        stab.set_render_params(
+            size,
+            (render_options.output_width, render_options.output_height),
+        );
 
         let params = stab.params.read();
         let trim_ratio = params.get_trim_ratio();
@@ -527,7 +634,10 @@ impl RenderQueue {
                 input_filename: QString::from(filesystem::get_filename(&video_url)),
                 output_folder: QString::from(render_options.output_folder.as_str()),
                 output_filename: QString::from(render_options.output_filename.as_str()),
-                display_output_path: QString::from(filesystem::display_folder_filename(render_options.output_folder.as_str(), render_options.output_filename.as_str())),
+                display_output_path: QString::from(filesystem::display_folder_filename(
+                    render_options.output_folder.as_str(),
+                    render_options.output_filename.as_str(),
+                )),
                 export_settings: QString::from(render_options.settings_string(params.fps)),
                 thumbnail_url,
                 current_frame: 0,
@@ -545,22 +655,26 @@ impl RenderQueue {
         }
         drop(params);
 
-        let project_data = Self::get_gyroflow_data_internal(&stab, &additional_data, &render_options);
+        let project_data =
+            Self::get_gyroflow_data_internal(&stab, &additional_data, &render_options);
 
         render_options.input_url = stab.input_file.read().url.clone();
         render_options.input_filename = filesystem::get_filename(&stab.input_file.read().url);
 
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
-        self.jobs.insert(job_id, Job {
-            queue_index: 0,
-            render_options,
-            additional_data,
-            cancel_flag: Default::default(),
-            project_data,
-            stab: Some(stab.clone()),
-            video_created_at,
-        });
+        self.jobs.insert(
+            job_id,
+            Job {
+                queue_index: 0,
+                render_options,
+                additional_data,
+                cancel_flag: Default::default(),
+                project_data,
+                stab: Some(stab.clone()),
+                video_created_at,
+            },
+        );
         self.update_queue_indices();
 
         self.queue_changed();
@@ -623,7 +737,9 @@ impl RenderQueue {
         }
     }
     fn current_timestamp() -> u64 {
-        if let Ok(time) = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH) {
+        if let Ok(time) =
+            std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)
+        {
             time.as_millis() as u64
         } else {
             0
@@ -647,7 +763,7 @@ impl RenderQueue {
             self.start_frame = self.get_current_frame();
             self.progress_changed();
         } else if let Some(paused_timestamp) = self.paused_timestamp.take() {
-            let diff =  Self::current_timestamp() - paused_timestamp;
+            let diff = Self::current_timestamp() - paused_timestamp;
             self.start_timestamp += diff;
             let mut q = self.queue.borrow_mut();
             for i in 0..q.row_count() as usize {
@@ -670,7 +786,11 @@ impl RenderQueue {
 
                 let mut job_id = None;
                 for v in self.queue.borrow().iter() {
-                    if v.current_frame == 0 && v.total_frames > 0 && v.status == JobStatus::Queued && (v.processing_progress == 0.0 || v.processing_progress == 1.0) {
+                    if v.current_frame == 0
+                        && v.total_frames > 0
+                        && v.status == JobStatus::Queued
+                        && (v.processing_progress == 0.0 || v.processing_progress == 1.0)
+                    {
                         job_id = Some(v.job_id);
                         break;
                     }
@@ -720,7 +840,13 @@ impl RenderQueue {
                 fn system_shutdown(reboot: bool) {
                     #[cfg(target_os = "windows")]
                     {
-                        let msg = util::tr("App", &format!("Gyroflow will {} the computer in 60 seconds because all tasks have been completed.", if reboot { "reboot" } else { "shut down" }));
+                        let msg = util::tr(
+                            "App",
+                            &format!(
+                                "Gyroflow will {} the computer in 60 seconds because all tasks have been completed.",
+                                if reboot { "reboot" } else { "shut down" }
+                            ),
+                        );
                         let _ = if reboot {
                             system_shutdown::reboot_with_message(&msg, 60, false)
                         } else {
@@ -729,16 +855,30 @@ impl RenderQueue {
                     }
 
                     #[cfg(not(target_os = "windows"))]
-                    let _ = if reboot { system_shutdown::reboot() } else { system_shutdown::shutdown() };
+                    let _ = if reboot {
+                        system_shutdown::reboot()
+                    } else {
+                        system_shutdown::shutdown()
+                    };
                 }
 
                 match self.when_done {
-                    1 => { system_shutdown(false); }
-                    2 => { system_shutdown(true); }
-                    3 => { let _ = system_shutdown::sleep(); }
-                    4 => { let _ = system_shutdown::hibernate(); }
-                    5 => { let _ = system_shutdown::logout(); }
-                    _ => { }
+                    1 => {
+                        system_shutdown(false);
+                    }
+                    2 => {
+                        system_shutdown(true);
+                    }
+                    3 => {
+                        let _ = system_shutdown::sleep();
+                    }
+                    4 => {
+                        let _ = system_shutdown::hibernate();
+                    }
+                    5 => {
+                        let _ = system_shutdown::logout();
+                    }
+                    _ => {}
                 }
             }
         }
@@ -752,10 +892,18 @@ impl RenderQueue {
         }
     }
     pub fn get_active_render_count(&self) -> usize {
-        self.queue.borrow().iter().filter(|v| v.total_frames > 0 && v.status == JobStatus::Rendering).count()
+        self.queue
+            .borrow()
+            .iter()
+            .filter(|v| v.total_frames > 0 && v.status == JobStatus::Rendering)
+            .count()
     }
     pub fn get_pending_count(&self) -> usize {
-        self.queue.borrow().iter().filter(|v| v.total_frames > 0 && v.status == JobStatus::Queued).count()
+        self.queue
+            .borrow()
+            .iter()
+            .filter(|v| v.total_frames > 0 && v.status == JobStatus::Queued)
+            .count()
     }
     pub fn set_parallel_renders(&mut self, v: i32) {
         self.parallel_renders = v;
@@ -782,17 +930,42 @@ impl RenderQueue {
             let lens_profile_db = self.stabilizer.lens_profile_db.clone();
 
             if let (Some(data), Some(opts)) = (project_data, render_options) {
-                let stab = Arc::new(StabilizationManager { lens_profile_db, ..Default::default() });
+                let stab = Arc::new(StabilizationManager {
+                    lens_profile_db,
+                    ..Default::default()
+                });
                 let mut is_preset = false;
 
                 let result = if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&data) {
                     if let Some(project_file) = obj.get("project_file").and_then(|v| v.as_str()) {
-                        stab.import_gyroflow_file(project_file, false, |_|(), Arc::new(AtomicBool::new(false)), false)
+                        stab.import_gyroflow_file(
+                            project_file,
+                            false,
+                            |_| (),
+                            Arc::new(AtomicBool::new(false)),
+                            false,
+                        )
                     } else {
-                        stab.import_gyroflow_data(data.as_bytes(), false, None, |_|(), Arc::new(AtomicBool::new(false)), &mut is_preset, false)
+                        stab.import_gyroflow_data(
+                            data.as_bytes(),
+                            false,
+                            None,
+                            |_| (),
+                            Arc::new(AtomicBool::new(false)),
+                            &mut is_preset,
+                            false,
+                        )
                     }
                 } else {
-                    stab.import_gyroflow_data(data.as_bytes(), false, None, |_|(), Arc::new(AtomicBool::new(false)), &mut is_preset, false)
+                    stab.import_gyroflow_data(
+                        data.as_bytes(),
+                        false,
+                        None,
+                        |_| (),
+                        Arc::new(AtomicBool::new(false)),
+                        &mut is_preset,
+                        false,
+                    )
                 };
 
                 match result {
@@ -803,7 +976,11 @@ impl RenderQueue {
                         }
                     }
                     Err(e) => {
-                        ::log::error!("Failed to recreate StabilizationManager for job {}: {:?}", job_id, e);
+                        ::log::error!(
+                            "Failed to recreate StabilizationManager for job {}: {:?}",
+                            job_id,
+                            e
+                        );
                         update_model!(self, job_id, itm {
                             itm.error_string = QString::from(format!("Failed to restore job state: {:?}", e));
                             itm.status = JobStatus::Error;
@@ -844,7 +1021,11 @@ impl RenderQueue {
         false
     }
 
-    fn get_gyroflow_data_internal(stab: &StabilizationManager, additional_data: &str, render_options: &RenderOptions) -> Option<String> {
+    fn get_gyroflow_data_internal(
+        stab: &StabilizationManager,
+        additional_data: &str,
+        render_options: &RenderOptions,
+    ) -> Option<String> {
         if let Some(url) = stab.input_file.read().project_file_url.as_ref() {
             if filesystem::exists(url) {
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
@@ -858,13 +1039,17 @@ impl RenderQueue {
             }
         }
         let mut additional_data = additional_data.to_owned();
-        if let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
+        if let Ok(serde_json::Value::Object(mut obj)) =
+            serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value>
+        {
             if let Ok(output) = serde_json::to_value(&render_options) {
                 obj.insert("output".into(), output);
             }
             additional_data = serde_json::to_string(&obj).unwrap_or_default();
         }
-        if let Ok(data) = stab.export_gyroflow_data(core::GyroflowProjectType::Simple, &additional_data, None) {
+        if let Ok(data) =
+            stab.export_gyroflow_data(core::GyroflowProjectType::Simple, &additional_data, None)
+        {
             return Some(data);
         }
         None
@@ -872,7 +1057,10 @@ impl RenderQueue {
 
     pub fn get_gyroflow_data(&self, job_id: u32) -> QString {
         if let Some(job) = self.jobs.get(&job_id) {
-            job.project_data.clone().map(QString::from).unwrap_or_default()
+            job.project_data
+                .clone()
+                .map(QString::from)
+                .unwrap_or_default()
         } else {
             QString::default()
         }
@@ -883,17 +1071,45 @@ impl RenderQueue {
             if let Some(ref data) = job.project_data {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                     let stab = v.get("stabilization").cloned().unwrap_or_default();
-                    let smoothness = stab.get("smoothing_params")
+                    let smoothness = stab
+                        .get("smoothing_params")
                         .and_then(|p| p.as_array())
-                        .and_then(|arr| arr.iter().find(|x| x.get("name").and_then(|n| n.as_str()) == Some("smoothness")))
+                        .and_then(|arr| {
+                            arr.iter().find(|x| {
+                                x.get("name").and_then(|n| n.as_str()) == Some("smoothness")
+                            })
+                        })
                         .and_then(|x| x.get("value").and_then(|v| v.as_f64()))
                         .unwrap_or(0.5);
-                    let horizon_lock_amount = stab.get("horizon_lock_amount").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let lens_correction = stab.get("lens_correction_amount").and_then(|v| v.as_f64()).unwrap_or(1.0);
-                    let az = stab.get("adaptive_zoom_window").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let zoom_mode = if az < -0.9 { "static" } else if az > 0.0 { "dynamic" } else { "none" };
-                    let framerate = v.get("video_info").and_then(|vi| vi.get("fps")).and_then(|f| f.as_f64()).unwrap_or(0.0);
-                    let focal_length = v.get("video_info").and_then(|vi| vi.get("focal_length")).and_then(|f| f.as_f64()).unwrap_or(0.0);
+                    let horizon_lock_amount = stab
+                        .get("horizon_lock_amount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let lens_correction = stab
+                        .get("lens_correction_amount")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(1.0);
+                    let az = stab
+                        .get("adaptive_zoom_window")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let zoom_mode = if az < -0.9 {
+                        "static"
+                    } else if az > 0.0 {
+                        "dynamic"
+                    } else {
+                        "none"
+                    };
+                    let framerate = v
+                        .get("video_info")
+                        .and_then(|vi| vi.get("fps"))
+                        .and_then(|f| f.as_f64())
+                        .unwrap_or(0.0);
+                    let focal_length = v
+                        .get("video_info")
+                        .and_then(|vi| vi.get("focal_length"))
+                        .and_then(|f| f.as_f64())
+                        .unwrap_or(0.0);
                     let result = serde_json::json!({
                         "smoothness": smoothness,
                         "horizon_lock_amount": horizon_lock_amount,
@@ -923,23 +1139,43 @@ impl RenderQueue {
             if let Some(job) = self.jobs.get_mut(&job_id) {
                 if let Some(ref mut data_str) = job.project_data {
                     if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(data_str) {
-                        let stab = data.get_mut("stabilization")
+                        let stab = data
+                            .get_mut("stabilization")
                             .and_then(|s| s.as_object_mut());
                         if let Some(stab) = stab {
-                            if let Some(smoothness) = params.get("smoothness").and_then(|v| v.as_f64()) {
+                            if let Some(smoothness) =
+                                params.get("smoothness").and_then(|v| v.as_f64())
+                            {
                                 // Update smoothing_params array
-                                if let Some(sp) = stab.get_mut("smoothing_params").and_then(|p| p.as_array_mut()) {
+                                if let Some(sp) = stab
+                                    .get_mut("smoothing_params")
+                                    .and_then(|p| p.as_array_mut())
+                                {
                                     for p in sp.iter_mut() {
-                                        if p.get("name").and_then(|n| n.as_str()) == Some("smoothness") {
-                                            p.as_object_mut().map(|o| o.insert("value".into(), serde_json::json!(smoothness)));
+                                        if p.get("name").and_then(|n| n.as_str())
+                                            == Some("smoothness")
+                                        {
+                                            p.as_object_mut().map(|o| {
+                                                o.insert(
+                                                    "value".into(),
+                                                    serde_json::json!(smoothness),
+                                                )
+                                            });
                                         }
                                     }
                                 }
                             }
-                            if let Some(amount) = params.get("horizon_lock_amount").and_then(|v| v.as_f64()) {
-                                stab.insert("horizon_lock_amount".into(), serde_json::json!(amount));
+                            if let Some(amount) =
+                                params.get("horizon_lock_amount").and_then(|v| v.as_f64())
+                            {
+                                stab.insert(
+                                    "horizon_lock_amount".into(),
+                                    serde_json::json!(amount),
+                                );
                             }
-                            if let Some(zoom_mode) = params.get("zoom_mode").and_then(|v| v.as_str()) {
+                            if let Some(zoom_mode) =
+                                params.get("zoom_mode").and_then(|v| v.as_str())
+                            {
                                 let az = match zoom_mode {
                                     "static" => -1.0,
                                     "dynamic" => 4.0,
@@ -947,15 +1183,23 @@ impl RenderQueue {
                                 };
                                 stab.insert("adaptive_zoom_window".into(), serde_json::json!(az));
                             }
-                            if let Some(zoom_speed) = params.get("zoom_speed").and_then(|v| v.as_f64()) {
-                                stab.insert("adaptive_zoom_window".into(), serde_json::json!(zoom_speed));
+                            if let Some(zoom_speed) =
+                                params.get("zoom_speed").and_then(|v| v.as_f64())
+                            {
+                                stab.insert(
+                                    "adaptive_zoom_window".into(),
+                                    serde_json::json!(zoom_speed),
+                                );
                             }
-                            if let Some(lc) = params.get("lens_correction").and_then(|v| v.as_f64()) {
+                            if let Some(lc) = params.get("lens_correction").and_then(|v| v.as_f64())
+                            {
                                 stab.insert("lens_correction_amount".into(), serde_json::json!(lc));
                             }
                         }
                         if let Some(fps) = params.get("framerate").and_then(|v| v.as_f64()) {
-                            if let Some(output) = data.get_mut("output").and_then(|o| o.as_object_mut()) {
+                            if let Some(output) =
+                                data.get_mut("output").and_then(|o| o.as_object_mut())
+                            {
                                 output.insert("output_fps".into(), serde_json::json!(fps));
                             }
                         }
@@ -974,7 +1218,10 @@ impl RenderQueue {
                 if job.queue_index < q.row_count() as usize {
                     //let mut itm = &mut q[job.queue_index];
                     let mut itm = q[job.queue_index].clone();
-                    if itm.status == JobStatus::Rendering || itm.status == JobStatus::Finished || itm.status == JobStatus::Skipped {
+                    if itm.status == JobStatus::Rendering
+                        || itm.status == JobStatus::Finished
+                        || itm.status == JobStatus::Skipped
+                    {
                         ::log::warn!("Job is already rendering or skipped {}", job_id);
                         return;
                     }
@@ -988,7 +1235,10 @@ impl RenderQueue {
             let stab = match job.stab.clone() {
                 Some(s) => s,
                 None => {
-                    ::log::error!("StabilizationManager is None for job {}, cannot render", job_id);
+                    ::log::error!(
+                        "StabilizationManager is None for job {}, cannot render",
+                        job_id
+                    );
                     return;
                 }
             };
@@ -997,128 +1247,193 @@ impl RenderQueue {
 
             let rendered_frames = Arc::new(AtomicUsize::new(0));
             let rendered_frames2 = rendered_frames.clone();
-            let progress = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (progress, current_frame, total_frames, finished, is_conversion): (f64, usize, usize, bool, bool)| {
-                rendered_frames2.store(current_frame, SeqCst);
+            let progress = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this,
+                      (progress, current_frame, total_frames, finished, is_conversion): (
+                    f64,
+                    usize,
+                    usize,
+                    bool,
+                    bool,
+                )| {
+                    rendered_frames2.store(current_frame, SeqCst);
 
-                let mut start_time = 0;
+                    let mut start_time = 0;
 
-                update_model!(this, job_id, itm {
-                    itm.current_frame = current_frame as u64;
-                    itm.total_frames = total_frames as u64;
-                    if itm.start_timestamp == 0 {
-                        itm.start_timestamp = Self::current_timestamp();
-                    }
-                    start_time = itm.start_timestamp;
-                    itm.end_timestamp = Self::current_timestamp();
-                    itm.frame_times.push_back((itm.current_frame, itm.end_timestamp));
-                    if itm.end_timestamp - itm.start_timestamp > 10000 { // 10s average
-                        if let Some(el) = itm.frame_times.pop_front() {
-                            itm.start_timestamp_frame = el.0;
-                            itm.start_timestamp2 = el.1;
+                    update_model!(this, job_id, itm {
+                        itm.current_frame = current_frame as u64;
+                        itm.total_frames = total_frames as u64;
+                        if itm.start_timestamp == 0 {
+                            itm.start_timestamp = Self::current_timestamp();
                         }
-                    }
+                        start_time = itm.start_timestamp;
+                        itm.end_timestamp = Self::current_timestamp();
+                        itm.frame_times.push_back((itm.current_frame, itm.end_timestamp));
+                        if itm.end_timestamp - itm.start_timestamp > 10000 { // 10s average
+                            if let Some(el) = itm.frame_times.pop_front() {
+                                itm.start_timestamp_frame = el.0;
+                                itm.start_timestamp2 = el.1;
+                            }
+                        }
+                        if finished {
+                            itm.status = JobStatus::Finished;
+                        }
+                    });
+
+                    this.end_timestamp = Self::current_timestamp();
+                    this.render_progress(
+                        job_id,
+                        progress,
+                        current_frame,
+                        total_frames,
+                        finished,
+                        start_time as f64,
+                        is_conversion,
+                    );
+                    this.progress_changed();
+
+                    let is_queue_active = this.status == "active".into();
                     if finished {
-                        itm.status = JobStatus::Finished;
-                    }
-                });
-
-                this.end_timestamp = Self::current_timestamp();
-                this.render_progress(job_id, progress, current_frame, total_frames, finished, start_time as f64, is_conversion);
-                this.progress_changed();
-
-                let is_queue_active = this.status == "active".into();
-                if finished {
-                    // Update project_data with sync offsets before releasing stab
-                    if let Some(job) = this.jobs.get_mut(&job_id) {
-                        if let Some(ref stab) = job.stab {
-                            job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                        // Update project_data with sync offsets before releasing stab
+                        if let Some(job) = this.jobs.get_mut(&job_id) {
+                            if let Some(ref stab) = job.stab {
+                                job.project_data = Self::get_gyroflow_data_internal(
+                                    stab,
+                                    &job.additional_data,
+                                    &job.render_options,
+                                );
+                            }
+                        }
+                        // Release StabilizationManager to reclaim GPU memory
+                        if let Some(job) = this.jobs.get_mut(&job_id) {
+                            job.stab = None;
+                        }
+                        if this.get_pending_count() > 0 && is_queue_active {
+                            // Start the next one
+                            this.start();
+                        } else {
+                            this.start_timestamp = 0;
+                            this.start_frame = 0;
+                            this.update_status();
+                            if is_queue_active {
+                                this.post_render_action();
+                            }
                         }
                     }
+                },
+            );
+            let processing = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, progress: f64| {
+                    update_model!(this, job_id, itm {
+                        itm.processing_progress = progress;
+                    });
+                    this.processing_progress(job_id, progress);
+                },
+            );
+            let encoder_initialized = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, encoder_name: String| {
+                    if let Some(job) = this.jobs.get(&job_id) {
+                        if job.render_options.use_gpu
+                            && (encoder_name == "libx264"
+                                || encoder_name == "libx265"
+                                || encoder_name == "prores_ks")
+                        {
+                            update_model!(this, job_id, itm {
+                                itm.error_string = QString::from("uses_cpu");
+                            });
+                        }
+                    }
+                    this.encoder_initialized(job_id, encoder_name);
+                },
+            );
+
+            let err = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, (msg, mut arg): (String, String)| {
+                    arg.push_str("\n\n");
+                    arg.push_str(&rendering::get_log());
+
+                    update_model!(this, job_id, itm {
+                        itm.error_string = QString::from(arg.clone());
+                        itm.status = JobStatus::Error;
+                    });
+
+                    this.error(
+                        job_id,
+                        QString::from(msg),
+                        QString::from(arg),
+                        QString::default(),
+                    );
+                    this.render_progress(job_id, 1.0, 0, 0, true, 0.0, false);
+
                     // Release StabilizationManager to reclaim GPU memory
                     if let Some(job) = this.jobs.get_mut(&job_id) {
                         job.stab = None;
                     }
-                    if this.get_pending_count() > 0 && is_queue_active {
+
+                    if this.get_pending_count() > 0 {
                         // Start the next one
                         this.start();
                     } else {
                         this.start_timestamp = 0;
                         this.start_frame = 0;
-                        this.update_status();
-                        if is_queue_active {
-                            this.post_render_action();
-                        }
                     }
-                }
-            });
-            let processing = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, progress: f64| {
-                update_model!(this, job_id, itm {
-                    itm.processing_progress = progress;
-                });
-                this.processing_progress(job_id, progress);
-            });
-            let encoder_initialized = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, encoder_name: String| {
-                if let Some(job) = this.jobs.get(&job_id) {
-                    if job.render_options.use_gpu && (encoder_name == "libx264" || encoder_name == "libx265" || encoder_name == "prores_ks") {
-                        update_model!(this, job_id, itm {
-                            itm.error_string = QString::from("uses_cpu");
-                        });
+                    this.update_status();
+                },
+            );
+
+            let convert_format = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, (format, mut supported, candidate): (String, String, String)| {
+                    use itertools::Itertools;
+                    supported = supported
+                        .split(',')
+                        .filter(|v| {
+                            ![
+                                "CUDA",
+                                "D3D11",
+                                "D3D12",
+                                "BGRZ",
+                                "RGBZ",
+                                "BGRA",
+                                "UYVY422",
+                                "VIDEOTOOLBOX",
+                                "DXVA2",
+                                "MEDIACODEC",
+                                "VULKAN",
+                                "OPENCL",
+                                "QSV",
+                            ]
+                            .contains(v)
+                        })
+                        .join(",");
+
+                    update_model!(this, job_id, itm {
+                        itm.error_string = QString::from(format!("convert_format:{format};{supported};{candidate}"));
+                        itm.status = JobStatus::Error;
+                    });
+
+                    this.convert_format(
+                        job_id,
+                        QString::from(format),
+                        QString::from(supported),
+                        QString::from(candidate),
+                    );
+                    this.render_progress(job_id, 1.0, 0, 0, true, 0.0, false);
+
+                    if this.get_pending_count() > 0 {
+                        // Start the next one
+                        this.start();
+                    } else {
+                        this.start_timestamp = 0;
+                        this.start_frame = 0;
                     }
-                }
-                this.encoder_initialized(job_id, encoder_name);
-            });
-
-            let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (msg, mut arg): (String, String)| {
-                arg.push_str("\n\n");
-                arg.push_str(&rendering::get_log());
-
-                update_model!(this, job_id, itm {
-                    itm.error_string = QString::from(arg.clone());
-                    itm.status = JobStatus::Error;
-                });
-
-                this.error(job_id, QString::from(msg), QString::from(arg), QString::default());
-                this.render_progress(job_id, 1.0, 0, 0, true, 0.0, false);
-
-                // Release StabilizationManager to reclaim GPU memory
-                if let Some(job) = this.jobs.get_mut(&job_id) {
-                    job.stab = None;
-                }
-
-                if this.get_pending_count() > 0 {
-                    // Start the next one
-                    this.start();
-                } else {
-                    this.start_timestamp = 0;
-                    this.start_frame = 0;
-                }
-                this.update_status();
-            });
-
-            let convert_format = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (format, mut supported, candidate): (String, String, String)| {
-                use itertools::Itertools;
-                supported = supported
-                    .split(',')
-                    .filter(|v| !["CUDA", "D3D11", "D3D12","BGRZ", "RGBZ", "BGRA", "UYVY422", "VIDEOTOOLBOX", "DXVA2", "MEDIACODEC", "VULKAN", "OPENCL", "QSV"].contains(v))
-                    .join(",");
-
-                update_model!(this, job_id, itm {
-                    itm.error_string = QString::from(format!("convert_format:{format};{supported};{candidate}"));
-                    itm.status = JobStatus::Error;
-                });
-
-                this.convert_format(job_id, QString::from(format), QString::from(supported), QString::from(candidate));
-                this.render_progress(job_id, 1.0, 0, 0, true, 0.0, false);
-
-                if this.get_pending_count() > 0 {
-                    // Start the next one
-                    this.start();
-                } else {
-                    this.start_timestamp = 0;
-                    this.start_frame = 0;
-                }
-                this.update_status();
-            });
+                    this.update_status();
+                },
+            );
             let params = stab.params.read();
             let trim_ratio = params.get_trim_ratio();
             let total_frame_count = params.frame_count;
@@ -1127,14 +1442,20 @@ impl RenderQueue {
             let filename = filesystem::get_filename(&input_file.url);
             let render_options = job.render_options.clone();
 
-            progress((0.0, 0, (total_frame_count as f64 * trim_ratio).round() as usize, false, false));
+            progress((
+                0.0,
+                0,
+                (total_frame_count as f64 * trim_ratio).round() as usize,
+                false,
+                false,
+            ));
 
             job.cancel_flag.store(false, SeqCst);
             let cancel_flag = job.cancel_flag.clone();
             let pause_flag = self.pause_flag.clone();
-            let export_project  = self.export_project;
+            let export_project = self.export_project;
             let export_metadata = self.export_metadata.clone();
-            let export_stmap    = self.export_stmap.clone();
+            let export_stmap = self.export_stmap.clone();
             let default_suffix = self.default_suffix.to_string();
             let mut additional_data = job.additional_data.clone();
             let mut proc_height = self.processing_resolution;
@@ -1155,20 +1476,28 @@ impl RenderQueue {
                         match opt {
                             1 => {
                                 let gyro_url = stab.input_file.read().url.clone();
-                                let contents = gyroflow_core::gyro_export::export_full_metadata(&gyro_url, &stab)?;
+                                let contents = gyroflow_core::gyro_export::export_full_metadata(
+                                    &gyro_url, &stab,
+                                )?;
                                 filesystem::write(&url, contents.as_bytes())?;
-                            },
+                            }
                             2 => {
-                                if let Ok(contents) = serde_json::to_string_pretty(&stab.gyro.read().file_metadata) {
+                                if let Ok(contents) =
+                                    serde_json::to_string_pretty(&stab.gyro.read().file_metadata)
+                                {
                                     filesystem::write(&url, contents.as_bytes())?;
                                 }
-                            },
+                            }
                             3 => {
                                 let filename = filesystem::get_filename(&url).to_ascii_lowercase();
-                                let contents = gyroflow_core::gyro_export::export_gyro_data(&filename, &serde_json::to_string(&fields).unwrap(), &stab);
+                                let contents = gyroflow_core::gyro_export::export_gyro_data(
+                                    &filename,
+                                    &serde_json::to_string(&fields).unwrap(),
+                                    &stab,
+                                );
                                 filesystem::write(&url, contents.as_bytes())?
                             }
-                            _ => { }
+                            _ => {}
                         }
                         Ok(())
                     };
@@ -1182,41 +1511,91 @@ impl RenderQueue {
                 if let Some((opt, path)) = export_stmap {
                     let per_frame = opt == 2;
                     let folder_url = filesystem::path_to_url(&path);
-                    let total = if per_frame { stab.params.read().frame_count } else { 1 };
+                    let total = if per_frame {
+                        stab.params.read().frame_count
+                    } else {
+                        1
+                    };
                     let mut processed = 0;
                     progress((0.0, processed, total, false, false));
-                    for (fname_base, frame, dist, undist) in core::stmap::generate_stmaps(&stab, per_frame) {
-                        if let Err(e) = filesystem::write(&filesystem::get_file_url(&folder_url, &format!("{fname_base}-undistort-{frame}.exr"), true), &undist) {
+                    for (fname_base, frame, dist, undist) in
+                        core::stmap::generate_stmaps(&stab, per_frame)
+                    {
+                        if let Err(e) = filesystem::write(
+                            &filesystem::get_file_url(
+                                &folder_url,
+                                &format!("{fname_base}-undistort-{frame}.exr"),
+                                true,
+                            ),
+                            &undist,
+                        ) {
                             return err((e.to_string(), String::new()));
                         }
-                        if let Err(e) = filesystem::write(&filesystem::get_file_url(&folder_url, &format!("{fname_base}-redistort-{frame}.exr"), true), &dist) {
+                        if let Err(e) = filesystem::write(
+                            &filesystem::get_file_url(
+                                &folder_url,
+                                &format!("{fname_base}-redistort-{frame}.exr"),
+                                true,
+                            ),
+                            &dist,
+                        ) {
                             return err((e.to_string(), String::new()));
                         }
                         processed += 1;
-                        progress((processed as f64 / total as f64, processed, total, false, false));
+                        progress((
+                            processed as f64 / total as f64,
+                            processed,
+                            total,
+                            false,
+                            false,
+                        ));
 
-                        if cancel_flag.load(SeqCst) { break; }
+                        if cancel_flag.load(SeqCst) {
+                            break;
+                        }
                     }
                     progress((1.0, total, total, true, false));
                     return;
                 }
 
                 if export_project > 0 {
-                    if let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
+                    if let Ok(serde_json::Value::Object(mut obj)) =
+                        serde_json::from_str(&additional_data)
+                            as serde_json::Result<serde_json::Value>
+                    {
                         if let Ok(output) = serde_json::to_value(&render_options) {
                             obj.insert("output".into(), output);
                         }
                         additional_data = serde_json::to_string(&obj).unwrap_or_default();
                     }
                     let gf_folder = render_options.output_folder.to_owned();
-                    let gf_file = filesystem::filename_with_extension(&render_options.output_filename.replace(&default_suffix, ""), "gyroflow");
+                    let gf_file = filesystem::filename_with_extension(
+                        &render_options.output_filename.replace(&default_suffix, ""),
+                        "gyroflow",
+                    );
                     let gf_url = filesystem::get_file_url(&gf_folder, &gf_file, true);
                     let result = match export_project {
-                        1 => stab.export_gyroflow_file(&gf_url, core::GyroflowProjectType::Simple, &additional_data),
-                        2 => stab.export_gyroflow_file(&gf_url, core::GyroflowProjectType::WithGyroData, &additional_data),
-                        3 => stab.export_gyroflow_file(&gf_url, core::GyroflowProjectType::WithProcessedData, &additional_data),
-                        4 => stab.export_gyroflow_file(&gf_url, core::GyroflowProjectType::WithGyroData, &additional_data),
-                        _ => { Err(gyroflow_core::GyroflowCoreError::Unknown) }
+                        1 => stab.export_gyroflow_file(
+                            &gf_url,
+                            core::GyroflowProjectType::Simple,
+                            &additional_data,
+                        ),
+                        2 => stab.export_gyroflow_file(
+                            &gf_url,
+                            core::GyroflowProjectType::WithGyroData,
+                            &additional_data,
+                        ),
+                        3 => stab.export_gyroflow_file(
+                            &gf_url,
+                            core::GyroflowProjectType::WithProcessedData,
+                            &additional_data,
+                        ),
+                        4 => stab.export_gyroflow_file(
+                            &gf_url,
+                            core::GyroflowProjectType::WithGyroData,
+                            &additional_data,
+                        ),
+                        _ => Err(gyroflow_core::GyroflowCoreError::Unknown),
                     };
                     if export_project != 4 {
                         if let Err(e) = result {
@@ -1229,32 +1608,65 @@ impl RenderQueue {
                 }
 
                 // Assumes regular filesystem
-                if filename.to_ascii_lowercase().ends_with(".r3d") || filename.to_ascii_lowercase().ends_with(".nev") {
-                    let mov_url = filesystem::get_file_url(&filesystem::get_folder(&input_file.url), &filesystem::filename_with_extension(&filesystem::get_filename(&input_file.url), "mov"), false);
+                if filename.to_ascii_lowercase().ends_with(".r3d")
+                    || filename.to_ascii_lowercase().ends_with(".nev")
+                {
+                    let mov_url = filesystem::get_file_url(
+                        &filesystem::get_folder(&input_file.url),
+                        &filesystem::filename_with_extension(
+                            &filesystem::get_filename(&input_file.url),
+                            "mov",
+                        ),
+                        false,
+                    );
                     if filesystem::exists(&mov_url) {
                         input_file.url = mov_url.clone();
                     } else {
                         let in_file = input_file.url.clone();
 
                         let mut frame = 0;
-                        let r3d_progress = |(percent, error_str, out_url): (f64, String, String)| {
-                            if !error_str.is_empty() {
-                                err(("An error occured: %1".to_string(), error_str));
-                            } else {
-                                progress((percent * 0.98, frame, total_frame_count + 1, false, true));
-                                input_file.url = out_url;
-                                frame += 1;
-                            }
-                        };
+                        let r3d_progress =
+                            |(percent, error_str, out_url): (f64, String, String)| {
+                                if !error_str.is_empty() {
+                                    err(("An error occured: %1".to_string(), error_str));
+                                } else {
+                                    progress((
+                                        percent * 0.98,
+                                        frame,
+                                        total_frame_count + 1,
+                                        false,
+                                        true,
+                                    ));
+                                    input_file.url = out_url;
+                                    frame += 1;
+                                }
+                            };
                         let format = gyroflow_core::settings::get_u64("r3dConvertFormat", 0) as i32;
-                        let force_primary = gyroflow_core::settings::get_u64("r3dColorMode", 0) as i32;
+                        let force_primary =
+                            gyroflow_core::settings::get_u64("r3dColorMode", 0) as i32;
 
-                        let gamma_curves = [-1, 1, 2, 3, 4, 5, 6, 14, 15, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37];
-                        let color_spaces = [2, 0, 1, 14, 15, 5, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
-                        let gamma = gamma_curves[gyroflow_core::settings::get_u64("r3dGammaCurve", 7) as usize];
-                        let space = color_spaces[gyroflow_core::settings::get_u64("r3dColorSpace", 0) as usize];
-                        let additional_params = gyroflow_core::settings::get_str("r3dRedlineParams", "");
-                        crate::external_sdk::r3d::REDSdk::convert_r3d(&in_file, format, force_primary > 0, gamma, space, &additional_params, r3d_progress, cancel_flag.clone());
+                        let gamma_curves = [
+                            -1, 1, 2, 3, 4, 5, 6, 14, 15, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
+                            37,
+                        ];
+                        let color_spaces =
+                            [2, 0, 1, 14, 15, 5, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+                        let gamma = gamma_curves
+                            [gyroflow_core::settings::get_u64("r3dGammaCurve", 7) as usize];
+                        let space = color_spaces
+                            [gyroflow_core::settings::get_u64("r3dColorSpace", 0) as usize];
+                        let additional_params =
+                            gyroflow_core::settings::get_str("r3dRedlineParams", "");
+                        crate::external_sdk::r3d::REDSdk::convert_r3d(
+                            &in_file,
+                            format,
+                            force_primary > 0,
+                            gamma,
+                            space,
+                            &additional_params,
+                            r3d_progress,
+                            cancel_flag.clone(),
+                        );
                         if cancel_flag.load(SeqCst) {
                             std::thread::sleep(std::time::Duration::from_secs(2));
                             let _ = filesystem::remove_file(&mov_url);
@@ -1272,17 +1684,49 @@ impl RenderQueue {
                 };
                 let original_gpu_decode = stab.gpu_decoding.load(SeqCst);
                 'ranges: for range in ranges_to_render {
-                    if cancel_flag.load(SeqCst) { break; }
+                    if cancel_flag.load(SeqCst) {
+                        break;
+                    }
                     let mut i = 0;
                     loop {
-                        let result = rendering::render(stab.clone(), progress.clone(), &input_file, &render_options, i, range, cancel_flag.clone(), pause_flag.clone(), encoder_initialized.clone());
+                        let result = rendering::render(
+                            stab.clone(),
+                            progress.clone(),
+                            &input_file,
+                            &render_options,
+                            i,
+                            range,
+                            cancel_flag.clone(),
+                            pause_flag.clone(),
+                            encoder_initialized.clone(),
+                        );
                         if let Err(e) = result {
-                            if let rendering::FFmpegError::PixelFormatNotSupported((fmt, supported, candidate)) = e {
-                                let candidate = if let Some(c) = candidate { format!("{c:?}").to_ascii_lowercase().to_string() } else { String::new() };
-                                convert_format((format!("{fmt:?}"), supported.into_iter().map(|v| format!("{:?}", v)).collect::<Vec<String>>().join(","), candidate));
+                            if let rendering::FFmpegError::PixelFormatNotSupported((
+                                fmt,
+                                supported,
+                                candidate,
+                            )) = e
+                            {
+                                let candidate = if let Some(c) = candidate {
+                                    format!("{c:?}").to_ascii_lowercase().to_string()
+                                } else {
+                                    String::new()
+                                };
+                                convert_format((
+                                    format!("{fmt:?}"),
+                                    supported
+                                        .into_iter()
+                                        .map(|v| format!("{:?}", v))
+                                        .collect::<Vec<String>>()
+                                        .join(","),
+                                    candidate,
+                                ));
                                 break 'ranges;
                             }
-                            if original_gpu_decode && stab.gpu_decoding.load(SeqCst) && matches!(e, rendering::FFmpegError::GPUDecodingFailed) {
+                            if original_gpu_decode
+                                && stab.gpu_decoding.load(SeqCst)
+                                && matches!(e, rendering::FFmpegError::GPUDecodingFailed)
+                            {
                                 stab.gpu_decoding.store(false, SeqCst);
                                 continue;
                             }
@@ -1317,19 +1761,24 @@ impl RenderQueue {
         }
         filesystem::get_folder(input_url)
     }
-    fn get_output_filename(input_url: &str, suffix: &str, render_options: &RenderOptions, override_ext: Option<&str>) -> String {
+    fn get_output_filename(
+        input_url: &str,
+        suffix: &str,
+        render_options: &RenderOptions,
+        override_ext: Option<&str>,
+    ) -> String {
         if !render_options.output_filename.is_empty() {
             return render_options.output_filename.to_owned();
         }
         let mut filename = filesystem::get_filename(input_url);
 
         let mut ext = override_ext.unwrap_or(match render_options.codec.as_ref() {
-            "ProRes"        => ".mov",
-            "DNxHD"         => ".mov",
-            "CineForm"      => ".mov",
-            "EXR Sequence"  => "_%05d.exr",
-            "PNG Sequence"  => "_%05d.png",
-            _ => ".mp4"
+            "ProRes" => ".mov",
+            "DNxHD" => ".mov",
+            "CineForm" => ".mov",
+            "EXR Sequence" => "_%05d.exr",
+            "PNG Sequence" => "_%05d.png",
+            _ => ".mp4",
         });
         if ext == ".mp4" && render_options.preserve_other_tracks {
             ext = ".mov";
@@ -1346,29 +1795,50 @@ impl RenderQueue {
 
         let is_gf_data = url.starts_with('{');
 
-        let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (msg, arg): (String, String)| {
-            ::log::warn!("[add_file]: {}", arg);
-            update_model!(this, job_id, itm {
-                itm.error_string = QString::from(arg.clone());
-                itm.status = JobStatus::Error;
-            });
-            this.error(job_id, QString::from(msg), QString::from(arg), QString::default());
-        });
+        let err = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, (msg, arg): (String, String)| {
+                ::log::warn!("[add_file]: {}", arg);
+                update_model!(this, job_id, itm {
+                    itm.error_string = QString::from(arg.clone());
+                    itm.status = JobStatus::Error;
+                });
+                this.error(
+                    job_id,
+                    QString::from(msg),
+                    QString::from(arg),
+                    QString::default(),
+                );
+            },
+        );
         let is_rendering = self.export_metadata.is_none() && self.export_stmap.is_none();
-        let processing_done = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, _: ()| {
-            if let Some(job) = this.jobs.get(&job_id) {
-                if is_rendering && filesystem::exists_in_folder(&job.render_options.output_folder, &job.render_options.output_filename.replace("_%05d", "_00001")) {
-                    let msg = QString::from(format!("file_exists:{}", serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })));
-                    update_model!(this, job_id, itm {
-                        itm.error_string = msg.clone();
-                        itm.status = JobStatus::Error;
-                    });
-                    this.error(job_id, msg, QString::default(), QString::default());
+        let processing_done = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, _: ()| {
+                if let Some(job) = this.jobs.get(&job_id) {
+                    if is_rendering
+                        && filesystem::exists_in_folder(
+                            &job.render_options.output_folder,
+                            &job.render_options
+                                .output_filename
+                                .replace("_%05d", "_00001"),
+                        )
+                    {
+                        let msg = QString::from(format!(
+                            "file_exists:{}",
+                            serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })
+                        ));
+                        update_model!(this, job_id, itm {
+                            itm.error_string = msg.clone();
+                            itm.status = JobStatus::Error;
+                        });
+                        this.error(job_id, msg, QString::default(), QString::default());
+                    }
                 }
-            }
 
-            this.processing_done(job_id, false);
-        });
+                this.processing_done(job_id, false);
+            },
+        );
 
         let suffix = self.default_suffix.to_string();
 
@@ -1376,43 +1846,80 @@ impl RenderQueue {
 
         let additional_data2 = additional_data.clone();
         let additional_data3 = additional_data.clone();
-        if let Ok(additional_data) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
+        if let Ok(additional_data) =
+            serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value>
+        {
             let mut sync_options = serde_json::Value::default();
             if let Some(sync) = additional_data.get("synchronization") {
                 sync_options = sync.clone();
             }
             if let Some(out) = additional_data.get("output") {
-                let has_output_width  = out.as_object().map(|x| x.contains_key("output_width")).unwrap_or_default() && out.get("output_width").and_then(|x| x.as_i64()).unwrap_or_default() > 0;
-                let has_output_height = out.as_object().map(|x| x.contains_key("output_height")).unwrap_or_default() && out.get("output_height").and_then(|x| x.as_i64()).unwrap_or_default() > 0;
+                let has_output_width = out
+                    .as_object()
+                    .map(|x| x.contains_key("output_width"))
+                    .unwrap_or_default()
+                    && out
+                        .get("output_width")
+                        .and_then(|x| x.as_i64())
+                        .unwrap_or_default()
+                        > 0;
+                let has_output_height = out
+                    .as_object()
+                    .map(|x| x.contains_key("output_height"))
+                    .unwrap_or_default()
+                    && out
+                        .get("output_height")
+                        .and_then(|x| x.as_i64())
+                        .unwrap_or_default()
+                        > 0;
 
-                let override_ext = out.get("output_extension").and_then(|x| x.as_str()).map(|x| x.to_owned());
-                if let Ok(mut render_options) = serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions> {
+                let override_ext = out
+                    .get("output_extension")
+                    .and_then(|x| x.as_str())
+                    .map(|x| x.to_owned());
+                if let Ok(mut render_options) =
+                    serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions>
+                {
                     render_options.update_from_json(out);
                     let smoothing = stabilizer.smoothing.read().clone();
                     let params = stabilizer.params.read();
 
                     let stab = StabilizationManager {
-                        params: Arc::new(RwLock::new(core::stabilization_params::StabilizationParams {
-                            fov:                    params.fov,
-                            background:             params.background,
-                            adaptive_zoom_window:   params.adaptive_zoom_window,
-                            lens_correction_amount: params.lens_correction_amount,
-                            light_refraction_coefficient: params.light_refraction_coefficient,
-                            background_mode:           params.background_mode,
-                            background_margin:         params.background_margin,
-                            background_margin_feather: params.background_margin_feather,
-                            current_device:            params.current_device,
-                            video_speed:               params.video_speed,
-                            video_speed_affects_smoothing: params.video_speed_affects_smoothing,
-                            video_speed_affects_zooming:   params.video_speed_affects_zooming,
-                            video_speed_affects_zooming_limit: params.video_speed_affects_zooming_limit,
-                            of_method:                 params.of_method,
-                            adaptive_zoom_method:      params.adaptive_zoom_method,
-                            max_zoom:                  params.max_zoom,
-                            max_zoom_iterations:       params.max_zoom_iterations,
-                            ..Default::default()
+                        params: Arc::new(RwLock::new(
+                            core::stabilization_params::StabilizationParams {
+                                fov: params.fov,
+                                background: params.background,
+                                adaptive_zoom_window: params.adaptive_zoom_window,
+                                lens_correction_amount: params.lens_correction_amount,
+                                light_refraction_coefficient: params.light_refraction_coefficient,
+                                background_mode: params.background_mode,
+                                background_margin: params.background_margin,
+                                background_margin_feather: params.background_margin_feather,
+                                current_device: params.current_device,
+                                video_speed: params.video_speed,
+                                video_speed_affects_smoothing: params.video_speed_affects_smoothing,
+                                video_speed_affects_zooming: params.video_speed_affects_zooming,
+                                video_speed_affects_zooming_limit: params
+                                    .video_speed_affects_zooming_limit,
+                                of_method: params.of_method,
+                                adaptive_zoom_method: params.adaptive_zoom_method,
+                                max_zoom: params.max_zoom,
+                                max_zoom_iterations: params.max_zoom_iterations,
+                                ..Default::default()
+                            },
+                        )),
+                        input_file: Arc::new(RwLock::new(gyroflow_core::InputFile {
+                            url: if is_gf_data {
+                                String::new()
+                            } else {
+                                url.clone()
+                            },
+                            project_file_url: None,
+                            image_sequence_start: 0,
+                            image_sequence_fps: 0.0,
+                            preset_name: None,
+                            preset_output_size: None,
                         })),
-                        input_file: Arc::new(RwLock::new(gyroflow_core::InputFile { url: if is_gf_data { String::new() } else { url.clone() }, project_file_url: None, image_sequence_start: 0, image_sequence_fps: 0.0, preset_name: None, preset_output_size: None })),
                         lens_profile_db: stabilizer.lens_profile_db.clone(),
                         ..Default::default()
                     };
@@ -1422,23 +1929,42 @@ impl RenderQueue {
                     let stab = Arc::new(stab);
 
                     let stab2 = stab.clone();
-                    let loaded = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, render_options: RenderOptions| {
-                        this.add_internal(job_id, stab2.clone(), render_options, additional_data2.clone(), QString::default());
-                    });
-                    let thumb_fetched = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, thumb: QString| {
-                        update_model!(this, job_id, itm { itm.thumbnail_url = thumb; });
-                    });
-                    let apply_preset = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (preset, to_job_id): (String, u32)| {
-                        this.apply_to_all(preset, additional_data3.clone(), to_job_id);
-                        this.added(job_id);
-                    });
+                    let loaded = util::qt_queued_callback_mut(
+                        QPointer::from(self as &Self),
+                        move |this, render_options: RenderOptions| {
+                            this.add_internal(
+                                job_id,
+                                stab2.clone(),
+                                render_options,
+                                additional_data2.clone(),
+                                QString::default(),
+                            );
+                        },
+                    );
+                    let thumb_fetched = util::qt_queued_callback_mut(
+                        QPointer::from(self as &Self),
+                        move |this, thumb: QString| {
+                            update_model!(this, job_id, itm { itm.thumbnail_url = thumb; });
+                        },
+                    );
+                    let apply_preset = util::qt_queued_callback_mut(
+                        QPointer::from(self as &Self),
+                        move |this, (preset, to_job_id): (String, u32)| {
+                            this.apply_to_all(preset, additional_data3.clone(), to_job_id);
+                            this.added(job_id);
+                        },
+                    );
 
                     core::run_threaded(move || {
-                        let fetch_thumb = |video_url: &str, ratio: f64| -> Result<(), rendering::FFmpegError> {
-                            let mut fetched = false;
-                            if !crate::cli::will_run_in_console() { // Don't fetch thumbs in the CLI
-                                let mut proc = rendering::VideoProcessor::from_file(video_url, false, 0, None)?;
-                                proc.on_frame(move |_timestamp_us, input_frame, _output_frame, converter, _rate_control| {
+                        let fetch_thumb =
+                            |video_url: &str, ratio: f64| -> Result<(), rendering::FFmpegError> {
+                                let mut fetched = false;
+                                if !crate::cli::will_run_in_console() {
+                                    // Don't fetch thumbs in the CLI
+                                    let mut proc = rendering::VideoProcessor::from_file(
+                                        video_url, false, 0, None,
+                                    )?;
+                                    proc.on_frame(move |_timestamp_us, input_frame, _output_frame, converter, _rate_control| {
                                     let sf = converter.scale(input_frame, ffmpeg_next::format::Pixel::RGBA, (50.0 * ratio).round() as u32, 50)?;
 
                                     if !fetched {
@@ -1448,18 +1974,23 @@ impl RenderQueue {
 
                                     Ok(())
                                 });
-                                proc.start_decoder_only(vec![(0.0, 50.0)], Arc::new(AtomicBool::new(true)))?;
-                            }
-                            Ok(())
-                        };
+                                    proc.start_decoder_only(
+                                        vec![(0.0, 50.0)],
+                                        Arc::new(AtomicBool::new(true)),
+                                    )?;
+                                }
+                                Ok(())
+                            };
 
                         if is_gf_data || filesystem::get_filename(&url).ends_with(".gyroflow") {
                             if !is_gf_data {
                                 let video_url = || -> Option<String> {
                                     let data = filesystem::read(&url).ok()?;
-                                    let obj: serde_json::Value = serde_json::from_slice(&data).ok()?;
+                                    let obj: serde_json::Value =
+                                        serde_json::from_slice(&data).ok()?;
                                     Some(obj.get("videofile")?.as_str()?.to_string())
-                                }().unwrap_or_default();
+                                }()
+                                .unwrap_or_default();
 
                                 if video_url.is_empty() {
                                     // It's a preset
@@ -1472,41 +2003,70 @@ impl RenderQueue {
 
                             let result = if is_gf_data {
                                 let mut is_preset = false;
-                                stab.import_gyroflow_data(url.as_bytes(), true, None, |_|(), Arc::new(AtomicBool::new(false)), &mut is_preset, false)
+                                stab.import_gyroflow_data(
+                                    url.as_bytes(),
+                                    true,
+                                    None,
+                                    |_| (),
+                                    Arc::new(AtomicBool::new(false)),
+                                    &mut is_preset,
+                                    false,
+                                )
                             } else {
-                                stab.import_gyroflow_file(&url, true, |_|(), Arc::new(AtomicBool::new(false)), false)
+                                stab.import_gyroflow_file(
+                                    &url,
+                                    true,
+                                    |_| (),
+                                    Arc::new(AtomicBool::new(false)),
+                                    false,
+                                )
                             };
 
                             match result {
                                 Ok(obj) => {
                                     if let Some(out) = obj.get("output") {
-                                        if let Ok(mut render_options2) = serde_json::from_value(out.clone()) as serde_json::Result<RenderOptions> {
+                                        if let Ok(mut render_options2) =
+                                            serde_json::from_value(out.clone())
+                                                as serde_json::Result<RenderOptions>
+                                        {
                                             render_options2.update_from_json(out);
                                             loaded(render_options2);
                                         }
                                     }
-                                    if let Some(out) = obj.get("videofile").and_then(|x| x.as_str()) {
+                                    if let Some(out) = obj.get("videofile").and_then(|x| x.as_str())
+                                    {
                                         let ratio = {
                                             let params = stab.params.read();
                                             params.size.0 as f64 / params.size.1 as f64
                                         };
 
                                         if let Err(e) = fetch_thumb(out, ratio) {
-                                            err(("An error occured: %1".to_string(), e.to_string()));
+                                            err((
+                                                "An error occured: %1".to_string(),
+                                                e.to_string(),
+                                            ));
                                         }
                                     }
 
                                     Self::update_sync_settings(&stab, &sync_options);
-                                    if let Some(sync) = obj.get("synchronization").and_then(|x| x.as_object()) {
+                                    if let Some(sync) =
+                                        obj.get("synchronization").and_then(|x| x.as_object())
+                                    {
                                         if !sync.is_empty() {
-                                            Self::update_sync_settings(&stab, &serde_json::Value::Object(sync.clone()));
+                                            Self::update_sync_settings(
+                                                &stab,
+                                                &serde_json::Value::Object(sync.clone()),
+                                            );
                                         }
                                     }
 
                                     processing_done(());
-                                },
+                                }
                                 Err(e) => {
-                                    err(("An error occured: %1".to_string(), format!("Error loading {}: {:?}", url, e)));
+                                    err((
+                                        "An error occured: %1".to_string(),
+                                        format!("Error loading {}: {:?}", url, e),
+                                    ));
                                 }
                             }
                         } else if let Ok(info) = rendering::VideoProcessor::get_video_info(&url) {
@@ -1519,32 +2079,57 @@ impl RenderQueue {
                             if !has_output_height {
                                 render_options.output_height = info.height as usize;
                             }
-                            render_options.output_folder = Self::get_output_folder(&url, &render_options.output_folder);
-                            render_options.output_filename = Self::get_output_filename(&url, &suffix, &render_options, override_ext.as_deref());
+                            render_options.output_folder =
+                                Self::get_output_folder(&url, &render_options.output_folder);
+                            render_options.output_filename = Self::get_output_filename(
+                                &url,
+                                &suffix,
+                                &render_options,
+                                override_ext.as_deref(),
+                            );
 
                             let ratio = info.width as f64 / info.height as f64;
 
                             if info.duration_ms > 0.0 && info.fps > 0.0 {
-
                                 let video_size = (info.width as usize, info.height as usize);
 
-                                stab.init_from_video_data(info.duration_ms, info.fps, info.frame_count, video_size);
+                                stab.init_from_video_data(
+                                    info.duration_ms,
+                                    info.fps,
+                                    info.frame_count,
+                                    video_size,
+                                );
                                 stab.set_video_rotation(((360 - info.rotation) % 360) as f64);
                                 stab.params.write().video_created_at = info.created_at;
 
                                 stab.input_file.write().url = url.clone();
 
                                 let is_main_video = gyro_url.is_empty();
-                                let gyro_url = if !gyro_url.is_empty() { &gyro_url } else { &url };
+                                let gyro_url = if !gyro_url.is_empty() {
+                                    &gyro_url
+                                } else {
+                                    &url
+                                };
                                 {
-                                    if let Ok(mut file) = filesystem::open_file(&gyro_url, false, false) {
+                                    if let Ok(mut file) =
+                                        filesystem::open_file(&gyro_url, false, false)
+                                    {
                                         let filesize = file.size;
-                                        let _ = stab.load_gyro_data(file.get_file(), filesize, &gyro_url, is_main_video, &Default::default(), |_|(), Arc::new(AtomicBool::new(false)));
+                                        let _ = stab.load_gyro_data(
+                                            file.get_file(),
+                                            filesize,
+                                            &gyro_url,
+                                            is_main_video,
+                                            &Default::default(),
+                                            |_| (),
+                                            Arc::new(AtomicBool::new(false)),
+                                        );
                                     }
                                 }
                                 // Prefer telemetry-parser's creation_date_utc over ffmpeg's creation_time
                                 {
-                                    let file_metadata = stab.gyro.read().file_metadata.read().clone();
+                                    let file_metadata =
+                                        stab.gyro.read().file_metadata.read().clone();
                                     if let Some(ref utc_str) = file_metadata.creation_date_utc {
                                         if let Some(ms) = parse_creation_date_to_millis(utc_str) {
                                             stab.params.write().video_created_at = Some(ms);
@@ -1557,30 +2142,52 @@ impl RenderQueue {
                                 let has_builtin_profile = {
                                     let gyro = stab.gyro.read();
                                     let file_metadata = gyro.file_metadata.read();
-                                    file_metadata.lens_profile.as_ref().map(|y| y.is_object()).unwrap_or_default()
+                                    file_metadata
+                                        .lens_profile
+                                        .as_ref()
+                                        .map(|y| y.is_object())
+                                        .unwrap_or_default()
                                 };
 
-                                let id_str = camera_id.as_ref().map(|v| v.get_identifier_for_autoload()).unwrap_or_default();
+                                let id_str = camera_id
+                                    .as_ref()
+                                    .map(|v| v.get_identifier_for_autoload())
+                                    .unwrap_or_default();
                                 if !id_str.is_empty() && !has_builtin_profile {
                                     let db = stab.lens_profile_db.read();
                                     if db.contains_id(&id_str) {
                                         match stab.load_lens_profile(&id_str) {
                                             Ok(_) => {
-                                                let (fr, frd) = { let lens = stab.lens.read(); (lens.frame_readout_time, lens.frame_readout_direction) };
+                                                let (fr, frd) = {
+                                                    let lens = stab.lens.read();
+                                                    (
+                                                        lens.frame_readout_time,
+                                                        lens.frame_readout_direction,
+                                                    )
+                                                };
                                                 if let Some(fr) = fr {
                                                     let mut params = stab.params.write();
                                                     params.frame_readout_time = fr.abs();
-                                                    params.frame_readout_direction = frd.unwrap_or(if fr < 0.0 { ReadoutDirection::BottomToTop } else { ReadoutDirection::TopToBottom });
+                                                    params.frame_readout_direction =
+                                                        frd.unwrap_or(if fr < 0.0 {
+                                                            ReadoutDirection::BottomToTop
+                                                        } else {
+                                                            ReadoutDirection::TopToBottom
+                                                        });
                                                 }
                                             }
                                             Err(e) => {
-                                                err(("An error occured: %1".to_string(), e.to_string()));
+                                                err((
+                                                    "An error occured: %1".to_string(),
+                                                    e.to_string(),
+                                                ));
                                                 return;
                                             }
                                         }
                                     }
                                 }
-                                if let Some(output_dim) = stab.lens.read().output_dimension.clone() {
+                                if let Some(output_dim) = stab.lens.read().output_dimension.clone()
+                                {
                                     if !has_output_width {
                                         render_options.output_width = output_dim.w;
                                     }
@@ -1590,7 +2197,10 @@ impl RenderQueue {
                                 }
 
                                 stab.set_size(video_size.0, video_size.1);
-                                stab.set_output_size(render_options.output_width, render_options.output_height);
+                                stab.set_output_size(
+                                    render_options.output_width,
+                                    render_options.output_height,
+                                );
 
                                 stab.recompute_blocking();
 
@@ -1602,7 +2212,9 @@ impl RenderQueue {
 
                                 // Apply default preset
                                 let default_preset = gyroflow_core::lens_profile_database::LensProfileDatabase::get_path().join("default.gyroflow");
-                                let default_preset2 = gyroflow_core::settings::data_dir().join("lens_profiles").join("default.gyroflow");
+                                let default_preset2 = gyroflow_core::settings::data_dir()
+                                    .join("lens_profiles")
+                                    .join("default.gyroflow");
                                 if let Ok(data) = std::fs::read_to_string(default_preset2) {
                                     apply_preset((data, job_id));
                                 } else if let Ok(data) = std::fs::read_to_string(default_preset) {
@@ -1616,7 +2228,10 @@ impl RenderQueue {
                                 processing_done(());
                             }
                         } else {
-                            err(("An error occured: %1".to_string(), "Unable to read the video file.".to_string()));
+                            err((
+                                "An error occured: %1".to_string(),
+                                "Unable to read the video file.".to_string(),
+                            ));
                         }
                     });
                 }
@@ -1627,58 +2242,108 @@ impl RenderQueue {
         job_id
     }
 
-    fn do_autosync<F: Fn(f64) + Send + Sync + Clone + 'static, F2: Fn((String, String)) + Send + Sync + Clone + 'static>(stab: Arc<StabilizationManager>, processing_cb: F, input_file: &gyroflow_core::InputFile, err: F2, proc_height: i32) {
+    fn do_autosync<
+        F: Fn(f64) + Send + Sync + Clone + 'static,
+        F2: Fn((String, String)) + Send + Sync + Clone + 'static,
+    >(
+        stab: Arc<StabilizationManager>,
+        processing_cb: F,
+        input_file: &gyroflow_core::InputFile,
+        err: F2,
+        proc_height: i32,
+    ) {
         let (url, duration_ms) = {
-            (stab.input_file.read().url.clone(), stab.params.read().duration_ms)
+            (
+                stab.input_file.read().url.clone(),
+                stab.params.read().duration_ms,
+            )
         };
 
         let (has_sync_points, has_accurate_timestamps) = {
             let gyro = stab.gyro.read();
             let md = gyro.file_metadata.read();
-            (!gyro.get_offsets().is_empty(), md.has_accurate_timestamps && !url.to_ascii_lowercase().ends_with(".braw"))
+            (
+                !gyro.get_offsets().is_empty(),
+                md.has_accurate_timestamps && !url.to_ascii_lowercase().ends_with(".braw"),
+            )
         };
         let fps = stab.params.read().fps;
 
         let sync_settings = stab.lens.read().sync_settings.clone().unwrap_or_default();
-        if !has_sync_points && !has_accurate_timestamps && sync_settings.get("do_autosync").and_then(|v| v.as_bool()).unwrap_or_default() {
+        if !has_sync_points
+            && !has_accurate_timestamps
+            && sync_settings
+                .get("do_autosync")
+                .and_then(|v| v.as_bool())
+                .unwrap_or_default()
+        {
             // ----------------------------------------------------------------------------
             // --------------------------------- Autosync ---------------------------------
             processing_cb(0.01);
-            use gyroflow_core::synchronization::AutosyncProcess;
-            use gyroflow_core::synchronization;
             use crate::rendering::VideoProcessor;
+            use gyroflow_core::synchronization;
+            use gyroflow_core::synchronization::AutosyncProcess;
             use itertools::Either;
 
-            if let Ok(mut sync_params) = serde_json::from_value(sync_settings) as serde_json::Result<synchronization::SyncParams> {
+            if let Ok(mut sync_params) = serde_json::from_value(sync_settings)
+                as serde_json::Result<synchronization::SyncParams>
+            {
                 if sync_params.max_sync_points > 0 {
-                    let mut timestamps_fract = stab.get_optimal_sync_points(sync_params.max_sync_points, sync_params.initial_offset * 1000.0);
+                    let mut timestamps_fract = stab.get_optimal_sync_points(
+                        sync_params.max_sync_points,
+                        sync_params.initial_offset * 1000.0,
+                    );
 
                     if timestamps_fract.is_empty() || !sync_params.auto_sync_points {
                         let chunks = 1.0 / sync_params.max_sync_points as f64;
                         let start = chunks / 2.0;
-                        timestamps_fract = (0..sync_params.max_sync_points).map(|i| start + (i as f64 * chunks)).collect();
+                        timestamps_fract = (0..sync_params.max_sync_points)
+                            .map(|i| start + (i as f64 * chunks))
+                            .collect();
 
                         if !sync_params.custom_sync_pattern.is_null() {
-                            let v = Self::resolve_syncpoint_pattern(&sync_params.custom_sync_pattern, duration_ms, fps);
-                            timestamps_fract = v.into_iter().filter(|v| *v <= duration_ms).map(|v| v / duration_ms).collect();
+                            let v = Self::resolve_syncpoint_pattern(
+                                &sync_params.custom_sync_pattern,
+                                duration_ms,
+                                fps,
+                            );
+                            timestamps_fract = v
+                                .into_iter()
+                                .filter(|v| *v <= duration_ms)
+                                .map(|v| v / duration_ms)
+                                .collect();
                         }
                     }
 
                     #[cfg(not(any(target_os = "ios", target_os = "android")))]
-                    let _prevent_system_sleep = keep_awake::inhibit_system("Gyroflow", "Autosyncing");
+                    let _prevent_system_sleep =
+                        keep_awake::inhibit_system("Gyroflow", "Autosyncing");
                     #[cfg(any(target_os = "ios", target_os = "android"))]
-                    let _prevent_system_sleep = keep_awake::inhibit_display("Gyroflow", "Autosyncing");
+                    let _prevent_system_sleep =
+                        keep_awake::inhibit_display("Gyroflow", "Autosyncing");
 
                     let cancel_flag = Arc::new(AtomicBool::new(false));
-                    sync_params.initial_offset     *= 1000.0; // s to ms
+                    sync_params.initial_offset *= 1000.0; // s to ms
                     sync_params.time_per_syncpoint *= 1000.0; // s to ms
-                    sync_params.search_size        *= 1000.0; // s to ms
+                    sync_params.search_size *= 1000.0; // s to ms
 
                     let every_nth_frame = sync_params.every_nth_frame.max(1);
 
                     let size = stab.params.read().size;
 
-                    if let Ok(mut sync) = AutosyncProcess::from_manager(&stab, &timestamps_fract, sync_params, "synchronize".into(), cancel_flag.clone()) {
+                    let sync_failure_detail = synchronization::describe_autosync_init_failure(
+                        &stab,
+                        &timestamps_fract,
+                        &sync_params,
+                    );
+
+                    if let Ok(mut sync) = AutosyncProcess::from_manager(
+                        &stab,
+                        &timestamps_fract,
+                        sync_params,
+                        "synchronize".into(),
+                        cancel_flag.clone(),
+                    ) {
                         let processing_cb2 = processing_cb.clone();
                         sync.on_progress(move |percent, _ready, _total| {
                             processing_cb2(percent);
@@ -1689,13 +2354,24 @@ impl RenderQueue {
                                 let mut gyro = stab2.gyro.write();
                                 gyro.prevent_recompute = true;
                                 for x in offsets {
-                                    ::log::info!("Setting offset at {:.4}: {:.4} (cost {:.4})", x.0, x.1, x.2);
+                                    ::log::info!(
+                                        "Setting offset at {:.4}: {:.4} (cost {:.4})",
+                                        x.0,
+                                        x.1,
+                                        x.2
+                                    );
                                     let new_ts = ((x.0 - x.1) * 1000.0) as i64;
-                                    { // Check the offset
+                                    {
+                                        // Check the offset
                                         let sync_data = stab2.sync_data.read();
                                         if !sync_data.rank.is_empty() {
-                                            let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0)).round() as usize;
-                                            if index < sync_data.rank.len() && sync_data.rank[index] < 13.0 {
+                                            let index = ((x.0 - x.1) as f64
+                                                / (sync_data.ratio * 1000.0))
+                                                .round()
+                                                as usize;
+                                            if index < sync_data.rank.len()
+                                                && sync_data.rank[index] < 13.0
+                                            {
                                                 continue;
                                             }
                                         }
@@ -1712,7 +2388,10 @@ impl RenderQueue {
                             }
                         });
 
-                        let (sw, sh) = ((proc_height as f64 * (size.0 as f64 / size.1 as f64)).round() as u32, proc_height as u32);
+                        let (sw, sh) = (
+                            (proc_height as f64 * (size.0 as f64 / size.1 as f64)).round() as u32,
+                            proc_height as u32,
+                        );
 
                         let gpu_decoding = stab.gpu_decoding.load(SeqCst);
 
@@ -1722,7 +2401,10 @@ impl RenderQueue {
 
                         let mut decoder_options = ffmpeg_next::Dictionary::new();
                         if proc_height > 0 {
-                            decoder_options.set("scale", &format!("{}x{}", (proc_height * 16) / 9, proc_height));
+                            decoder_options.set(
+                                "scale",
+                                &format!("{}x{}", (proc_height * 16) / 9, proc_height),
+                            );
                         }
 
                         if input_file.image_sequence_fps > 0.0 {
@@ -1731,38 +2413,75 @@ impl RenderQueue {
                             } else {
                                 ffmpeg_next::Rational::new(fps.round() as i32, 1)
                             };
-                            decoder_options.set("framerate", &format!("{}/{}", fps.numerator(), fps.denominator()));
+                            decoder_options.set(
+                                "framerate",
+                                &format!("{}/{}", fps.numerator(), fps.denominator()),
+                            );
                         }
                         if input_file.image_sequence_start > 0 {
-                            decoder_options.set("start_number", &format!("{}", input_file.image_sequence_start));
+                            decoder_options.set(
+                                "start_number",
+                                &format!("{}", input_file.image_sequence_start),
+                            );
                         }
                         if cfg!(target_os = "android") {
                             decoder_options.set("ndk_codec", "1");
                         }
                         ::log::debug!("Decoder options: {:?}", decoder_options);
 
-                        match VideoProcessor::from_file(&url, gpu_decoding, 0, Some(decoder_options)) {
+                        match VideoProcessor::from_file(
+                            &url,
+                            gpu_decoding,
+                            0,
+                            Some(decoder_options),
+                        ) {
                             Ok(mut proc) => {
                                 let err2 = err.clone();
                                 let sync2 = sync.clone();
-                                proc.on_frame(move |timestamp_us, input_frame, _output_frame, converter, _rate_control| {
-                                    if abs_frame_no % every_nth_frame == 0 {
-                                        match converter.scale(input_frame, ffmpeg_next::format::Pixel::GRAY8, sw, sh) {
-                                            Ok(small_frame) => {
-                                                let (width, height, stride, pixels) = (small_frame.plane_width(0), small_frame.plane_height(0), small_frame.stride(0), small_frame.data(0));
+                                proc.on_frame(
+                                    move |timestamp_us,
+                                          input_frame,
+                                          _output_frame,
+                                          converter,
+                                          _rate_control| {
+                                        if abs_frame_no % every_nth_frame == 0 {
+                                            match converter.scale(
+                                                input_frame,
+                                                ffmpeg_next::format::Pixel::GRAY8,
+                                                sw,
+                                                sh,
+                                            ) {
+                                                Ok(small_frame) => {
+                                                    let (width, height, stride, pixels) = (
+                                                        small_frame.plane_width(0),
+                                                        small_frame.plane_height(0),
+                                                        small_frame.stride(0),
+                                                        small_frame.data(0),
+                                                    );
 
-                                                sync2.feed_frame(timestamp_us, frame_no, width, height, stride, pixels);
-                                            },
-                                            Err(e) => {
-                                                err2(("An error occured: %1".to_string(), e.to_string()))
+                                                    sync2.feed_frame(
+                                                        timestamp_us,
+                                                        frame_no,
+                                                        width,
+                                                        height,
+                                                        stride,
+                                                        pixels,
+                                                    );
+                                                }
+                                                Err(e) => err2((
+                                                    "An error occured: %1".to_string(),
+                                                    e.to_string(),
+                                                )),
                                             }
+                                            frame_no += 1;
                                         }
-                                        frame_no += 1;
-                                    }
-                                    abs_frame_no += 1;
-                                    Ok(())
-                                });
-                                if let Err(e) = proc.start_decoder_only(sync.get_ranges(), cancel_flag) {
+                                        abs_frame_no += 1;
+                                        Ok(())
+                                    },
+                                );
+                                if let Err(e) =
+                                    proc.start_decoder_only(sync.get_ranges(), cancel_flag)
+                                {
                                     err(("An error occured: %1".to_string(), e.to_string()));
                                 }
 
@@ -1773,7 +2492,14 @@ impl RenderQueue {
                             }
                         };
                     } else {
-                        err(("An error occured: %1".to_string(), "Invalid parameters".to_string()));
+                        let detail = format!(
+                            "Invalid autosync parameters (queue apply): {sync_failure_detail}"
+                        );
+                        ::log::warn!(
+                            "[autosync] queue apply rejected for '{}': {detail}",
+                            filesystem::get_filename(&url)
+                        );
+                        err(("An error occured: %1".to_string(), detail));
                     }
 
                     stab.recompute_blocking();
@@ -1794,23 +2520,36 @@ impl RenderQueue {
                 new_output_options = Some(output.clone());
             }
         }
-        let processing_done = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, job_id: u32| {
-            this.processing_done(job_id, true);
-        });
-        let err = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (job_id, msg): (u32, String)| {
-            this.error(job_id, QString::from(msg), QString::default(), QString::default());
-        });
+        let processing_done =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, job_id: u32| {
+                this.processing_done(job_id, true);
+            });
+        let err = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, (job_id, msg): (u32, String)| {
+                this.error(
+                    job_id,
+                    QString::from(msg),
+                    QString::default(),
+                    QString::default(),
+                );
+            },
+        );
         ::log::debug!("new_output_options: {:?}", &new_output_options);
         let data = data.as_bytes();
         let data_vec = data.to_vec();
         let mut q = self.queue.borrow_mut();
         for (job_id, job) in self.jobs.iter_mut() {
-            if to_job_id > 0 && *job_id != to_job_id { continue; }
+            if to_job_id > 0 && *job_id != to_job_id {
+                continue;
+            }
             if job.queue_index < q.row_count() as usize {
                 let mut itm = q[job.queue_index].clone();
                 if itm.status == JobStatus::Queued {
                     let mut sync_options = serde_json::Value::default();
-                    if let Ok(additional_data) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
+                    if let Ok(additional_data) = serde_json::from_str(&additional_data)
+                        as serde_json::Result<serde_json::Value>
+                    {
                         if let Some(sync) = additional_data.get("synchronization") {
                             sync_options = sync.clone();
                         }
@@ -1822,18 +2561,44 @@ impl RenderQueue {
                     }
                     let job_id = *job_id;
                     if let Some(ref new_output_options) = new_output_options {
-                        let override_ext = new_output_options.get("output_extension").and_then(|x| x.as_str());
+                        let override_ext = new_output_options
+                            .get("output_extension")
+                            .and_then(|x| x.as_str());
                         job.render_options.update_from_json(new_output_options);
-                        job.render_options.output_folder = Self::get_output_folder(&itm.input_file.to_string(), &job.render_options.output_folder);
-                        job.render_options.output_filename = Self::get_output_filename(&itm.input_file.to_string(), &self.default_suffix.to_string(), &job.render_options, override_ext);
+                        job.render_options.output_folder = Self::get_output_folder(
+                            &itm.input_file.to_string(),
+                            &job.render_options.output_folder,
+                        );
+                        job.render_options.output_filename = Self::get_output_filename(
+                            &itm.input_file.to_string(),
+                            &self.default_suffix.to_string(),
+                            &job.render_options,
+                            override_ext,
+                        );
                         if let Some(ref stab) = job.stab {
-                            itm.export_settings = QString::from(job.render_options.settings_string(stab.params.read().fps));
+                            itm.export_settings = QString::from(
+                                job.render_options.settings_string(stab.params.read().fps),
+                            );
                         }
-                        itm.output_filename = QString::from(job.render_options.output_filename.as_str());
-                        itm.output_folder   = QString::from(job.render_options.output_folder.as_str());
-                        itm.display_output_path = QString::from(filesystem::display_folder_filename(job.render_options.output_folder.as_str(), job.render_options.output_filename.as_str()));
-                        if filesystem::exists_in_folder(&job.render_options.output_folder, &job.render_options.output_filename.replace("_%05d", "_00001")) {
-                            let msg = QString::from(format!("file_exists:{}", serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })));
+                        itm.output_filename =
+                            QString::from(job.render_options.output_filename.as_str());
+                        itm.output_folder =
+                            QString::from(job.render_options.output_folder.as_str());
+                        itm.display_output_path =
+                            QString::from(filesystem::display_folder_filename(
+                                job.render_options.output_folder.as_str(),
+                                job.render_options.output_filename.as_str(),
+                            ));
+                        if filesystem::exists_in_folder(
+                            &job.render_options.output_folder,
+                            &job.render_options
+                                .output_filename
+                                .replace("_%05d", "_00001"),
+                        ) {
+                            let msg = QString::from(format!(
+                                "file_exists:{}",
+                                serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })
+                            ));
                             itm.error_string = msg.clone();
                             itm.status = JobStatus::Error;
                             err((job_id, msg.to_string()));
@@ -1842,12 +2607,24 @@ impl RenderQueue {
 
                     if let Some(ref stab) = job.stab {
                         let mut is_preset = false;
-                        if let Err(e) = stab.import_gyroflow_data(&data_vec, true, None, |_|(), Arc::new(AtomicBool::new(false)), &mut is_preset, false) {
+                        if let Err(e) = stab.import_gyroflow_data(
+                            &data_vec,
+                            true,
+                            None,
+                            |_| (),
+                            Arc::new(AtomicBool::new(false)),
+                            &mut is_preset,
+                            false,
+                        ) {
                             ::log::error!("Failed to update queue stab data: {:?}", e);
                         }
 
                         Self::update_sync_settings(stab, &sync_options);
-                        job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                        job.project_data = Self::get_gyroflow_data_internal(
+                            stab,
+                            &job.additional_data,
+                            &job.render_options,
+                        );
                     }
                     processing_done(job_id);
 
@@ -1861,7 +2638,9 @@ impl RenderQueue {
         let folder = QString::from(folder).to_string();
         let filename = filename.to_string();
         for (_id, job) in self.jobs.iter() {
-            if job.render_options.output_folder == folder && job.render_options.output_filename == filename {
+            if job.render_options.output_folder == folder
+                && job.render_options.output_filename == filename
+            {
                 return true;
             }
         }
@@ -1900,17 +2679,37 @@ impl RenderQueue {
     // Keep in sync with Synchronization.qml
     fn resolve_syncpoint_pattern(o: &serde_json::Value, duration: f64, fps: f64) -> Vec<f64> {
         fn resolve_duration_to_ms(d: &serde_json::Value, fps: f64) -> Option<f64> {
-            if !d.is_number() && !d.is_string() { return None; }
-                 if d.is_string() && d.as_str()?.ends_with("ms") { d.as_str()?.strip_suffix("ms")?.parse::<f64>().ok() }
-            else if d.is_string() && d.as_str()?.ends_with('s')  { d.as_str()?.strip_suffix('s')?.parse::<f64>().ok().map(|x| x * 1000.0) }
-            else if d.is_string() { d.as_str()?.parse::<f64>().ok().map(|x| (x / fps) * 1000.0) }
-            else { d.as_f64().map(|x| (x / fps) * 1000.0) }
+            if !d.is_number() && !d.is_string() {
+                return None;
+            }
+            if d.is_string() && d.as_str()?.ends_with("ms") {
+                d.as_str()?.strip_suffix("ms")?.parse::<f64>().ok()
+            } else if d.is_string() && d.as_str()?.ends_with('s') {
+                d.as_str()?
+                    .strip_suffix('s')?
+                    .parse::<f64>()
+                    .ok()
+                    .map(|x| x * 1000.0)
+            } else if d.is_string() {
+                d.as_str()?.parse::<f64>().ok().map(|x| (x / fps) * 1000.0)
+            } else {
+                d.as_f64().map(|x| (x / fps) * 1000.0)
+            }
         }
         fn resolve_item(x: &serde_json::Value, duration: f64, fps: f64) -> Vec<f64> {
             if let Some(x) = x.as_object() {
-                let start = x.get("start").and_then(|y| resolve_duration_to_ms(y, fps)).unwrap_or_default();
-                let interval = x.get("interval").and_then(|y| resolve_duration_to_ms(y, fps)).unwrap_or(duration);
-                let gap = x.get("gap").and_then(|y| resolve_duration_to_ms(y, fps)).unwrap_or_default();
+                let start = x
+                    .get("start")
+                    .and_then(|y| resolve_duration_to_ms(y, fps))
+                    .unwrap_or_default();
+                let interval = x
+                    .get("interval")
+                    .and_then(|y| resolve_duration_to_ms(y, fps))
+                    .unwrap_or(duration);
+                let gap = x
+                    .get("gap")
+                    .and_then(|y| resolve_duration_to_ms(y, fps))
+                    .unwrap_or_default();
                 let mut out = Vec::new();
                 let mut i = start;
                 while i < duration {
@@ -1940,7 +2739,12 @@ impl RenderQueue {
     }
 
     fn update_sync_settings(stab: &StabilizationManager, sync_options: &serde_json::Value) {
-        let mut sync_settings = stab.lens.read().sync_settings.clone().unwrap_or(sync_options.clone());
+        let mut sync_settings = stab
+            .lens
+            .read()
+            .sync_settings
+            .clone()
+            .unwrap_or(sync_options.clone());
         if sync_settings.is_object() && sync_options.is_object() {
             crate::core::util::merge_json(&mut sync_settings, sync_options);
         }
@@ -1963,7 +2767,9 @@ impl RenderQueue {
 
     // T1: Add a gyro file to the list and start background parsing (T2).
     fn add_gyro_file(&mut self, url: String) {
-        let filename = url.rsplit('/').next()
+        let filename = url
+            .rsplit('/')
+            .next()
             .or_else(|| url.rsplit('\\').next())
             .unwrap_or(&url)
             .to_string();
@@ -1976,27 +2782,39 @@ impl RenderQueue {
         self.gyro_files_changed();
 
         // T2: Background metadata parsing
-        let on_parsed = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, result: (Option<i64>, Option<f64>, Option<String>)| {
-            if let Some(info) = this.gyro_files.get_mut(index) {
-                info.created_at_ms = result.0;
-                info.duration_ms = result.1;
-                info.error = result.2.clone();
-                info.parsed = true;
-            }
-            this.gyro_files_changed();
-        });
+        let on_parsed = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, result: (Option<i64>, Option<f64>, Option<String>)| {
+                if let Some(info) = this.gyro_files.get_mut(index) {
+                    info.created_at_ms = result.0;
+                    info.duration_ms = result.1;
+                    info.error = result.2.clone();
+                    info.parsed = true;
+                }
+                this.gyro_files_changed();
+            },
+        );
 
         core::run_threaded(move || {
             let t = std::time::Instant::now();
             match parse_gyro_metadata(&url) {
                 Ok((created_at, duration)) => {
-                    ::log::info!("[add_gyro_file] parsed '{}': {:.1}ms (created_at={}, duration={:.0}ms)",
-                        filesystem::get_filename(&url), t.elapsed().as_secs_f64() * 1000.0, created_at, duration);
+                    ::log::info!(
+                        "[add_gyro_file] parsed '{}': {:.1}ms (created_at={}, duration={:.0}ms)",
+                        filesystem::get_filename(&url),
+                        t.elapsed().as_secs_f64() * 1000.0,
+                        created_at,
+                        duration
+                    );
                     on_parsed((Some(created_at), Some(duration), None));
                 }
                 Err(e) => {
-                    ::log::warn!("[add_gyro_file] parse failed '{}': {:.1}ms {:?}",
-                        filesystem::get_filename(&url), t.elapsed().as_secs_f64() * 1000.0, e);
+                    ::log::warn!(
+                        "[add_gyro_file] parse failed '{}': {:.1}ms {:?}",
+                        filesystem::get_filename(&url),
+                        t.elapsed().as_secs_f64() * 1000.0,
+                        e
+                    );
                     on_parsed((None, None, Some(e.to_string())));
                 }
             }
@@ -2013,7 +2831,10 @@ impl RenderQueue {
         }
         ::log::info!("[add_gyro_folder] 开始扫描文件夹: {}", path);
         let files = self.scan_gyro_folder(dir, 0);
-        ::log::info!("[add_gyro_folder] 扫描完成，共找到 {} 个 _mix.bin 文件", files.len());
+        ::log::info!(
+            "[add_gyro_folder] 扫描完成，共找到 {} 个 _mix.bin 文件",
+            files.len()
+        );
         for f in files {
             let url = filesystem::path_to_url(&f.to_string_lossy());
             self.add_gyro_file(url);
@@ -2022,7 +2843,9 @@ impl RenderQueue {
 
     fn scan_gyro_folder(&self, dir: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
         let mut result = Vec::new();
-        if depth > 3 { return result; }
+        if depth > 3 {
+            return result;
+        }
         match std::fs::read_dir(dir) {
             Ok(entries) => {
                 let mut files: Vec<std::path::PathBuf> = Vec::new();
@@ -2031,7 +2854,8 @@ impl RenderQueue {
                     let p = entry.path();
                     if p.is_dir() {
                         subdirs.push(p);
-                    } else if p.file_name()
+                    } else if p
+                        .file_name()
                         .and_then(|n| n.to_str())
                         .map(|n| n.ends_with("_mix.bin"))
                         .unwrap_or(false)
@@ -2041,8 +2865,13 @@ impl RenderQueue {
                 }
                 files.sort();
                 subdirs.sort();
-                ::log::info!("[scan_gyro_folder] depth={}, dir={}, 文件={}, 子目录={}",
-                    depth, dir.display(), files.len(), subdirs.len());
+                ::log::info!(
+                    "[scan_gyro_folder] depth={}, dir={}, 文件={}, 子目录={}",
+                    depth,
+                    dir.display(),
+                    files.len(),
+                    subdirs.len()
+                );
                 result.extend(files);
                 for d in subdirs {
                     result.extend(self.scan_gyro_folder(&d, depth + 1));
@@ -2082,11 +2911,18 @@ impl RenderQueue {
         // Update project_data for all jobs
         for (_, job) in &mut self.jobs {
             if let Some(ref stab) = job.stab {
-                job.project_data = Self::get_gyroflow_data_internal(stab, &job.additional_data, &job.render_options);
+                job.project_data = Self::get_gyroflow_data_internal(
+                    stab,
+                    &job.additional_data,
+                    &job.render_options,
+                );
             }
         }
 
-        ::log::info!("[clear_gyro_files] cleared {} gyro files and caches", self.gyro_files.len());
+        ::log::info!(
+            "[clear_gyro_files] cleared {} gyro files and caches",
+            self.gyro_files.len()
+        );
         self.gyro_files.clear();
         self.match_results = None;
         self.manual_pairs.clear();
@@ -2095,20 +2931,27 @@ impl RenderQueue {
         self.match_results_changed();
     }
 
-    fn get_gyro_file_count(&self) -> usize { self.gyro_files.len() }
+    fn get_gyro_file_count(&self) -> usize {
+        self.gyro_files.len()
+    }
 
-    fn has_gyro_files(&self) -> bool { !self.gyro_files.is_empty() }
+    fn has_gyro_files(&self) -> bool {
+        !self.gyro_files.is_empty()
+    }
 
     fn get_gyro_file_info_json(&self, index: usize) -> QString {
         if let Some(info) = self.gyro_files.get(index) {
-            QString::from(serde_json::json!({
-                "path": info.path,
-                "filename": info.filename,
-                "created_at_ms": info.created_at_ms,
-                "duration_ms": info.duration_ms,
-                "parsed": info.parsed,
-                "error": info.error,
-            }).to_string())
+            QString::from(
+                serde_json::json!({
+                    "path": info.path,
+                    "filename": info.filename,
+                    "created_at_ms": info.created_at_ms,
+                    "duration_ms": info.duration_ms,
+                    "parsed": info.parsed,
+                    "error": info.error,
+                })
+                .to_string(),
+            )
         } else {
             QString::default()
         }
@@ -2121,7 +2964,8 @@ impl RenderQueue {
         // [queue-render-skip] 重新 match 前，清除所有已有的 Skipped 标记
         {
             let q = self.queue.borrow();
-            let skipped_ids: Vec<u32> = q.iter()
+            let skipped_ids: Vec<u32> = q
+                .iter()
                 .filter(|v| v.status == JobStatus::Skipped)
                 .map(|v| v.job_id)
                 .collect();
@@ -2136,7 +2980,10 @@ impl RenderQueue {
 
         let t0 = std::time::Instant::now();
         let job_ids = self.get_ordered_job_ids();
-        ::log::info!("[batch_match T16] ordered job_ids at match start: {:?}", job_ids);
+        ::log::info!(
+            "[batch_match T16] ordered job_ids at match start: {:?}",
+            job_ids
+        );
 
         // Collect video metadata from jobs
         let mut videos = Vec::new();
@@ -2145,8 +2992,13 @@ impl RenderQueue {
                 if let Some(stab) = &job.stab {
                     let params = stab.params.read();
                     let created_at = params.video_created_at;
-                    ::log::info!("[batch_match T20] video[{}] job_id={}, created_at={:?}, file={}",
-                        vi, job_id, created_at, filesystem::get_filename(&stab.input_file.read().url));
+                    ::log::info!(
+                        "[batch_match T20] video[{}] job_id={}, created_at={:?}, file={}",
+                        vi,
+                        job_id,
+                        created_at,
+                        filesystem::get_filename(&stab.input_file.read().url)
+                    );
                     videos.push(core::gyro_match::VideoMatchInfo {
                         path: stab.input_file.read().url.clone(),
                         duration_ms: params.duration_ms,
@@ -2156,8 +3008,12 @@ impl RenderQueue {
                 } else {
                     // [T20] stab 已释放（渲染完成后），使用 job.video_created_at fallback
                     let created_at = job.video_created_at;
-                    ::log::info!("[batch_match T20] video[{}] job_id={}, created_at={:?} (stab released, using cached)",
-                        vi, job_id, created_at);
+                    ::log::info!(
+                        "[batch_match T20] video[{}] job_id={}, created_at={:?} (stab released, using cached)",
+                        vi,
+                        job_id,
+                        created_at
+                    );
                     videos.push(core::gyro_match::VideoMatchInfo {
                         path: job.render_options.input_url.clone(),
                         duration_ms: 0.0,
@@ -2169,7 +3025,9 @@ impl RenderQueue {
         }
 
         // Collect gyro metadata (only parsed files with valid data)
-        let gyros: Vec<_> = self.gyro_files.iter()
+        let gyros: Vec<_> = self
+            .gyro_files
+            .iter()
             .filter(|g| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
             .map(|g| core::gyro_match::GyroMatchInfo {
                 path: g.path.clone(),
@@ -2177,8 +3035,13 @@ impl RenderQueue {
                 created_at_ms: g.created_at_ms.unwrap(),
             })
             .collect();
-        ::log::info!("[batch_match] collect metadata: {:.1}ms ({} videos, {} gyros parsed/{} total)",
-            t0.elapsed().as_secs_f64() * 1000.0, videos.len(), gyros.len(), self.gyro_files.len());
+        ::log::info!(
+            "[batch_match] collect metadata: {:.1}ms ({} videos, {} gyros parsed/{} total)",
+            t0.elapsed().as_secs_f64() * 1000.0,
+            videos.len(),
+            gyros.len(),
+            self.gyro_files.len()
+        );
 
         // 将 manual_pairs 中的 job_id 转换为当前队列中的 video_index
         // 这样即使 remove/sort 改变了队列顺序，pair 关系仍然正确
@@ -2190,21 +3053,43 @@ impl RenderQueue {
                     video_index,
                     gyro_index: p.gyro_index,
                 });
-                ::log::info!("[batch_match] manual pair: job_id={} -> video_index={}, gyro_index={}", p.job_id, video_index, p.gyro_index);
+                ::log::info!(
+                    "[batch_match] manual pair: job_id={} -> video_index={}, gyro_index={}",
+                    p.job_id,
+                    video_index,
+                    p.gyro_index
+                );
             } else {
-                ::log::warn!("[batch_match] manual pair job_id={} not found in queue, skipping", p.job_id);
+                ::log::warn!(
+                    "[batch_match] manual pair job_id={} not found in queue, skipping",
+                    p.job_id
+                );
             }
         }
-        let manual = if resolved_pairs.is_empty() { None } else { Some(resolved_pairs.as_slice()) };
+        let manual = if resolved_pairs.is_empty() {
+            None
+        } else {
+            Some(resolved_pairs.as_slice())
+        };
 
         let t1 = std::time::Instant::now();
         let mut result = core::gyro_match::batch_match(&videos, &gyros, manual);
-        ::log::info!("[batch_match] algorithm: {:.1}ms (offset={:?}, error={:?})",
-            t1.elapsed().as_secs_f64() * 1000.0, result.global_offset_ms, result.error);
+        ::log::info!(
+            "[batch_match] algorithm: {:.1}ms (offset={:?}, error={:?})",
+            t1.elapsed().as_secs_f64() * 1000.0,
+            result.global_offset_ms,
+            result.error
+        );
         for r in &result.results {
             if r.gyro_index.is_some() {
-                ::log::info!("[batch_match]   video[{}] -> gyro[{}] {:?} range=[{:.0?}..{:.0?}]",
-                    r.video_index, r.gyro_index.unwrap(), r.status, r.gyro_start_ms, r.gyro_end_ms);
+                ::log::info!(
+                    "[batch_match]   video[{}] -> gyro[{}] {:?} range=[{:.0?}..{:.0?}]",
+                    r.video_index,
+                    r.gyro_index.unwrap(),
+                    r.status,
+                    r.gyro_start_ms,
+                    r.gyro_end_ms
+                );
             }
         }
         // [queue-lifecycle T4] 为每个 match result 填入 job_id，以便 remove 后仍能按 job_id 查找
@@ -2216,8 +3101,14 @@ impl RenderQueue {
 
         let t2 = std::time::Instant::now();
         self.apply_match_results();
-        ::log::info!("[batch_match] apply_match_results setup: {:.1}ms", t2.elapsed().as_secs_f64() * 1000.0);
-        ::log::info!("[batch_match] total (main thread): {:.1}ms", t_total.elapsed().as_secs_f64() * 1000.0);
+        ::log::info!(
+            "[batch_match] apply_match_results setup: {:.1}ms",
+            t2.elapsed().as_secs_f64() * 1000.0
+        );
+        ::log::info!(
+            "[batch_match] total (main thread): {:.1}ms",
+            t_total.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     // T4: Apply match results by loading gyro data into each matched job.
@@ -2231,7 +3122,9 @@ impl RenderQueue {
         let job_ids = self.get_ordered_job_ids();
 
         // Build a mapping from parsed gyro index back to gyro_files index.
-        let parsed_gyro_indices: Vec<usize> = self.gyro_files.iter()
+        let parsed_gyro_indices: Vec<usize> = self
+            .gyro_files
+            .iter()
             .enumerate()
             .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
             .map(|(i, _)| i)
@@ -2241,12 +3134,21 @@ impl RenderQueue {
         struct ApplyInfo {
             job_id: u32,
             gyro_files_idx: usize,
+            gyro_path: String,
             gyro_start_ms: Option<f64>,
             gyro_end_ms: Option<f64>,
+            additional_data: String,
             stab: Arc<StabilizationManager>,
         }
+        #[derive(Clone)]
+        struct GyroParseInfo {
+            path: String,
+            fps: f64,
+            size: (usize, usize),
+            requested_ranges: Vec<Option<(f64, f64)>>,
+        }
         let mut apply_items: Vec<ApplyInfo> = Vec::new();
-        let mut unique_gyro_paths: HashMap<usize, (String, f64, (usize, usize), Option<(f64, f64)>)> = HashMap::new();
+        let mut unique_gyro_paths: HashMap<usize, GyroParseInfo> = HashMap::new();
 
         for result in &results {
             let gyro_batch_idx = match result.gyro_index {
@@ -2254,7 +3156,8 @@ impl RenderQueue {
                 None => continue,
             };
             if result.status == core::gyro_match::MatchStatus::Unmatched
-               || result.status == core::gyro_match::MatchStatus::NoCreationTime {
+                || result.status == core::gyro_match::MatchStatus::NoCreationTime
+            {
                 continue;
             }
             let gyro_files_idx = match parsed_gyro_indices.get(gyro_batch_idx) {
@@ -2265,308 +3168,526 @@ impl RenderQueue {
                 Some(&id) => id,
                 None => continue,
             };
-            let (stab, gyro_path) = match self.jobs.get(&job_id) {
+            let requested_range =
+                normalize_time_range_ms(result.gyro_start_ms.zip(result.gyro_end_ms));
+            let (stab, gyro_path, additional_data) = match self.jobs.get(&job_id) {
                 Some(job) => match (&job.stab, self.gyro_files.get(gyro_files_idx)) {
-                    (Some(stab), Some(gyro_info)) => (stab.clone(), gyro_info.path.clone()),
+                    (Some(stab), Some(gyro_info)) => (
+                        stab.clone(),
+                        gyro_info.path.clone(),
+                        prepare_project_additional_data(&job.additional_data, &job.render_options),
+                    ),
                     _ => continue,
                 },
                 None => continue,
             };
 
-            // Record unique gyro files to parse, with merged time range across all videos
-            if let Some(entry) = unique_gyro_paths.get_mut(&gyro_files_idx) {
-                // Merge time range: expand to cover all videos using this gyro file
-                if let (Some(start), Some(end)) = (result.gyro_start_ms, result.gyro_end_ms) {
-                    entry.3 = Some((
-                        entry.3.map_or(start, |(s, _)| s.min(start)),
-                        entry.3.map_or(end, |(_, e)| e.max(end)),
-                    ));
-                }
-            } else {
-                let (fps, size) = {
-                    let params = stab.params.read();
-                    (params.fps, params.size)
-                };
-                let time_range = match (result.gyro_start_ms, result.gyro_end_ms) {
-                    (Some(s), Some(e)) => Some((s, e)),
-                    _ => None,
-                };
-                unique_gyro_paths.insert(gyro_files_idx, (gyro_path.clone(), fps, size, time_range));
-            }
+            unique_gyro_paths
+                .entry(gyro_files_idx)
+                .and_modify(|entry| entry.requested_ranges.push(requested_range))
+                .or_insert_with(|| {
+                    let (fps, size) = {
+                        let params = stab.params.read();
+                        (params.fps, params.size)
+                    };
+                    GyroParseInfo {
+                        path: gyro_path.clone(),
+                        fps,
+                        size,
+                        requested_ranges: vec![requested_range],
+                    }
+                });
 
             apply_items.push(ApplyInfo {
                 job_id,
                 gyro_files_idx,
+                gyro_path,
                 gyro_start_ms: result.gyro_start_ms,
                 gyro_end_ms: result.gyro_end_ms,
+                additional_data,
                 stab,
             });
         }
 
-        // 收集已有缓存的 FileMetadata，传入后台线程避免重复解析
-        let existing_caches: HashMap<usize, Arc<core::gyro_source::FileMetadata>> = unique_gyro_paths.keys()
+        // 收集已有缓存的 telemetry 区间，传入后台线程避免重复解析
+        let existing_caches: HashMap<usize, Vec<CachedGyroMetadataRange>> = unique_gyro_paths
+            .keys()
             .filter_map(|&idx| {
-                self.gyro_files.get(idx)
-                    .and_then(|info| info.cached_metadata.as_ref().map(|md| (idx, Arc::clone(md))))
+                self.gyro_files.get(idx).and_then(|info| {
+                    (!info.cached_metadata_ranges.is_empty())
+                        .then(|| (idx, info.cached_metadata_ranges.clone()))
+                })
             })
             .collect();
 
-        // 缓存回写回调：将后台线程新解析的 FileMetadata 存回 GyroFileInfo
-        let on_cache = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (idx, md): (usize, Arc<core::gyro_source::FileMetadata>)| {
-            if let Some(info) = this.gyro_files.get_mut(idx) {
-                let imu_count = md.raw_imu.len();
-                info.cached_metadata = Some(md);
-                ::log::info!("[apply_match] cached metadata stored for gyro {idx}, {imu_count} IMU samples");
-            }
-        });
-
         // Run heavy work on background thread
-        let on_done = util::qt_queued_callback_mut(QPointer::from(self as &Self), move |this, (applied_job_ids, t_bg_end): (Vec<u32>, std::time::Instant)| {
-            let t_cb = std::time::Instant::now();
-            ::log::info!("[apply_match] bg->main callback delay: {:.1}ms", (t_cb - t_bg_end).as_secs_f64() * 1000.0);
+        let on_done = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this,
+                  (applied_job_ids, exported_project_data, cache_updates, t_bg_end): (
+                Vec<u32>,
+                Vec<(u32, String)>,
+                Vec<(usize, Vec<CachedGyroMetadataRange>)>,
+                std::time::Instant,
+            )| {
+                let t_cb = std::time::Instant::now();
+                ::log::info!(
+                    "[apply_match] bg->main callback delay: {:.1}ms",
+                    (t_cb - t_bg_end).as_secs_f64() * 1000.0
+                );
 
-            // T9: Enable autosync with dynamic sync parameters for matched jobs
-            // (must run before T8 so sync_settings are included in project_data)
-            let t_sync = std::time::Instant::now();
-            for &job_id in &applied_job_ids {
-                if let Some(job) = this.jobs.get(&job_id) {
-                    if let Some(ref stab) = job.stab {
-                        let (duration_s, fps) = {
-                            let params = stab.params.read();
-                            (params.duration_ms / 1000.0, params.fps)
-                        };
-                        // Dynamic max_sync_points based on video duration (matching NiYien Tool logic)
-                        let max_sync_points = if duration_s > 30.0 * 60.0 { 5 }
-                            else if duration_s > 10.0 * 60.0 { 4 }
-                            else { 2 };
-                        // Dynamic every_nth_frame based on fps
-                        let every_nth_frame = ((fps / 49.0).floor() as i64).max(1);
-
-                        // Use Complementary integration for sync (will switch to VQF after sync)
-                        stab.gyro.write().integration_method = 1; // Complementary
-
-                        let mut lens = stab.lens.write();
-                        // Always overwrite sync_settings with correct parameters for batch match
-                        let new_sync = serde_json::json!({
-                            "do_autosync": true,
-                            "max_sync_points": max_sync_points,
-                            "search_size": 5.0,
-                            "time_per_syncpoint": 2.5,
-                            "every_nth_frame": every_nth_frame,
-                            "initial_offset": 0.0,
-                            "pose_method": 0,
-                            "of_method": 2,
-                            "offset_method": 2
-                        });
-                        lens.sync_settings = Some(new_sync);
-                        drop(lens);
-                        // Re-integrate gyro data with the new integration method
-                        stab.recompute_gyro();
+                let t_cache_write = std::time::Instant::now();
+                for (idx, new_entries) in cache_updates {
+                    if let Some(info) = this.gyro_files.get_mut(idx) {
+                        merge_metadata_cache_entries(&mut info.cached_metadata_ranges, new_entries);
+                        if let Some(best_entry) =
+                            info.cached_metadata_ranges.iter().max_by(|a, b| {
+                                time_range_span_ms(a.range_ms)
+                                    .partial_cmp(&time_range_span_ms(b.range_ms))
+                                    .unwrap_or(std::cmp::Ordering::Equal)
+                            })
+                        {
+                            info.cached_metadata = Some(Arc::clone(&best_entry.metadata));
+                        }
+                        ::log::info!(
+                            "[apply_match] cached metadata ranges stored for gyro {}: {} entries",
+                            idx,
+                            info.cached_metadata_ranges.len()
+                        );
                     }
                 }
-            }
-            ::log::info!("[apply_match] sync settings: {:.1}ms ({} jobs)", t_sync.elapsed().as_secs_f64() * 1000.0, applied_job_ids.len());
+                ::log::info!(
+                    "[apply_match] cache writeback: {:.1}ms",
+                    t_cache_write.elapsed().as_secs_f64() * 1000.0
+                );
 
-            // [T20] Update project_data with embedded gyro data (WithGyroData mode)
-            // 因为 file_url 已清空，Simple 模式不包含 raw_imu 数据，
-            // 必须使用 WithGyroData 模式将 gyro 数据内嵌到 project_data 中。
-            let t_export = std::time::Instant::now();
-            for &job_id in &applied_job_ids {
-                if let Some(job) = this.jobs.get_mut(&job_id) {
-                    if let Some(ref stab) = job.stab {
-                        // [Fix1] 将匹配的 gyro 文件名写入 file_url，使导出 JSON 的 filepath 不为空
-                        if let Some(ref mr) = this.match_results {
-                            let parsed_indices: Vec<usize> = this.gyro_files.iter()
-                                .enumerate()
-                                .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
-                                .map(|(i, _)| i).collect();
-                            if let Some(gyro_fn) = mr.results.iter()
-                                .find(|r| r.job_id == Some(job_id))
-                                .and_then(|r| r.gyro_index)
-                                .and_then(|gi| parsed_indices.get(gi).copied())
-                                .and_then(|fi| this.gyro_files.get(fi))
-                                .map(|g| g.filename.as_str())
-                            {
-                                stab.gyro.write().file_url = gyro_fn.to_string();
-                            }
-                        }
-
-                        let mut additional_data = job.additional_data.clone();
-                        if let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value> {
-                            if let Ok(output) = serde_json::to_value(&job.render_options) {
-                                obj.insert("output".into(), output);
-                            }
-                            additional_data = serde_json::to_string(&obj).unwrap_or_default();
-                        }
-                        if let Ok(data) = stab.export_gyroflow_data(core::GyroflowProjectType::WithGyroData, &additional_data, None) {
-                            ::log::info!("[apply_match T20] job {} project_data updated with embedded gyro data ({} bytes)", job_id, data.len());
-                            job.project_data = Some(data);
-                        }
+                let t_project = std::time::Instant::now();
+                for (job_id, data) in exported_project_data {
+                    if let Some(job) = this.jobs.get_mut(&job_id) {
+                        job.project_data = Some(data);
                     }
                 }
-            }
-            ::log::info!("[apply_match] export_gyroflow_data: {:.1}ms ({} jobs)", t_export.elapsed().as_secs_f64() * 1000.0, applied_job_ids.len());
+                ::log::info!(
+                    "[apply_match] project_data update: {:.1}ms ({} jobs)",
+                    t_project.elapsed().as_secs_f64() * 1000.0,
+                    applied_job_ids.len()
+                );
 
-            let t_sort = std::time::Instant::now();
-            this.sort_jobs_by_created_at();
-            ::log::info!("[apply_match] sort_jobs_by_created_at: {:.1}ms", t_sort.elapsed().as_secs_f64() * 1000.0);
+                let t_sort = std::time::Instant::now();
+                this.sort_jobs_by_created_at();
+                ::log::info!(
+                    "[apply_match] sort_jobs_by_created_at: {:.1}ms",
+                    t_sort.elapsed().as_secs_f64() * 1000.0
+                );
 
-            let t_cache = std::time::Instant::now();
-            // [T22] 排序完成后构建 sameGyro 缓存
-            this.build_same_gyro_cache();
-            ::log::info!("[apply_match] build_same_gyro_cache: {:.1}ms", t_cache.elapsed().as_secs_f64() * 1000.0);
+                let t_cache = std::time::Instant::now();
+                // [T22] 排序完成后构建 sameGyro 缓存
+                this.build_same_gyro_cache();
+                ::log::info!(
+                    "[apply_match] build_same_gyro_cache: {:.1}ms",
+                    t_cache.elapsed().as_secs_f64() * 1000.0
+                );
 
-            // [queue-render-skip] 标记无陀螺仪数据和校准对的视频为 Skipped
-            if let Some(ref match_results) = this.match_results {
-                let job_ids_now = this.get_ordered_job_ids();
-                for result in &match_results.results {
-                    let job_id = result.job_id
-                        .or_else(|| job_ids_now.get(result.video_index).copied());
-                    if let Some(job_id) = job_id {
-                        match result.status {
-                            core::gyro_match::MatchStatus::Unmatched
-                            | core::gyro_match::MatchStatus::NoCreationTime => {
-                                update_model!(this, job_id, itm {
-                                    itm.skip_reason = QString::from("no_gyro");
-                                    itm.status = JobStatus::Skipped;
-                                });
-                                ::log::info!("[queue-render-skip] job {} marked Skipped (no_gyro)", job_id);
+                // [queue-render-skip] 标记无陀螺仪数据和校准对的视频为 Skipped
+                if let Some(ref match_results) = this.match_results {
+                    let job_ids_now = this.get_ordered_job_ids();
+                    for result in &match_results.results {
+                        let job_id = result
+                            .job_id
+                            .or_else(|| job_ids_now.get(result.video_index).copied());
+                        if let Some(job_id) = job_id {
+                            match result.status {
+                                core::gyro_match::MatchStatus::Unmatched
+                                | core::gyro_match::MatchStatus::NoCreationTime => {
+                                    update_model!(this, job_id, itm {
+                                        itm.skip_reason = QString::from("no_gyro");
+                                        itm.status = JobStatus::Skipped;
+                                    });
+                                    ::log::info!(
+                                        "[queue-render-skip] job {} marked Skipped (no_gyro)",
+                                        job_id
+                                    );
+                                }
+                                core::gyro_match::MatchStatus::CalibrationPair => {
+                                    update_model!(this, job_id, itm {
+                                        itm.skip_reason = QString::from("calibration");
+                                        itm.status = JobStatus::Skipped;
+                                    });
+                                    ::log::info!(
+                                        "[queue-render-skip] job {} marked Skipped (calibration)",
+                                        job_id
+                                    );
+                                }
+                                _ => {}
                             }
-                            core::gyro_match::MatchStatus::CalibrationPair => {
-                                update_model!(this, job_id, itm {
-                                    itm.skip_reason = QString::from("calibration");
-                                    itm.status = JobStatus::Skipped;
-                                });
-                                ::log::info!("[queue-render-skip] job {} marked Skipped (calibration)", job_id);
-                            }
-                            _ => {}
                         }
                     }
                 }
-            }
 
-            this.match_results_changed();
-            // [T22] 数据加载全部完成，触发专用信号（遮罩在此关闭）
-            this.match_apply_finished();
-            ::log::info!("[apply_match] on_done callback total: {:.1}ms", t_cb.elapsed().as_secs_f64() * 1000.0);
-        });
+                this.match_results_changed();
+                // [T22] 数据加载全部完成，触发专用信号（遮罩在此关闭）
+                this.match_apply_finished();
+                ::log::info!(
+                    "[apply_match] on_done callback total: {:.1}ms",
+                    t_cb.elapsed().as_secs_f64() * 1000.0
+                );
+            },
+        );
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
 
-            // T3: Cache parsed gyro FileMetadata by gyro_files_idx
-            // 优先使用已有缓存，未缓存的才从文件解析
-            let mut gyro_cache: HashMap<usize, core::gyro_source::FileMetadata> = HashMap::new();
+            // 按区间缓存 telemetry 数据，避免超大 gyro 文件被整段解析
+            let mut gyro_cache = existing_caches.clone();
             let mut cache_hit = 0usize;
-            let mut cache_miss = 0usize;
-            for (gyro_files_idx, (gyro_path, fps, size, time_range)) in &unique_gyro_paths {
-                if let Some(cached) = existing_caches.get(gyro_files_idx) {
-                    ::log::info!("[apply_match] using cached metadata for gyro {gyro_files_idx}");
-                    gyro_cache.insert(*gyro_files_idx, cached.as_ref().clone());
-                    cache_hit += 1;
+            let mut parsed_chunks = 0usize;
+            let mut cache_updates: Vec<(usize, Vec<CachedGyroMetadataRange>)> = Vec::new();
+            let mut parse_jobs: Vec<(usize, GyroParseInfo)> =
+                unique_gyro_paths.into_iter().collect();
+            parse_jobs.sort_by_key(|(idx, _)| *idx);
+
+            for (gyro_files_idx, parse_info) in parse_jobs {
+                let existing_entries = gyro_cache.get(&gyro_files_idx).cloned().unwrap_or_default();
+                let parse_requests =
+                    build_parse_requests(&parse_info.requested_ranges, &existing_entries);
+                if parse_requests.is_empty() {
+                    if !existing_entries.is_empty() {
+                        cache_hit += 1;
+                        ::log::info!(
+                            "[apply_match] using cached metadata for gyro {} ({} cached ranges)",
+                            gyro_files_idx,
+                            existing_entries.len()
+                        );
+                    }
                     continue;
                 }
-                ::log::info!("[apply_match] parsing gyro file {gyro_files_idx} time_range={:?}", time_range);
-                let t_parse = std::time::Instant::now();
-                if let Ok(mut file) = filesystem::open_file(gyro_path, false, false) {
-                    let filesize = file.size;
-                    let load_options = core::gyro_source::FileLoadOptions {
-                        time_range_ms: *time_range,
-                        ..Default::default()
-                    };
-                    if let Ok(md) = GyroSource::parse_telemetry_file(
-                        file.get_file(), filesize, gyro_path,
-                        &load_options, *size, *fps, |_| {},
-                        Arc::new(AtomicBool::new(false))
-                    ) {
-                        ::log::info!("[apply_match] parse gyro[{}] '{}': {:.1}ms ({} imu samples)",
-                            gyro_files_idx, filesystem::get_filename(gyro_path),
-                            t_parse.elapsed().as_secs_f64() * 1000.0, md.raw_imu.len());
-                        // 通过回调将新解析的数据缓存回 GyroFileInfo
-                        on_cache((*gyro_files_idx, Arc::new(md.clone())));
-                        gyro_cache.insert(*gyro_files_idx, md);
-                        cache_miss += 1;
-                    }
-                }
-            }
-            ::log::info!("[apply_match] all gyro parsing: {:.1}ms ({} unique files, {} cached, {} parsed)",
-                t_bg.elapsed().as_secs_f64() * 1000.0, gyro_cache.len(), cache_hit, cache_miss);
 
-            // Apply cached gyro data to each job
-            let t_apply = std::time::Instant::now();
-            for (idx, item) in apply_items.iter().enumerate() {
-                let t_item = std::time::Instant::now();
-                if let Some(cached_md) = gyro_cache.get(&item.gyro_files_idx) {
-                    let mut md = cached_md.clone();
-                    md.per_frame_time_offsets.clear();
+                let total_chunks = parse_requests.len();
+                ::log::info!(
+                    "[apply_match] parsing gyro file {} mode={} chunks={}",
+                    gyro_files_idx,
+                    if total_chunks > 1 {
+                        "chunked"
+                    } else if parse_requests[0].is_none() {
+                        "full"
+                    } else {
+                        "range"
+                    },
+                    total_chunks
+                );
 
-                    // Backup and restore lens data from main video
-                    let backup_lens_data = {
-                        let gyro = item.stab.gyro.read();
-                        let fm = gyro.file_metadata.read();
-                        (fm.lens_params.clone(), fm.lens_positions.clone(), fm.lens_profile.clone())
-                    };
-                    if md.lens_params.is_empty()    { md.lens_params    = backup_lens_data.0.clone(); }
-                    if md.lens_positions.is_empty() { md.lens_positions  = backup_lens_data.1.clone(); }
-                    if md.lens_profile.is_none()    { md.lens_profile    = backup_lens_data.2.clone(); }
-
-                    {
-                        let params = item.stab.params.read();
-                        let mut gyro = item.stab.gyro.write();
-                        gyro.init_from_params(&params);
-                        gyro.clear();
-                        // [T18] gyro.file_url 清空：数据已通过 load_from_telemetry 加载到内存，
-                        // 不引用外部文件，.gyroflow 项目保存时 filepath 为空。
-                        gyro.file_url = String::new();
-                        ::log::info!("[apply_match T18] job[{}] gyro.file_url cleared (data in memory)", idx);
-                        gyro.file_metadata = Default::default();
-                        drop(params);
-                        gyro.load_from_telemetry(md);
-                        gyro.file_load_options = Default::default();
-
-                        // Trim gyro data to the matched time range.
-                        // When telemetry-parser zero-bases timestamps (accurate_ts=false),
-                        // the parsed data starts at ~0ms instead of the original gyro file time.
-                        // The trim ranges from assign_gyro_to_videos are in the original time domain,
-                        // so we must subtract the time_range start offset to align with the zero-based data.
-                        if let (Some(start), Some(end)) = (item.gyro_start_ms, item.gyro_end_ms) {
-                            let range_offset_ms = unique_gyro_paths.get(&item.gyro_files_idx)
-                                .and_then(|(_path, _fps, _size, tr)| tr.map(|(s, _)| s.max(0.0)))
-                                .unwrap_or(0.0);
-                            let adjusted_start = start - range_offset_ms;
-                            let adjusted_end = end - range_offset_ms;
-                            let start_us = (adjusted_start * 1000.0) as i64;
-                            let end_us = (adjusted_end * 1000.0) as i64;
-                            gyro.trim_to_time_range(start_us, end_us);
-
-                            // Zero-base timestamps in file_metadata so that .gyroflow export has correct timestamps
-                            {
-                                let mut fm = gyro.file_metadata.write();
-                                if let Some(first_ts_ms) = fm.raw_imu.first().map(|x| x.timestamp_ms) {
-                                    let first_ts_us = (first_ts_ms * 1000.0).round() as i64;
-                                    for sample in fm.raw_imu.iter_mut() {
-                                        sample.timestamp_ms -= first_ts_ms;
-                                    }
-                                    fm.quaternions = fm.quaternions.iter()
-                                        .map(|(&k, &v)| (k - first_ts_us, v))
-                                        .collect();
+                let mut new_entries = Vec::new();
+                let mut fallback_to_full_parse = false;
+                for (chunk_idx, request_range) in parse_requests.into_iter().enumerate() {
+                    let t_parse = std::time::Instant::now();
+                    match filesystem::open_file(&parse_info.path, false, false) {
+                        Ok(mut file) => {
+                            let filesize = file.size;
+                            let load_options = core::gyro_source::FileLoadOptions {
+                                time_range_ms: request_range,
+                                ..Default::default()
+                            };
+                            match GyroSource::parse_telemetry_file(
+                                file.get_file(),
+                                filesize,
+                                &parse_info.path,
+                                &load_options,
+                                parse_info.size,
+                                parse_info.fps,
+                                |_| {},
+                                Arc::new(AtomicBool::new(false)),
+                            ) {
+                                Ok(md) => {
+                                    ::log::info!(
+                                        "[apply_match] parse gyro[{}] chunk {}/{} '{}': {:.1}ms ({} imu samples, {} quats, range={:?})",
+                                        gyro_files_idx,
+                                        chunk_idx + 1,
+                                        total_chunks,
+                                        filesystem::get_filename(&parse_info.path),
+                                        t_parse.elapsed().as_secs_f64() * 1000.0,
+                                        md.raw_imu.len(),
+                                        md.quaternions.len(),
+                                        request_range
+                                    );
+                                    new_entries.push(CachedGyroMetadataRange {
+                                        range_ms: request_range,
+                                        metadata: Arc::new(md),
+                                    });
+                                    parsed_chunks += 1;
+                                }
+                                Err(e) => {
+                                    fallback_to_full_parse = true;
+                                    ::log::warn!(
+                                        "[apply_match] parse gyro[{}] chunk {}/{} '{}' failed after {:.1}ms, fallback to full parse: {} (range={:?})",
+                                        gyro_files_idx,
+                                        chunk_idx + 1,
+                                        total_chunks,
+                                        filesystem::get_filename(&parse_info.path),
+                                        t_parse.elapsed().as_secs_f64() * 1000.0,
+                                        e,
+                                        request_range
+                                    );
+                                    break;
                                 }
                             }
                         }
+                        Err(e) => {
+                            fallback_to_full_parse = true;
+                            ::log::warn!(
+                                "[apply_match] open gyro[{}] '{}' failed after {:.1}ms, fallback to full parse: {} (range={:?})",
+                                gyro_files_idx,
+                                filesystem::get_filename(&parse_info.path),
+                                t_parse.elapsed().as_secs_f64() * 1000.0,
+                                e,
+                                request_range
+                            );
+                            break;
+                        }
                     }
+                }
 
-                    item.stab.invalidate_smoothing();
-                    item.stab.invalidate_zooming();
-                    ::log::info!("[apply_match] job[{}] gyro[{}] clone+load+trim: {:.1}ms",
-                        idx, item.gyro_files_idx, t_item.elapsed().as_secs_f64() * 1000.0);
+                if fallback_to_full_parse
+                    && !existing_entries
+                        .iter()
+                        .any(|entry| entry.range_ms.is_none())
+                {
+                    let t_parse = std::time::Instant::now();
+                    match filesystem::open_file(&parse_info.path, false, false) {
+                        Ok(mut file) => {
+                            let filesize = file.size;
+                            match GyroSource::parse_telemetry_file(
+                                file.get_file(),
+                                filesize,
+                                &parse_info.path,
+                                &Default::default(),
+                                parse_info.size,
+                                parse_info.fps,
+                                |_| {},
+                                Arc::new(AtomicBool::new(false)),
+                            ) {
+                                Ok(md) => {
+                                    ::log::info!(
+                                        "[apply_match] parse gyro[{}] fallback full '{}': {:.1}ms ({} imu samples, {} quats)",
+                                        gyro_files_idx,
+                                        filesystem::get_filename(&parse_info.path),
+                                        t_parse.elapsed().as_secs_f64() * 1000.0,
+                                        md.raw_imu.len(),
+                                        md.quaternions.len()
+                                    );
+                                    new_entries.clear();
+                                    new_entries.push(CachedGyroMetadataRange {
+                                        range_ms: None,
+                                        metadata: Arc::new(md),
+                                    });
+                                    parsed_chunks += 1;
+                                }
+                                Err(e) => {
+                                    ::log::warn!(
+                                        "[apply_match] parse gyro[{}] fallback full '{}' failed after {:.1}ms: {}",
+                                        gyro_files_idx,
+                                        filesystem::get_filename(&parse_info.path),
+                                        t_parse.elapsed().as_secs_f64() * 1000.0,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            ::log::warn!(
+                                "[apply_match] open gyro[{}] fallback full '{}' failed after {:.1}ms: {}",
+                                gyro_files_idx,
+                                filesystem::get_filename(&parse_info.path),
+                                t_parse.elapsed().as_secs_f64() * 1000.0,
+                                e
+                            );
+                        }
+                    }
+                }
+
+                if !new_entries.is_empty() {
+                    merge_metadata_cache_entries(
+                        gyro_cache.entry(gyro_files_idx).or_default(),
+                        new_entries.clone(),
+                    );
+                    cache_updates.push((gyro_files_idx, new_entries));
                 }
             }
-            ::log::info!("[apply_match] all jobs apply: {:.1}ms ({} items)", t_apply.elapsed().as_secs_f64() * 1000.0, apply_items.len());
-            ::log::info!("[apply_match] background total: {:.1}ms", t_bg.elapsed().as_secs_f64() * 1000.0);
+            ::log::info!(
+                "[apply_match] all gyro parsing: {:.1}ms ({} gyro files, {} cached, {} parsed chunks)",
+                t_bg.elapsed().as_secs_f64() * 1000.0,
+                gyro_cache.len(),
+                cache_hit,
+                parsed_chunks
+            );
+
+            // Apply cached gyro data to each job
+            let t_apply = std::time::Instant::now();
+            let gyro_cache = Arc::new(gyro_cache);
+            apply_items.par_iter().enumerate().for_each(|(idx, item)| {
+                let t_item = std::time::Instant::now();
+                let requested_range = normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
+                if let Some(cached_entries) = gyro_cache.get(&item.gyro_files_idx) {
+                    if let Some(cache_entry) =
+                        select_best_cached_metadata(cached_entries, requested_range)
+                    {
+                        let adjusted_range_ms = get_adjusted_match_range_ms(
+                            cache_entry.range_ms,
+                            item.gyro_start_ms,
+                            item.gyro_end_ms,
+                        );
+                        let mut md =
+                            clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
+                        let imu_count = md.raw_imu.len();
+                        let quat_count = md.quaternions.len();
+
+                        let backup_lens_data = {
+                            let gyro = item.stab.gyro.read();
+                            let fm = gyro.file_metadata.read();
+                            (
+                                fm.lens_params.clone(),
+                                fm.lens_positions.clone(),
+                                fm.lens_profile.clone(),
+                            )
+                        };
+                        if md.lens_params.is_empty() {
+                            md.lens_params = backup_lens_data.0.clone();
+                        }
+                        if md.lens_positions.is_empty() {
+                            md.lens_positions = backup_lens_data.1.clone();
+                        }
+                        if md.lens_profile.is_none() {
+                            md.lens_profile = backup_lens_data.2.clone();
+                        }
+
+                        {
+                            let params = item.stab.params.read();
+                            let mut gyro = item.stab.gyro.write();
+                            gyro.init_from_params(&params);
+                            gyro.clear();
+                            gyro.file_url = String::new();
+                            ::log::info!(
+                                "[apply_match T18] job[{}] gyro.file_url cleared (data in memory)",
+                                idx
+                            );
+                            gyro.file_metadata = Default::default();
+                            drop(params);
+                            gyro.load_from_telemetry(md);
+                            gyro.file_load_options = Default::default();
+                        }
+
+                        item.stab.invalidate_smoothing();
+                        item.stab.invalidate_zooming();
+                        ::log::info!(
+                            "[apply_match] job[{}] gyro[{}] slice+load: {:.1}ms ({} imu, {} quats, range={:?}, cache_range={:?})",
+                            idx,
+                            item.gyro_files_idx,
+                            t_item.elapsed().as_secs_f64() * 1000.0,
+                            imu_count,
+                            quat_count,
+                            adjusted_range_ms,
+                            cache_entry.range_ms
+                        );
+                    } else {
+                        ::log::warn!(
+                            "[apply_match] no cached metadata matched gyro[{}] range={:?}",
+                            item.gyro_files_idx,
+                            requested_range
+                        );
+                    }
+                }
+            });
+            ::log::info!(
+                "[apply_match] all jobs apply: {:.1}ms ({} items)",
+                t_apply.elapsed().as_secs_f64() * 1000.0,
+                apply_items.len()
+            );
+
+            let t_sync = std::time::Instant::now();
+            apply_items.par_iter().for_each(|item| {
+                let (duration_s, fps) = {
+                    let params = item.stab.params.read();
+                    (params.duration_ms / 1000.0, params.fps)
+                };
+                let max_sync_points = if duration_s > 30.0 * 60.0 {
+                    5
+                } else if duration_s > 10.0 * 60.0 {
+                    4
+                } else {
+                    2
+                };
+                let every_nth_frame = ((fps / 49.0).floor() as i64).max(1);
+
+                item.stab.gyro.write().integration_method = 1; // Complementary
+
+                let mut lens = item.stab.lens.write();
+                lens.sync_settings = Some(serde_json::json!({
+                    "do_autosync": true,
+                    "max_sync_points": max_sync_points,
+                    "search_size": 5.0,
+                    "time_per_syncpoint": 2.5,
+                    "every_nth_frame": every_nth_frame,
+                    "initial_offset": 0.0,
+                    "pose_method": 0,
+                    "of_method": 2,
+                    "offset_method": 2
+                }));
+                drop(lens);
+                item.stab.recompute_gyro();
+            });
+            ::log::info!(
+                "[apply_match] sync settings: {:.1}ms ({} jobs)",
+                t_sync.elapsed().as_secs_f64() * 1000.0,
+                apply_items.len()
+            );
+
+            let t_export = std::time::Instant::now();
+            let exported_project_data: Vec<(u32, String)> = apply_items
+                .par_iter()
+                .filter_map(|item| {
+                    item.stab.gyro.write().file_url = item.gyro_path.clone();
+                    match item.stab.export_gyroflow_data(
+                        core::GyroflowProjectType::WithGyroData,
+                        &item.additional_data,
+                        None,
+                    ) {
+                        Ok(data) => {
+                            ::log::info!(
+                                "[apply_match T20] job {} project_data updated with embedded gyro data ({} bytes)",
+                                item.job_id,
+                                data.len()
+                            );
+                            Some((item.job_id, data))
+                        }
+                        Err(e) => {
+                            ::log::warn!(
+                                "[apply_match T20] job {} export_gyroflow_data failed: {}",
+                                item.job_id,
+                                e
+                            );
+                            None
+                        }
+                    }
+                })
+                .collect();
+            ::log::info!(
+                "[apply_match] export_gyroflow_data: {:.1}ms ({} jobs)",
+                t_export.elapsed().as_secs_f64() * 1000.0,
+                exported_project_data.len()
+            );
+
+            ::log::info!(
+                "[apply_match] background total: {:.1}ms",
+                t_bg.elapsed().as_secs_f64() * 1000.0
+            );
 
             let applied_job_ids: Vec<u32> = apply_items.iter().map(|item| item.job_id).collect();
             let t_bg_end = std::time::Instant::now();
-            on_done((applied_job_ids, t_bg_end));
+            on_done((
+                applied_job_ids,
+                exported_project_data,
+                cache_updates,
+                t_bg_end,
+            ));
         });
     }
 
@@ -2579,8 +3700,7 @@ impl RenderQueue {
                     .map(|i| {
                         let job_id = queue[i as usize].job_id;
                         // [T20] 使用 job.video_created_at（stab 释放后仍可用）
-                        let created_at = self.jobs.get(&job_id)
-                            .and_then(|j| j.video_created_at);
+                        let created_at = self.jobs.get(&job_id).and_then(|j| j.video_created_at);
                         (job_id, created_at)
                     })
                     .collect()
@@ -2594,18 +3714,20 @@ impl RenderQueue {
 
         // Sort: timestamped ascending, no-timestamp at end
         // Rust sort_by 是稳定排序，相同创建时间的 job 保持原有相对顺序
-        items.sort_by(|a, b| {
-            match (a.1, b.1) {
-                (Some(ta), Some(tb)) => ta.cmp(&tb),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
+        items.sort_by(|a, b| match (a.1, b.1) {
+            (Some(ta), Some(tb)) => ta.cmp(&tb),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
         });
 
         // Reorder the queue model to match the sorted order
         let sorted_ids: Vec<_> = items.iter().map(|(id, _)| *id).collect();
-        ::log::info!("[queue-lifecycle T16] sort_jobs_by_created_at: before={:?}, after={:?}", before_ids, sorted_ids);
+        ::log::info!(
+            "[queue-lifecycle T16] sort_jobs_by_created_at: before={:?}, after={:?}",
+            before_ids,
+            sorted_ids
+        );
         self.reorder_queue_by_job_ids(&sorted_ids);
         self.queue_changed();
     }
@@ -2618,14 +3740,15 @@ impl RenderQueue {
     fn reorder_queue_by_job_ids(&mut self, desired_order: &[u32]) {
         if let Ok(mut q) = self.queue.try_borrow_mut() {
             let count = q.row_count() as usize;
-            if desired_order.len() != count { return; }
+            if desired_order.len() != count {
+                return;
+            }
 
             // Build a position lookup from current queue
             for target_pos in 0..count {
                 let desired_id = desired_order[target_pos];
                 // Find where this job_id currently is in the queue
-                let current_pos = (target_pos..count)
-                    .find(|&i| q[i].job_id == desired_id);
+                let current_pos = (target_pos..count).find(|&i| q[i].job_id == desired_id);
                 if let Some(current_pos) = current_pos {
                     if current_pos != target_pos {
                         let itm = q[current_pos].clone();
@@ -2649,19 +3772,28 @@ impl RenderQueue {
     fn manual_set_calibration_pair(&mut self, job_id: u32, gyro_index: usize) {
         // 直接按 job_id 去重并存储，不依赖队列位置
         self.manual_pairs.retain(|p| p.job_id != job_id);
-        self.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+        self.manual_pairs
+            .push(core::gyro_match::ManualCalibrationPair {
+                job_id,
+                video_index: 0, // 占位，batch_match 前会重新计算
+                gyro_index,
+            });
+        ::log::info!(
+            "[manual_pair] set: job_id={}, gyro_index={}",
             job_id,
-            video_index: 0, // 占位，batch_match 前会重新计算
-            gyro_index,
-        });
-        ::log::info!("[manual_pair] set: job_id={}, gyro_index={}", job_id, gyro_index);
+            gyro_index
+        );
         self.match_results_changed();
     }
 
     fn get_manual_pair_gyro_index(&self, job_id: u32) -> i32 {
         // 直接按 job_id 查找，不再依赖队列位置
         if let Some(pair) = self.manual_pairs.iter().find(|p| p.job_id == job_id) {
-            ::log::debug!("[manual_pair] found: job_id={}, gyro_index={}", job_id, pair.gyro_index);
+            ::log::debug!(
+                "[manual_pair] found: job_id={}, gyro_index={}",
+                job_id,
+                pair.gyro_index
+            );
             return pair.gyro_index as i32;
         }
         -1
@@ -2680,10 +3812,16 @@ impl RenderQueue {
         // [queue-lifecycle T4] 按 job_id 查找 match result，避免 remove 后 video_index 错位
         let ordered_ids = self.get_ordered_job_ids();
         if let Some(ref mut results) = self.match_results {
-            let idx = results.results.iter().position(|r| r.job_id == Some(job_id))
+            let idx = results
+                .results
+                .iter()
+                .position(|r| r.job_id == Some(job_id))
                 .or_else(|| {
                     let video_index = ordered_ids.iter().position(|&id| id == job_id)?;
-                    results.results.iter().position(|r| r.video_index == video_index)
+                    results
+                        .results
+                        .iter()
+                        .position(|r| r.video_index == video_index)
                 });
             if let Some(i) = idx {
                 results.results[i].status = core::gyro_match::MatchStatus::Unmatched;
@@ -2712,27 +3850,36 @@ impl RenderQueue {
     fn get_match_status_json(&self, job_id: u32) -> QString {
         // [queue-lifecycle T4] 优先按 job_id 查找（remove 后 video_index 会错位）
         if let Some(ref results) = self.match_results {
-            let r_opt = results.results.iter().find(|r| r.job_id == Some(job_id))
+            let r_opt = results
+                .results
+                .iter()
+                .find(|r| r.job_id == Some(job_id))
                 .or_else(|| {
                     // 兼容 fallback：job_id 未设置时按 video_index 查找
                     let job_ids = self.get_ordered_job_ids();
                     let video_index = job_ids.iter().position(|&id| id == job_id)?;
-                    results.results.iter().find(|r| r.video_index == video_index)
+                    results
+                        .results
+                        .iter()
+                        .find(|r| r.video_index == video_index)
                 });
             if let Some(r) = r_opt {
-                let parsed_gyro_indices: Vec<usize> = self.gyro_files.iter()
+                let parsed_gyro_indices: Vec<usize> = self
+                    .gyro_files
+                    .iter()
                     .enumerate()
-                    .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+                    .filter(|(_, g)| {
+                        g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some()
+                    })
                     .map(|(i, _)| i)
                     .collect();
 
-                let matched_gyro = r.gyro_index
+                let matched_gyro = r
+                    .gyro_index
                     .and_then(|gi| parsed_gyro_indices.get(gi))
                     .and_then(|&fi| self.gyro_files.get(fi));
 
-                let gyro_filename = matched_gyro
-                    .map(|g| g.filename.as_str())
-                    .unwrap_or("");
+                let gyro_filename = matched_gyro.map(|g| g.filename.as_str()).unwrap_or("");
 
                 // [queue-batch-streamline T1] 从 cached_metadata 提取 detected_source
                 let detected_source = matched_gyro
@@ -2740,14 +3887,17 @@ impl RenderQueue {
                     .and_then(|md| md.detected_source.as_deref())
                     .unwrap_or("");
 
-                return QString::from(serde_json::json!({
-                    "status": format!("{:?}", r.status),
-                    "gyro_index": r.gyro_index,
-                    "gyro_start_ms": r.gyro_start_ms,
-                    "gyro_end_ms": r.gyro_end_ms,
-                    "gyro_filename": gyro_filename,
-                    "detected_source": detected_source,
-                }).to_string());
+                return QString::from(
+                    serde_json::json!({
+                        "status": format!("{:?}", r.status),
+                        "gyro_index": r.gyro_index,
+                        "gyro_start_ms": r.gyro_start_ms,
+                        "gyro_end_ms": r.gyro_end_ms,
+                        "gyro_filename": gyro_filename,
+                        "detected_source": detected_source,
+                    })
+                    .to_string(),
+                );
             }
         }
         QString::from("{\"status\":\"none\"}")
@@ -2761,7 +3911,10 @@ impl RenderQueue {
         let pos = match job_ids.iter().position(|&id| id == job_id) {
             Some(p) => p as i32,
             None => {
-                ::log::debug!("[queue-gyro-column T9] get_adjacent_gyro_index: job_id {} not found in ordered_ids", job_id);
+                ::log::debug!(
+                    "[queue-gyro-column T9] get_adjacent_gyro_index: job_id {} not found in ordered_ids",
+                    job_id
+                );
                 return -1;
             }
         };
@@ -2772,10 +3925,16 @@ impl RenderQueue {
         let adj_job_id = job_ids[adj_pos as usize];
         // 复用 get_match_status_json 的查找逻辑：优先按 job_id，再 fallback video_index
         let result = if let Some(ref results) = self.match_results {
-            let r_opt = results.results.iter().find(|r| r.job_id == Some(adj_job_id))
+            let r_opt = results
+                .results
+                .iter()
+                .find(|r| r.job_id == Some(adj_job_id))
                 .or_else(|| {
                     let video_index = job_ids.iter().position(|&id| id == adj_job_id)?;
-                    results.results.iter().find(|r| r.video_index == video_index)
+                    results
+                        .results
+                        .iter()
+                        .find(|r| r.video_index == video_index)
                 });
             if let Some(r) = r_opt {
                 r.gyro_index.map(|gi| gi as i32).unwrap_or(-1)
@@ -2785,7 +3944,13 @@ impl RenderQueue {
         } else {
             -1
         };
-        ::log::debug!("[queue-gyro-column T9] get_adjacent_gyro_index: job_id={}, offset={}, adj_job_id={}, result={}", job_id, offset, adj_job_id, result);
+        ::log::debug!(
+            "[queue-gyro-column T9] get_adjacent_gyro_index: job_id={}, offset={}, adj_job_id={}, result={}",
+            job_id,
+            offset,
+            adj_job_id,
+            result
+        );
         result
     }
 
@@ -2798,10 +3963,16 @@ impl RenderQueue {
     fn get_gyro_index_for_job(&self, job_id: u32) -> i32 {
         if let Some(ref results) = self.match_results {
             let job_ids = self.get_ordered_job_ids();
-            let r_opt = results.results.iter().find(|r| r.job_id == Some(job_id))
+            let r_opt = results
+                .results
+                .iter()
+                .find(|r| r.job_id == Some(job_id))
                 .or_else(|| {
                     let video_index = job_ids.iter().position(|&id| id == job_id)?;
-                    results.results.iter().find(|r| r.video_index == video_index)
+                    results
+                        .results
+                        .iter()
+                        .find(|r| r.video_index == video_index)
                 });
             if let Some(r) = r_opt {
                 return r.gyro_index.map(|gi| gi as i32).unwrap_or(-1);
@@ -2815,7 +3986,13 @@ impl RenderQueue {
         let my_idx = self.get_gyro_index_for_job(job_id);
         let prev_idx = self.get_adjacent_gyro_index(job_id, -1);
         let result = my_idx >= 0 && my_idx == prev_idx;
-        ::log::debug!("[T15] is_same_gyro_as_prev: job_id={}, my_idx={}, prev_idx={}, result={}", job_id, my_idx, prev_idx, result);
+        ::log::debug!(
+            "[T15] is_same_gyro_as_prev: job_id={}, my_idx={}, prev_idx={}, result={}",
+            job_id,
+            my_idx,
+            prev_idx,
+            result
+        );
         result
     }
 
@@ -2824,7 +4001,13 @@ impl RenderQueue {
         let my_idx = self.get_gyro_index_for_job(job_id);
         let next_idx = self.get_adjacent_gyro_index(job_id, 1);
         let result = my_idx >= 0 && my_idx == next_idx;
-        ::log::debug!("[T15] is_same_gyro_as_next: job_id={}, my_idx={}, next_idx={}, result={}", job_id, my_idx, next_idx, result);
+        ::log::debug!(
+            "[T15] is_same_gyro_as_next: job_id={}, my_idx={}, next_idx={}, result={}",
+            job_id,
+            my_idx,
+            next_idx,
+            result
+        );
         result
     }
 
@@ -2833,27 +4016,344 @@ impl RenderQueue {
         self.same_gyro_cache.clear();
         let job_ids = self.get_ordered_job_ids();
         // 收集每个 job 的 gyro_index
-        let gyro_indices: Vec<i32> = job_ids.iter()
+        let gyro_indices: Vec<i32> = job_ids
+            .iter()
             .map(|&jid| self.get_gyro_index_for_job(jid))
             .collect();
         for (i, &jid) in job_ids.iter().enumerate() {
             let my_idx = gyro_indices[i];
             let prev_same = i > 0 && my_idx >= 0 && gyro_indices[i - 1] == my_idx;
-            let next_same = i + 1 < gyro_indices.len() && my_idx >= 0 && gyro_indices[i + 1] == my_idx;
+            let next_same =
+                i + 1 < gyro_indices.len() && my_idx >= 0 && gyro_indices[i + 1] == my_idx;
             self.same_gyro_cache.insert(jid, (prev_same, next_same));
         }
-        ::log::info!("[T22] build_same_gyro_cache: {} jobs cached", self.same_gyro_cache.len());
+        ::log::info!(
+            "[T22] build_same_gyro_cache: {} jobs cached",
+            self.same_gyro_cache.len()
+        );
     }
 
     // [T22] 从缓存读取 sameGyroAsPrev（不实时查询，不受 queue 状态影响）
     fn get_cached_same_gyro_prev(&self, job_id: u32) -> bool {
-        self.same_gyro_cache.get(&job_id).map(|&(prev, _)| prev).unwrap_or(false)
+        self.same_gyro_cache
+            .get(&job_id)
+            .map(|&(prev, _)| prev)
+            .unwrap_or(false)
     }
 
     // [T22] 从缓存读取 sameGyroAsNext（不实时查询，不受 queue 状态影响）
     fn get_cached_same_gyro_next(&self, job_id: u32) -> bool {
-        self.same_gyro_cache.get(&job_id).map(|&(_, next)| next).unwrap_or(false)
+        self.same_gyro_cache
+            .get(&job_id)
+            .map(|&(_, next)| next)
+            .unwrap_or(false)
     }
+}
+
+const APPLY_MATCH_PARSE_CHUNK_MAX_SPAN_MS: f64 = 120_000.0;
+const APPLY_MATCH_PARSE_CHUNK_MERGE_GAP_MS: f64 = 15_000.0;
+const APPLY_MATCH_RANGE_EPSILON_MS: f64 = 0.5;
+
+fn normalize_time_range_ms(range: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    range.map(|(start, end)| {
+        let start = start.max(0.0);
+        let end = end.max(start);
+        (start, end)
+    })
+}
+
+fn time_range_span_ms(range: Option<(f64, f64)>) -> f64 {
+    range
+        .map(|(start, end)| (end - start).max(0.0))
+        .unwrap_or(f64::INFINITY)
+}
+
+fn metadata_cache_covers(
+    cached_range_ms: Option<(f64, f64)>,
+    requested_range_ms: Option<(f64, f64)>,
+) -> bool {
+    match (
+        normalize_time_range_ms(cached_range_ms),
+        normalize_time_range_ms(requested_range_ms),
+    ) {
+        (None, _) => true,
+        (Some(_), None) => false,
+        (Some((cached_start, cached_end)), Some((requested_start, requested_end))) => {
+            cached_start <= requested_start + APPLY_MATCH_RANGE_EPSILON_MS
+                && cached_end + APPLY_MATCH_RANGE_EPSILON_MS >= requested_end
+        }
+    }
+}
+
+fn merge_metadata_cache_entries(
+    cache_entries: &mut Vec<CachedGyroMetadataRange>,
+    new_entries: impl IntoIterator<Item = CachedGyroMetadataRange>,
+) {
+    for mut entry in new_entries {
+        entry.range_ms = normalize_time_range_ms(entry.range_ms);
+        if cache_entries
+            .iter()
+            .any(|existing| metadata_cache_covers(existing.range_ms, entry.range_ms))
+        {
+            continue;
+        }
+        if entry.range_ms.is_none() {
+            cache_entries.clear();
+            cache_entries.push(entry);
+            continue;
+        }
+        cache_entries.retain(|existing| !metadata_cache_covers(entry.range_ms, existing.range_ms));
+        cache_entries.push(entry);
+    }
+    cache_entries.sort_by(|a, b| {
+        let ka = a
+            .range_ms
+            .map(|(start, _)| start)
+            .unwrap_or(f64::NEG_INFINITY);
+        let kb = b
+            .range_ms
+            .map(|(start, _)| start)
+            .unwrap_or(f64::NEG_INFINITY);
+        ka.partial_cmp(&kb).unwrap_or(std::cmp::Ordering::Equal)
+    });
+}
+
+fn build_parse_requests(
+    requested_ranges: &[Option<(f64, f64)>],
+    existing_entries: &[CachedGyroMetadataRange],
+) -> Vec<Option<(f64, f64)>> {
+    if requested_ranges.is_empty() {
+        return Vec::new();
+    }
+
+    let normalized_requests: Vec<Option<(f64, f64)>> = requested_ranges
+        .iter()
+        .copied()
+        .map(normalize_time_range_ms)
+        .collect();
+
+    if normalized_requests.iter().any(|range| range.is_none()) {
+        if existing_entries
+            .iter()
+            .any(|entry| entry.range_ms.is_none())
+        {
+            return Vec::new();
+        }
+        return vec![None];
+    }
+
+    let mut uncovered_ranges: Vec<(f64, f64)> = normalized_requests
+        .into_iter()
+        .flatten()
+        .filter(|range| {
+            !existing_entries
+                .iter()
+                .any(|entry| metadata_cache_covers(entry.range_ms, Some(*range)))
+        })
+        .collect();
+
+    if uncovered_ranges.is_empty() {
+        return Vec::new();
+    }
+
+    uncovered_ranges.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut merged_ranges = Vec::new();
+    let mut current = uncovered_ranges[0];
+    for range in uncovered_ranges.into_iter().skip(1) {
+        let gap_ms = range.0 - current.1;
+        let merged_end = current.1.max(range.1);
+        let merged_span_ms = merged_end - current.0;
+        if gap_ms <= APPLY_MATCH_PARSE_CHUNK_MERGE_GAP_MS
+            && merged_span_ms <= APPLY_MATCH_PARSE_CHUNK_MAX_SPAN_MS
+        {
+            current.1 = merged_end;
+        } else {
+            merged_ranges.push(current);
+            current = range;
+        }
+    }
+    merged_ranges.push(current);
+
+    merged_ranges.into_iter().map(Some).collect()
+}
+
+fn select_best_cached_metadata<'a>(
+    cache_entries: &'a [CachedGyroMetadataRange],
+    requested_range_ms: Option<(f64, f64)>,
+) -> Option<&'a CachedGyroMetadataRange> {
+    let requested_range_ms = normalize_time_range_ms(requested_range_ms);
+    cache_entries
+        .iter()
+        .filter(|entry| metadata_cache_covers(entry.range_ms, requested_range_ms))
+        .min_by(|a, b| {
+            time_range_span_ms(a.range_ms)
+                .partial_cmp(&time_range_span_ms(b.range_ms))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+fn prepare_project_additional_data(
+    additional_data: &str,
+    render_options: &RenderOptions,
+) -> String {
+    let mut additional_data = additional_data.to_owned();
+    if let Ok(serde_json::Value::Object(mut obj)) =
+        serde_json::from_str(&additional_data) as serde_json::Result<serde_json::Value>
+    {
+        if let Ok(output) = serde_json::to_value(render_options) {
+            obj.insert("output".into(), output);
+        }
+        additional_data = serde_json::to_string(&obj).unwrap_or_default();
+    }
+    additional_data
+}
+
+fn get_adjusted_match_range_ms(
+    merged_time_range: Option<(f64, f64)>,
+    gyro_start_ms: Option<f64>,
+    gyro_end_ms: Option<f64>,
+) -> Option<(f64, f64)> {
+    let (start, end) = match normalize_time_range_ms(gyro_start_ms.zip(gyro_end_ms)) {
+        Some(range) => range,
+        _ => return None,
+    };
+    let range_offset_ms = merged_time_range.map(|(s, _)| s.max(0.0)).unwrap_or(0.0);
+    let adjusted_start = (start - range_offset_ms).max(0.0);
+    let adjusted_end = (end - range_offset_ms).max(adjusted_start);
+    Some((adjusted_start, adjusted_end))
+}
+
+fn update_metadata_duration(md: &mut core::gyro_source::FileMetadata) {
+    if !md.raw_imu.is_empty() {
+        let len = md.raw_imu.len() as f64;
+        let first = md
+            .raw_imu
+            .first()
+            .map(|x| x.timestamp_ms)
+            .unwrap_or_default();
+        let last = md
+            .raw_imu
+            .last()
+            .map(|x| x.timestamp_ms)
+            .unwrap_or_default();
+        md.duration_ms = (last - first) * ((len + 1.0) / len.max(1.0));
+    } else if !md.quaternions.is_empty() {
+        let len = md.quaternions.len() as f64;
+        let first = md
+            .quaternions
+            .iter()
+            .next()
+            .map(|(k, _)| *k as f64 / 1000.0)
+            .unwrap_or_default();
+        let last = md
+            .quaternions
+            .iter()
+            .next_back()
+            .map(|(k, _)| *k as f64 / 1000.0)
+            .unwrap_or_default();
+        md.duration_ms = (last - first) * ((len + 1.0) / len.max(1.0));
+    } else {
+        md.duration_ms = 0.0;
+    }
+}
+
+fn zero_base_metadata(md: &mut core::gyro_source::FileMetadata) {
+    let first_ts_ms = md
+        .raw_imu
+        .first()
+        .map(|x| x.timestamp_ms)
+        .or_else(|| {
+            md.quaternions
+                .iter()
+                .next()
+                .map(|(k, _)| *k as f64 / 1000.0)
+        })
+        .or_else(|| {
+            md.gravity_vectors
+                .as_ref()
+                .and_then(|gv| gv.iter().next().map(|(k, _)| *k as f64 / 1000.0))
+        })
+        .or_else(|| {
+            md.image_orientations
+                .as_ref()
+                .and_then(|io| io.iter().next().map(|(k, _)| *k as f64 / 1000.0))
+        });
+
+    if let Some(first_ts_ms) = first_ts_ms {
+        let first_ts_us = (first_ts_ms * 1000.0).round() as i64;
+        for sample in md.raw_imu.iter_mut() {
+            sample.timestamp_ms -= first_ts_ms;
+        }
+        md.quaternions = md
+            .quaternions
+            .iter()
+            .map(|(&k, &v)| (k - first_ts_us, v))
+            .collect();
+        if let Some(gravity_vectors) = md.gravity_vectors.take() {
+            md.gravity_vectors = Some(
+                gravity_vectors
+                    .iter()
+                    .map(|(&k, &v)| (k - first_ts_us, v))
+                    .collect(),
+            );
+        }
+        if let Some(image_orientations) = md.image_orientations.take() {
+            md.image_orientations = Some(
+                image_orientations
+                    .iter()
+                    .map(|(&k, &v)| (k - first_ts_us, v))
+                    .collect(),
+            );
+        }
+    }
+    update_metadata_duration(md);
+}
+
+fn clone_metadata_for_job(
+    cached_md: &core::gyro_source::FileMetadata,
+    adjusted_range_ms: Option<(f64, f64)>,
+) -> core::gyro_source::FileMetadata {
+    let mut md = if let Some((start_ms, end_ms)) = adjusted_range_ms {
+        let start_us = (start_ms * 1000.0).round() as i64;
+        let end_us = (end_ms * 1000.0).round() as i64;
+        let mut md = cached_md.thin();
+        md.per_frame_time_offsets.clear();
+        md.raw_imu = cached_md
+            .raw_imu
+            .iter()
+            .filter(|sample| sample.timestamp_ms >= start_ms && sample.timestamp_ms <= end_ms)
+            .cloned()
+            .collect();
+        md.quaternions = cached_md
+            .quaternions
+            .range(start_us..=end_us)
+            .map(|(&k, &v)| (k, v))
+            .collect();
+        md.gravity_vectors = cached_md.gravity_vectors.as_ref().map(|gravity_vectors| {
+            gravity_vectors
+                .range(start_us..=end_us)
+                .map(|(&k, &v)| (k, v))
+                .collect()
+        });
+        md.image_orientations = cached_md
+            .image_orientations
+            .as_ref()
+            .map(|image_orientations| {
+                image_orientations
+                    .range(start_us..=end_us)
+                    .map(|(&k, &v)| (k, v))
+                    .collect()
+            });
+        zero_base_metadata(&mut md);
+        md
+    } else {
+        let mut md = cached_md.clone();
+        md.per_frame_time_offsets.clear();
+        md
+    };
+    update_metadata_duration(&mut md);
+    md
 }
 
 /// Parse telemetry creation date string "yyyy:MM:dd HH:mm:ss" or "yyyy:MM:dd HH:mm:ss.SSS" to Unix milliseconds.
@@ -2884,12 +4384,19 @@ fn parse_gyro_metadata(url: &str) -> Result<(i64, f64), Box<dyn std::error::Erro
         ..Default::default()
     };
     let md = GyroSource::parse_telemetry_file(
-        file.get_file(), filesize, url,
-        &options, (0, 0), 0.0,
-        |_| {}, Arc::new(AtomicBool::new(false))
+        file.get_file(),
+        filesize,
+        url,
+        &options,
+        (0, 0),
+        0.0,
+        |_| {},
+        Arc::new(AtomicBool::new(false)),
     )?;
 
-    let created_at = md.creation_date_utc.as_ref()
+    let created_at = md
+        .creation_date_utc
+        .as_ref()
         .and_then(|s| parse_creation_date_to_millis(s))
         .ok_or("No creation date found in gyro file")?;
 

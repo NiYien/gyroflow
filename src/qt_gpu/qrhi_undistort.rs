@@ -1,33 +1,56 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use gyroflow_core::{ stabilization::ProcessedInfo, gpu::Buffers };
-use qml_video_rs::video_player::MDKPlayerWrapper;
-use std::sync::Arc;
 use crate::core::StabilizationManager;
 use crate::core::stabilization::RGBA8;
 use cpp::*;
-use qmetaobject::{ QSize, QString };
+use gyroflow_core::{gpu::Buffers, stabilization::ProcessedInfo};
+use qmetaobject::{QSize, QString};
+use qml_video_rs::video_player::MDKPlayerWrapper;
+use std::sync::Arc;
 
 cpp! {{
     #include "src/qt_gpu/qrhi_undistort.cpp"
 }}
 
-pub fn render(mdkplayer: &MDKPlayerWrapper, timestamp: f64, frame: usize, width: u32, height: u32, stab: Arc<StabilizationManager>, buffers: &mut Buffers) -> Option<ProcessedInfo> {
-    if stab.prevent_recompute.load(std::sync::atomic::Ordering::SeqCst) { return None; }
+pub fn render(
+    mdkplayer: &MDKPlayerWrapper,
+    timestamp: f64,
+    frame: usize,
+    width: u32,
+    height: u32,
+    stab: Arc<StabilizationManager>,
+    buffers: &mut Buffers,
+) -> Option<ProcessedInfo> {
+    if stab
+        .prevent_recompute
+        .load(std::sync::atomic::Ordering::SeqCst)
+    {
+        return None;
+    }
 
     let mut timestamp_us = (timestamp * 1000.0).round() as i64;
     let mut output_size = QSize::default();
     let mut shader_path = QString::default();
 
     if let Some(p) = stab.params.try_read() {
-        output_size = QSize { width: p.output_size.0 as u32, height: p.output_size.1 as u32 };
+        output_size = QSize {
+            width: p.output_size.0 as u32,
+            height: p.output_size.1 as u32,
+        };
         shader_path = {
             let lens = stab.lens.read();
             let distortion_model = lens.distortion_model.as_deref().unwrap_or("opencv_fisheye");
-            let digital_lens = lens.digital_lens.as_ref().map(|x| format!("_{}", x)).unwrap_or_else(|| "".into());
+            let digital_lens = lens
+                .digital_lens
+                .as_ref()
+                .map(|x| format!("_{}", x))
+                .unwrap_or_else(|| "".into());
 
-            QString::from(format!(":/src/qt_gpu/compiled/undistort_{}{}.frag.qsb", distortion_model, digital_lens))
+            QString::from(format!(
+                ":/src/qt_gpu/compiled/undistort_{}{}.frag.qsb",
+                distortion_model, digital_lens
+            ))
         };
 
         if let Some(scale) = p.fps_scale {
@@ -53,10 +76,17 @@ pub fn render(mdkplayer: &MDKPlayerWrapper, timestamp: f64, frame: usize, width:
             let mesh_data_ptr = itm.mesh_data.as_ptr();
             let mesh_data_len = itm.mesh_data.len() as u32;
 
-            let size_for_rs = if (itm.kernel_params.flags & 16) == 16 { itm.kernel_params.width } else { itm.kernel_params.height } as u32;
+            let size_for_rs = if (itm.kernel_params.flags & 16) == 16 {
+                itm.kernel_params.width
+            } else {
+                itm.kernel_params.height
+            } as u32;
 
             let canvas_size = undist.drawing.get_size();
-            let canvas_size = QSize { width: canvas_size.0 as u32, height: canvas_size.1 as u32 };
+            let canvas_size = QSize {
+                width: canvas_size.0 as u32,
+                height: canvas_size.1 as u32,
+            };
 
             let ok = cpp!(unsafe [mdkplayer as "MDKPlayerWrapper *", output_size as "QSize", shader_path as "QString", width as "uint32_t", height as "uint32_t", params_ptr as "uint8_t*", matrices_ptr as "uint8_t*", canvas_ptr as "uint8_t*", mesh_data_ptr as "float*", mesh_data_len as "uint32_t", matrices_len as "uint32_t", params_len as "uint32_t", canvas_len as "uint32_t", canvas_size as "QSize", size_for_rs as "uint32_t"] -> bool as "bool" {
                 if (!mdkplayer || !mdkplayer->mdkplayer || shader_path.isEmpty() || output_size.isEmpty()) return false;
@@ -103,7 +133,7 @@ pub fn render(mdkplayer: &MDKPlayerWrapper, timestamp: f64, frame: usize, width:
                     fov: itm.fov,
                     minimal_fov: itm.minimal_fov,
                     focal_length: itm.focal_length,
-                    backend: "Qt RHI"
+                    backend: "Qt RHI",
                 });
             }
         }

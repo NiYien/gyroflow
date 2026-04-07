@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use qmetaobject::*;
-use cpp::*;
-use std::cell::RefCell;
 use crate::controller::Controller;
 use crate::util;
+use cpp::*;
+use qmetaobject::*;
+use std::cell::RefCell;
 
 #[cfg(target_os = "windows")]
-use windows::Win32::{ Foundation::HWND, UI::Shell::{ ITaskbarList4, TaskbarList }, System::Com::{ CoInitializeEx, CoCreateInstance, CLSCTX_ALL, COINIT_MULTITHREADED } };
+use windows::Win32::{
+    Foundation::HWND,
+    System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx},
+    UI::Shell::{ITaskbarList4, TaskbarList},
+};
 
 cpp! {{
     #include <QTranslator>
@@ -27,7 +31,8 @@ pub struct UITools {
     set_icon: qt_method!(fn(&mut self, wnd: QJSValue)),
     get_safe_area_margins: qt_method!(fn(&mut self, wnd: QJSValue) -> QJsonObject),
     set_progress: qt_method!(fn(&self, progress: f64)),
-    modify_digit: qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
+    modify_digit:
+        qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
     closing: qt_method!(fn(&mut self)),
 
     language_changed: qt_signal!(),
@@ -41,7 +46,7 @@ pub struct UITools {
 
     is_dark: bool,
 
-    pub engine_ptr: Option<*mut QmlEngine>
+    pub engine_ptr: Option<*mut QmlEngine>,
 }
 impl UITools {
     pub fn set_language(&self, lang_id: QString) {
@@ -93,34 +98,60 @@ impl UITools {
 
             match self.is_dark {
                 true => {
-                    engine.set_property("style"                 .into(), QString::from("dark").into());
-                    engine.set_property("styleBackground"       .into(), QString::from("#1e1e1e").into());
-                    engine.set_property("styleBackground2"      .into(), QString::from("#191919").into());
-                    engine.set_property("styleButtonColor"      .into(), QString::from("#282828").into());
-                    engine.set_property("styleTextColor"        .into(), QString::from("#ffffff").into());
-                    engine.set_property("styleAccentColor"      .into(), QString::from("#76baed").into());
-                    engine.set_property("styleVideoBorderColor" .into(), QString::from("#2b2b2b").into());
-                    engine.set_property("styleTextColorOnAccent".into(), QString::from("#000000").into());
-                    engine.set_property("styleHrColor"          .into(), QString::from("#2e2e2e").into());
-                    engine.set_property("stylePopupBorder"      .into(), QString::from("#0f0f0f").into());
-                    engine.set_property("styleSliderHandle"     .into(), QString::from("#454545").into());
-                    engine.set_property("styleSliderBackground" .into(), QString::from("#949494").into());
-                    engine.set_property("styleHighlightColor"   .into(), QString::from("#10ffffff").into());
-                },
+                    engine.set_property("style".into(), QString::from("dark").into());
+                    engine.set_property("styleBackground".into(), QString::from("#1e1e1e").into());
+                    engine.set_property("styleBackground2".into(), QString::from("#191919").into());
+                    engine.set_property("styleButtonColor".into(), QString::from("#282828").into());
+                    engine.set_property("styleTextColor".into(), QString::from("#ffffff").into());
+                    engine.set_property("styleAccentColor".into(), QString::from("#76baed").into());
+                    engine.set_property(
+                        "styleVideoBorderColor".into(),
+                        QString::from("#2b2b2b").into(),
+                    );
+                    engine.set_property(
+                        "styleTextColorOnAccent".into(),
+                        QString::from("#000000").into(),
+                    );
+                    engine.set_property("styleHrColor".into(), QString::from("#2e2e2e").into());
+                    engine.set_property("stylePopupBorder".into(), QString::from("#0f0f0f").into());
+                    engine
+                        .set_property("styleSliderHandle".into(), QString::from("#454545").into());
+                    engine.set_property(
+                        "styleSliderBackground".into(),
+                        QString::from("#949494").into(),
+                    );
+                    engine.set_property(
+                        "styleHighlightColor".into(),
+                        QString::from("#10ffffff").into(),
+                    );
+                }
                 false => {
-                    engine.set_property("style"                 .into(), QString::from("light").into());
-                    engine.set_property("styleBackground"       .into(), QString::from("#f9f9f9").into());
-                    engine.set_property("styleBackground2"      .into(), QString::from("#f3f3f3").into());
-                    engine.set_property("styleButtonColor"      .into(), QString::from("#fbfbfb").into());
-                    engine.set_property("styleTextColor"        .into(), QString::from("#111111").into());
-                    engine.set_property("styleAccentColor"      .into(), QString::from("#116cad").into());
-                    engine.set_property("styleVideoBorderColor" .into(), QString::from("#d5d5d5").into());
-                    engine.set_property("styleTextColorOnAccent".into(), QString::from("#ffffff").into());
-                    engine.set_property("styleHrColor"          .into(), QString::from("#e5e5e5").into());
-                    engine.set_property("stylePopupBorder"      .into(), QString::from("#d5d5d5").into());
-                    engine.set_property("styleSliderHandle"     .into(), QString::from("#c2c2c2").into());
-                    engine.set_property("styleSliderBackground" .into(), QString::from("#cdcdcd").into());
-                    engine.set_property("styleHighlightColor"   .into(), QString::from("#10000000").into());
+                    engine.set_property("style".into(), QString::from("light").into());
+                    engine.set_property("styleBackground".into(), QString::from("#f9f9f9").into());
+                    engine.set_property("styleBackground2".into(), QString::from("#f3f3f3").into());
+                    engine.set_property("styleButtonColor".into(), QString::from("#fbfbfb").into());
+                    engine.set_property("styleTextColor".into(), QString::from("#111111").into());
+                    engine.set_property("styleAccentColor".into(), QString::from("#116cad").into());
+                    engine.set_property(
+                        "styleVideoBorderColor".into(),
+                        QString::from("#d5d5d5").into(),
+                    );
+                    engine.set_property(
+                        "styleTextColorOnAccent".into(),
+                        QString::from("#ffffff").into(),
+                    );
+                    engine.set_property("styleHrColor".into(), QString::from("#e5e5e5").into());
+                    engine.set_property("stylePopupBorder".into(), QString::from("#d5d5d5").into());
+                    engine
+                        .set_property("styleSliderHandle".into(), QString::from("#c2c2c2").into());
+                    engine.set_property(
+                        "styleSliderBackground".into(),
+                        QString::from("#cdcdcd").into(),
+                    );
+                    engine.set_property(
+                        "styleHighlightColor".into(),
+                        QString::from("#10000000").into(),
+                    );
                 }
             }
             self.update_dark_mode(0);
@@ -130,7 +161,8 @@ impl UITools {
     pub fn set_scaling(&self, dpi_scale: f64) {
         if let Some(engine) = self.engine_ptr {
             let engine = unsafe { &mut *(engine) };
-            let mut dpi = cpp!(unsafe[] -> f64 as "double" { return QGuiApplication::primaryScreen()->logicalDotsPerInch() / 96.0; }) * dpi_scale;
+            let mut dpi = cpp!(unsafe[] -> f64 as "double" { return QGuiApplication::primaryScreen()->logicalDotsPerInch() / 96.0; })
+                * dpi_scale;
             if cfg!(any(target_os = "android", target_os = "ios")) {
                 dpi *= 1.2;
             }
@@ -176,11 +208,18 @@ impl UITools {
     fn update_dark_mode(&self, mut hwnd: isize) {
         #[cfg(target_os = "windows")]
         unsafe {
-            if hwnd == 0 && self.main_window_handle.is_some() { hwnd = self.main_window_handle.unwrap(); }
+            if hwnd == 0 && self.main_window_handle.is_some() {
+                hwnd = self.main_window_handle.unwrap();
+            }
             use windows::Win32::Foundation::*;
             use windows::Win32::Graphics::Dwm::*;
             let is_dark = self.is_dark;
-            let _ = DwmSetWindowAttribute(HWND(hwnd as *mut _), DWMWA_USE_IMMERSIVE_DARK_MODE, &is_dark as *const _ as _, std::mem::size_of_val(&is_dark) as _);
+            let _ = DwmSetWindowAttribute(
+                HWND(hwnd as *mut _),
+                DWMWA_USE_IMMERSIVE_DARK_MODE,
+                &is_dark as *const _ as _,
+                std::mem::size_of_val(&is_dark) as _,
+            );
         }
     }
 
@@ -206,28 +245,33 @@ impl UITools {
 
     pub fn init_calibrator(&mut self) {
         //if self.calibrator_ctl.is_none() {
-            self.calibrator_ctl = Some(RefCell::new(Controller::new()));
+        self.calibrator_ctl = Some(RefCell::new(Controller::new()));
 
-            let calib_ctl = self.calibrator_ctl.as_ref().unwrap();
-            calib_ctl.borrow().init_calibrator();
-            let calib_ctlpinned = unsafe { QObjectPinned::new(calib_ctl) };
+        let calib_ctl = self.calibrator_ctl.as_ref().unwrap();
+        calib_ctl.borrow().init_calibrator();
+        let calib_ctlpinned = unsafe { QObjectPinned::new(calib_ctl) };
 
-            if let Some(engine) = self.engine_ptr {
-                let engine = unsafe { &mut *(engine) };
-                engine.set_object_property("calib_controller".into(), calib_ctlpinned);
+        if let Some(engine) = self.engine_ptr {
+            let engine = unsafe { &mut *(engine) };
+            engine.set_object_property("calib_controller".into(), calib_ctlpinned);
 
-                calib_ctl.borrow_mut().stabilizer.params.write().framebuffer_inverted = util::is_opengl();
-            }
+            calib_ctl
+                .borrow_mut()
+                .stabilizer
+                .params
+                .write()
+                .framebuffer_inverted = util::is_opengl();
+        }
         //}
     }
 
     pub fn modify_digit(&self, value: String, cursor_position: usize, increase: bool) -> QString {
-        let (new_num_str, new_cursor_position) = modify_digit_impl(value.as_str(), cursor_position, increase);
+        let (new_num_str, new_cursor_position) =
+            modify_digit_impl(value.as_str(), cursor_position, increase);
 
         QString::from(format!("{};{}", new_num_str, new_cursor_position))
     }
 }
-
 
 pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) -> (String, usize) {
     // Convert the string to a number and find its decimal point
@@ -238,9 +282,16 @@ pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) 
     let number_length = num_str.len();
     let decimal_pos = num_str.find('.').unwrap_or(number_length);
     let has_decimal_part = number_length > decimal_pos;
-    let decimal_length = if has_decimal_part { number_length - decimal_pos - 1 } else { 0 };
+    let decimal_length = if has_decimal_part {
+        number_length - decimal_pos - 1
+    } else {
+        0
+    };
 
-    assert!(cursor_position <= number_length, "Cursor position out of bounds");
+    assert!(
+        cursor_position <= number_length,
+        "Cursor position out of bounds"
+    );
 
     // Calculate the position offset from the decimal point
     let mut pos_adjust: isize = 0;
@@ -257,15 +308,25 @@ pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) 
 
     // Calculate the value to add or subtract
     let dec_offset: isize = (-1 * pos_adjust)
-        .checked_add_unsigned(decimal_pos).unwrap()
-        .checked_sub_unsigned(cursor_position + 1).unwrap();
+        .checked_add_unsigned(decimal_pos)
+        .unwrap()
+        .checked_sub_unsigned(cursor_position + 1)
+        .unwrap();
     let modifier = 10f64.powi(dec_offset as i32);
 
     // Modify the number
     let new_number = if increase {
-        if number < 0.0 && modifier + number > 0.0 { -1.0 * number } else { number + modifier }
+        if number < 0.0 && modifier + number > 0.0 {
+            -1.0 * number
+        } else {
+            number + modifier
+        }
     } else {
-        if number > 0.0 && modifier - number > 0.0 { -1.0 * number } else { number - modifier }
+        if number > 0.0 && modifier - number > 0.0 {
+            -1.0 * number
+        } else {
+            number - modifier
+        }
     };
     let new_num_negative = new_number < 0.0;
 
@@ -277,7 +338,13 @@ pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) 
     } else {
         0
     };
-    let new_num_pad_length = number_length.checked_sub(new_num_length.checked_add_signed(new_num_length_diff).unwrap()).unwrap_or(0);
+    let new_num_pad_length = number_length
+        .checked_sub(
+            new_num_length
+                .checked_add_signed(new_num_length_diff)
+                .unwrap(),
+        )
+        .unwrap_or(0);
 
     // Adjust the cursor position if the number of digits has changed
     let new_num_str = format!(
@@ -286,7 +353,8 @@ pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) 
         "0".repeat(new_num_pad_length),
         new_num_str_abs,
     );
-    let new_cursor_position = (new_num_length + new_num_pad_length).saturating_sub(number_length - cursor_position);
+    let new_cursor_position =
+        (new_num_length + new_num_pad_length).saturating_sub(number_length - cursor_position);
 
     (new_num_str, new_cursor_position)
 }
@@ -406,8 +474,17 @@ mod tests {
             input.2,
             expected.0,
             expected.1,
-            if expected.0.len() > input.0.len() { " " } else { "" },
-            format!("\"{}{}{}\"", input.0.get(0..input.1).unwrap_or(""), "|", input.0.get(input.1..).unwrap_or("")),
+            if expected.0.len() > input.0.len() {
+                " "
+            } else {
+                ""
+            },
+            format!(
+                "\"{}{}{}\"",
+                input.0.get(0..input.1).unwrap_or(""),
+                "|",
+                input.0.get(input.1..).unwrap_or("")
+            ),
             if input.2 { "↑" } else { "↓" },
             expected.0.get(0..expected.1).unwrap_or(""),
             expected.0.get(expected.1..).unwrap_or(""),

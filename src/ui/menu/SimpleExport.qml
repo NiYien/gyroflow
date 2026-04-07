@@ -26,7 +26,28 @@ Column {
             currentIndex: exportSettings ? exportSettings.queueOutputMode : 0;
             onCurrentIndexChanged: {
                 if (exportSettings) {
-                    exportSettings.queueOutputMode.currentIndex = currentIndex;
+                    exportSettings.queueOutputMode = currentIndex;
+                }
+            }
+        }
+    }
+    Row {
+        visible: simpleQueueOutputMode.currentIndex === 1;
+        width: parent.width;
+        spacing: 5 * dpiScale;
+        TextField {
+            width: parent.width - simpleQueueBrowse.width - parent.spacing;
+            placeholderText: qsTranslate("Export", "Select output folder...");
+            text: exportSettings && exportSettings.queueFixedOutputPath ? filesystem.url_to_path(exportSettings.queueFixedOutputPath) : "";
+            readOnly: true;
+        }
+        LinkButton {
+            id: simpleQueueBrowse;
+            height: parent.height > 0 ? parent.height : 30 * dpiScale;
+            text: qsTranslate("Export", "Browse");
+            onClicked: {
+                if (exportSettings) {
+                    exportSettings.browseQueueOutputFolder();
                 }
             }
         }
@@ -186,6 +207,7 @@ Column {
     // ── Sync from Full mode ──
     Connections {
         target: exportSettings;
+        function onQueueOutputModeChanged(): void { simpleQueueOutputMode.currentIndex = exportSettings.queueOutputMode; }
         function onOutWidthChanged(): void { simpleOutputWidth.value = exportSettings.outWidth; }
         function onOutHeightChanged(): void { simpleOutputHeight.value = exportSettings.outHeight; }
         function onOutBitrateChanged(): void { simpleBitrate.value = exportSettings.outBitrate; }

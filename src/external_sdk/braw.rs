@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-pub struct BrawSdk { }
+pub struct BrawSdk {}
 
 impl BrawSdk {
     pub fn is_installed() -> bool {
@@ -9,21 +9,27 @@ impl BrawSdk {
             let mut path = path.clone();
             path.push("_");
             if cfg!(target_os = "windows") {
-                return
-                    path.with_file_name("BlackmagicRawAPI.dll").exists() &&
-                    path.with_file_name("DecoderCUDA.dll").exists() &&
-                    path.with_file_name("DecoderOpenCL.dll").exists() &&
-                    path.with_file_name("InstructionSetServicesAVX.dll").exists() &&
-                    path.with_file_name("InstructionSetServicesAVX2.dll").exists();
+                return path.with_file_name("BlackmagicRawAPI.dll").exists()
+                    && path.with_file_name("DecoderCUDA.dll").exists()
+                    && path.with_file_name("DecoderOpenCL.dll").exists()
+                    && path
+                        .with_file_name("InstructionSetServicesAVX.dll")
+                        .exists()
+                    && path
+                        .with_file_name("InstructionSetServicesAVX2.dll")
+                        .exists();
             } else if cfg!(target_os = "macos") {
                 return path.with_file_name("BlackmagicRawAPI.framework").exists();
             } else if cfg!(target_os = "linux") {
-                return
-                    path.with_file_name("libBlackmagicRawAPI.so").exists() &&
-                    path.with_file_name("libDecoderCUDA.so").exists() &&
-                    path.with_file_name("libDecoderOpenCL.so").exists() &&
-                    path.with_file_name("libInstructionSetServicesAVX.so").exists() &&
-                    path.with_file_name("libInstructionSetServicesAVX2.so").exists();
+                return path.with_file_name("libBlackmagicRawAPI.so").exists()
+                    && path.with_file_name("libDecoderCUDA.so").exists()
+                    && path.with_file_name("libDecoderOpenCL.so").exists()
+                    && path
+                        .with_file_name("libInstructionSetServicesAVX.so")
+                        .exists()
+                    && path
+                        .with_file_name("libInstructionSetServicesAVX2.so")
+                        .exists();
             }
         }
 

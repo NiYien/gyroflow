@@ -1,13 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2023 Adrian <adrian.eddy at gmail>
 
-use ndk::media::image_reader::*;
-use ndk::hardware_buffer::*;
-use ndk::native_window::*;
-use jni::{ objects::{ GlobalRef, JObject }, JavaVM };
-use std::ffi::*;
 use ffmpeg_next::ffi;
-use std::sync::mpsc::{ Receiver, channel };
+use jni::{
+    JavaVM,
+    objects::{GlobalRef, JObject},
+};
+use ndk::hardware_buffer::*;
+use ndk::media::image_reader::*;
+use ndk::native_window::*;
+use std::ffi::*;
+use std::sync::mpsc::{Receiver, channel};
 
 unsafe extern "C" {
     fn av_mediacodec_release_buffer(buffer: *mut c_void, render: c_int) -> c_int;
@@ -19,7 +22,7 @@ unsafe extern "C" {
 struct AVMediaCodecDeviceContext {
     surface: *mut c_void,
     native_window: *mut c_void,
-    create_window: c_int
+    create_window: c_int,
 }
 
 struct AndroidHWBuffer(HardwareBuffer);
@@ -29,63 +32,107 @@ pub struct AndroidHWHandles {
     image_reader: ImageReader,
     window: NativeWindow,
     surface: GlobalRef<JObject<'static>>,
-    pub receiver: Option<Receiver<AndroidHWBuffer>>
+    pub receiver: Option<Receiver<AndroidHWBuffer>>,
 }
 
 impl AndroidHWHandles {
-    pub fn init_with_context(decoder_ctx: &mut ffmpeg_next::codec::context::Context) -> Result<Self, &'static str> { // TODO error type
-        let mut image_reader = ImageReader::new_with_usage(1, 1, ImageFormat::YUV_420_888, HardwareBufferUsage::GPU_SAMPLED_IMAGE, 10).unwrap(); // TODO: unwrap
+    pub fn init_with_context(
+        decoder_ctx: &mut ffmpeg_next::codec::context::Context,
+    ) -> Result<Self, &'static str> {
+        // TODO error type
+        let mut image_reader = ImageReader::new_with_usage(
+            1,
+            1,
+            ImageFormat::YUV_420_888,
+            HardwareBufferUsage::GPU_SAMPLED_IMAGE,
+            10,
+        )
+        .unwrap(); // TODO: unwrap
 
         let (sender, receiver) = channel();
 
-        image_reader.set_image_listener(Box::new(move |image_reader| {
-            match &mut image_reader.acquire_next_image() {
-                Ok(AcquireResult::Image(image)) => {
-                    let timestamp = std::time::Duration::from_nanos(image.timestamp().unwrap() as u64);
+        image_reader
+            .set_image_listener(Box::new(move |image_reader| {
+                match &mut image_reader.acquire_next_image() {
+                    Ok(AcquireResult::Image(image)) => {
+                        let timestamp =
+                            std::time::Duration::from_nanos(image.timestamp().unwrap() as u64);
 
-                    // TODO import AHardwareBuffer to wgpu Vulkan
-                    // The problem with the hardware buffer is that it can be in arbitrary vendor-specific pixel format
-                    // One way to tackle that is to use vk::SamplerYcbcrConversion from Vulkan and draw over Vulkan RGB8 texture, but it's a lot of work ( https://github.com/korejan/ALVR/blob/master/alvr/experiments/client/src/video_decoder/mediacodec.rs )
-                    // Another way is to draw RGBA in an OpenGL context using Surface https://docs.rs/ndk/latest/ndk/surface_texture/struct.SurfaceTexture.html and update_tex_image
-                    // We may need to enable Gl backend in wgpu for that
-                    let hw_buffer = image.hardware_buffer().unwrap();
-                    ::log::debug!("AHardwareBuffer: {:?} ({}x{} {:?} {:?})", hw_buffer.as_ptr(), image.width().unwrap(), image.height().unwrap(), image.format().unwrap(), timestamp);
+                        // TODO import AHardwareBuffer to wgpu Vulkan
+                        // The problem with the hardware buffer is that it can be in arbitrary vendor-specific pixel format
+                        // One way to tackle that is to use vk::SamplerYcbcrConversion from Vulkan and draw over Vulkan RGB8 texture, but it's a lot of work ( https://github.com/korejan/ALVR/blob/master/alvr/experiments/client/src/video_decoder/mediacodec.rs )
+                        // Another way is to draw RGBA in an OpenGL context using Surface https://docs.rs/ndk/latest/ndk/surface_texture/struct.SurfaceTexture.html and update_tex_image
+                        // We may need to enable Gl backend in wgpu for that
+                        let hw_buffer = image.hardware_buffer().unwrap();
+                        ::log::debug!(
+                            "AHardwareBuffer: {:?} ({}x{} {:?} {:?})",
+                            hw_buffer.as_ptr(),
+                            image.width().unwrap(),
+                            image.height().unwrap(),
+                            image.format().unwrap(),
+                            timestamp
+                        );
 
-                    sender.send(AndroidHWBuffer(hw_buffer)).unwrap();
+                        sender.send(AndroidHWBuffer(hw_buffer)).unwrap();
+                    }
+                    Ok(AcquireResult::NoBufferAvailable) => {
+                        ::log::warn!("acquire_next_image: NoBufferAvailable");
+                    }
+                    Ok(AcquireResult::MaxImagesAcquired) => {
+                        ::log::warn!("acquire_next_image: MaxImagesAcquired");
+                    }
+                    Err(e) => {
+                        ::log::error!("acquire_next_image error {e:?}");
+                    }
                 }
-                Ok(AcquireResult::NoBufferAvailable) => { ::log::warn!("acquire_next_image: NoBufferAvailable"); }
-                Ok(AcquireResult::MaxImagesAcquired) => { ::log::warn!("acquire_next_image: MaxImagesAcquired"); }
-                Err(e) => { ::log::error!("acquire_next_image error {e:?}"); }
-            }
-        })).unwrap();
-        image_reader.set_buffer_removed_listener(Box::new(|_, _| {
-            log::debug!("buffer removed");
-        })).unwrap();
+            }))
+            .unwrap();
+        image_reader
+            .set_buffer_removed_listener(Box::new(|_, _| {
+                log::debug!("buffer removed");
+            }))
+            .unwrap();
 
         let vm = unsafe { JavaVM::from_raw(av_jni_get_java_vm(std::ptr::null_mut()) as *mut _) };
-        let (window, surface) = vm.attach_current_thread(|mut env| {
-            unsafe {
-                let window = image_reader.window().unwrap(); // TODO: unwrap
-                let surface = env.new_global_ref(JObject::from_raw(env, window.to_surface(env.get_raw() as _) as *mut _)).unwrap(); // TODO: unwrap
+        let (window, surface) = vm
+            .attach_current_thread(|mut env| {
+                unsafe {
+                    let window = image_reader.window().unwrap(); // TODO: unwrap
+                    let surface = env
+                        .new_global_ref(JObject::from_raw(
+                            env,
+                            window.to_surface(env.get_raw() as _) as *mut _,
+                        ))
+                        .unwrap(); // TODO: unwrap
 
-                Ok::<_, jni::errors::Error>((window, surface))
-            }
-        }).unwrap(); // TODO: unwrap
+                    Ok::<_, jni::errors::Error>((window, surface))
+                }
+            })
+            .unwrap(); // TODO: unwrap
 
         unsafe {
             let hw_device_ctx = (*decoder_ctx.as_mut_ptr()).hw_device_ctx;
             {
-                if hw_device_ctx.is_null() { return Err("hw_device_ctx is null"); }
+                if hw_device_ctx.is_null() {
+                    return Err("hw_device_ctx is null");
+                }
             }
 
             let av_hw_device_ctx = (*hw_device_ctx).data as *mut ffi::AVHWDeviceContext;
             {
-                if av_hw_device_ctx.is_null() { return Err("av_hw_device_ctx is null"); }
-                if (*av_hw_device_ctx).type_ != ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC { return Err("av_hw_device_ctx->type is not MediaCodec"); }
+                if av_hw_device_ctx.is_null() {
+                    return Err("av_hw_device_ctx is null");
+                }
+                if (*av_hw_device_ctx).type_ != ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_MEDIACODEC {
+                    return Err("av_hw_device_ctx->type is not MediaCodec");
+                }
             }
-            let media_codec_device_ctx = (*av_hw_device_ctx).hwctx as *mut AVMediaCodecDeviceContext;
+            let media_codec_device_ctx =
+                (*av_hw_device_ctx).hwctx as *mut AVMediaCodecDeviceContext;
             {
-                if media_codec_device_ctx.is_null() { return Err("media_codec_device_ctx is null"); }
+                if media_codec_device_ctx.is_null() {
+                    return Err("media_codec_device_ctx is null");
+                }
             }
             (*media_codec_device_ctx).surface = surface.as_raw() as *mut _;
         }
@@ -94,7 +141,7 @@ impl AndroidHWHandles {
             image_reader,
             window,
             surface,
-            receiver: Some(receiver)
+            receiver: Some(receiver),
         })
     }
 }
@@ -109,7 +156,6 @@ pub fn release_frame(frame: &mut ffmpeg_next::frame::Video) {
         }
     }
 }
-
 
 // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VK_ANDROID_external_memory_android_hardware_buffer.html
 // https://github.com/yohhoy/heifreader/issues/1#issuecomment-669852293

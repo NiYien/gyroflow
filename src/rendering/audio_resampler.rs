@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Maik <myco at gmx>
 
-use ffmpeg_next::{ format, software, frame, channel_layout::ChannelLayout, Error };
-
+use ffmpeg_next::{Error, channel_layout::ChannelLayout, format, frame, software};
 
 pub struct AudioResampler {
     resampler: software::resampling::Context,
@@ -10,19 +9,18 @@ pub struct AudioResampler {
     buffer_frame: frame::Audio,
     chunk_size: usize,
     src_frame_offset: usize,
-    buffer_frame_offset: usize
+    buffer_frame_offset: usize,
 }
 
 impl AudioResampler {
     pub fn new(
         (in_format, in_layout, in_rate): (format::Sample, ChannelLayout, u32),
         (out_format, out_layout, out_rate): (format::Sample, ChannelLayout, u32),
-        chunk_size: usize
+        chunk_size: usize,
     ) -> Result<Self, Error> {
-
         let resampler = software::resampler(
             (in_format, in_layout, in_rate),
-            (out_format, out_layout, out_rate)
+            (out_format, out_layout, out_rate),
         )?;
 
         let src_frame = frame::Audio::empty();
@@ -34,7 +32,7 @@ impl AudioResampler {
             buffer_frame,
             chunk_size,
             src_frame_offset: 0,
-            buffer_frame_offset: 0
+            buffer_frame_offset: 0,
         })
     }
 
@@ -51,7 +49,11 @@ impl AudioResampler {
                     self.resampler.output().channel_layout,
                 );
             }
-            ffmpeg_next::ffi::swr_config_frame(self.resampler.as_mut_ptr(), self.src_frame.as_mut_ptr(), in_frame.as_ptr());
+            ffmpeg_next::ffi::swr_config_frame(
+                self.resampler.as_mut_ptr(),
+                self.src_frame.as_mut_ptr(),
+                in_frame.as_ptr(),
+            );
         }
         // in_frame.set_channel_layout(self.resampler.input().channel_layout);
         self.resampler.run(in_frame, &mut self.src_frame)?;
@@ -74,21 +76,34 @@ impl AudioResampler {
             if self.resampler.output().format.is_planar() {
                 for c in 0..channels {
                     unsafe {
-                        let dst_ptr = (*self.buffer_frame.as_mut_ptr()).data[c].add(dest_byte_offset);
+                        let dst_ptr =
+                            (*self.buffer_frame.as_mut_ptr()).data[c].add(dest_byte_offset);
                         let src_ptr = (*self.src_frame.as_ptr()).data[c].add(src_byte_offset);
-                        std::ptr::copy_nonoverlapping::<u8>(src_ptr, dst_ptr, copy_samples * bytes_per_sample);
+                        std::ptr::copy_nonoverlapping::<u8>(
+                            src_ptr,
+                            dst_ptr,
+                            copy_samples * bytes_per_sample,
+                        );
                     }
                 }
             } else {
                 unsafe {
-                    let dst_ptr = (*self.buffer_frame.as_mut_ptr()).data[0].add(dest_byte_offset * channels);
-                    let src_ptr = (*self.src_frame.as_ptr()).data[0].add(src_byte_offset * channels);
-                    std::ptr::copy_nonoverlapping::<u8>(src_ptr, dst_ptr, copy_samples * bytes_per_sample * channels);
+                    let dst_ptr =
+                        (*self.buffer_frame.as_mut_ptr()).data[0].add(dest_byte_offset * channels);
+                    let src_ptr =
+                        (*self.src_frame.as_ptr()).data[0].add(src_byte_offset * channels);
+                    std::ptr::copy_nonoverlapping::<u8>(
+                        src_ptr,
+                        dst_ptr,
+                        copy_samples * bytes_per_sample * channels,
+                    );
                 }
             }
 
             if self.buffer_frame_offset == 0 {
-                self.buffer_frame.set_pts(Some(self.src_frame.pts().unwrap() + (self.src_frame_offset as i64)));
+                self.buffer_frame.set_pts(Some(
+                    self.src_frame.pts().unwrap() + (self.src_frame_offset as i64),
+                ));
             }
 
             self.src_frame_offset += copy_samples;
@@ -115,14 +130,24 @@ impl AudioResampler {
                 if self.resampler.output().format.is_planar() {
                     for c in 0..channels {
                         unsafe {
-                            let dst_ptr = (*self.buffer_frame.as_mut_ptr()).data[c].add(dest_byte_offset);
-                            std::ptr::write_bytes::<u8>(dst_ptr, 0,missing_samples * bytes_per_sample);
+                            let dst_ptr =
+                                (*self.buffer_frame.as_mut_ptr()).data[c].add(dest_byte_offset);
+                            std::ptr::write_bytes::<u8>(
+                                dst_ptr,
+                                0,
+                                missing_samples * bytes_per_sample,
+                            );
                         }
                     }
                 } else {
                     unsafe {
-                        let dst_ptr = (*self.buffer_frame.as_mut_ptr()).data[0].add(dest_byte_offset * channels);
-                        std::ptr::write_bytes::<u8>(dst_ptr, 0, missing_samples * bytes_per_sample * channels);
+                        let dst_ptr = (*self.buffer_frame.as_mut_ptr()).data[0]
+                            .add(dest_byte_offset * channels);
+                        std::ptr::write_bytes::<u8>(
+                            dst_ptr,
+                            0,
+                            missing_samples * bytes_per_sample * channels,
+                        );
                     }
                 }
             }

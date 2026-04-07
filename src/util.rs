@@ -10,11 +10,23 @@ pub fn serde_json_to_qt_array(v: &serde_json::Value) -> QJsonArray {
     if let Some(arr) = v.as_array() {
         for param in arr {
             match param {
-                serde_json::Value::Number(v) => { ret.push(QJsonValue::from(v.as_f64().unwrap())); },
-                serde_json::Value::Bool(v) => { ret.push(QJsonValue::from(*v)); },
-                serde_json::Value::String(v) => { ret.push(QJsonValue::from(QString::from(v.clone()))); },
-                serde_json::Value::Array(v) => { ret.push(QJsonValue::from(serde_json_to_qt_array(&serde_json::Value::Array(v.to_vec())))); },
-                serde_json::Value::Object(_) => { ret.push(QJsonValue::from(serde_json_to_qt_object(param))); },
+                serde_json::Value::Number(v) => {
+                    ret.push(QJsonValue::from(v.as_f64().unwrap()));
+                }
+                serde_json::Value::Bool(v) => {
+                    ret.push(QJsonValue::from(*v));
+                }
+                serde_json::Value::String(v) => {
+                    ret.push(QJsonValue::from(QString::from(v.clone())));
+                }
+                serde_json::Value::Array(v) => {
+                    ret.push(QJsonValue::from(serde_json_to_qt_array(
+                        &serde_json::Value::Array(v.to_vec()),
+                    )));
+                }
+                serde_json::Value::Object(_) => {
+                    ret.push(QJsonValue::from(serde_json_to_qt_object(param)));
+                }
                 serde_json::Value::Null => { /* ::log::warn!("null unimplemented");*/ }
             };
         }
@@ -26,11 +38,26 @@ pub fn serde_json_to_qt_object(v: &serde_json::Value) -> QJsonObject {
     if let Some(obj) = v.as_object() {
         for (k, v) in obj {
             match v {
-                serde_json::Value::Number(v) => { map.insert(k, QJsonValue::from(v.as_f64().unwrap())); },
-                serde_json::Value::Bool(v) => { map.insert(k, QJsonValue::from(*v)); },
-                serde_json::Value::String(v) => { map.insert(k, QJsonValue::from(QString::from(v.clone()))); },
-                serde_json::Value::Array(v) => { map.insert(k, QJsonValue::from(serde_json_to_qt_array(&serde_json::Value::Array(v.to_vec())))); },
-                serde_json::Value::Object(_) => { map.insert(k, QJsonValue::from(serde_json_to_qt_object(v))); },
+                serde_json::Value::Number(v) => {
+                    map.insert(k, QJsonValue::from(v.as_f64().unwrap()));
+                }
+                serde_json::Value::Bool(v) => {
+                    map.insert(k, QJsonValue::from(*v));
+                }
+                serde_json::Value::String(v) => {
+                    map.insert(k, QJsonValue::from(QString::from(v.clone())));
+                }
+                serde_json::Value::Array(v) => {
+                    map.insert(
+                        k,
+                        QJsonValue::from(serde_json_to_qt_array(&serde_json::Value::Array(
+                            v.to_vec(),
+                        ))),
+                    );
+                }
+                serde_json::Value::Object(_) => {
+                    map.insert(k, QJsonValue::from(serde_json_to_qt_object(v)));
+                }
                 serde_json::Value::Null => { /* ::log::warn!("null unimplemented");*/ }
             };
         }
@@ -44,7 +71,10 @@ pub fn is_opengl() -> bool {
     })
 }
 
-pub fn qt_queued_callback<T: QObject + 'static, T2: Send + 'static, F: FnMut(&T, T2) + 'static>(qptr: QPointer<T>, mut cb: F) -> impl Fn(T2) + Send + Sync + Clone + 'static {
+pub fn qt_queued_callback<T: QObject + 'static, T2: Send + 'static, F: FnMut(&T, T2) + 'static>(
+    qptr: QPointer<T>,
+    mut cb: F,
+) -> impl Fn(T2) + Send + Sync + Clone + 'static {
     qmetaobject::queued_callback(move |arg| {
         if let Some(this) = qptr.as_pinned() {
             let this = this.borrow();
@@ -52,7 +82,14 @@ pub fn qt_queued_callback<T: QObject + 'static, T2: Send + 'static, F: FnMut(&T,
         }
     })
 }
-pub fn qt_queued_callback_mut<T: QObject + 'static, T2: Send + 'static, F: FnMut(&mut T, T2) + 'static>(qptr: QPointer<T>, mut cb: F) -> impl Fn(T2) + Send + Sync + Clone + 'static {
+pub fn qt_queued_callback_mut<
+    T: QObject + 'static,
+    T2: Send + 'static,
+    F: FnMut(&mut T, T2) + 'static,
+>(
+    qptr: QPointer<T>,
+    mut cb: F,
+) -> impl Fn(T2) + Send + Sync + Clone + 'static {
     qmetaobject::queued_callback(move |arg| {
         if let Some(this) = qptr.as_pinned() {
             let mut this = this.borrow_mut();
@@ -117,7 +154,11 @@ cpp! {{
 #[cfg(target_os = "android")]
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_xyz_gyroflow_MainActivity_urlReceived(_vm: *mut c_void, _: *mut c_void, jstr: *mut c_void) {
+pub extern "system" fn Java_xyz_gyroflow_MainActivity_urlReceived(
+    _vm: *mut c_void,
+    _: *mut c_void,
+    jstr: *mut c_void,
+) {
     cpp!(unsafe [jstr as "void*"] {
         #ifdef Q_OS_ANDROID
             QString str = QJniObject((jstring)jstr).toString();
@@ -165,7 +206,8 @@ pub fn dispatch_url_event(url: QUrl) {
 pub fn qurl_to_encoded(url: QUrl) -> String {
     cpp!(unsafe [url as "QUrl"] -> QString as "QString" {
         return QString(url.toEncoded());
-    }).to_string()
+    })
+    .to_string()
 }
 pub fn catch_qt_file_open<F: FnMut(QUrl)>(cb: F) {
     let func: Box<dyn FnMut(QUrl)> = Box::new(cb);
@@ -190,7 +232,8 @@ pub fn open_file_externally(url: QUrl) {
 pub fn get_data_location() -> String {
     cpp!(unsafe [] -> QString as "QString" {
         return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-    }).into()
+    })
+    .into()
 }
 
 pub fn update_rlimit() {
@@ -230,48 +273,77 @@ pub fn set_android_context() {
                 return nullptr;
             #endif
         });
-        unsafe { ndk_context::initialize_android_context(jvm, activity); }
+        unsafe {
+            ndk_context::initialize_android_context(jvm, activity);
+        }
     }
 }
 
 pub fn init_logging() {
     use simplelog::*;
 
-    let log_config = [ "mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls", "mdk" ]
+    let log_config = ["mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls", "mdk"]
         .into_iter()
-        .fold(ConfigBuilder::new(), |mut cfg, x| { cfg.add_filter_ignore_str(x); cfg })
+        .fold(ConfigBuilder::new(), |mut cfg, x| {
+            cfg.add_filter_ignore_str(x);
+            cfg
+        })
         .build();
-    let file_log_config = [ "mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls" ]
+    let file_log_config = ["mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls"]
         .into_iter()
-        .fold(ConfigBuilder::new(), |mut cfg, x| { cfg.add_filter_ignore_str(x); cfg })
+        .fold(ConfigBuilder::new(), |mut cfg, x| {
+            cfg.add_filter_ignore_str(x);
+            cfg
+        })
         .build();
 
     #[cfg(target_os = "android")]
-    WriteLogger::init(LevelFilter::Debug, log_config, crate::util::AndroidLog::default()).unwrap();
+    WriteLogger::init(
+        LevelFilter::Debug,
+        log_config,
+        crate::util::AndroidLog::default(),
+    )
+    .unwrap();
 
     #[cfg(not(target_os = "android"))]
     {
         let exe_loc = gyroflow_core::settings::data_dir().join("gyroflow.log");
         if let Ok(file_log) = std::fs::File::create(exe_loc) {
             let _ = CombinedLogger::init(vec![
-                TermLogger::new(LevelFilter::Debug, log_config, TerminalMode::Mixed, ColorChoice::Auto),
-                WriteLogger::new(LevelFilter::Debug, file_log_config, file_log)
+                TermLogger::new(
+                    LevelFilter::Debug,
+                    log_config,
+                    TerminalMode::Mixed,
+                    ColorChoice::Auto,
+                ),
+                WriteLogger::new(LevelFilter::Debug, file_log_config, file_log),
             ]);
         } else {
-            let _ = TermLogger::init(LevelFilter::Debug, log_config, TerminalMode::Mixed, ColorChoice::Auto);
+            let _ = TermLogger::init(
+                LevelFilter::Debug,
+                log_config,
+                TerminalMode::Mixed,
+                ColorChoice::Auto,
+            );
         }
     }
 
     qmetaobject::log::init_qt_to_rust();
 
-    qml_video_rs::video_item::MDKVideoItem::setLogHandler(|level: i32, text: &str| {
-        match level {
-            1 => { ::log::error!(target: "mdk", "[MDK] {}", text.trim()); },
-            2 => { ::log::warn!(target: "mdk", "[MDK] {}", text.trim()); },
-            3 => { ::log::info!(target: "mdk", "[MDK] {}", text.trim()); },
-            4 => { ::log::debug!(target: "mdk", "[MDK] {}", text.trim()); },
-            _ => { }
+    qml_video_rs::video_item::MDKVideoItem::setLogHandler(|level: i32, text: &str| match level {
+        1 => {
+            ::log::error!(target: "mdk", "[MDK] {}", text.trim());
         }
+        2 => {
+            ::log::warn!(target: "mdk", "[MDK] {}", text.trim());
+        }
+        3 => {
+            ::log::info!(target: "mdk", "[MDK] {}", text.trim());
+        }
+        4 => {
+            ::log::debug!(target: "mdk", "[MDK] {}", text.trim());
+        }
+        _ => {}
     });
 }
 
@@ -295,7 +367,11 @@ pub fn install_crash_handler() -> std::io::Result<()> {
         };
 
         unsafe {
-            extern "C" fn callback(path: *const breakpad_sys::PathChar, path_len: usize, _ctx: *mut c_void) {
+            extern "C" fn callback(
+                path: *const breakpad_sys::PathChar,
+                path_len: usize,
+                _ctx: *mut c_void,
+            ) {
                 let path_slice = unsafe { std::slice::from_raw_parts(path, path_len) };
 
                 let path = {
@@ -331,7 +407,11 @@ pub fn install_crash_handler() -> std::io::Result<()> {
                 let path = path.path();
                 if path.to_string_lossy().ends_with(".dmp") {
                     if let Ok(content) = std::fs::read(&path) {
-                        if let Ok(Ok(body)) = ureq::post("https://api.gyroflow.xyz/upload_dump").header("Content-Type", "application/octet-stream").send(&content).map(|x| x.into_body().read_to_string()) {
+                        if let Ok(Ok(body)) = ureq::post("https://api.gyroflow.xyz/upload_dump")
+                            .header("Content-Type", "application/octet-stream")
+                            .send(&content)
+                            .map(|x| x.into_body().read_to_string())
+                        {
                             ::log::debug!("Minidump uploaded: {}", body.as_str());
                             let _ = std::fs::remove_file(path);
                         }
@@ -349,14 +429,20 @@ pub fn android_log(v: String) {
     let tag = CStr::from_bytes_with_nul(b"Gyroflow\0").unwrap();
     if let Ok(msg) = CString::new(v) {
         unsafe {
-            ndk_sys::__android_log_write(ndk_sys::android_LogPriority::ANDROID_LOG_DEBUG.0 as std::os::raw::c_int, tag.as_ptr(), msg.as_ptr());
+            ndk_sys::__android_log_write(
+                ndk_sys::android_LogPriority::ANDROID_LOG_DEBUG.0 as std::os::raw::c_int,
+                tag.as_ptr(),
+                msg.as_ptr(),
+            );
         }
     }
 }
 
 #[cfg(target_os = "android")]
 #[derive(Default)]
-pub struct AndroidLog { buf: String }
+pub struct AndroidLog {
+    buf: String,
+}
 #[cfg(target_os = "android")]
 impl std::io::Write for AndroidLog {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -368,7 +454,11 @@ impl std::io::Write for AndroidLog {
         }
         Ok(buf.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> { android_log(self.buf.clone()); self.buf.clear(); Ok(()) }
+    fn flush(&mut self) -> std::io::Result<()> {
+        android_log(self.buf.clone());
+        self.buf.clear();
+        Ok(())
+    }
 }
 
 pub fn tr(context: &str, text: &str) -> String {
@@ -376,7 +466,8 @@ pub fn tr(context: &str, text: &str) -> String {
     let text = QString::from(text);
     cpp!(unsafe [context as "QString", text as "QString"] -> QString as "QString" {
         return QCoreApplication::translate(qUtf8Printable(context), qUtf8Printable(text));
-    }).to_string()
+    })
+    .to_string()
 }
 
 pub fn qt_graphics_api() -> QString {
@@ -410,10 +501,16 @@ pub fn copy_to_clipboard(text: QString) {
 pub fn save_exe_location() {
     if let Ok(exe_path) = std::env::current_exe() {
         if cfg!(target_os = "macos") {
-            if let Some(parent) = exe_path.parent() { // MacOS
-                if let Some(parent) = parent.parent() { // Contents
-                    if let Some(parent) = parent.parent() { // Gyroflow.app
-                        gyroflow_core::settings::set("exeLocation", parent.to_string_lossy().into());
+            if let Some(parent) = exe_path.parent() {
+                // MacOS
+                if let Some(parent) = parent.parent() {
+                    // Contents
+                    if let Some(parent) = parent.parent() {
+                        // Gyroflow.app
+                        gyroflow_core::settings::set(
+                            "exeLocation",
+                            parent.to_string_lossy().into(),
+                        );
                     }
                 }
             }
@@ -424,7 +521,14 @@ pub fn save_exe_location() {
             #[cfg(target_os = "windows")]
             if exe_str.contains("29160AdrianRoss.Gyroflow") {
                 let parts = exe_str.split("\\").collect::<Vec<_>>();
-                let parts = parts.into_iter().rev().skip(1).next().unwrap_or("").split("_").collect::<Vec<_>>();
+                let parts = parts
+                    .into_iter()
+                    .rev()
+                    .skip(1)
+                    .next()
+                    .unwrap_or("")
+                    .split("_")
+                    .collect::<Vec<_>>();
                 if let Some(publisher) = parts.first() {
                     if let Some(app_id) = parts.last() {
                         if !publisher.is_empty() && !app_id.is_empty() {
@@ -478,29 +582,53 @@ pub fn update_file_times(output_url: &str, input_url: &str, additional_ms: Optio
         let input_path = gyroflow_core::filesystem::url_to_path(input_url);
         let output_path = gyroflow_core::filesystem::url_to_path(output_url);
         if input_path.is_empty() || output_path.is_empty() {
-            return Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("Can't get path from url! Input: {input_url} / {input_path}, output: {output_url} / {output_path}")));
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!(
+                    "Can't get path from url! Input: {input_url} / {input_path}, output: {output_url} / {output_path}"
+                ),
+            ));
         }
-        let mut org_time_c = filetime_creation::FileTime::from_creation_time(&std::fs::metadata(&input_path)?);
-        let mut org_time_m = filetime_creation::FileTime::from_last_modification_time(&std::fs::metadata(&input_path)?);
+        let mut org_time_c =
+            filetime_creation::FileTime::from_creation_time(&std::fs::metadata(&input_path)?);
+        let mut org_time_m = filetime_creation::FileTime::from_last_modification_time(
+            &std::fs::metadata(&input_path)?,
+        );
         if let Some(additional_ms) = additional_ms {
             if additional_ms > 0.0 {
                 if let Some(ctime) = org_time_c {
-                    org_time_c = Some(filetime_creation::FileTime::from_unix_time(ctime.unix_seconds() + (additional_ms / 1000.0).round() as i64, ctime.nanoseconds()));
+                    org_time_c = Some(filetime_creation::FileTime::from_unix_time(
+                        ctime.unix_seconds() + (additional_ms / 1000.0).round() as i64,
+                        ctime.nanoseconds(),
+                    ));
                 }
-                org_time_m = filetime_creation::FileTime::from_unix_time(org_time_m.unix_seconds() + (additional_ms / 1000.0).round() as i64, org_time_m.nanoseconds());
+                org_time_m = filetime_creation::FileTime::from_unix_time(
+                    org_time_m.unix_seconds() + (additional_ms / 1000.0).round() as i64,
+                    org_time_m.nanoseconds(),
+                );
             }
         }
         if cfg!(target_os = "windows") {
             if let Some(org_time_c) = org_time_c {
-                ::log::debug!("Updating creation time of {} to {}", output_path, org_time_c.to_string());
+                ::log::debug!(
+                    "Updating creation time of {} to {}",
+                    output_path,
+                    org_time_c.to_string()
+                );
                 filetime_creation::set_file_ctime(output_path.clone(), org_time_c)?;
             }
         }
-        ::log::debug!("Updating modification time of {} to {}", output_path, org_time_m.to_string());
+        ::log::debug!(
+            "Updating modification time of {} to {}",
+            output_path,
+            org_time_m.to_string()
+        );
         filetime_creation::set_file_mtime(output_path, org_time_m)?;
 
         Ok(())
-    }() { ::log::warn!("Failed to update file times: {e:?}"); }
+    }() {
+        ::log::warn!("Failed to update file times: {e:?}");
+    }
 }
 
 pub fn is_store_package() -> bool {
@@ -530,21 +658,24 @@ pub fn is_insta360(input_url: &str) -> bool {
     }
     &buf == b"8db42d694ccc418790edff439fe026bf"
 }
-pub fn copy_insta360_metadata(output_url: &str, input_url: &str) -> Result<(), gyroflow_core::filesystem::FilesystemError> {
+pub fn copy_insta360_metadata(
+    output_url: &str,
+    input_url: &str,
+) -> Result<(), gyroflow_core::filesystem::FilesystemError> {
     use std::io::*;
     pub const HEADER_SIZE: usize = 32 + 4 + 4 + 32; // padding(32), size(4), version(4), magic(32)
     pub const MAGIC: &[u8] = b"8db42d694ccc418790edff439fe026bf";
 
-    let mut input = gyroflow_core::filesystem::open_file( input_url, false, false)?;
+    let mut input = gyroflow_core::filesystem::open_file(input_url, false, false)?;
 
     let mut buf = vec![0u8; HEADER_SIZE];
     input.seek(SeekFrom::End(-(HEADER_SIZE as i64)))?;
     input.read_exact(&mut buf)?;
-    if &buf[HEADER_SIZE-32..] == MAGIC {
+    if &buf[HEADER_SIZE - 32..] == MAGIC {
         let extra_size = u32::from_le_bytes(buf[32..36].try_into().unwrap()) as i64;
         input.seek(SeekFrom::End(-extra_size))?;
 
-        let mut output = gyroflow_core::filesystem::open_file( output_url, true, false)?;
+        let mut output = gyroflow_core::filesystem::open_file(output_url, true, false)?;
         output.seek(SeekFrom::End(0))?;
         std::io::copy(&mut input, &mut output.get_file())?;
     }
@@ -559,7 +690,10 @@ pub fn report_lens_profile_usage(checksum: Option<String>) {
                 let url = format!("https://api.gyroflow.xyz/usage?checksum={checksum}");
 
                 if let Ok(body) = ureq::get(url).call() {
-                    ::log::debug!("Lens profile usage stats: {:?}", body.into_body().read_to_string());
+                    ::log::debug!(
+                        "Lens profile usage stats: {:?}",
+                        body.into_body().read_to_string()
+                    );
                 }
             });
         }

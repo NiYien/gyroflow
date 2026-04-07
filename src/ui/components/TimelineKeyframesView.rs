@@ -5,14 +5,14 @@
 
 use std::{collections::BTreeMap, str::FromStr};
 
+use crate::util;
 use gyroflow_core::keyframes::*;
 use qmetaobject::*;
-use crate::util;
 
 struct Point {
     point: QPointF,
     timestamp: i64,
-    value: f64
+    value: f64,
 }
 struct Series {
     line: Vec<QPointF>,
@@ -46,18 +46,41 @@ pub struct TimelineKeyframesView {
 }
 
 impl TimelineKeyframesView {
-    pub fn setDurationMs(&mut self, v: f64) { self.duration_ms = v; }
-    fn setVisibleAreaLeft (&mut self, v: f64) { self.visibleAreaLeft = v; self.update(); }
-    fn setVisibleAreaRight(&mut self, v: f64) { self.visibleAreaRight = v; self.update(); }
-    fn setVScale          (&mut self, v: f64) { self.vscale = v.max(0.1); self.update(); }
-    fn setVideoTimestamp  (&mut self, v: f64) { self.videoTimestamp = v; self.update_video_timestamp(true); }
+    pub fn setDurationMs(&mut self, v: f64) {
+        self.duration_ms = v;
+    }
+    fn setVisibleAreaLeft(&mut self, v: f64) {
+        self.visibleAreaLeft = v;
+        self.update();
+    }
+    fn setVisibleAreaRight(&mut self, v: f64) {
+        self.visibleAreaRight = v;
+        self.update();
+    }
+    fn setVScale(&mut self, v: f64) {
+        self.vscale = v.max(0.1);
+        self.update();
+    }
+    fn setVideoTimestamp(&mut self, v: f64) {
+        self.videoTimestamp = v;
+        self.update_video_timestamp(true);
+    }
 
     fn keyframeAtXY(&self, x: f64, y: f64) -> QJSValue {
         for (kf, v) in &self.series {
             for pt in &v.points {
-                if x >= pt.point.x - 8.0 && x <= pt.point.x + 8.0 &&
-                   y >= pt.point.y - 8.0 && y <= pt.point.y + 8.0 {
-                    return QJSValue::from(QString::from(format!("{:?}:{}:{}:{}", kf, pt.timestamp, keyframe_text(kf), keyframe_format_value(kf, pt.value))));
+                if x >= pt.point.x - 8.0
+                    && x <= pt.point.x + 8.0
+                    && y >= pt.point.y - 8.0
+                    && y <= pt.point.y + 8.0
+                {
+                    return QJSValue::from(QString::from(format!(
+                        "{:?}:{}:{}:{}",
+                        kf,
+                        pt.timestamp,
+                        keyframe_text(kf),
+                        keyframe_format_value(kf, pt.value)
+                    )));
                 }
             }
         }
@@ -66,14 +89,32 @@ impl TimelineKeyframesView {
     }
 
     fn nextKeyframe(&self, typ: String) -> QJSValue {
-        if let Some(res) = self.mgr.next_keyframe((self.videoTimestamp * 1000.0) as i64, KeyframeType::from_str(&typ).ok()) {
-            return QJSValue::from(QString::from(format!("{:?}:{}:{}:{}", res.0, res.1, keyframe_text(&res.0), keyframe_format_value(&res.0, res.2.value))));
+        if let Some(res) = self.mgr.next_keyframe(
+            (self.videoTimestamp * 1000.0) as i64,
+            KeyframeType::from_str(&typ).ok(),
+        ) {
+            return QJSValue::from(QString::from(format!(
+                "{:?}:{}:{}:{}",
+                res.0,
+                res.1,
+                keyframe_text(&res.0),
+                keyframe_format_value(&res.0, res.2.value)
+            )));
         }
         QJSValue::default()
     }
     fn prevKeyframe(&self, typ: String) -> QJSValue {
-        if let Some(res) = self.mgr.prev_keyframe((self.videoTimestamp * 1000.0) as i64, KeyframeType::from_str(&typ).ok()) {
-            return QJSValue::from(QString::from(format!("{:?}:{}:{}:{}", res.0, res.1, keyframe_text(&res.0), keyframe_format_value(&res.0, res.2.value))));
+        if let Some(res) = self.mgr.prev_keyframe(
+            (self.videoTimestamp * 1000.0) as i64,
+            KeyframeType::from_str(&typ).ok(),
+        ) {
+            return QJSValue::from(QString::from(format!(
+                "{:?}:{}:{}:{}",
+                res.0,
+                res.1,
+                keyframe_text(&res.0),
+                keyframe_format_value(&res.0, res.2.value)
+            )));
         }
         QJSValue::default()
     }
@@ -84,7 +125,12 @@ impl TimelineKeyframesView {
         for v in self.series.values_mut() {
             let mut new_idx: i32 = -1;
 
-            if let Some(idx) = v.points.iter().position(|pt| (pt.timestamp - vid_ts).abs() < 2000) { // 2ms
+            if let Some(idx) = v
+                .points
+                .iter()
+                .position(|pt| (pt.timestamp - vid_ts).abs() < 2000)
+            {
+                // 2ms
                 new_idx = idx as i32;
             }
             if new_idx != v.playback_keyframe_idx {
@@ -92,7 +138,9 @@ impl TimelineKeyframesView {
                 changed = true;
             }
         }
-        if redraw && changed { self.update(); }
+        if redraw && changed {
+            self.update();
+        }
     }
 
     pub fn update(&mut self) {
@@ -104,10 +152,16 @@ impl TimelineKeyframesView {
     }
     fn calculate_lines(&mut self) {
         let rect = (self as &dyn QQuickItem).bounding_rect();
-        if rect.width <= 0.0 || rect.height <= 0.0 { return; }
+        if rect.width <= 0.0 || rect.height <= 0.0 {
+            return;
+        }
 
-        let map_to_visible_area = |v: f64| -> f64 { (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft) };
-        let map_from_visible_area = |v: f64| -> f64 { v * (self.visibleAreaRight - self.visibleAreaLeft) + self.visibleAreaLeft };
+        let map_to_visible_area = |v: f64| -> f64 {
+            (v - self.visibleAreaLeft) / (self.visibleAreaRight - self.visibleAreaLeft)
+        };
+        let map_from_visible_area = |v: f64| -> f64 {
+            v * (self.visibleAreaRight - self.visibleAreaLeft) + self.visibleAreaLeft
+        };
 
         let duration_us = (self.duration_ms * 1000.0).round();
 
@@ -119,13 +173,26 @@ impl TimelineKeyframesView {
             let mut max = 1.0;
             let mut min = -1.0;
             if let Some(all_keyframes) = self.mgr.get_keyframes(kf) {
-                if let Some(v) = all_keyframes.values().max_by(|a, b| a.value.total_cmp(&b.value)) {
-                    if v.value > max { max = v.value; }
+                if let Some(v) = all_keyframes
+                    .values()
+                    .max_by(|a, b| a.value.total_cmp(&b.value))
+                {
+                    if v.value > max {
+                        max = v.value;
+                    }
                 }
-                if let Some(v) = all_keyframes.values().min_by(|a, b| a.value.total_cmp(&b.value)) {
-                    if v.value < min { min = v.value; }
+                if let Some(v) = all_keyframes
+                    .values()
+                    .min_by(|a, b| a.value.total_cmp(&b.value))
+                {
+                    if v.value < min {
+                        min = v.value;
+                    }
                 }
-                if max == min { max = 1.0; min = -1.0; }
+                if max == min {
+                    max = 1.0;
+                    min = -1.0;
+                }
 
                 let both_max = max.abs().max(min.abs());
                 max = both_max;
@@ -135,26 +202,38 @@ impl TimelineKeyframesView {
                     points.push(Point {
                         point: QPointF {
                             x: map_to_visible_area(*ts as f64 / duration_us) * rect.width,
-                            y: TOP_BOTTOM_MARGIN + (1.0 - ((v.value - min) / (max - min)) * self.vscale) * (rect.height - TOP_BOTTOM_MARGIN*2.0)
+                            y: TOP_BOTTOM_MARGIN
+                                + (1.0 - ((v.value - min) / (max - min)) * self.vscale)
+                                    * (rect.height - TOP_BOTTOM_MARGIN * 2.0),
                         },
                         timestamp: *ts,
-                        value: v.value
+                        value: v.value,
                     });
                 }
             }
 
             for x in 0..rect.width as i32 {
                 let p = x as f64 / rect.width;
-                let timestamp_ms = map_from_visible_area(p) * self.duration_ms / self.mgr.timestamp_scale.unwrap_or(1.0);
+                let timestamp_ms = map_from_visible_area(p) * self.duration_ms
+                    / self.mgr.timestamp_scale.unwrap_or(1.0);
                 if let Some(v) = self.mgr.value_at_video_timestamp(kf, timestamp_ms) {
                     let point = QPointF {
                         x: x as f64,
-                        y: TOP_BOTTOM_MARGIN + (1.0 - ((v - min) / (max - min)) * self.vscale) * (rect.height - TOP_BOTTOM_MARGIN*2.0)
+                        y: TOP_BOTTOM_MARGIN
+                            + (1.0 - ((v - min) / (max - min)) * self.vscale)
+                                * (rect.height - TOP_BOTTOM_MARGIN * 2.0),
                     };
                     line.push(point);
                 }
             }
-            self.series.insert(*kf, Series { line, points, playback_keyframe_idx: -1 });
+            self.series.insert(
+                *kf,
+                Series {
+                    line,
+                    points,
+                    playback_keyframe_idx: -1,
+                },
+            );
         }
     }
 
@@ -182,7 +261,7 @@ impl TimelineKeyframesView {
             p.set_pen(pen);
 
             let pt = &self.series[keyframe].points[*idx as usize];
-            p.draw_ellipse_with_center(pt.point, POINT_SIZE*1.5, POINT_SIZE*1.5);
+            p.draw_ellipse_with_center(pt.point, POINT_SIZE * 1.5, POINT_SIZE * 1.5);
         }
     }
 

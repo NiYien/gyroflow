@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
+mod audio_resampler;
 mod ffmpeg_audio;
+pub mod ffmpeg_hw;
+pub mod ffmpeg_processor;
 mod ffmpeg_video;
 mod ffmpeg_video_converter;
-mod audio_resampler;
-pub mod ffmpeg_processor;
-pub mod ffmpeg_hw;
-pub mod render_queue;
 pub mod mdk_processor;
+pub mod render_queue;
 pub mod video_processor;
 pub mod zero_copy;
 use gyroflow_core::settings;
@@ -16,37 +16,54 @@ use zero_copy::*;
 #[cfg(target_os = "android")]
 pub mod ffmpeg_android;
 
+pub use self::ffmpeg_processor::{FFmpegError, FfmpegProcessor};
 pub use self::video_processor::VideoProcessor;
-pub use self::ffmpeg_processor::{ FfmpegProcessor, FFmpegError };
+use crate::core::{StabilizationManager, stabilization::*};
+use ffmpeg_next::{Error, codec, ffi, format::Pixel, frame::Video};
+use gyroflow_core::gpu::Buffers;
+use parking_lot::RwLock;
 use render_queue::RenderOptions;
-use crate::core::{ StabilizationManager, stabilization::* };
-use ffmpeg_next::{ format::Pixel, frame::Video, codec, Error, ffi };
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::rc::Rc;
-use std::sync::{ Arc, atomic::AtomicBool };
-use parking_lot::RwLock;
-use gyroflow_core::gpu::Buffers;
+use std::sync::{Arc, atomic::AtomicBool};
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 enum GpuType {
-    Nvidia, Amd, Intel, AppleSilicon, Android, WindowsArm, Unknown
+    Nvidia,
+    Amd,
+    Intel,
+    AppleSilicon,
+    Android,
+    WindowsArm,
+    Unknown,
 }
 lazy_static::lazy_static! {
     static ref GPU_TYPE: RwLock<GpuType> = RwLock::new(GpuType::Unknown);
 }
 pub fn set_gpu_type_from_name(name: &str) {
-    if name.is_empty() { return; }
+    if name.is_empty() {
+        return;
+    }
     ffmpeg_hw::clear_devices();
     let name = name.to_ascii_lowercase();
-         if name.contains("nvidia") || name.contains("quadro") || name.contains("grid") { *GPU_TYPE.write() = GpuType::Nvidia; }
-    else if name.contains("amd") || name.contains("advanced micro devices") { *GPU_TYPE.write() = GpuType::Amd; }
-    else if name.contains("intel") && !name.contains("intel(r) core(tm)") { *GPU_TYPE.write() = GpuType::Intel; }
-    else if name.contains("apple m") { *GPU_TYPE.write() = GpuType::AppleSilicon; }
-    else if name.contains("adreno") { *GPU_TYPE.write() = if cfg!(target_os = "android") { GpuType::Android } else { GpuType::WindowsArm }; }
-    else {
+    if name.contains("nvidia") || name.contains("quadro") || name.contains("grid") {
+        *GPU_TYPE.write() = GpuType::Nvidia;
+    } else if name.contains("amd") || name.contains("advanced micro devices") {
+        *GPU_TYPE.write() = GpuType::Amd;
+    } else if name.contains("intel") && !name.contains("intel(r) core(tm)") {
+        *GPU_TYPE.write() = GpuType::Intel;
+    } else if name.contains("apple m") {
+        *GPU_TYPE.write() = GpuType::AppleSilicon;
+    } else if name.contains("adreno") {
+        *GPU_TYPE.write() = if cfg!(target_os = "android") {
+            GpuType::Android
+        } else {
+            GpuType::WindowsArm
+        };
+    } else {
         log::warn!("Unknown GPU {}", name);
     }
 
@@ -55,8 +72,12 @@ pub fn set_gpu_type_from_name(name: &str) {
         ffmpeg_hw::initialize_ctx(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_CUDA);
     }
 
-    if settings::get_bool("useVulkanEncoder", false) { ffmpeg_hw::initialize_ctx(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN); }
-    if settings::get_bool("useD3D12Encoder",  false) { ffmpeg_hw::initialize_ctx(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D12VA); }
+    if settings::get_bool("useVulkanEncoder", false) {
+        ffmpeg_hw::initialize_ctx(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VULKAN);
+    }
+    if settings::get_bool("useD3D12Encoder", false) {
+        ffmpeg_hw::initialize_ctx(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D12VA);
+    }
     #[cfg(target_os = "windows")]
     if gpu_type == GpuType::Amd {
         ffmpeg_hw::initialize_ctx(ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_D3D11VA);
@@ -78,9 +99,14 @@ pub fn set_gpu_type_from_name(name: &str) {
     ::log::debug!("GPU type: {:?}, from name: {}", gpu_type, name);
 }
 
-pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, bool)> { // -> (name, is_gpu)
-    if codec.contains("PNG") || codec.contains("png") { return vec![("png", false)]; }
-    if codec.contains("EXR") || codec.contains("exr") { return vec![("exr", false)]; }
+pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, bool)> {
+    // -> (name, is_gpu)
+    if codec.contains("PNG") || codec.contains("png") {
+        return vec![("png", false)];
+    }
+    if codec.contains("EXR") || codec.contains("exr") {
+        return vec![("exr", false)];
+    }
 
     let mut encoders = if use_gpu {
         match codec {
@@ -88,81 +114,85 @@ pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, b
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 ("h264_videotoolbox", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("h264_nvenc",        true),
+                ("h264_nvenc", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("h264_amf",          true),
+                ("h264_amf", true),
                 #[cfg(any(target_os = "linux"))]
-                ("h264_vaapi",        true),
+                ("h264_vaapi", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("h264_qsv",          true),
+                ("h264_qsv", true),
                 #[cfg(target_os = "windows")]
-                ("h264_mf",           true),
+                ("h264_mf", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("h264_vulkan",       true),
+                ("h264_vulkan", true),
                 #[cfg(target_os = "linux")]
-                ("h264_v4l2m2m",      true),
+                ("h264_v4l2m2m", true),
                 #[cfg(target_os = "android")]
-                ("h264_mediacodec",   true),
-                ("libx264",           false),
+                ("h264_mediacodec", true),
+                ("libx264", false),
             ],
             "H.265/HEVC" => vec![
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 ("hevc_videotoolbox", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("hevc_nvenc",        true),
+                ("hevc_nvenc", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("hevc_amf",          true),
+                ("hevc_amf", true),
                 #[cfg(any(target_os = "linux"))]
-                ("hevc_vaapi",        true),
+                ("hevc_vaapi", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("hevc_qsv",          true),
+                ("hevc_qsv", true),
                 #[cfg(target_os = "windows")]
-                ("hevc_mf",           true),
+                ("hevc_mf", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("hevc_vulkan",       true),
+                ("hevc_vulkan", true),
                 #[cfg(target_os = "windows")]
-                ("hevc_d3d12va",      true),
+                ("hevc_d3d12va", true),
                 #[cfg(target_os = "linux")]
-                ("hevc_v4l2m2m",      true),
+                ("hevc_v4l2m2m", true),
                 #[cfg(target_os = "android")]
-                ("hevc_mediacodec",   true),
-                ("libx265",           false),
+                ("hevc_mediacodec", true),
+                ("libx265", false),
             ],
             "AV1" => vec![
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("av1_nvenc",        true),
+                ("av1_nvenc", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("av1_amf",          true),
+                ("av1_amf", true),
                 #[cfg(any(target_os = "windows", target_os = "linux"))]
-                ("av1_qsv",          true),
+                ("av1_qsv", true),
                 #[cfg(any(target_os = "linux"))]
-                ("av1_vaapi",         true),
+                ("av1_vaapi", true),
                 #[cfg(target_os = "android")]
-                ("av1_mediacodec",   true),
-                ("librav1e",         false),
-                ("libaom-av1",       false),
-                ("libsvtav1",        false),
+                ("av1_mediacodec", true),
+                ("librav1e", false),
+                ("libaom-av1", false),
+                ("libsvtav1", false),
             ],
             "ProRes" => vec![
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 ("prores_videotoolbox", true),
                 //#[cfg(any(target_os = "windows", target_os = "linux", target_os = "android"))]
                 //("prores_ks_vulkan", true),
-                ("prores_ks", false)
+                ("prores_ks", false),
             ],
-            "DNxHD"    => vec![("dnxhd", false)],
+            "DNxHD" => vec![("dnxhd", false)],
             "CineForm" => vec![("cfhd", false)],
-            _          => vec![]
+            _ => vec![],
         }
     } else {
         match codec {
-            "H.264/AVC"  => vec![("libx264", false)],
+            "H.264/AVC" => vec![("libx264", false)],
             "H.265/HEVC" => vec![("libx265", false)],
-            "ProRes"     => vec![("prores_ks", false)],
-            "DNxHD"      => vec![("dnxhd", false)],
-            "CineForm"   => vec![("cfhd", false)],
-            "AV1"        => vec![("librav1e", false), ("libaom-av1", false), ("libsvtav1", false)],
-            _            => vec![]
+            "ProRes" => vec![("prores_ks", false)],
+            "DNxHD" => vec![("dnxhd", false)],
+            "CineForm" => vec![("cfhd", false)],
+            "AV1" => vec![
+                ("librav1e", false),
+                ("libaom-av1", false),
+                ("libsvtav1", false),
+            ],
+            _ => vec![],
         }
     };
 
@@ -171,8 +201,12 @@ pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, b
         encoders.retain(|x| !x.0.contains("nvenc"));
     }
 
-    if !settings::get_bool("useVulkanEncoder", false) { encoders.retain(|x| !x.0.contains("_vulkan")); }
-    if !settings::get_bool("useD3D12Encoder",  false) { encoders.retain(|x| !x.0.contains("_d3d12")); }
+    if !settings::get_bool("useVulkanEncoder", false) {
+        encoders.retain(|x| !x.0.contains("_vulkan"));
+    }
+    if !settings::get_bool("useD3D12Encoder", false) {
+        encoders.retain(|x| !x.0.contains("_d3d12"));
+    }
 
     if gpu_type != GpuType::Amd {
         encoders.retain(|x| !x.0.contains("_amf"));
@@ -184,15 +218,31 @@ pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, b
     encoders
 }
 
-pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &gyroflow_core::InputFile, render_options: &RenderOptions, gpu_decoder_index: i32, trim_range_ind: Option<usize>, cancel_flag: Arc<AtomicBool>, pause_flag: Arc<AtomicBool>, encoder_initialized: F2) -> Result<(), FFmpegError>
-    where F: Fn((f64, usize, usize, bool, bool)) + Send + Sync + Clone,
-          F2: Fn(String) + Send + Sync + Clone
+pub fn render<F, F2>(
+    stab: Arc<StabilizationManager>,
+    progress: F,
+    input_file: &gyroflow_core::InputFile,
+    render_options: &RenderOptions,
+    gpu_decoder_index: i32,
+    trim_range_ind: Option<usize>,
+    cancel_flag: Arc<AtomicBool>,
+    pause_flag: Arc<AtomicBool>,
+    encoder_initialized: F2,
+) -> Result<(), FFmpegError>
+where
+    F: Fn((f64, usize, usize, bool, bool)) + Send + Sync + Clone,
+    F2: Fn(String) + Send + Sync + Clone,
 {
-    log::debug!("ffmpeg_hw::supported_gpu_backends: {:?}", ffmpeg_hw::supported_gpu_backends());
+    log::debug!(
+        "ffmpeg_hw::supported_gpu_backends: {:?}",
+        ffmpeg_hw::supported_gpu_backends()
+    );
 
     let params = stab.params.read();
     let org_trim_ranges = params.trim_ranges.clone();
-    let trim_ranges = trim_range_ind.map(|x| vec![params.trim_ranges[x]]).unwrap_or_else(|| params.trim_ranges.clone());
+    let trim_ranges = trim_range_ind
+        .map(|x| vec![params.trim_ranges[x]])
+        .unwrap_or_else(|| params.trim_ranges.clone());
     let trim_ratio = if !render_options.pad_with_black && !render_options.preserve_other_tracks {
         params.get_trim_ratio()
     } else {
@@ -233,39 +283,53 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
     let mut decoder_options = ffmpeg_next::Dictionary::new();
     if input_file.image_sequence_fps > 0.0 {
         let fps = fps_to_rational(input_file.image_sequence_fps);
-        decoder_options.set("framerate", &format!("{}/{}", fps.numerator(), fps.denominator()));
+        decoder_options.set(
+            "framerate",
+            &format!("{}/{}", fps.numerator(), fps.denominator()),
+        );
     }
     if input_file.image_sequence_start > 0 {
-        decoder_options.set("start_number", &format!("{}", input_file.image_sequence_start));
+        decoder_options.set(
+            "start_number",
+            &format!("{}", input_file.image_sequence_start),
+        );
     }
     if cfg!(target_os = "android") {
         decoder_options.set("ndk_codec", "1");
     }
     let gpu_decoding = stab.gpu_decoding.load(std::sync::atomic::Ordering::SeqCst);
-    let mut proc = FfmpegProcessor::from_file(&input_file.url, gpu_decoding && gpu_decoder_index >= 0, gpu_decoder_index as usize, Some(decoder_options))?;
+    let mut proc = FfmpegProcessor::from_file(
+        &input_file.url,
+        gpu_decoding && gpu_decoder_index >= 0,
+        gpu_decoder_index as usize,
+        Some(decoder_options),
+    )?;
 
     let render_options_dict = render_options.get_encoder_options_dict();
     let hwaccel_device = render_options_dict.get("hwaccel_device");
 
     match render_options.audio_codec.as_ref() {
-        "AAC"         => proc.audio_codec = ffmpeg_next::codec::Id::AAC,
+        "AAC" => proc.audio_codec = ffmpeg_next::codec::Id::AAC,
         "PCM (s16le)" => proc.audio_codec = ffmpeg_next::codec::Id::PCM_S16LE,
         "PCM (s16be)" => proc.audio_codec = ffmpeg_next::codec::Id::PCM_S16BE,
         "PCM (s24le)" => proc.audio_codec = ffmpeg_next::codec::Id::PCM_S24LE,
         "PCM (s24be)" => proc.audio_codec = ffmpeg_next::codec::Id::PCM_S24BE,
-        _ => { }
+        _ => {}
     }
 
     let interpolation: Interpolation = render_options.interpolation.as_str().into();
     let ffmpeg_interpolation = match interpolation {
         Interpolation::Bilinear => ffmpeg_next::software::scaling::flag::Flags::BILINEAR,
-        Interpolation::Bicubic  => ffmpeg_next::software::scaling::flag::Flags::BICUBIC,
-       _ => ffmpeg_next::software::scaling::flag::Flags::LANCZOS,
+        Interpolation::Bicubic => ffmpeg_next::software::scaling::flag::Flags::BICUBIC,
+        _ => ffmpeg_next::software::scaling::flag::Flags::LANCZOS,
     };
 
     log::debug!("interpolation: {:?}", &interpolation);
     log::debug!("proc.gpu_device: {:?}", &proc.gpu_device);
-    let encoder = ffmpeg_hw::find_working_encoder(&get_possible_encoders(&render_options.codec, render_options.use_gpu), hwaccel_device);
+    let encoder = ffmpeg_hw::find_working_encoder(
+        &get_possible_encoders(&render_options.codec, render_options.use_gpu),
+        hwaccel_device,
+    );
     proc.video_codec = Some(encoder.0.to_owned());
     proc.video.gpu_encoding = encoder.1;
     proc.video.ffmpeg_interpolation = ffmpeg_interpolation.bits();
@@ -273,18 +337,54 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
     proc.video.encoder_params.options.set("threads", "auto");
     proc.video.encoder_params.metadata = render_options.get_metadata_dict();
     proc.video.processing_order = order;
-    log::debug!("video_codec: {:?}, processing_order: {:?}", &proc.video_codec, proc.video.processing_order);
+    log::debug!(
+        "video_codec: {:?}, processing_order: {:?}",
+        &proc.video_codec,
+        proc.video.processing_order
+    );
 
-    if !render_options.pad_with_black && !render_options.preserve_other_tracks && !trim_ranges.is_empty() {
-        proc.ranges_ms = trim_ranges.iter().map(|x| (if x.0 > 0.0 { Some(x.0 * duration_ms) } else { None }, if x.1 < 1.0 { Some(x.1 * duration_ms) } else { None })).collect();
+    if !render_options.pad_with_black
+        && !render_options.preserve_other_tracks
+        && !trim_ranges.is_empty()
+    {
+        proc.ranges_ms = trim_ranges
+            .iter()
+            .map(|x| {
+                (
+                    if x.0 > 0.0 {
+                        Some(x.0 * duration_ms)
+                    } else {
+                        None
+                    },
+                    if x.1 < 1.0 {
+                        Some(x.1 * duration_ms)
+                    } else {
+                        None
+                    },
+                )
+            })
+            .collect();
     }
 
     match proc.video_codec.as_deref() {
         Some("prores_ks") | Some("prores_videotoolbox") => {
             let profiles = ["Proxy", "LT", "Standard", "HQ", "4444", "4444XQ"];
-            let pix_fmts = [Pixel::YUV422P10LE, Pixel::YUV422P10LE, Pixel::YUV422P10LE, Pixel::YUV422P10LE, Pixel::YUVA444P10LE, Pixel::YUVA444P10LE];
-            if let Some(profile) = profiles.iter().position(|&x| x == render_options.codec_options) {
-                proc.video.encoder_params.options.set("profile", &format!("{}", profile));
+            let pix_fmts = [
+                Pixel::YUV422P10LE,
+                Pixel::YUV422P10LE,
+                Pixel::YUV422P10LE,
+                Pixel::YUV422P10LE,
+                Pixel::YUVA444P10LE,
+                Pixel::YUVA444P10LE,
+            ];
+            if let Some(profile) = profiles
+                .iter()
+                .position(|&x| x == render_options.codec_options)
+            {
+                proc.video
+                    .encoder_params
+                    .options
+                    .set("profile", &format!("{}", profile));
                 if proc.video_codec.as_deref() == Some("prores_ks") {
                     proc.video.encoder_params.pixel_format = Some(pix_fmts[profile]);
                 }
@@ -292,10 +392,30 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
             proc.video.clone_frames = proc.video_codec.as_deref() == Some("prores_ks");
         }
         Some("dnxhd") => {
-            let profiles = ["DNxHD", "DNxHR LB", "DNxHR SQ", "DNxHR HQ", "DNxHR HQX", "DNxHR 444"];
-            let pix_fmts = [Pixel::YUV422P, Pixel::YUV422P, Pixel::YUV422P, Pixel::YUV422P, Pixel::YUV422P10LE, Pixel::YUV444P10LE];
-            if let Some(profile) = profiles.iter().position(|&x| x == render_options.codec_options) {
-                proc.video.encoder_params.options.set("profile", &format!("{}", profile));
+            let profiles = [
+                "DNxHD",
+                "DNxHR LB",
+                "DNxHR SQ",
+                "DNxHR HQ",
+                "DNxHR HQX",
+                "DNxHR 444",
+            ];
+            let pix_fmts = [
+                Pixel::YUV422P,
+                Pixel::YUV422P,
+                Pixel::YUV422P,
+                Pixel::YUV422P,
+                Pixel::YUV422P10LE,
+                Pixel::YUV444P10LE,
+            ];
+            if let Some(profile) = profiles
+                .iter()
+                .position(|&x| x == render_options.codec_options)
+            {
+                proc.video
+                    .encoder_params
+                    .options
+                    .set("profile", &format!("{}", profile));
                 proc.video.encoder_params.pixel_format = Some(pix_fmts[profile]);
             }
             proc.video.clone_frames = true;
@@ -306,9 +426,14 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
         }
         Some("png") => {
             if render_options.codec_options.contains("16-bit") {
-                proc.video.encoder_params.pixel_format = Some(if has_alpha { Pixel::RGBA64BE } else { Pixel::RGB48BE });
+                proc.video.encoder_params.pixel_format = Some(if has_alpha {
+                    Pixel::RGBA64BE
+                } else {
+                    Pixel::RGB48BE
+                });
             } else {
-                proc.video.encoder_params.pixel_format = Some(if has_alpha { Pixel::RGBA } else { Pixel::RGB24 });
+                proc.video.encoder_params.pixel_format =
+                    Some(if has_alpha { Pixel::RGBA } else { Pixel::RGB24 });
             }
             proc.video.clone_frames = true;
         }
@@ -316,7 +441,11 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
             proc.video.clone_frames = true;
             proc.video.encoder_params.options.set("compression", "1"); // RLE compression
             proc.video.encoder_params.options.set("gamma", "1.0");
-            proc.video.encoder_params.pixel_format = Some(if has_alpha { Pixel::GBRAPF32LE } else { Pixel::GBRPF32LE });
+            proc.video.encoder_params.pixel_format = Some(if has_alpha {
+                Pixel::GBRAPF32LE
+            } else {
+                Pixel::GBRPF32LE
+            });
             /*Decoder options:
                 -layer             <string>     .D.V....... Set the decoding layer (default "")
                 -part              <int>        .D.V....... Set the decoding part (from 0 to INT_MAX) (default 0)
@@ -340,7 +469,7 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
                     smpte428_1      17           .D.V....... SMPTE ST 428-1
             */
         }
-        _ => { }
+        _ => {}
     }
 
     let is_sequence = matches!(proc.video_codec.as_deref(), Some("png") | Some("exr"));
@@ -373,11 +502,17 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
             *FFMPEG_LOG.write() = log;
         }
         if VT_SUPPORTS_CONSTANT_BIT_RATE.read().is_some_and(|x| x) {
-            proc.video.encoder_params.options.set("constant_bit_rate", "1");
+            proc.video
+                .encoder_params
+                .options
+                .set("constant_bit_rate", "1");
         }
     }
     if encoder.0.contains("nvenc") {
-        proc.video.encoder_params.options.set("b_ref_mode", "disabled");
+        proc.video
+            .encoder_params
+            .options
+            .set("b_ref_mode", "disabled");
     }
 
     if cfg!(target_os = "android") {
@@ -386,7 +521,8 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
 
     proc.video.encoder_params.keyframe_distance_s = render_options.keyframe_distance.max(0.0001);
 
-    proc.preserve_other_tracks = render_options.preserve_other_tracks && !crate::util::is_insta360(&input_file.url);
+    proc.preserve_other_tracks =
+        render_options.preserve_other_tracks && !crate::util::is_insta360(&input_file.url);
 
     for (key, value) in render_options_dict.iter() {
         log::info!("Setting encoder option {}: {}", key, value);
@@ -406,8 +542,12 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
     if !pixel_format.is_empty() {
         use std::str::FromStr;
         match Pixel::from_str(&pixel_format.to_ascii_lowercase()) {
-            Ok(px) => { proc.video.encoder_params.pixel_format = Some(px); },
-            Err(e) => { ::log::debug!("Unknown requested pixel format: {}, {:?}", pixel_format, e); }
+            Ok(px) => {
+                proc.video.encoder_params.pixel_format = Some(px);
+            }
+            Err(e) => {
+                ::log::debug!("Unknown requested pixel format: {}, {:?}", pixel_format, e);
+            }
         }
     }
 
@@ -417,7 +557,12 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
         proc.audio_codec = codec::Id::None;
     }
 
-    log::debug!("start_us: {}, render_duration: {}, render_frame_count: {}", start_us, render_duration, render_frame_count);
+    log::debug!(
+        "start_us: {}, render_duration: {}, render_frame_count: {}",
+        start_us,
+        render_duration,
+        render_frame_count
+    );
 
     let mut planes = Vec::<Box<dyn FnMut(i64, &mut Video, &mut Video, usize, bool)>>::new();
 
@@ -433,7 +578,11 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
     }
 
     proc.on_encoder_initialized(|enc: &ffmpeg_next::encoder::video::Video| {
-        encoder_initialized(enc.codec().map(|x| x.name().to_string()).unwrap_or_default());
+        encoder_initialized(
+            enc.codec()
+                .map(|x| x.name().to_string())
+                .unwrap_or_default(),
+        );
         Ok(())
     });
 
@@ -441,7 +590,11 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
     let mut ramped_ts = 0.0;
     let mut final_ts = 0;
     let interval = (1_000_000.0 / fps).round() as i64;
-    let is_speed_changed = video_speed != 1.0 || stab.keyframes.read().is_keyframed(&gyroflow_core::keyframes::KeyframeType::VideoSpeed);
+    let is_speed_changed = video_speed != 1.0
+        || stab
+            .keyframes
+            .read()
+            .is_keyframed(&gyroflow_core::keyframes::KeyframeType::VideoSpeed);
     if is_speed_changed {
         proc.audio_codec = codec::Id::None; // Audio not supported when changing speed
     }
@@ -688,7 +841,9 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
 
     let mut filename = render_options.output_filename.clone();
     let folder = &render_options.output_folder;
-    if cfg!(not(any(target_os = "android", target_os = "ios"))) && !gyroflow_core::filesystem::exists(folder) {
+    if cfg!(not(any(target_os = "android", target_os = "ios")))
+        && !gyroflow_core::filesystem::exists(folder)
+    {
         let path = gyroflow_core::filesystem::url_to_path(folder);
         if !path.is_empty() {
             let _ = std::fs::create_dir_all(path);
@@ -707,15 +862,30 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
     if cfg!(not(any(target_os = "android", target_os = "ios"))) && !is_sequence {
         render_filename = format!("{filename}.tmp");
     }
-    proc.render(folder, &render_filename, (output_width as u32, output_height as u32), if render_options.bitrate > 0.0 { Some(render_options.bitrate) } else { None }, cancel_flag, pause_flag)?;
+    proc.render(
+        folder,
+        &render_filename,
+        (output_width as u32, output_height as u32),
+        if render_options.bitrate > 0.0 {
+            Some(render_options.bitrate)
+        } else {
+            None
+        },
+        cancel_flag,
+        pause_flag,
+    )?;
 
     drop(proc);
 
     let output_url = gyroflow_core::filesystem::get_file_url(folder, &filename, false);
 
     if render_filename != filename {
-        let output_url_temp = gyroflow_core::filesystem::get_file_url(folder, &render_filename, false);
-        if let Err(e) = std::fs::rename(&gyroflow_core::filesystem::url_to_path(&output_url_temp), &gyroflow_core::filesystem::url_to_path(&output_url)) {
+        let output_url_temp =
+            gyroflow_core::filesystem::get_file_url(folder, &render_filename, false);
+        if let Err(e) = std::fs::rename(
+            &gyroflow_core::filesystem::url_to_path(&output_url_temp),
+            &gyroflow_core::filesystem::url_to_path(&output_url),
+        ) {
             ::log::error!("Failed to rename file from {output_url_temp} to {output_url}: {e:?}");
         }
     }
@@ -743,7 +913,7 @@ pub fn render<F, F2>(stab: Arc<StabilizationManager>, progress: F, input_file: &
 }
 
 pub fn init_log() {
-	unsafe {
+    unsafe {
         ffi::av_log_set_level(ffi::AV_LOG_INFO);
         ffi::av_log_set_callback(Some(ffmpeg_log));
     }
@@ -763,9 +933,15 @@ lazy_static::lazy_static! {
     pub static ref VT_SUPPORTS_CONSTANT_BIT_RATE: RwLock<Option<bool>> = RwLock::new(None);
 }
 
-#[cfg(not(any(all(target_os = "linux", target_arch = "x86_64"), all(target_os = "macos", target_arch = "x86_64"))))]
+#[cfg(not(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "x86_64")
+)))]
 type VaList = ffi::va_list;
-#[cfg(any(all(target_os = "linux", target_arch = "x86_64"), all(target_os = "macos", target_arch = "x86_64")))]
+#[cfg(any(
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "x86_64")
+))]
 type VaList = *mut ffi::__va_list_tag;
 
 #[allow(improper_ctypes_definitions)]
@@ -775,20 +951,43 @@ unsafe extern "C" fn ffmpeg_log(avcl: *mut c_void, level: i32, fmt: *const c_cha
             let mut line = vec![0u8; 2048];
             let mut prefix: i32 = *LAST_PREFIX.read();
 
-            #[cfg(any(target_os = "android", all(target_os = "linux", target_arch = "aarch64")))]
-            let written = ffi::av_log_format_line2(avcl, level, fmt, vl, line.as_mut_ptr() as *mut u8, line.len() as i32, &mut prefix);
-            #[cfg(not(any(target_os = "android", all(target_os = "linux", target_arch = "aarch64"))))]
-            let written = ffi::av_log_format_line2(avcl, level, fmt, vl, line.as_mut_ptr() as *mut i8, line.len() as i32, &mut prefix);
+            #[cfg(any(
+                target_os = "android",
+                all(target_os = "linux", target_arch = "aarch64")
+            ))]
+            let written = ffi::av_log_format_line2(
+                avcl,
+                level,
+                fmt,
+                vl,
+                line.as_mut_ptr() as *mut u8,
+                line.len() as i32,
+                &mut prefix,
+            );
+            #[cfg(not(any(
+                target_os = "android",
+                all(target_os = "linux", target_arch = "aarch64")
+            )))]
+            let written = ffi::av_log_format_line2(
+                avcl,
+                level,
+                fmt,
+                vl,
+                line.as_mut_ptr() as *mut i8,
+                line.len() as i32,
+                &mut prefix,
+            );
             if written > 0 {
                 line.resize(written as usize, 0u8);
 
                 if let Ok(mut line) = String::from_utf8(line) {
-                    if line.contains("Unknown profile bitstream") ||
-                    line.contains("infe version < 2") ||
-                    line.contains("Update your FFmpeg version to the newest one from Git.") ||
-                    line.contains("Cannot find an index entry before timestamp") ||
-                    line.contains("stream set to be discarded by default.") ||
-                    line.contains("Missing key frame while searching for timestamp") {
+                    if line.contains("Unknown profile bitstream")
+                        || line.contains("infe version < 2")
+                        || line.contains("Update your FFmpeg version to the newest one from Git.")
+                        || line.contains("Cannot find an index entry before timestamp")
+                        || line.contains("stream set to be discarded by default.")
+                        || line.contains("Missing key frame while searching for timestamp")
+                    {
                         return;
                     }
                     *LAST_PREFIX.write() = prefix;
@@ -799,12 +998,14 @@ unsafe extern "C" fn ffmpeg_log(avcl: *mut c_void, level: i32, fmt: *const c_cha
                         ffi::AV_LOG_PANIC | ffi::AV_LOG_FATAL | ffi::AV_LOG_ERROR => {
                             ::log::error!("{}", line.trim());
                             line = format!("<font color=\"#d82626\">{}</font>", line);
-                        },
+                        }
                         ffi::AV_LOG_WARNING => {
                             ::log::warn!("{}", line.trim());
                             line = format!("<font color=\"#f6a10c\">{}</font>", line);
-                        },
-                        _ => { ::log::debug!("{}", line.trim()); }
+                        }
+                        _ => {
+                            ::log::debug!("{}", line.trim());
+                        }
                     }
                     FFMPEG_LOG.write().push_str(&line);
                 }
@@ -813,12 +1014,21 @@ unsafe extern "C" fn ffmpeg_log(avcl: *mut c_void, level: i32, fmt: *const c_cha
     }
 }
 
-pub fn append_log(msg: &str) { ::log::debug!("{}", msg); FFMPEG_LOG.write().push_str(msg); }
-pub fn get_log() -> String { FFMPEG_LOG.read().clone() }
-pub fn clear_log() { FFMPEG_LOG.write().clear() }
+pub fn append_log(msg: &str) {
+    ::log::debug!("{}", msg);
+    FFMPEG_LOG.write().push_str(msg);
+}
+pub fn get_log() -> String {
+    FFMPEG_LOG.read().clone()
+}
+pub fn clear_log() {
+    FFMPEG_LOG.write().clear()
+}
 
 unsafe fn to_str<'a>(ptr: *const c_char) -> std::borrow::Cow<'a, str> {
-    if ptr.is_null() { return std::borrow::Cow::Borrowed(""); }
+    if ptr.is_null() {
+        return std::borrow::Cow::Borrowed("");
+    }
     unsafe { std::ffi::CStr::from_ptr(ptr) }.to_string_lossy()
 }
 unsafe fn codec_options(c: *const ffi::AVCodec) {
@@ -830,18 +1040,27 @@ unsafe fn codec_options(c: *const ffi::AVCodec) {
     unsafe {
         use std::fmt::Write;
         let mut ret = String::new();
-        let _ = writeln!(ret, "{} <b>{}</b>:\n", ["Decoder", "Encoder"][ffi::av_codec_is_encoder(c) as usize], to_str((*c).name));
+        let _ = writeln!(
+            ret,
+            "{} <b>{}</b>:\n",
+            ["Decoder", "Encoder"][ffi::av_codec_is_encoder(c) as usize],
+            to_str((*c).name)
+        );
 
         if !(*c).pix_fmts.is_null() {
             ret.push_str("Supported pixel formats (-pix_fmt): ");
             for i in 0..100 {
                 let fmt = (*c).pix_fmts.offset(i);
-                if fmt.is_null() { break; }
+                if fmt.is_null() {
+                    break;
+                }
                 let p = *fmt;
                 if p == ffi::AVPixelFormat::AV_PIX_FMT_NONE {
                     break;
                 }
-                if i > 0 { ret.push_str(", "); }
+                if i > 0 {
+                    ret.push_str(", ");
+                }
                 ret.push_str(&to_str(ffi::av_get_pix_fmt_name(p)));
             }
         }
@@ -849,8 +1068,13 @@ unsafe fn codec_options(c: *const ffi::AVCodec) {
         if !(*c).priv_class.is_null() {
             ret.push_str("<pre>");
             FFMPEG_LOG.write().push_str(&ret);
-            show_help_children((*c).priv_class, ffi::AV_OPT_FLAG_ENCODING_PARAM | ffi::AV_OPT_FLAG_DECODING_PARAM);
-            FFMPEG_LOG.write().push_str("</pre>Additional supported flags:<pre>-hwaccel_device\n-qscale</pre>");
+            show_help_children(
+                (*c).priv_class,
+                ffi::AV_OPT_FLAG_ENCODING_PARAM | ffi::AV_OPT_FLAG_DECODING_PARAM,
+            );
+            FFMPEG_LOG
+                .write()
+                .push_str("</pre>Additional supported flags:<pre>-hwaccel_device\n-qscale</pre>");
         }
     }
 }
@@ -877,11 +1101,13 @@ pub fn get_default_encoder(codec: &str, gpu: bool) -> String {
     encoder.0.to_string()
 }
 pub fn get_encoder_options(name: &str) -> String {
-	init_log();
+    init_log();
     clear_log();
     match ffmpeg_next::encoder::find_by_name(name) {
-        Some(encoder) => { unsafe { codec_options(encoder.as_ptr()); } },
-        None => log::warn!("Failed to find codec by name: {name}")
+        Some(encoder) => unsafe {
+            codec_options(encoder.as_ptr());
+        },
+        None => log::warn!("Failed to find codec by name: {name}"),
     }
     let ret = get_log().replace("E..V.......", "").replace('\n', "<br>");
     clear_log();

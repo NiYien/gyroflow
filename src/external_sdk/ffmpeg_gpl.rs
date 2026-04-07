@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-pub struct FfmpegGpl { }
+pub struct FfmpegGpl {}
 
 impl FfmpegGpl {
     pub fn is_installed() -> bool {
-        if cfg!(any(target_os = "windows", target_os = "macos", target_os = "linux")) {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux"
+        )) {
             let x264 = ffmpeg_next::encoder::find_by_name("libx264");
             let x265 = ffmpeg_next::encoder::find_by_name("libx265");
 
