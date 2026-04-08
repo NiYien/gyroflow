@@ -778,14 +778,19 @@ MenuItem {
                                     messageBox(Modal.Question, qsTr("Which format do you want to use?"), [
                                         { text: "CSV",                         clicked: function() { exportToFolder("csv"); } },
                                         { text: "JSON", accent: true,          clicked: function() { exportToFolder("json"); } },
-                                        { text: "Universal Scene Description", clicked: function() { exportToFolder("usd"); } },
-                                        { text: "After Effects Script",        clicked: function() { exportToFolder("jsx"); } },
+                                        { text: qsTr("Universal Scene Description"), clicked: function() { exportToFolder("usd"); } },
+                                        { text: qsTr("After Effects Script"),        clicked: function() { exportToFolder("jsx"); } },
                                         { text: qsTr("Cancel") },
                                     ]);
                                     return;
                                 }
 
-                                exportFileDialog.nameFilters = ["CSV (*.csv)", "JSON (*.json)", "Universal Scene Description (*.usd)", "After Effects Script (*.jsx)"];
+                                exportFileDialog.nameFilters = [
+                                    "CSV (*.csv)",
+                                    "JSON (*.json)",
+                                    qsTr("Universal Scene Description") + " (*.usd)",
+                                    qsTr("After Effects Script") + " (*.jsx)"
+                                ];
                                 exportFileDialog.exportData = obj;
                                 exportFileDialog.open2();
                             });

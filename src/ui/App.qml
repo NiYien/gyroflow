@@ -269,6 +269,13 @@ Rectangle {
             }
         }
     }
+    Timer {
+        id: devicePollTimer;
+        interval: 100;
+        repeat: true;
+        running: true;
+        onTriggered: controller.poll_device_events();
+    }
 
     Item {
         id: mainLayout;
@@ -478,7 +485,7 @@ Rectangle {
                             }
 
                             if (fname.endsWith('.r3d') && controller.find_redline()) {
-                                messageBox(Modal.Info, "Gyroflow will use REDline to convert .R3D to ProRes before stabilizing in order to export from Gyroflow directly.\nIf you want to work on RAW data instead, export project file (Ctrl+S) and use one of [video editor plugins] (%1).".replace(/\[(.*?)\]/, '<a href="https://gyroflow.xyz/download#plugins"><font color="' + styleTextColor + '">$1</font></a>').arg("DaVinci Resolve, Final Cut Pro"), [
+                                messageBox(Modal.Info, qsTr("Gyroflow will use REDline to convert .R3D to ProRes before stabilizing in order to export from Gyroflow directly.\nIf you want to work on RAW data instead, export project file (Ctrl+S) and use one of [video editor plugins] (%1).").replace(/\[(.*?)\]/, '<a href="https://gyroflow.xyz/download#plugins"><font color="' + styleTextColor + '">$1</font></a>').arg("DaVinci Resolve, Final Cut Pro"), [
                                     { text: qsTr("Ok"), accent: true }
                                 ], undefined, Text.StyledText, "r3d-conversion" );
                             }
@@ -869,6 +876,14 @@ Rectangle {
                     }
                 }
                 Hr { }
+
+                ItemLoader {
+                    id: simpleDevice;
+                    active: controller.device_connected || controller.ota_state !== "none";
+                    width: parent.width;
+                    sourceComponent: Component { Menu.SimpleDevice { } }
+                }
+                Hr { visible: simpleDevice.active; }
 
                 // ── 2. Stabilization ──
                 MenuItem {

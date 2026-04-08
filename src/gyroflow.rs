@@ -13,6 +13,8 @@ pub use gyroflow_core as core;
 mod cli;
 pub mod controller;
 pub mod external_sdk;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod niyien_device;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub mod nle_plugins;
 pub mod rendering;

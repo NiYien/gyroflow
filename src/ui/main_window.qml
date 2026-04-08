@@ -41,7 +41,11 @@ Window {
         property alias windowWidth: main_window.width;
         property alias windowHeight: main_window.height;
         property int visibility: 0;
-        Component.onCompleted: { settings.init(sett); main_window.visible = true; }
+        Component.onCompleted: {
+            settings.init(sett);
+            main_window.visible = true;
+            if (!isMobile) Qt.callLater(() => ui_tools.ensure_window_visible(main_window));
+        }
         function propChanged() { settings.propChanged(sett); }
     }
 

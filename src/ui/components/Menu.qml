@@ -32,7 +32,8 @@ QQC.Menu {
         property real itemHeight: parentMenu? parentMenu.itemHeight : (27 * dpiScale);
 
         property QQC.Menu parentMenu: null;
-        property color textColor: orgIconColor.a > 0.1? orgIconColor : (dlg.checked? styleTextColorOnAccent : styleTextColor);
+        property color textColor: dlg.checked? styleTextColorOnAccent : styleTextColor;
+        property color iconColor: orgIconColor.a > 0.1? orgIconColor : textColor;
         QQCM.Material.foreground: textColor;
 
         onImplicitWidthChanged: Qt.callLater(updateMaxHeight);
@@ -50,7 +51,21 @@ QQC.Menu {
         spacing: 8 * dpiScale;
         icon.width: itemHeight / 2 + 1 * dpiScale;
         icon.height: itemHeight / 2 + 1 * dpiScale;
+        icon.color: iconColor;
         font: parentMenu? parentMenu.font : undefined;
+
+        contentItem: QQCI.IconLabel {
+            text: dlg.text
+            icon.name: dlg.icon.name
+            icon.source: dlg.icon.source
+            icon.color: dlg.iconColor
+            color: dlg.textColor
+            spacing: dlg.spacing
+            leftPadding: 0
+            rightPadding: 0
+            font: dlg.font
+            alignment: Qt.AlignLeft
+        }
 
         Component.onCompleted: {
             if (icon.name && icon.name.indexOf(";") > 0) {

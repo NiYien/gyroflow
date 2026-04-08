@@ -20,3 +20,14 @@ CLAUDE.md
 /.github/skills
 /.github/prompts
 /docs
+/.codex
+AGENTS.md
+*.log
+/.dev_localappdata
+/plugins
+/target-codex
+/target-codex2
+/target-codex4
+/.npm-cache
+/.agents
+/target-codex6

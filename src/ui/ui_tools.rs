@@ -30,6 +30,7 @@ pub struct UITools {
     init_calibrator: qt_method!(fn(&mut self)),
     set_icon: qt_method!(fn(&mut self, wnd: QJSValue)),
     get_safe_area_margins: qt_method!(fn(&mut self, wnd: QJSValue) -> QJsonObject),
+    ensure_window_visible: qt_method!(fn(&mut self, wnd: QJSValue)),
     set_progress: qt_method!(fn(&self, progress: f64)),
     modify_digit:
         qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
@@ -181,6 +182,46 @@ impl UITools {
                 { "right",  safeArea.right() },
                 { "left",   safeArea.left() }
             };
+        })
+    }
+
+    pub fn ensure_window_visible(&mut self, wnd: QJSValue) {
+        cpp!(unsafe [wnd as "QJSValue"] {
+            auto obj = qobject_cast<QQuickWindow *>(wnd.toQObject());
+            if (!obj) return;
+
+            const auto screens = QGuiApplication::screens();
+            if (screens.isEmpty()) return;
+
+            QRect frame = obj->frameGeometry();
+            if (!frame.isValid() || frame.width() <= 0 || frame.height() <= 0) {
+                frame = QRect(obj->x(), obj->y(), obj->width(), obj->height());
+            }
+
+            bool intersects_any_screen = false;
+            for (QScreen *screen : screens) {
+                if (screen->availableGeometry().intersects(frame)) {
+                    intersects_any_screen = true;
+                    break;
+                }
+            }
+
+            auto visibility = obj->visibility();
+            if (visibility == QWindow::Hidden || visibility == QWindow::Minimized) {
+                obj->setVisibility(QWindow::Windowed);
+                visibility = obj->visibility();
+            }
+
+            if (!intersects_any_screen) {
+                QScreen *screen = QGuiApplication::primaryScreen();
+                if (!screen) screen = screens.first();
+                const QRect area = screen->availableGeometry();
+                const int new_width = qMin(obj->width(), area.width());
+                const int new_height = qMin(obj->height(), area.height());
+                obj->resize(new_width, new_height);
+                obj->setX(area.x() + qMax(0, (area.width() - new_width) / 2));
+                obj->setY(area.y() + qMax(0, (area.height() - new_height) / 2));
+            }
         })
     }
 

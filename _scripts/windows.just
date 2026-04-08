@@ -103,7 +103,6 @@ build *param:
 
 [no-cd]
 build-debug *param:
-    $Env:OPENCV_LINK_LIBS="$Env:OPENCV_LINK_LIBS,opencv_ml4,opencv_videoio4" ; \
     cargo build -- {{param}}
 
 [no-cd]
@@ -115,12 +114,11 @@ test *param:
     cargo test -- {{param}}
 
 [no-cd]
-clippy:
-    cargo clippy
+clippy *param:
+    cargo clippy {{param}}
 
 [no-cd]
 debug *param:
-    $Env:OPENCV_LINK_LIBS="$Env:OPENCV_LINK_LIBS,opencv_ml4,opencv_videoio4" ; \
     cargo run -- {{param}}
 
 [no-cd]

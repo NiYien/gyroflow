@@ -11,6 +11,15 @@ pub fn data_dir() -> PathBuf {
     static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
     PATH.get_or_init(|| {
+        if let Ok(custom_dir) = std::env::var("GYROFLOW_DATA_DIR") {
+            if !custom_dir.trim().is_empty() {
+                let path = PathBuf::from(custom_dir);
+                let _ = std::fs::create_dir_all(&path);
+                let _ = std::fs::create_dir_all(path.join("lens_profiles"));
+                return path;
+            }
+        }
+
         let mut path = app_dirs2::get_app_dir(AppDataType::UserData, &AppInfo { name: "Gyroflow", author: "Gyroflow" }, "").unwrap();
         if path.file_name().unwrap() == path.parent().unwrap().file_name().unwrap() {
             path = path.parent().unwrap().to_path_buf();

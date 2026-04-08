@@ -101,23 +101,23 @@ install-deps:
 
 [no-cd]
 build *param:
-    cargo build --release -- {{param}}
+    cargo build --release {{param}}
 
 [no-cd]
 build-debug *param:
-    cargo build -- {{param}}
+    cargo build {{param}}
 
 [no-cd]
 run *param:
-    cargo run --release -- {{param}}
+    cargo run --release {{param}}
 
 [no-cd]
 test *param:
-    cargo test -- {{param}}
+    cargo test {{param}}
 
 [no-cd]
 debug *param:
-    cargo run -- {{param}}
+    cargo run {{param}}
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Deployment ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

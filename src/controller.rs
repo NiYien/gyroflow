@@ -3,12 +3,16 @@
 
 use itertools::{Either, Itertools};
 use nalgebra::Vector4;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use parking_lot::Mutex;
 use qmetaobject::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use qml_video_rs::video_item::MDKVideoItem;
 
@@ -21,6 +25,8 @@ use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
 use crate::core::synchronization::AutosyncProcess;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+use crate::niyien_device::{DeviceCommand, DeviceEvent, DeviceManager};
 use crate::qt_gpu::qrhi_undistort;
 use crate::rendering;
 use crate::rendering::VideoProcessor;
@@ -271,6 +277,24 @@ pub struct Controller {
 
     check_updates: qt_method!(fn(&self)),
     updates_available: qt_signal!(version: QString, changelog: QString),
+    sync_device_time: qt_method!(fn(&mut self, tz_offset_minutes: i32)),
+    check_firmware_update: qt_method!(fn(&mut self)),
+    start_firmware_update: qt_method!(fn(&mut self)),
+    poll_device_events: qt_method!(fn(&mut self)),
+    device_state_changed: qt_signal!(),
+    device_time_sync_finished: qt_signal!(success: bool, message: QString),
+    device_connected: qt_property!(bool; NOTIFY device_state_changed),
+    device_name: qt_property!(QString; NOTIFY device_state_changed),
+    device_soft_version: qt_property!(QString; NOTIFY device_state_changed),
+    device_hard_version: qt_property!(QString; NOTIFY device_state_changed),
+    device_time: qt_property!(QString; NOTIFY device_state_changed),
+    device_time_sync_in_progress: qt_property!(bool; NOTIFY device_state_changed),
+    ota_progress: qt_property!(f64; NOTIFY device_state_changed),
+    ota_state: qt_property!(QString; NOTIFY device_state_changed),
+    ota_error: qt_property!(QString; NOTIFY device_state_changed),
+    firmware_update_available: qt_property!(bool; NOTIFY device_state_changed),
+    firmware_latest_version: qt_property!(QString; NOTIFY device_state_changed),
+    firmware_changelog: qt_property!(QString; NOTIFY device_state_changed),
     rate_profile:
         qt_method!(fn(&self, name: QString, json: QString, checksum: QString, is_good: bool)),
     request_profile_ratings: qt_method!(fn(&self)),
@@ -363,16 +387,32 @@ pub struct Controller {
 
     ongoing_computations: BTreeSet<u64>,
 
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    device_manager: Option<DeviceManager>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    device_command_tx: Option<Sender<DeviceCommand>>,
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    device_event_rx: Option<Arc<Mutex<Receiver<DeviceEvent>>>>,
+
     pub stabilizer: Arc<StabilizationManager>,
 }
 
 impl Controller {
     pub fn new() -> Self {
-        Self {
+        let mut this = Self {
             preview_resolution: -1,
             processing_resolution: 720,
+            ota_state: QString::from("none"),
             ..Default::default()
+        };
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            let device_manager = DeviceManager::new();
+            this.device_command_tx = Some(device_manager.command_sender());
+            this.device_event_rx = Some(device_manager.event_receiver());
+            this.device_manager = Some(device_manager);
         }
+        this
     }
 
     fn get_image_sequence_fps(&self, url: QUrl) -> f64 {
@@ -2345,6 +2385,256 @@ impl Controller {
                 }
             }
         });
+    }
+
+    fn sync_device_time(&mut self, tz_offset_minutes: i32) {
+        ::log::info!("NiYien: sync_device_time requested");
+        if !self.device_connected {
+            self.device_time_sync_finished(false, QString::from("Device is not connected"));
+            return;
+        }
+        self.device_time_sync_in_progress = true;
+        self.device_state_changed();
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            if let Some(tx) = self.device_command_tx.as_ref() {
+                let offset = tz_offset_minutes.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+                if tx.send(DeviceCommand::SyncTime(offset)).is_ok() {
+                    return;
+                }
+            }
+        }
+
+        self.device_time_sync_in_progress = false;
+        self.device_state_changed();
+        self.device_time_sync_finished(false, QString::from("Device manager is unavailable"));
+    }
+
+    fn check_firmware_update(&mut self) {
+        ::log::info!("NiYien: check_firmware_update requested");
+        self.ota_error = QString::default();
+        self.ota_state = QString::from("checking");
+        self.firmware_update_available = false;
+        self.firmware_latest_version = QString::default();
+        self.firmware_changelog = QString::default();
+        self.device_state_changed();
+
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            if let Some(tx) = self.device_command_tx.as_ref() {
+                let current_version = if self.device_soft_version.is_empty() {
+                    "0.0.0".to_owned()
+                } else {
+                    self.device_soft_version.to_string()
+                };
+                let _ = tx.send(DeviceCommand::CheckUpdate(current_version));
+                return;
+            }
+        }
+
+        self.ota_state = QString::from("failed");
+        self.ota_error = QString::from("Device manager is unavailable");
+        self.device_state_changed();
+    }
+
+    fn start_firmware_update(&mut self) {
+        ::log::info!("NiYien: start_firmware_update requested");
+        if !self.firmware_update_available {
+            self.ota_state = QString::from("failed");
+            self.ota_error = QString::from("No firmware update is available");
+            self.device_state_changed();
+            return;
+        }
+
+        self.ota_progress = 0.0;
+        self.ota_error = QString::default();
+        self.ota_state = QString::from("updating");
+        self.device_state_changed();
+
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            if let Some(tx) = self.device_command_tx.as_ref() {
+                let _ = tx.send(DeviceCommand::StartOta);
+                return;
+            }
+        }
+
+        self.ota_state = QString::from("failed");
+        self.ota_error = QString::from("Device manager is unavailable");
+        self.device_state_changed();
+    }
+
+    fn poll_device_events(&mut self) {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            let Some(rx) = self.device_event_rx.as_ref().map(Arc::clone) else {
+                return;
+            };
+
+            loop {
+                let event = {
+                    let rx = rx.lock();
+                    rx.try_recv()
+                };
+                match event {
+                    Ok(event) => self.handle_device_event(event),
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        self.device_connected = false;
+                        self.device_state_changed();
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn handle_device_event(&mut self, event: DeviceEvent) {
+        match event {
+            DeviceEvent::Connected(info) => {
+                let soft_version = info.soft_version.clone();
+                let hard_version = info.hard_version.clone();
+                let serial = Self::format_device_serial(&info.serial_number);
+                self.device_connected = true;
+                self.device_name = QString::from(format!("A1:{serial}"));
+                self.device_soft_version = QString::from(info.soft_version);
+                self.device_hard_version = QString::from(info.hard_version);
+                self.ota_error = QString::default();
+                ::log::info!(
+                    "NiYien: device connected name=A1:{} soft={} hard={}",
+                    serial,
+                    soft_version,
+                    hard_version
+                );
+                self.device_state_changed();
+                if std::env::var("GYROFLOW_NIYIEN_AUTO_SYNC_TIME").unwrap_or_default() == "1" {
+                    let system_offset_minutes =
+                        chrono::Local::now().offset().local_minus_utc() / 60;
+                    self.sync_device_time(system_offset_minutes);
+                }
+                if self.ota_state != QString::from("updating") {
+                    self.check_firmware_update();
+                }
+            }
+            DeviceEvent::Disconnected => {
+                self.device_connected = false;
+                self.device_time_sync_in_progress = false;
+                self.device_name = QString::default();
+                self.device_soft_version = QString::default();
+                self.device_hard_version = QString::default();
+                ::log::info!("NiYien: device disconnected");
+                if self.ota_state == QString::from("updating") {
+                    self.ota_state = QString::from("failed");
+                    self.ota_error = QString::from("The device was disconnected");
+                } else if self.ota_state != QString::from("failed") {
+                    self.ota_state = QString::from("none");
+                }
+                self.device_state_changed();
+            }
+            DeviceEvent::TimeReceived(time) => {
+                let formatted = Self::format_device_time(&time);
+                self.device_time = QString::from(formatted.clone());
+                ::log::info!("NiYien: device time received {}", formatted);
+                self.device_state_changed();
+            }
+            DeviceEvent::TimeSyncResult(success) => {
+                ::log::info!("NiYien: time sync result success={}", success);
+                self.device_time_sync_in_progress = false;
+                self.device_state_changed();
+                self.device_time_sync_finished(
+                    success,
+                    QString::from(if success {
+                        "Device time synchronized successfully"
+                    } else {
+                        "Failed to synchronize device time"
+                    }),
+                );
+            }
+            DeviceEvent::UpdateAvailable(info) => {
+                self.ota_state = QString::from("up_to_date");
+                self.ota_error = QString::default();
+                if let Some(info) = info {
+                    ::log::info!(
+                        "NiYien: firmware update available version={} file={}",
+                        info.version,
+                        info.filename
+                    );
+                    self.firmware_update_available = true;
+                    self.ota_state = QString::from("update_available");
+                    self.firmware_latest_version = QString::from(info.version);
+                    self.firmware_changelog = QString::from(if info.changelog_en.is_empty() {
+                        info.changelog_zh
+                    } else {
+                        info.changelog_en
+                    });
+                    if std::env::var("GYROFLOW_NIYIEN_AUTO_START_OTA").unwrap_or_default() == "1" {
+                        self.start_firmware_update();
+                    }
+                } else {
+                    ::log::info!("NiYien: no firmware update available");
+                    self.firmware_update_available = false;
+                    self.firmware_latest_version = QString::default();
+                    self.firmware_changelog = QString::default();
+                }
+                self.device_state_changed();
+            }
+            DeviceEvent::UpdateCheckFailed(message) => {
+                ::log::warn!("NiYien: update check failed: {}", message);
+                self.firmware_update_available = false;
+                self.firmware_latest_version = QString::default();
+                self.firmware_changelog = QString::default();
+                self.ota_state = QString::from("failed");
+                self.ota_error = QString::from(message);
+                self.device_state_changed();
+            }
+            DeviceEvent::OtaProgress(progress) => {
+                ::log::info!("NiYien: OTA progress {:.0}%", progress * 100.0);
+                self.ota_progress = progress;
+                self.ota_state = QString::from("updating");
+                self.device_state_changed();
+            }
+            DeviceEvent::OtaComplete => {
+                ::log::info!("NiYien: OTA complete");
+                self.ota_progress = 1.0;
+                self.ota_state = QString::from("success");
+                self.ota_error = QString::default();
+                self.device_state_changed();
+            }
+            DeviceEvent::OtaFailed(message) => {
+                ::log::warn!("NiYien: OTA failed: {}", message);
+                self.ota_state = QString::from("failed");
+                self.ota_error = QString::from(message);
+                self.device_state_changed();
+            }
+        }
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn format_device_serial(serial_number: &[u8; 12]) -> String {
+        let ascii_bytes: Vec<u8> = serial_number
+            .iter()
+            .copied()
+            .take_while(|byte| *byte != 0)
+            .collect();
+        if !ascii_bytes.is_empty() && ascii_bytes.iter().all(|byte| byte.is_ascii_graphic()) {
+            return String::from_utf8_lossy(&ascii_bytes).into_owned();
+        }
+
+        let mut hex = String::with_capacity(serial_number.len() * 2);
+        for byte in serial_number {
+            use std::fmt::Write as _;
+            let _ = write!(hex, "{byte:02X}");
+        }
+        hex
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn format_device_time(time: &crate::niyien_device::commands::DeviceTime) -> String {
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+            time.year, time.month, time.day, time.hour, time.minute, time.second
+        )
     }
 
     pub fn init_calibrator(&self) {

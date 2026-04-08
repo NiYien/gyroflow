@@ -137,7 +137,7 @@ install-deps:
 
 [no-cd]
 run *param:
-    cargo run --release -- {{param}}
+    cargo run --release {{param}}
 
 [no-cd]
 test *param:
@@ -145,7 +145,7 @@ test *param:
 
 [no-cd]
 debug *param:
-    cargo run -- {{param}}
+    cargo run {{param}}
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Deployment ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
