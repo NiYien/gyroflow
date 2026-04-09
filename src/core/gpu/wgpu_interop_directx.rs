@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
+use ash::vk::{self, ImageCreateInfo};
 use wgpu::TextureFormat;
-use wgpu::hal::api::Vulkan;
 use wgpu::hal::api::Dx12;
-use windows::Win32::Graphics::{ Dxgi::*, Dxgi::Common::*, Direct3D11::*, Direct3D12 };
-use windows::Win32::Foundation::{ CloseHandle, HANDLE, E_NOINTERFACE, E_FAIL, GENERIC_ALL };
-use windows::Win32::System::Threading::{ CreateEventA, WaitForSingleObject };
+use wgpu::hal::api::Vulkan;
+use windows::Win32::Foundation::{CloseHandle, E_FAIL, E_NOINTERFACE, GENERIC_ALL, HANDLE};
+use windows::Win32::Graphics::{Direct3D11::*, Direct3D12, Dxgi::Common::*, Dxgi::*};
+use windows::Win32::System::Threading::{CreateEventA, WaitForSingleObject};
 use windows::core::Interface;
-use ash::vk::{ self, ImageCreateInfo };
 
 pub struct DirectX11Fence {
     fence: ID3D11Fence,
     event: HANDLE,
-    fence_value: std::sync::atomic::AtomicU64
+    fence_value: std::sync::atomic::AtomicU64,
 }
 unsafe impl Send for DirectX11Fence {}
 impl DirectX11Fence {
@@ -30,13 +30,16 @@ impl DirectX11Fence {
             Ok(Self {
                 fence,
                 event,
-                fence_value: Default::default()
+                fence_value: Default::default(),
             })
         }
     }
     pub fn synchronize(&self, context: &ID3D11DeviceContext) -> windows::core::Result<()> {
         let context = context.cast::<ID3D11DeviceContext4>()?;
-        let v = self.fence_value.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let v = self
+            .fence_value
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
         unsafe {
             context.Signal(&self.fence, v)?;
             self.fence.SetEventOnCompletion(v, self.event)?;
@@ -47,7 +50,9 @@ impl DirectX11Fence {
 }
 impl Drop for DirectX11Fence {
     fn drop(&mut self) {
-        unsafe { let _ = CloseHandle(self.event); }
+        unsafe {
+            let _ = CloseHandle(self.event);
+        }
     }
 }
 
@@ -56,10 +61,27 @@ pub struct DirectX11SharedTexture {
     fence: DirectX11Fence,
 }
 impl DirectX11SharedTexture {
-    pub fn synchronized_copy_from(&self, context: &ID3D11DeviceContext, tex: &ID3D11Texture2D) -> windows::core::Result<()> { self.synchronized_copy(context, tex, true) }
-    pub fn synchronized_copy_to  (&self, context: &ID3D11DeviceContext, tex: &ID3D11Texture2D) -> windows::core::Result<()> { self.synchronized_copy(context, tex, false) }
+    pub fn synchronized_copy_from(
+        &self,
+        context: &ID3D11DeviceContext,
+        tex: &ID3D11Texture2D,
+    ) -> windows::core::Result<()> {
+        self.synchronized_copy(context, tex, true)
+    }
+    pub fn synchronized_copy_to(
+        &self,
+        context: &ID3D11DeviceContext,
+        tex: &ID3D11Texture2D,
+    ) -> windows::core::Result<()> {
+        self.synchronized_copy(context, tex, false)
+    }
 
-    fn synchronized_copy(&self, context: &ID3D11DeviceContext, texture: &ID3D11Texture2D, from: bool) -> windows::core::Result<()> {
+    fn synchronized_copy(
+        &self,
+        context: &ID3D11DeviceContext,
+        texture: &ID3D11Texture2D,
+        from: bool,
+    ) -> windows::core::Result<()> {
         unsafe {
             if let Ok(mutex) = self.intermediate_texture.cast::<IDXGIKeyedMutex>() {
                 mutex.AcquireSync(0, 500)?;
@@ -72,17 +94,27 @@ impl DirectX11SharedTexture {
                 mutex.ReleaseSync(0)?;
                 Ok(())
             } else {
-                Err(windows::core::Error::new(E_NOINTERFACE, "Failed to query IDXGIKeyedMutex"))
+                Err(windows::core::Error::new(
+                    E_NOINTERFACE,
+                    "Failed to query IDXGIKeyedMutex",
+                ))
             }
         }
     }
 }
 
-pub fn get_shared_texture_d3d11(device: &ID3D11Device, texture: &ID3D11Texture2D) -> Result<(HANDLE, Option<DirectX11SharedTexture>), Box<dyn std::error::Error>> {
+pub fn get_shared_texture_d3d11(
+    device: &ID3D11Device,
+    texture: &ID3D11Texture2D,
+) -> Result<(HANDLE, Option<DirectX11SharedTexture>), Box<dyn std::error::Error>> {
     unsafe {
         // Try to open or create shared handle if possible
         if let Ok(dxgi_resource) = texture.cast::<IDXGIResource1>() {
-            if let Ok(handle) = dxgi_resource.CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0, None) {
+            if let Ok(handle) = dxgi_resource.CreateSharedHandle(
+                None,
+                DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0,
+                None,
+            ) {
                 if !handle.is_invalid() {
                     return Ok((handle, None));
                 }
@@ -93,25 +125,37 @@ pub fn get_shared_texture_d3d11(device: &ID3D11Device, texture: &ID3D11Texture2D
         // We need to create a new texture and use texture copy from our original one.
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         texture.GetDesc(&mut desc);
-        desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 as u32 | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0 as u32;
+        desc.MiscFlags |= D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0 as u32
+            | D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0 as u32;
 
         let mut new_texture = None;
         device.CreateTexture2D(&desc, None, Some(&mut new_texture))?;
         if let Some(new_texture) = new_texture {
             let dxgi_resource: IDXGIResource1 = new_texture.cast::<IDXGIResource1>()?;
-            let handle = dxgi_resource.CreateSharedHandle(None, DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0, None)?;
+            let handle = dxgi_resource.CreateSharedHandle(
+                None,
+                DXGI_SHARED_RESOURCE_READ.0 | DXGI_SHARED_RESOURCE_WRITE.0,
+                None,
+            )?;
 
-            Ok((handle, Some(DirectX11SharedTexture {
-                intermediate_texture: new_texture,
-                fence: DirectX11Fence::new(device)?
-            })))
+            Ok((
+                handle,
+                Some(DirectX11SharedTexture {
+                    intermediate_texture: new_texture,
+                    fence: DirectX11Fence::new(device)?,
+                }),
+            ))
         } else {
             Err("Call to CreateTexture2D failed".into())
         }
     }
 }
 
-pub fn create_vk_image_from_d3d11_texture(device: &wgpu::Device, d3d11_device: &ID3D11Device, texture: &ID3D11Texture2D) -> Result<(vk::Image, Option<DirectX11SharedTexture>), Box<dyn std::error::Error>> {
+pub fn create_vk_image_from_d3d11_texture(
+    device: &wgpu::Device,
+    d3d11_device: &ID3D11Device,
+    texture: &ID3D11Texture2D,
+) -> Result<(vk::Image, Option<DirectX11SharedTexture>), Box<dyn std::error::Error>> {
     unsafe {
         let (handle, shared_texture) = get_shared_texture_d3d11(d3d11_device, texture)?;
 
@@ -134,7 +178,8 @@ pub fn create_vk_image_from_d3d11_texture(device: &wgpu::Device, d3d11_device: &
 
                 let allocated_memory = raw_device.allocate_memory(&allocate_info, None)?;
 
-                let mut ext_create_info = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle_type);
+                let mut ext_create_info =
+                    vk::ExternalMemoryImageCreateInfo::default().handle_types(handle_type);
 
                 // vk::ExportMemoryWin32HandleInfoKHR
                 // ash::extensions::khr::ExternalMemoryWin32::new(, raw_device);
@@ -142,13 +187,23 @@ pub fn create_vk_image_from_d3d11_texture(device: &wgpu::Device, d3d11_device: &
                 let image_create_info = ImageCreateInfo::default()
                     .push_next(&mut ext_create_info)
                     .image_type(vk::ImageType::TYPE_2D)
-                    .format(super::wgpu_interop_vulkan::format_wgpu_to_vulkan(format_dxgi_to_wgpu(desc.Format)))
-                    .extent(vk::Extent3D { width: desc.Width, height: desc.Height, depth: desc.ArraySize })
+                    .format(super::wgpu_interop_vulkan::format_wgpu_to_vulkan(
+                        format_dxgi_to_wgpu(desc.Format),
+                    ))
+                    .extent(vk::Extent3D {
+                        width: desc.Width,
+                        height: desc.Height,
+                        depth: desc.ArraySize,
+                    })
                     .mip_levels(desc.MipLevels)
                     .array_layers(desc.ArraySize)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST)
+                    .usage(
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT
+                            | vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::TRANSFER_DST,
+                    )
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
                 let raw_image = raw_device.create_image(&image_create_info, None)?;
@@ -159,13 +214,19 @@ pub fn create_vk_image_from_d3d11_texture(device: &wgpu::Device, d3d11_device: &
 
                 Ok::<ash::vk::Image, vk::Result>(raw_image)
             })
-        }.unwrap()?; // TODO: unwrap
+        }
+        .unwrap()?; // TODO: unwrap
 
         Ok((raw_image, shared_texture))
     }
 }
 
-pub fn create_dx12_resource_from_d3d11_texture(device: &wgpu::Device, d3d11_device: &ID3D11Device, texture: &ID3D11Texture2D) -> Result<(Direct3D12::ID3D12Resource, Option<DirectX11SharedTexture>), Box<dyn std::error::Error>> {
+pub fn create_dx12_resource_from_d3d11_texture(
+    device: &wgpu::Device,
+    d3d11_device: &ID3D11Device,
+    texture: &ID3D11Texture2D,
+) -> Result<(Direct3D12::ID3D12Resource, Option<DirectX11SharedTexture>), Box<dyn std::error::Error>>
+{
     unsafe {
         let (handle, shared_texture) = get_shared_texture_d3d11(d3d11_device, texture)?;
 
@@ -177,29 +238,45 @@ pub fn create_dx12_resource_from_d3d11_texture(device: &wgpu::Device, d3d11_devi
                 let mut resource = None::<Direct3D12::ID3D12Resource>;
                 match raw_device.OpenSharedHandle(handle, &mut resource) {
                     Ok(_) => Ok(resource.unwrap()),
-                    Err(e) => Err(e)
+                    Err(e) => Err(e),
                 }
             })
-        }.unwrap()?; // TODO: unwrap
+        }
+        .unwrap()?; // TODO: unwrap
 
         Ok((raw_image, shared_texture))
     }
 }
 
-pub fn create_texture_from_dx12_resource(device: &wgpu::Device, resource: Direct3D12::ID3D12Resource, desc: &wgpu::TextureDescriptor) -> wgpu::Texture {
+pub fn create_texture_from_dx12_resource(
+    device: &wgpu::Device,
+    resource: Direct3D12::ID3D12Resource,
+    desc: &wgpu::TextureDescriptor,
+) -> wgpu::Texture {
     unsafe {
-        let texture = <Dx12 as wgpu::hal::Api>::Device::texture_from_raw(resource, desc.format, desc.dimension, desc.size, 1, 1);
+        let texture = <Dx12 as wgpu::hal::Api>::Device::texture_from_raw(
+            resource,
+            desc.format,
+            desc.dimension,
+            desc.size,
+            1,
+            1,
+        );
 
         device.create_texture_from_hal::<Dx12>(texture, &desc)
     }
 }
 
-pub fn create_dx12_resource_from_vk_image(device: &wgpu::Device, vk_image: vk::Image, vk_device: vk::Device, vk_instance: vk::Instance) -> Result<Direct3D12::ID3D12Resource, Box<dyn std::error::Error>> {
+pub fn create_dx12_resource_from_vk_image(
+    device: &wgpu::Device,
+    vk_image: vk::Image,
+    vk_device: vk::Device,
+    vk_instance: vk::Instance,
+) -> Result<Direct3D12::ID3D12Resource, Box<dyn std::error::Error>> {
     unsafe {
         let hdevice = device.as_hal::<Dx12>();
         let raw_image = {
             hdevice.map(|hdevice| {
-
                 let entry = ash::Entry::load().unwrap();
                 dbg!("entry");
                 let ash_instance = ash::Instance::load(entry.static_fn(), vk_instance);
@@ -216,27 +293,36 @@ pub fn create_dx12_resource_from_vk_image(device: &wgpu::Device, vk_image: vk::I
                     .push_next(&mut export_memory_info)
                     .memory_type_index(0);
 
-                let allocated_memory = ash_device.allocate_memory(&allocate_info, None).map_err(|e| format!("{e:?}"))?;
+                let allocated_memory = ash_device
+                    .allocate_memory(&allocate_info, None)
+                    .map_err(|e| format!("{e:?}"))?;
 
                 let ext = ash::khr::external_memory_win32::Device::new(&ash_instance, &ash_device);
-                let handle = ext.get_memory_win32_handle(&vk::MemoryGetWin32HandleInfoKHR::default()
-                    .memory(allocated_memory)
-                    .handle_type(handle_type)).unwrap();
+                let handle = ext
+                    .get_memory_win32_handle(
+                        &vk::MemoryGetWin32HandleInfoKHR::default()
+                            .memory(allocated_memory)
+                            .handle_type(handle_type),
+                    )
+                    .unwrap();
 
                 dbg!(handle);
                 //CloseHandle(handle); TODO
 
-                ash_device.bind_image_memory(vk_image, allocated_memory, 0).map_err(|e| format!("{e:?}"))?;
+                ash_device
+                    .bind_image_memory(vk_image, allocated_memory, 0)
+                    .map_err(|e| format!("{e:?}"))?;
 
                 let raw_device = hdevice.raw_device();
 
                 let mut resource = None::<Direct3D12::ID3D12Resource>;
                 match raw_device.OpenSharedHandle(HANDLE(handle as _), &mut resource) {
                     Ok(_) => Ok(resource.unwrap()),
-                    Err(e) => Err(e.to_string())
+                    Err(e) => Err(e.to_string()),
                 }
             })
-        }.unwrap()?; // TODO: unwrap
+        }
+        .unwrap()?; // TODO: unwrap
 
         Ok(raw_image)
     }
@@ -297,7 +383,10 @@ pub fn create_dx12_resource_from_vk_image(device: &wgpu::Device, vk_image: vk::I
     }
 }*/
 
-pub fn create_native_shared_buffer_dx12(device: &wgpu::Device, size: usize) -> Result<(Direct3D12::ID3D12Resource, HANDLE, usize), String> {
+pub fn create_native_shared_buffer_dx12(
+    device: &wgpu::Device,
+    size: usize,
+) -> Result<(Direct3D12::ID3D12Resource, HANDLE, usize), String> {
     unsafe {
         let hdevice = device.as_hal::<Dx12>();
         {
@@ -330,14 +419,16 @@ pub fn create_native_shared_buffer_dx12(device: &wgpu::Device, size: usize) -> R
                         VisibleNodeMask: 0,
                     };
 
-                    raw_device.CreateCommittedResource(
-                        &heap_properties,
-                        Direct3D12::D3D12_HEAP_FLAG_SHARED,
-                        &raw_desc,
-                        Direct3D12::D3D12_RESOURCE_STATE_COMMON,
-                        None, // clear value
-                        &mut resource,
-                    ).map_err(|e| format!("{e:?}"))?;
+                    raw_device
+                        .CreateCommittedResource(
+                            &heap_properties,
+                            Direct3D12::D3D12_HEAP_FLAG_SHARED,
+                            &raw_desc,
+                            Direct3D12::D3D12_RESOURCE_STATE_COMMON,
+                            None, // clear value
+                            &mut resource,
+                        )
+                        .map_err(|e| format!("{e:?}"))?;
                 }
 
                 let resource = resource.unwrap();
@@ -346,12 +437,22 @@ pub fn create_native_shared_buffer_dx12(device: &wgpu::Device, size: usize) -> R
                 let ai = raw_device.GetResourceAllocationInfo(0, &[actual_desc]);
                 let actual_size = ai.SizeInBytes as usize;
 
-                match raw_device.CreateSharedHandle(&resource, None, GENERIC_ALL.0, windows::core::PCWSTR::null()) {
-                    Ok(handle) => Ok::<(Direct3D12::ID3D12Resource, HANDLE, usize), String>((resource, handle, actual_size)),
-                    Err(e) => Err(e.to_string())
+                match raw_device.CreateSharedHandle(
+                    &resource,
+                    None,
+                    GENERIC_ALL.0,
+                    windows::core::PCWSTR::null(),
+                ) {
+                    Ok(handle) => Ok::<(Direct3D12::ID3D12Resource, HANDLE, usize), String>((
+                        resource,
+                        handle,
+                        actual_size,
+                    )),
+                    Err(e) => Err(e.to_string()),
                 }
             })
-        }.unwrap() // TODO: unwrap
+        }
+        .unwrap() // TODO: unwrap
     }
 }
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
+use crate::glam::{vec2, Vec2, Vec3};
 use crate::types::*;
-use crate::glam::{ Vec2, vec2, Vec3 };
 
-pub struct GoProHyperview { }
+pub struct GoProHyperview {}
 
 impl GoProHyperview {
     /// `uv` range: (0, 0)...(width, height)
@@ -39,9 +39,13 @@ impl GoProHyperview {
     }
 
     #[cfg(not(target_arch = "spirv"))]
-    pub fn adjust_lens_profile(calib_w: &mut usize, calib_h: &mut usize/*, lens_model: &mut String*/) {
+    pub fn adjust_lens_profile(
+        calib_w: &mut usize,
+        calib_h: &mut usize, /*, lens_model: &mut String*/
+    ) {
         let aspect = (*calib_w as f64 / *calib_h as f64 * 100.0) as usize;
-        if aspect == 114 { // It's 8:7
+        if aspect == 114 {
+            // It's 8:7
             *calib_w = (*calib_w as f64 * 1.55555555555).round() as usize;
         }
         // *lens_model = "Hyperview".into();

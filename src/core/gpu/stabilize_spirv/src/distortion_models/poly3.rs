@@ -3,10 +3,10 @@
 
 // Adapted from LensFun: https://github.com/lensfun/lensfun/blob/e78e7be448c81256cce36a5a37ddc229616c0db7/libs/lensfun/mod-coord.cpp#L562
 
+use crate::glam::{vec2, Vec2, Vec3};
 use crate::types::*;
-use crate::glam::{ Vec2, vec2, Vec3 };
 
-pub struct Poly3 { }
+pub struct Poly3 {}
 
 const NEWTON_EPS: f32 = 0.00001;
 
@@ -15,7 +15,9 @@ impl Poly3 {
         let inv_k1 = 1.0 / params.k1.x;
 
         let rd = point.length();
-        if rd == 0.0 { return vec2(-99999.0, -99999.0); }
+        if rd == 0.0 {
+            return vec2(-99999.0, -99999.0);
+        }
 
         let rd_div_k1 = rd * inv_k1;
 
@@ -27,8 +29,9 @@ impl Poly3 {
         // Divide by k1_:     Ru^3 + Ru/k1_ - Rd/k1_ = 0
         // Derivative:        3 * Ru^2 + 1/k1_
         let mut ru = rd;
-        let mut i = 0; while i < 6 {
-        // for i in 0..10 {
+        let mut i = 0;
+        while i < 6 {
+            // for i in 0..10 {
             let fru = ru * ru * ru + ru * inv_k1 - rd_div_k1;
             if fru >= -NEWTON_EPS && fru < NEWTON_EPS {
                 break;
@@ -44,10 +47,7 @@ impl Poly3 {
 
         ru = ru / rd;
 
-        vec2(
-            point.x * ru,
-            point.y * ru
-        )
+        vec2(point.x * ru, point.y * ru)
     }
 
     pub fn distort_point(point: Vec3, params: &KernelParams) -> Vec2 {
@@ -55,10 +55,7 @@ impl Poly3 {
         let y = point.y / point.z;
         let poly2 = params.k1.x * (x.powi(2) + y.powi(2)) + 1.0;
 
-        vec2(
-            x * poly2,
-            y * poly2
-        )
+        vec2(x * poly2, y * poly2)
     }
 
     #[cfg(not(target_arch = "spirv"))]
@@ -70,7 +67,11 @@ impl Poly3 {
     }
 
     #[cfg(not(target_arch = "spirv"))]
-    pub fn adjust_lens_profile(_calib_w: &mut usize, _calib_h: &mut usize/*, lens_model: &mut String*/) { }
+    pub fn adjust_lens_profile(
+        _calib_w: &mut usize,
+        _calib_h: &mut usize, /*, lens_model: &mut String*/
+    ) {
+    }
 }
 
 // TODO
@@ -86,4 +87,3 @@ impl Poly3 {
 // let hugin_scale_in_millimeters = 36.0.hypot(24.0) / crop_factor / aspect_ratio.hypot(1.0) / 2.0;
 // let hugin_scaling = real_focal / hugin_scale_in_millimeters;
 // rescale_coeffs(k, hugin_scaling);
-

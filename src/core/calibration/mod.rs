@@ -7,18 +7,21 @@
 
 #[cfg(feature = "use-opencv")]
 use opencv::{
-    core::{ Mat, Size, Point2f, Vector, Point3d, TermCriteria, TermCriteria_Type, CV_8UC1 },
-    prelude::{ MatTraitConst, MatTraitConstManual },
-    calib3d::{ CALIB_CB_MARKER, Fisheye_CALIB_RECOMPUTE_EXTRINSIC, Fisheye_CALIB_FIX_SKEW }
+    calib3d::{CALIB_CB_MARKER, Fisheye_CALIB_FIX_SKEW, Fisheye_CALIB_RECOMPUTE_EXTRINSIC},
+    core::{CV_8UC1, Mat, Point2f, Point3d, Size, TermCriteria, TermCriteria_Type, Vector},
+    prelude::{MatTraitConst, MatTraitConstManual},
 };
 
-use rand::prelude::IteratorRandom;
-use std::{ ffi::c_void, collections::{ BTreeSet, BTreeMap, HashSet } };
-use std::sync::atomic::{ AtomicBool, AtomicUsize, Ordering::SeqCst };
-use std::sync::Arc;
-use nalgebra::{ Matrix3, Vector4 };
+use nalgebra::{Matrix3, Vector4};
 use parking_lot::RwLock;
-use rayon::iter::{ ParallelIterator, IntoParallelIterator };
+use rand::prelude::IteratorRandom;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashSet},
+    ffi::c_void,
+};
 
 use crate::stabilization::distortion_models::DistortionModel;
 
@@ -30,7 +33,7 @@ pub struct Detected {
     pub frame: i32,
     pub timestamp_us: i64,
     pub avg_sharpness: f64,
-    pub is_forced: bool
+    pub is_forced: bool,
 }
 #[derive(Default)]
 pub struct LensCalibrator {
@@ -62,13 +65,16 @@ pub struct LensCalibrator {
 
     pub all_matches: Arc<RwLock<BTreeMap<i32, Detected>>>, // frame, Detected
     pub image_points: Arc<RwLock<BTreeMap<i32, Detected>>>, // frame, Detected
-    pub used_points: BTreeMap<i32, Detected> // frame, Detected
+    pub used_points: BTreeMap<i32, Detected>,              // frame, Detected
 }
 
 impl LensCalibrator {
     pub fn new() -> Self {
         #[cfg(feature = "opencv")]
-        ::log::info!("OpenCV: {}", opencv::core::get_version_string().unwrap_or_default());
+        ::log::info!(
+            "OpenCV: {}",
+            opencv::core::get_version_string().unwrap_or_default()
+        );
 
         let mut ret = Self {
             columns: 14,
@@ -101,9 +107,22 @@ impl LensCalibrator {
         self.used_points.clear();
     }
 
-    pub fn feed_frame<F>(&mut self, timestamp_us: i64, frame: i32, size: (u32, u32), org_size: (u32, u32), stride: usize, pt_scale: f32, pixels: &[u8], cancel_flag: Arc<AtomicBool>, total: usize, processed_imgs: Arc<AtomicUsize>, progress: F)
-    where F: Fn((usize, usize, usize, f64, f64)) + Send + Sync + Clone + 'static {
-
+    pub fn feed_frame<F>(
+        &mut self,
+        timestamp_us: i64,
+        frame: i32,
+        size: (u32, u32),
+        org_size: (u32, u32),
+        stride: usize,
+        pt_scale: f32,
+        pixels: &[u8],
+        cancel_flag: Arc<AtomicBool>,
+        total: usize,
+        processed_imgs: Arc<AtomicUsize>,
+        progress: F,
+    ) where
+        F: Fn((usize, usize, usize, f64, f64)) + Send + Sync + Clone + 'static,
+    {
         self.width = org_size.0 as usize;
         self.height = org_size.1 as usize;
         let grid_size = Size::new(self.columns as i32, self.rows as i32);
@@ -115,7 +134,10 @@ impl LensCalibrator {
         let is_forced = self.forced_frames.contains(&frame);
         let sum_sharpness = self.sum_sharpness.clone();
 
-        let digital_lens = self.digital_lens.as_ref().map(|x| DistortionModel::from_name(&x));
+        let digital_lens = self
+            .digital_lens
+            .as_ref()
+            .map(|x| DistortionModel::from_name(&x));
         let digital_lens_params_opt = self.digital_lens_params.clone();
         let no_marker = self.no_marker;
 
@@ -124,7 +146,13 @@ impl LensCalibrator {
                 img_points.write().insert(frame, detected.clone());
                 *sum_sharpness.write() += detected.avg_sharpness;
             }
-            progress((processed_imgs.fetch_add(1, SeqCst) + 1, total, img_points.read().len(), 0.0, detected.avg_sharpness));
+            progress((
+                processed_imgs.fetch_add(1, SeqCst) + 1,
+                total,
+                img_points.read().len(),
+                0.0,
+                detected.avg_sharpness,
+            ));
             return;
         }
 
@@ -141,8 +169,22 @@ impl LensCalibrator {
                     *px = (*px as f64 * contrast + brightness).min(255.0) as u8;
                 }
 
-                let inp1 = unsafe { Mat::new_size_with_data_unsafe(Size::new(size.0 as i32, size.1 as i32), CV_8UC1, pixels.as_ptr() as *mut c_void, stride as usize)? };
-                let mut inp = unsafe { Mat::new_size_with_data_unsafe(Size::new(size.0 as i32, size.1 as i32), CV_8UC1, pixels.as_ptr() as *mut c_void, stride as usize)? };
+                let inp1 = unsafe {
+                    Mat::new_size_with_data_unsafe(
+                        Size::new(size.0 as i32, size.1 as i32),
+                        CV_8UC1,
+                        pixels.as_ptr() as *mut c_void,
+                        stride as usize,
+                    )?
+                };
+                let mut inp = unsafe {
+                    Mat::new_size_with_data_unsafe(
+                        Size::new(size.0 as i32, size.1 as i32),
+                        CV_8UC1,
+                        pixels.as_ptr() as *mut c_void,
+                        stride as usize,
+                    )?
+                };
 
                 let _ = opencv::imgproc::equalize_hist(&inp1, &mut inp);
 
@@ -153,9 +195,22 @@ impl LensCalibrator {
                     flags = 0;
                 }
 
-                if opencv::calib3d::find_chessboard_corners_sb(&inp, grid_size, &mut corners, flags)? {
+                if opencv::calib3d::find_chessboard_corners_sb(
+                    &inp,
+                    grid_size,
+                    &mut corners,
+                    flags,
+                )? {
                     if corners.rows() > 0 {
-                        let sharpness = opencv::calib3d::estimate_chessboard_sharpness(&inp, grid_size, &corners, 0.8, false, &mut Mat::default()).unwrap_or_default();
+                        let sharpness = opencv::calib3d::estimate_chessboard_sharpness(
+                            &inp,
+                            grid_size,
+                            &corners,
+                            0.8,
+                            false,
+                            &mut Mat::default(),
+                        )
+                        .unwrap_or_default();
                         let avg_sharpness = *sharpness.get(0).unwrap_or(&100.0);
                         let mut points = Vec::with_capacity(corners.rows() as usize);
 
@@ -167,7 +222,7 @@ impl LensCalibrator {
                         }
                         // TODO more params
                         let kernel_params = crate::stabilization::KernelParams {
-                            width : size.0 as i32,
+                            width: size.0 as i32,
                             height: size.1 as i32,
                             output_width: size.0 as i32,
                             output_height: size.1 as i32,
@@ -177,7 +232,9 @@ impl LensCalibrator {
 
                         for (_pos, mut pt) in corners.iter::<Point2f>()? {
                             if let Some(digital) = &digital_lens {
-                                if let Some(mut pt2) = digital.undistort_point((pt.x, pt.y), &kernel_params) {
+                                if let Some(mut pt2) =
+                                    digital.undistort_point((pt.x, pt.y), &kernel_params)
+                                {
                                     // TODO
                                     // Move from center to the left, because we trim the right part making it 4:3
                                     //pt2.0 -= 0.125; // (16-4) / (9-3) / 16
@@ -187,23 +244,55 @@ impl LensCalibrator {
                             }
                             points.push((pt.x * pt_scale, pt.y * pt_scale));
                         }
-                        log::debug!("avg sharpness: {:.5}, max: {:.5}", avg_sharpness, max_sharpness);
+                        log::debug!(
+                            "avg sharpness: {:.5}, max: {:.5}",
+                            avg_sharpness,
+                            max_sharpness
+                        );
                         if avg_sharpness < max_sharpness || is_forced {
-                            img_points.write().insert(frame, Detected { points: points.clone(), timestamp_us, frame, avg_sharpness, is_forced });
+                            img_points.write().insert(
+                                frame,
+                                Detected {
+                                    points: points.clone(),
+                                    timestamp_us,
+                                    frame,
+                                    avg_sharpness,
+                                    is_forced,
+                                },
+                            );
                             *sum_sharpness.write() += avg_sharpness;
                         }
-                        all_matches.write().insert(frame, Detected { points, timestamp_us, avg_sharpness, frame, is_forced });
+                        all_matches.write().insert(
+                            frame,
+                            Detected {
+                                points,
+                                timestamp_us,
+                                avg_sharpness,
+                                frame,
+                                is_forced,
+                            },
+                        );
                         return Ok(avg_sharpness);
                     }
                 }
                 Err(opencv::Error::new(0, "Chessboard not found".to_string()))
             })();
-            progress((processed_imgs.fetch_add(1, SeqCst) + 1, total, img_points.read().len(), 0.0, avg_sharpness.unwrap_or(0.0)));
+            progress((
+                processed_imgs.fetch_add(1, SeqCst) + 1,
+                total,
+                img_points.read().len(),
+                0.0,
+                avg_sharpness.unwrap_or(0.0),
+            ));
         });
     }
 
     pub fn calibrate(&mut self, only_used: bool) -> Result<(), opencv::Error> {
-        let calib_criteria = TermCriteria::new(TermCriteria_Type::EPS as i32 | TermCriteria_Type::COUNT as i32, 30, 1e-6)?;
+        let calib_criteria = TermCriteria::new(
+            TermCriteria_Type::EPS as i32 | TermCriteria_Type::COUNT as i32,
+            30,
+            1e-6,
+        )?;
 
         let found_frames: BTreeSet<i32> = if only_used {
             self.used_points.keys().copied().collect()
@@ -211,11 +300,19 @@ impl LensCalibrator {
             self.image_points.read().keys().copied().collect()
         };
 
-        let find_min = |a: (f64, Matrix3::<f64>, Vector4::<f64>, Vec<i32>), b: (f64, Matrix3::<f64>, Vector4::<f64>, Vec<i32>)| -> (f64, Matrix3::<f64>, Vector4::<f64>, Vec<i32>) { if a.0 < b.0 { a } else { b } };
+        let find_min = |a: (f64, Matrix3<f64>, Vector4<f64>, Vec<i32>),
+                        b: (f64, Matrix3<f64>, Vector4<f64>, Vec<i32>)|
+         -> (f64, Matrix3<f64>, Vector4<f64>, Vec<i32>) {
+            if a.0 < b.0 { a } else { b }
+        };
 
         let image_points = self.image_points.read().clone();
         let mut width = self.width as i32;
-        if let Some(digital) = self.digital_lens.as_ref().map(|x| DistortionModel::from_name(&x)) {
+        if let Some(digital) = self
+            .digital_lens
+            .as_ref()
+            .map(|x| DistortionModel::from_name(&x))
+        {
             // TODO
             //width = (width as f32 / 1.33333333).round() as i32;
         }
@@ -228,81 +325,126 @@ impl LensCalibrator {
         if found_frames.len() <= max_images || max_images == 0 || only_used {
             iterations = 1;
         }
-        let result = (0..iterations).into_par_iter().map(|_| {
-            let candidate_frames: BTreeSet<i32> = if iterations > 1 {
-                // Dive the entire range to `max_images` even slices
-                // Then pick a random frame from each slice
-                let mut choosen = BTreeSet::new();
-                if let Some(max) = found_frames.iter().max() {
-                    if let Some(min) = found_frames.iter().min() {
-                        let step = ((*max - *min) as f64 / max_images as f64).floor() as i32;
-                        let mut val = *min;
-                        for _ in 0..max_images {
-                            let range = found_frames.range(val..val + step);
-                            if let Some(el) = range.choose(&mut rand::rng()) {
-                                choosen.insert(*el);
+        let result = (0..iterations)
+            .into_par_iter()
+            .map(|_| {
+                let candidate_frames: BTreeSet<i32> = if iterations > 1 {
+                    // Dive the entire range to `max_images` even slices
+                    // Then pick a random frame from each slice
+                    let mut choosen = BTreeSet::new();
+                    if let Some(max) = found_frames.iter().max() {
+                        if let Some(min) = found_frames.iter().min() {
+                            let step = ((*max - *min) as f64 / max_images as f64).floor() as i32;
+                            let mut val = *min;
+                            for _ in 0..max_images {
+                                let range = found_frames.range(val..val + step);
+                                if let Some(el) = range.choose(&mut rand::rng()) {
+                                    choosen.insert(*el);
+                                }
+                                val += step;
                             }
-                            val += step;
                         }
                     }
+                    choosen
+                } else if only_used {
+                    // Calculate only using used frames
+                    found_frames.clone()
+                } else {
+                    // Pick `max_images` random frames from the entire range
+                    found_frames
+                        .iter()
+                        .copied()
+                        .sample(&mut rand::rng(), max_images)
+                        .into_iter()
+                        .collect()
+                };
+
+                let final_frames: Vec<i32> = candidate_frames
+                    .iter()
+                    .chain(forced_frames.iter())
+                    .filter_map(|k| Some(image_points.get(k)?.frame))
+                    .collect();
+
+                if final_frames.len() == 1 {
+                    return (
+                        999.0000,
+                        Matrix3::<f64>::default(),
+                        Vector4::<f64>::default(),
+                        final_frames,
+                    );
                 }
-                choosen
-            } else if only_used {
-                // Calculate only using used frames
-                found_frames.clone()
-            } else {
-                // Pick `max_images` random frames from the entire range
-                found_frames.iter().copied()
-                    .sample(&mut rand::rng(), max_images).into_iter()
-                    .collect()
-            };
 
-            let final_frames: Vec<i32> = candidate_frames.iter().chain(forced_frames.iter()).filter_map(|k| Some(image_points.get(k)?.frame)).collect();
+                let imgpoints =
+                    Vector::<Vector<Point2f>>::from_iter(final_frames.iter().filter_map(|k| {
+                        Some(Vector::from_iter(
+                            image_points
+                                .get(k)?
+                                .points
+                                .iter()
+                                .map(|(x, y)| Point2f::new(*x as f32, *y as f32)),
+                        ))
+                    }));
+                let objpoints = Vector::<Vector<Point3d>>::from_iter(
+                    (0..imgpoints.len()).into_iter().map(|_| {
+                        Vector::<Point3d>::from_iter(
+                            objp.iter().map(|(x, y)| Point3d::new(*x, *y, 0.0)),
+                        )
+                    }),
+                );
 
-            if final_frames.len() == 1 {
-                return (999.0000, Matrix3::<f64>::default(), Vector4::<f64>::default(), final_frames);
-            }
+                let mut k = Mat::default();
+                let mut d = Mat::default();
+                let mut rv = Mat::default();
+                let mut tv = Mat::default();
+                // let mut nop = Mat::default();
 
-            let imgpoints = Vector::<Vector<Point2f>>::from_iter(
-                final_frames.iter().filter_map(|k| Some(Vector::from_iter(
-                    image_points.get(k)?.points.iter().map(|(x, y)| Point2f::new(*x as f32, *y as f32))
-                ))
-            ));
-            let objpoints = Vector::<Vector<Point3d>>::from_iter(
-                (0..imgpoints.len()).into_iter().map(|_| Vector::<Point3d>::from_iter(
-                    objp.iter().map(|(x, y)| Point3d::new(*x, *y, 0.0))
-                ))
-            );
-
-            let mut k  = Mat::default(); let mut d  = Mat::default();
-            let mut rv = Mat::default(); let mut tv = Mat::default();
-            // let mut nop = Mat::default();
-
-            // match opencv::calib3d::calibrate_camera_ro(&objpoints, &imgpoints, size, 13, &mut k, &mut d, &mut rv, &mut tv, &mut nop, Fisheye_CALIB_RECOMPUTE_EXTRINSIC | Fisheye_CALIB_FIX_SKEW, calib_criteria) {
-            match opencv::calib3d::calibrate(&objpoints, &imgpoints, size, &mut k, &mut d, &mut rv, &mut tv, Fisheye_CALIB_RECOMPUTE_EXTRINSIC | Fisheye_CALIB_FIX_SKEW, calib_criteria) {
-                Ok(rms) => {
-                    if let Ok(k) = cv_to_mat3(k) {
-                        if let Ok(d) = cv_to_vec4(d) {
-                            return (rms, k, d, final_frames);
+                // match opencv::calib3d::calibrate_camera_ro(&objpoints, &imgpoints, size, 13, &mut k, &mut d, &mut rv, &mut tv, &mut nop, Fisheye_CALIB_RECOMPUTE_EXTRINSIC | Fisheye_CALIB_FIX_SKEW, calib_criteria) {
+                match opencv::calib3d::calibrate(
+                    &objpoints,
+                    &imgpoints,
+                    size,
+                    &mut k,
+                    &mut d,
+                    &mut rv,
+                    &mut tv,
+                    Fisheye_CALIB_RECOMPUTE_EXTRINSIC | Fisheye_CALIB_FIX_SKEW,
+                    calib_criteria,
+                ) {
+                    Ok(rms) => {
+                        if let Ok(k) = cv_to_mat3(k) {
+                            if let Ok(d) = cv_to_vec4(d) {
+                                return (rms, k, d, final_frames);
+                            }
                         }
                     }
-                },
-                Err(e) => {
-                    log::warn!("Failed to calibrate! {:?}", e);
+                    Err(e) => {
+                        log::warn!("Failed to calibrate! {:?}", e);
+                    }
                 }
-            }
-            (999.0000, Matrix3::<f64>::default(), Vector4::<f64>::default(), Vec::new())
-        }).reduce_with(find_min);
+                (
+                    999.0000,
+                    Matrix3::<f64>::default(),
+                    Vector4::<f64>::default(),
+                    Vec::new(),
+                )
+            })
+            .reduce_with(find_min);
 
         if let Some((rms, k, d, used_frames)) = result {
             self.k = k;
             self.d = d;
             self.rms = rms;
-            self.used_points = used_frames.into_iter().filter_map(|f| Some((f, image_points.get(&f)?.clone()))).collect();
+            self.used_points = used_frames
+                .into_iter()
+                .filter_map(|f| Some((f, image_points.get(&f)?.clone())))
+                .collect();
 
             Ok(())
         } else {
-            Err(opencv::Error::new(0, "Unable to calibrate camera".to_string()))
+            Err(opencv::Error::new(
+                0,
+                "Unable to calibrate camera".to_string(),
+            ))
         }
     }
 }
@@ -313,9 +455,15 @@ fn cv_to_mat3(r1: Mat) -> Result<Matrix3<f64>, opencv::Error> {
         return Err(opencv::Error::new(0, "Invalid matrix type".to_string()));
     }
     Ok(Matrix3::new(
-        *r1.at_2d::<f64>(0, 0)?, *r1.at_2d::<f64>(0, 1)?, *r1.at_2d::<f64>(0, 2)?,
-        *r1.at_2d::<f64>(1, 0)?, *r1.at_2d::<f64>(1, 1)?, *r1.at_2d::<f64>(1, 2)?,
-        *r1.at_2d::<f64>(2, 0)?, *r1.at_2d::<f64>(2, 1)?, *r1.at_2d::<f64>(2, 2)?
+        *r1.at_2d::<f64>(0, 0)?,
+        *r1.at_2d::<f64>(0, 1)?,
+        *r1.at_2d::<f64>(0, 2)?,
+        *r1.at_2d::<f64>(1, 0)?,
+        *r1.at_2d::<f64>(1, 1)?,
+        *r1.at_2d::<f64>(1, 2)?,
+        *r1.at_2d::<f64>(2, 0)?,
+        *r1.at_2d::<f64>(2, 1)?,
+        *r1.at_2d::<f64>(2, 2)?,
     ))
 }
 
@@ -328,7 +476,7 @@ fn cv_to_vec4(v: Mat) -> Result<Vector4<f64>, opencv::Error> {
         *v.at::<f64>(0)?,
         *v.at::<f64>(1)?,
         *v.at::<f64>(2)?,
-        *v.at::<f64>(3)?
+        *v.at::<f64>(3)?,
     ))
 }
 

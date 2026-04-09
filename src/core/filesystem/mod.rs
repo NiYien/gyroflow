@@ -6,12 +6,12 @@ pub mod android;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod apple;
 
-use std::fs::*;
-use std::io::{ Read, Write };
-use std::path::*;
-use std::collections::HashSet;
 use itertools::Itertools;
 use parking_lot::RwLock;
+use std::collections::HashSet;
+use std::fs::*;
+use std::io::{Read, Write};
+use std::path::*;
 
 pub type Result<T> = std::result::Result<T, FilesystemError>;
 
@@ -54,25 +54,39 @@ lazy_static::lazy_static! {
 
 #[derive(thiserror::Error, Debug)]
 pub enum FilesystemError {
-    #[error("Invalid url {0:?}")]              InvalidUrl((String, url::ParseError)),
-    #[error("Not a file url {0}")]             NotAFile(String),
-    #[error("Not a folder url {0}")]           NotAFolder(String),
-    #[error("Path doesn't have a parent {0}")] NoParent(String),
-    #[error("Invalid path {0}")]               InvalidPath(String),
-    #[error("Invalid file descriptor {0}")]    InvalidFD(i32),
-    #[error("Unknown error")]                  Unknown,
-    #[error("IO error: {0:?}")]                IOError(#[from] std::io::Error),
-    #[error("String error: {0:?}")]            Utf8Error(#[from] std::str::Utf8Error),
+    #[error("Invalid url {0:?}")]
+    InvalidUrl((String, url::ParseError)),
+    #[error("Not a file url {0}")]
+    NotAFile(String),
+    #[error("Not a folder url {0}")]
+    NotAFolder(String),
+    #[error("Path doesn't have a parent {0}")]
+    NoParent(String),
+    #[error("Invalid path {0}")]
+    InvalidPath(String),
+    #[error("Invalid file descriptor {0}")]
+    InvalidFD(i32),
+    #[error("Unknown error")]
+    Unknown,
+    #[error("IO error: {0:?}")]
+    IOError(#[from] std::io::Error),
+    #[error("String error: {0:?}")]
+    Utf8Error(#[from] std::str::Utf8Error),
     #[cfg(target_os = "android")]
     #[error("Java exception: {0:?}")]
-    JavaException(#[from] jni::errors::Error)
+    JavaException(#[from] jni::errors::Error),
 }
 #[macro_export]
 macro_rules! function_name {
     () => {{
         fn f() {}
-        fn type_name_of<T>(_: T) -> &'static str { std::any::type_name::<T>() }
-        type_name_of(f).rsplit("::").find(|&part| part != "f" && part != "{{closure}}").expect("Short function name")
+        fn type_name_of<T>(_: T) -> &'static str {
+            std::any::type_name::<T>()
+        }
+        type_name_of(f)
+            .rsplit("::")
+            .find(|&part| part != "f" && part != "{{closure}}")
+            .expect("Short function name")
     }};
 }
 #[macro_export]
@@ -115,7 +129,7 @@ pub struct FileWrapper {
     file: Option<std::fs::File>,
 
     #[cfg(target_os = "android")]
-    pub android_handle: android::AndroidFileHandle
+    pub android_handle: android::AndroidFileHandle,
 }
 impl FileWrapper {
     pub fn get_file(&mut self) -> &mut File {
@@ -124,12 +138,18 @@ impl FileWrapper {
 }
 impl Read for FileWrapper {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        self.file.as_mut().ok_or_else(|| std::io::Error::from(std::io::ErrorKind::Other))?.read(buf)
+        self.file
+            .as_mut()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::Other))?
+            .read(buf)
     }
 }
 impl std::io::Seek for FileWrapper {
     fn seek(&mut self, pos: std::io::SeekFrom) -> std::io::Result<u64> {
-        self.file.as_mut().ok_or_else(|| std::io::Error::from(std::io::ErrorKind::Other))?.seek(pos)
+        self.file
+            .as_mut()
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::Other))?
+            .seek(pos)
     }
 }
 impl Drop for FileWrapper {
@@ -148,7 +168,7 @@ pub struct FfmpegPathWrapper {
     pub org_url: String,
     pub path: String,
     #[cfg(target_os = "android")]
-    _file: FileWrapper
+    _file: FileWrapper,
 }
 impl FfmpegPathWrapper {
     pub fn new(url: &str, _write: bool) -> Result<Self> {
@@ -187,23 +207,37 @@ impl Drop for FfmpegPathWrapper {
 }
 
 fn url_to_pathbuf(mut url: &str) -> Result<PathBuf> {
-    Ok(if url.contains("://") { // It's an url
-        url::Url::parse(url).map_err(|e| FilesystemError::InvalidUrl((url.into(), e)))?.to_file_path().map_err(|_| FilesystemError::NotAFile(url.into()))?
+    Ok(if url.contains("://") {
+        // It's an url
+        url::Url::parse(url)
+            .map_err(|e| FilesystemError::InvalidUrl((url.into(), e)))?
+            .to_file_path()
+            .map_err(|_| FilesystemError::NotAFile(url.into()))?
     } else {
-        if url.starts_with("//?/") { url = &url[4..]; } // Windows extended path
+        if url.starts_with("//?/") {
+            url = &url[4..];
+        } // Windows extended path
         Path::new(url).to_path_buf()
     })
 }
 
 pub fn get_filename(url: &str) -> String {
     fn inner(url: &str) -> Result<String> {
-        if url.is_empty() { return Ok(String::new()) }
-        if !url.contains("://") && !url.contains('/') && !url.contains('\\') { return Ok(url.to_owned()); }
+        if url.is_empty() {
+            return Ok(String::new());
+        }
+        if !url.contains("://") && !url.contains('/') && !url.contains('\\') {
+            return Ok(url.to_owned());
+        }
 
         #[cfg(target_os = "android")]
         if url.starts_with("content://") {
-            if android::is_dir_url(url) { return Ok(String::new()); } // no filename
-            return Ok(android::get_url_info(url).map(|x| x.filename.unwrap_or_default()).unwrap_or_default());
+            if android::is_dir_url(url) {
+                return Ok(String::new());
+            } // no filename
+            return Ok(android::get_url_info(url)
+                .map(|x| x.filename.unwrap_or_default())
+                .unwrap_or_default());
         } else {
             log::error!("Unknown android url scheme: {url}");
         }
@@ -212,20 +246,28 @@ pub fn get_filename(url: &str) -> String {
         if pathbuf.is_dir() && !pathbuf.to_str().unwrap().ends_with(".RDC") {
             return Ok(String::new());
         }
-        Ok(pathbuf.file_name().ok_or(FilesystemError::NotAFile(url.into()))?.to_string_lossy().to_string())
+        Ok(pathbuf
+            .file_name()
+            .ok_or(FilesystemError::NotAFile(url.into()))?
+            .to_string_lossy()
+            .to_string())
     }
     result!(inner(url), url)
 }
 pub fn get_folder(url: &str) -> String {
     fn inner(url: &str) -> Result<String> {
-        if url.is_empty() { return Ok(String::new()) }
-        if url.ends_with("/") { // it's already a directory url
+        if url.is_empty() {
+            return Ok(String::new());
+        }
+        if url.ends_with("/") {
+            // it's already a directory url
             return Ok(url.to_string());
         }
 
         #[cfg(target_os = "android")]
         if url.starts_with("content://") {
-            if android::is_dir_url(url) { // it's already a directory url
+            if android::is_dir_url(url) {
+                // it's already a directory url
                 return Ok(url.to_string());
             }
             // Try to find the folder in the allowed list
@@ -245,14 +287,20 @@ pub fn get_folder(url: &str) -> String {
                 }
             }
 
-            log::warn!("Cannot get directory path on android, url: {url}, info: {:?}", android::get_url_info(url));
+            log::warn!(
+                "Cannot get directory path on android, url: {url}, info: {:?}",
+                android::get_url_info(url)
+            );
             return Ok(String::new());
         }
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         if is_sandboxed() {
             if let Some(pos) = url.rfind('/') {
                 let folder = &url[0..pos + 1];
-                if ALLOWED_FOLDERS.read().contains(&normalize_url(folder, true)) {
+                if ALLOWED_FOLDERS
+                    .read()
+                    .contains(&normalize_url(folder, true))
+                {
                     return Ok(folder.to_string());
                 }
             }
@@ -263,7 +311,12 @@ pub fn get_folder(url: &str) -> String {
         if pathbuf.is_dir() {
             return Ok(path_to_url(&pathbuf.to_string_lossy()));
         }
-        Ok(path_to_url(&pathbuf.parent().ok_or(FilesystemError::NoParent(url.into()))?.to_string_lossy()))
+        Ok(path_to_url(
+            &pathbuf
+                .parent()
+                .ok_or(FilesystemError::NoParent(url.into()))?
+                .to_string_lossy(),
+        ))
     }
     let mut ret = inner(url);
     if let Ok(ref mut ret) = ret {
@@ -276,11 +329,14 @@ pub fn get_folder(url: &str) -> String {
 
 pub fn exists(url: &str) -> bool {
     fn inner(url: &str) -> Result<bool> {
-        if url.is_empty() { return Ok(false); }
+        if url.is_empty() {
+            return Ok(false);
+        }
 
         #[cfg(target_os = "android")]
         if url.starts_with("content://") {
-            return android::get_url_info(url).map(|x| x.filename.is_some() && !x.filename.unwrap().is_empty());
+            return android::get_url_info(url)
+                .map(|x| x.filename.is_some() && !x.filename.unwrap().is_empty());
         }
 
         start_accessing_url(url, false);
@@ -292,7 +348,9 @@ pub fn exists(url: &str) -> bool {
 }
 pub fn exists_in_folder(folder_url: &str, filename: &str) -> bool {
     fn inner(folder_url: &str, filename: &str) -> bool {
-        if folder_url.is_empty() || filename.is_empty() { return false; }
+        if folder_url.is_empty() || filename.is_empty() {
+            return false;
+        }
 
         #[cfg(target_os = "android")]
         if folder_url.starts_with("content://") && android::is_dir_url(folder_url) {
@@ -333,8 +391,16 @@ pub fn list_folder(folder_url: &str) -> Vec<(String, String)> {
         if let Ok(entries) = std::fs::read_dir(url_to_path(folder_url)) {
             for entry in entries {
                 if let Ok(entry) = entry {
-                    if entry.metadata().as_ref().map(|x| x.is_file() || x.is_dir()).unwrap_or_default() {
-                        ret.push((entry.file_name().to_string_lossy().to_string(), path_to_url(entry.path().to_string_lossy().as_ref())));
+                    if entry
+                        .metadata()
+                        .as_ref()
+                        .map(|x| x.is_file() || x.is_dir())
+                        .unwrap_or_default()
+                    {
+                        ret.push((
+                            entry.file_name().to_string_lossy().to_string(),
+                            path_to_url(entry.path().to_string_lossy().as_ref()),
+                        ));
                     }
                 }
             }
@@ -347,23 +413,27 @@ pub fn list_folder(folder_url: &str) -> Vec<(String, String)> {
     ret
 }
 pub fn get_mime(filename: &str) -> &'static str {
-    if filename.is_empty() || !filename.contains('.') { return "application/octet-stream"; }
+    if filename.is_empty() || !filename.contains('.') {
+        return "application/octet-stream";
+    }
     let pos = filename.rfind('.').unwrap();
-    let ext = filename[pos+1..].to_ascii_lowercase();
+    let ext = filename[pos + 1..].to_ascii_lowercase();
     match ext.as_str() {
         "gyroflow" => "application/octet-stream",
-        "json"     => "application/json",
-        "gcsv"     => "application/octet-stream",
-        "mp4"      => "video/mp4",
-        "mov"      => "video/quicktime",
-        "png"      => "image/png",
-        "exr"      => "image/x-exr",
-        _          => "application/octet-stream"
+        "json" => "application/json",
+        "gcsv" => "application/octet-stream",
+        "mp4" => "video/mp4",
+        "mov" => "video/quicktime",
+        "png" => "image/png",
+        "exr" => "image/x-exr",
+        _ => "application/octet-stream",
     }
 }
 pub fn get_file_url(folder_url: &str, filename: &str, can_create: bool) -> String {
     fn inner(folder_url: &str, filename: &str, _can_create: bool) -> Result<String> {
-        if folder_url.is_empty() { return Ok(String::new()); }
+        if folder_url.is_empty() {
+            return Ok(String::new());
+        }
 
         #[cfg(target_os = "android")]
         if folder_url.starts_with("content://") && android::is_dir_url(folder_url) {
@@ -379,7 +449,9 @@ pub fn get_file_url(folder_url: &str, filename: &str, can_create: bool) -> Strin
                 if _can_create {
                     match android::create_file(folder_url, filename, get_mime(filename)) {
                         Ok(new_url) => return Ok(new_url),
-                        Err(e) => { log::error!("android::create_file failed: {e:?}"); }
+                        Err(e) => {
+                            log::error!("android::create_file failed: {e:?}");
+                        }
                     }
                 }
                 return Ok(String::new());
@@ -393,7 +465,12 @@ pub fn get_file_url(folder_url: &str, filename: &str, can_create: bool) -> Strin
             Ok(format!("{folder_url}/{filename_escaped}"))
         }
     }
-    result!(inner(folder_url, filename, can_create), folder_url, filename, can_create)
+    result!(
+        inner(folder_url, filename, can_create),
+        folder_url,
+        filename,
+        can_create
+    )
 }
 pub fn read(url: &str) -> Result<Vec<u8>> {
     dbg_call!(url);
@@ -456,11 +533,16 @@ pub fn remove_file(url: &str) -> Result<()> {
 
 pub fn can_open_file(url: &str) -> bool {
     dbg_call!(url);
-    if !exists(url) { return false; }
-    let x = open_file(url, false, false).is_ok(); x
+    if !exists(url) {
+        return false;
+    }
+    let x = open_file(url, false, false).is_ok();
+    x
 }
 pub fn can_create_file(folder: &str, filename: &str) -> bool {
-    if folder.is_empty() || filename.is_empty() { return false; }
+    if folder.is_empty() || filename.is_empty() {
+        return false;
+    }
     fn inner(folder: &str, filename: &str) -> bool {
         if is_sandboxed() && folder.contains("://") {
             let lock = ALLOWED_FOLDERS.read();
@@ -493,23 +575,50 @@ pub fn open_file(url: &str, writing: bool, truncate: bool) -> Result<FileWrapper
 
     #[cfg(target_os = "android")]
     {
-        return FileWrapper::open_android(url, if writing && truncate { "wt" } else if writing { "w" } else { "r" });
+        return FileWrapper::open_android(
+            url,
+            if writing && truncate {
+                "wt"
+            } else if writing {
+                "w"
+            } else {
+                "r"
+            },
+        );
     }
     #[cfg(not(target_os = "android"))]
     {
         let path = url_to_path(url);
-        let file = if (writing && truncate) || (writing && !exists(url)) { File::create(path)? } else if writing { OpenOptions::new().read(true).write(true).open(path)? } else { File::open(path)? };
+        let file = if (writing && truncate) || (writing && !exists(url)) {
+            File::create(path)?
+        } else if writing {
+            OpenOptions::new().read(true).write(true).open(path)?
+        } else {
+            File::open(path)?
+        };
         let size = file.metadata()?.len() as usize;
-        Ok(FileWrapper { file: Some(file), size, url: url.to_owned() })
+        Ok(FileWrapper {
+            file: Some(file),
+            size,
+            url: url.to_owned(),
+        })
     }
 }
 
 pub fn path_to_url(path: &str) -> String {
     fn inner(mut path: &str) -> Result<String> {
-        if path.is_empty() { return Ok(String::new()) }
-        if path.contains("://") { return Ok(path.to_owned()); } // Already an url
-        if path.starts_with("//?/") { path = &path[4..]; } // Windows extended path
-        let mut ret = url::Url::from_file_path(&path).map_err(|_| FilesystemError::NotAFile(path.into()))?.to_string();
+        if path.is_empty() {
+            return Ok(String::new());
+        }
+        if path.contains("://") {
+            return Ok(path.to_owned());
+        } // Already an url
+        if path.starts_with("//?/") {
+            path = &path[4..];
+        } // Windows extended path
+        let mut ret = url::Url::from_file_path(&path)
+            .map_err(|_| FilesystemError::NotAFile(path.into()))?
+            .to_string();
         if (path.ends_with('/') || path.ends_with('\\')) && !ret.ends_with('/') {
             ret.push('/');
         }
@@ -520,7 +629,9 @@ pub fn path_to_url(path: &str) -> String {
 
 pub fn url_to_path(url: &str) -> String {
     fn inner(url: &str) -> Result<String> {
-        if url.is_empty() { return Ok(String::new()) }
+        if url.is_empty() {
+            return Ok(String::new());
+        }
         if cfg!(target_os = "android") {
             return Ok(get_filename(url));
         }
@@ -543,20 +654,46 @@ pub fn display_url(url: &str) -> String {
     let path = url_to_path(url);
     if cfg!(any(target_os = "macos", target_os = "ios")) {
         if path.contains("/File Provider Storage/") {
-            return path.split("/File Provider Storage/").last().unwrap().to_owned();
+            return path
+                .split("/File Provider Storage/")
+                .last()
+                .unwrap()
+                .to_owned();
         } else if path.contains("/com~apple~CloudDocs/") {
-            return format!("iCloud/{}", path.split("/com~apple~CloudDocs/").last().unwrap().to_owned());
+            return format!(
+                "iCloud/{}",
+                path.split("/com~apple~CloudDocs/")
+                    .last()
+                    .unwrap()
+                    .to_owned()
+            );
         } else if path.contains("/Data/Application/") {
-            return path.split("/Data/Application/").last().unwrap().split('/').skip(1).join("/").to_owned();
+            return path
+                .split("/Data/Application/")
+                .last()
+                .unwrap()
+                .split('/')
+                .skip(1)
+                .join("/")
+                .to_owned();
         } else if path.contains("/com.apple.filesystems.userfsd/") {
-            return path.split("/com.apple.filesystems.userfsd/").last().unwrap().split('/').skip(1).join("/").to_owned();
+            return path
+                .split("/com.apple.filesystems.userfsd/")
+                .last()
+                .unwrap()
+                .split('/')
+                .skip(1)
+                .join("/")
+                .to_owned();
         }
     }
     path
 }
 pub fn display_folder_filename(folder: &str, filename: &str) -> String {
     fn inner(folder: &str, filename: &str) -> String {
-        if folder.is_empty() && !filename.is_empty() { return filename.to_string(); }
+        if folder.is_empty() && !filename.is_empty() {
+            return filename.to_string();
+        }
 
         let url = get_file_url(folder, filename, false);
         if cfg!(target_os = "android") {
@@ -580,7 +717,9 @@ pub fn display_folder_filename(folder: &str, filename: &str) -> String {
 }
 
 pub fn normalize_url(url: &str, is_folder: bool) -> String {
-    if !url.contains("://") { return String::new(); }
+    if !url.contains("://") {
+        return String::new();
+    }
     if let Ok(url) = url::Url::parse(url) {
         let mut url = url.to_string();
         if is_folder && !url.ends_with('/') {
@@ -593,7 +732,9 @@ pub fn normalize_url(url: &str, is_folder: bool) -> String {
 }
 
 pub fn folder_access_granted(folder_url: &str) {
-    if folder_url.is_empty() || !folder_url.contains("://") { return; }
+    if folder_url.is_empty() || !folder_url.contains("://") {
+        return;
+    }
 
     let folder_url = normalize_url(folder_url, true);
     dbg_call!(folder_url);

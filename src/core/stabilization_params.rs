@@ -21,7 +21,7 @@ impl From<i32> for BackgroundMode {
             1 => Self::RepeatPixels,
             2 => Self::MirrorPixels,
             3 => Self::MarginWithFeather,
-            _ => Self::SolidColor
+            _ => Self::SolidColor,
         }
     }
 }
@@ -39,7 +39,7 @@ impl From<i32> for ReadoutDirection {
             1 => Self::BottomToTop,
             2 => Self::LeftToRight,
             3 => Self::RightToLeft,
-            _ => Self::TopToBottom
+            _ => Self::TopToBottom,
         }
     }
 }
@@ -49,7 +49,7 @@ impl From<&str> for ReadoutDirection {
             "BottomToTop" => Self::BottomToTop,
             "LeftToRight" => Self::LeftToRight,
             "RightToLeft" => Self::RightToLeft,
-            _ => Self::TopToBottom
+            _ => Self::TopToBottom,
         }
     }
 }
@@ -64,7 +64,7 @@ impl ReadoutDirection {
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct StabilizationParams {
-    pub size: (usize, usize), // Full resolution input size
+    pub size: (usize, usize),        // Full resolution input size
     pub output_size: (usize, usize), // Full resoution output size
 
     pub background: Vector4<f32>,
@@ -118,7 +118,7 @@ pub struct StabilizationParams {
     pub of_method: u32,
     pub current_device: i32,
 
-    pub zooming_debug_points: std::collections::BTreeMap<i64, Vec<(f64, f64)>>
+    pub zooming_debug_points: std::collections::BTreeMap<i64, Vec<(f64, f64)>>,
 }
 impl Default for StabilizationParams {
     fn default() -> Self {
@@ -190,26 +190,30 @@ impl StabilizationParams {
         if self.trim_ranges.is_empty() {
             1.0
         } else {
-            self.trim_ranges.iter().fold(0.0, |acc, &x| acc + (x.1 - x.0))
+            self.trim_ranges
+                .iter()
+                .fold(0.0, |acc, &x| acc + (x.1 - x.0))
         }
     }
     pub fn get_scaled_duration_ms(&self) -> f64 {
         match self.fps_scale {
             Some(scale) => self.duration_ms / scale,
-            None            => self.duration_ms
+            None => self.duration_ms,
         }
     }
     pub fn get_scaled_fps(&self) -> f64 {
         match self.fps_scale {
             Some(scale) => self.fps * scale,
-            None            => self.fps
+            None => self.fps,
         }
     }
 
     pub fn set_fovs(&mut self, fovs: Vec<f64>, mut lens_fov_adjustment: f64) {
         if let Some(mut min_fov) = fovs.iter().copied().reduce(f64::min) {
             min_fov *= self.size.0 as f64 / self.output_size.0.max(1) as f64;
-            if lens_fov_adjustment <= 0.0001 { lens_fov_adjustment = 1.0 };
+            if lens_fov_adjustment <= 0.0001 {
+                lens_fov_adjustment = 1.0
+            };
             self.min_fov = min_fov / lens_fov_adjustment;
         }
         if fovs.is_empty() {
@@ -218,7 +222,12 @@ impl StabilizationParams {
         self.fovs = fovs;
     }
 
-    pub fn calculate_ramped_timestamps(&mut self, keyframes: &KeyframeManager, speed_inverse: bool, map_inverse: bool) {
+    pub fn calculate_ramped_timestamps(
+        &mut self,
+        keyframes: &KeyframeManager,
+        speed_inverse: bool,
+        map_inverse: bool,
+    ) {
         if keyframes.is_keyframed(&KeyframeType::VideoSpeed) || self.video_speed != 1.0 {
             let fps = self.fps; // get_scaled_fps();
             let mut ramped_ts = 0.0;
@@ -226,7 +235,9 @@ impl StabilizationParams {
             let mut map = BTreeMap::new();
             for i in 0..self.frame_count {
                 let ts = crate::timestamp_at_frame(i as i32, fps);
-                let vid_speed = keyframes.value_at_video_timestamp(&KeyframeType::VideoSpeed, ts).unwrap_or(self.video_speed);
+                let vid_speed = keyframes
+                    .value_at_video_timestamp(&KeyframeType::VideoSpeed, ts)
+                    .unwrap_or(self.video_speed);
                 let vid_speed = if speed_inverse {
                     1.0 / vid_speed
                 } else {
@@ -236,9 +247,15 @@ impl StabilizationParams {
                 ramped_ts += current_interval;
                 prev_real_ts = ts;
                 if map_inverse {
-                    map.insert((ts * 1000.0).round() as i64, (ramped_ts * 1000.0).round() as i64);
+                    map.insert(
+                        (ts * 1000.0).round() as i64,
+                        (ramped_ts * 1000.0).round() as i64,
+                    );
                 } else {
-                    map.insert((ramped_ts * 1000.0).round() as i64, (ts * 1000.0).round() as i64);
+                    map.insert(
+                        (ramped_ts * 1000.0).round() as i64,
+                        (ts * 1000.0).round() as i64,
+                    );
                 }
             }
 
@@ -248,12 +265,16 @@ impl StabilizationParams {
     pub fn get_source_timestamp_at_ramped_timestamp(&self, timestamp_us: i64) -> i64 {
         if let Some(map) = &self.speed_ramped_timestamps {
             match map.len() {
-                0 => { return timestamp_us; },
-                1 => { return *map.values().next().unwrap(); },
+                0 => {
+                    return timestamp_us;
+                }
+                1 => {
+                    return *map.values().next().unwrap();
+                }
                 _ => {
                     if let Some(&first_ts) = map.keys().next() {
                         if let Some(&last_ts) = map.keys().next_back() {
-                            let lookup_ts = timestamp_us.min(last_ts-1).max(first_ts+1);
+                            let lookup_ts = timestamp_us.min(last_ts - 1).max(first_ts + 1);
                             if let Some(v1) = map.range(..=lookup_ts).next_back() {
                                 if *v1.0 == lookup_ts {
                                     return *v1.1;
@@ -261,7 +282,8 @@ impl StabilizationParams {
                                 if let Some(v2) = map.range(lookup_ts..).next() {
                                     let time_delta = (v2.0 - v1.0) as f64;
                                     let fract = (timestamp_us - v1.0) as f64 / time_delta;
-                                    return (*v1.1 as f64 + (*v2.1 as f64 - *v1.1 as f64) * fract).round() as i64;
+                                    return (*v1.1 as f64 + (*v2.1 as f64 - *v1.1 as f64) * fract)
+                                        .round() as i64;
                                 }
                             }
                         }
@@ -275,28 +297,28 @@ impl StabilizationParams {
 
     pub fn clear(&mut self) {
         *self = StabilizationParams {
-            stab_enabled:              self.stab_enabled,
-            show_detected_features:    self.show_detected_features,
-            show_optical_flow:         self.show_optical_flow,
-            background:                self.background,
-            adaptive_zoom_window:      self.adaptive_zoom_window,
-            framebuffer_inverted:      self.framebuffer_inverted,
-            lens_correction_amount:    self.lens_correction_amount,
-            video_speed:               self.video_speed,
+            stab_enabled: self.stab_enabled,
+            show_detected_features: self.show_detected_features,
+            show_optical_flow: self.show_optical_flow,
+            background: self.background,
+            adaptive_zoom_window: self.adaptive_zoom_window,
+            framebuffer_inverted: self.framebuffer_inverted,
+            lens_correction_amount: self.lens_correction_amount,
+            video_speed: self.video_speed,
             video_speed_affects_smoothing: self.video_speed_affects_smoothing,
-            video_speed_affects_zooming:   self.video_speed_affects_zooming,
+            video_speed_affects_zooming: self.video_speed_affects_zooming,
             video_speed_affects_zooming_limit: self.video_speed_affects_zooming_limit,
-            light_refraction_coefficient:  self.light_refraction_coefficient,
-            background_mode:           self.background_mode,
-            background_margin:         self.background_margin,
+            light_refraction_coefficient: self.light_refraction_coefficient,
+            background_mode: self.background_mode,
+            background_margin: self.background_margin,
             background_margin_feather: self.background_margin_feather,
-            of_method:                 self.of_method,
-            current_device:            self.current_device,
-            adaptive_zoom_method:      self.adaptive_zoom_method,
-            fov_overview:              self.fov_overview,
-            show_safe_area:            self.show_safe_area,
-            max_zoom:                  self.max_zoom,
-            max_zoom_iterations:       self.max_zoom_iterations,
+            of_method: self.of_method,
+            current_device: self.current_device,
+            adaptive_zoom_method: self.adaptive_zoom_method,
+            fov_overview: self.fov_overview,
+            show_safe_area: self.show_safe_area,
+            max_zoom: self.max_zoom,
+            max_zoom_iterations: self.max_zoom_iterations,
             ..Self::default()
         };
     }

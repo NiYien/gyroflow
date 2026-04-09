@@ -102,6 +102,28 @@ Rectangle {
 
     readonly property bool wasModified: window.videoArea.vid.loaded;
     property bool isDialogOpened: false;
+    property bool lensGroupPanelActive: false;
+
+    function parseLensGroupStatus(): var {
+        try {
+            const parsed = JSON.parse(controller.lens_group_status || "[]");
+            return Array.isArray(parsed) ? parsed : [];
+        } catch (e) {
+            console.warn("parseLensGroupStatus error:", e);
+            return [];
+        }
+    }
+    function updateLensGroupPanelState(): void {
+        const statuses = parseLensGroupStatus();
+        let hasLensGroupConfig = false;
+        try {
+            const configs = JSON.parse(controller.lens_group_config || "[]");
+            hasLensGroupConfig = Array.isArray(configs) && configs.length > 0;
+        } catch (e) {
+            console.warn("parseLensGroupConfig error:", e);
+        }
+        lensGroupPanelActive = statuses.some(status => status.used) || hasLensGroupConfig;
+    }
 
     // ── Task 5: Batch editing state for render queue ──
     QtObject {
@@ -109,6 +131,8 @@ Rectangle {
         property bool active: false;
         property real smoothness: 50;
         property bool horizonLock: false;
+        property bool autoRotate: false;
+        property string detectedSource: "";
         property real horizonLockAmount: 100;  // 0-100
         property int zoomMode: 1;    // 0=none, 1=dynamic, 2=static
         property real lensCorrection: 1.0;     // 0.0-1.0
@@ -121,27 +145,51 @@ Rectangle {
 
     on_QueueBatchActiveChanged: {
         batchState.active = _queueBatchActive;
-        if (_queueBatchActive) loadBatchParams();
+        if (_queueBatchActive) {
+            loadBatchParams();
+        } else {
+            batchState.detectedSource = "";
+        }
     }
 
     Connections {
         target: (videoArea.queue && batchState.active) ? videoArea.queue : null
         function onSelectedJobsChanged() { window.loadBatchParams(); }
     }
+    Connections {
+        target: controller
+        function onLens_group_status_changed(): void { window.updateLensGroupPanelState(); }
+    }
+    Connections {
+        target: render_queue
+        function onGyro_files_changed(): void {
+            controller.refresh_lens_group_status();
+            window.updateLensGroupPanelState();
+        }
+        function onMatch_apply_finished(): void {
+            controller.refresh_lens_group_status();
+            window.updateLensGroupPanelState();
+        }
+    }
 
     function loadBatchParams() {
         if (!videoArea.queue) return;
         const keys = Object.keys(videoArea.queue.selectedJobs);
-        if (keys.length === 0) return;
+        if (keys.length === 0) {
+            batchState.detectedSource = "";
+            return;
+        }
         try {
             const p = JSON.parse(render_queue.get_job_display_params(+keys[0]));
             batchState.smoothness = (p.smoothness || 0.5) * 100;
             batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
+            batchState.autoRotate = !!p.auto_rotate;
             batchState.horizonLockAmount = p.horizon_lock_amount || 0;
             const zm = p.zoom_mode || "dynamic";
             batchState.zoomMode = zm === "static" ? 2 : zm === "dynamic" ? 1 : 0;
             batchState.lensCorrection = p.lens_correction !== undefined ? p.lens_correction : 1.0;
             batchState.framerate = p.framerate || 0;
+            batchState.detectedSource = p.detected_source || "";
             syncBatchToStabPanel();
         } catch(e) { console.log("loadBatchParams error:", e); }
     }
@@ -157,6 +205,7 @@ Rectangle {
         if (batchState.framerate > 0) params.framerate = batchState.framerate;
 
         const jobIds = Object.keys(videoArea.queue.selectedJobs).map(Number);
+        render_queue.auto_rotate = batchState.autoRotate;
         render_queue.batch_update_params(JSON.stringify(jobIds), JSON.stringify(params));
         videoArea.queue.matchVersion++;
     }
@@ -175,6 +224,9 @@ Rectangle {
         if (simpleStab) {
             simpleStab.smoothnessSlider.value = batchState.smoothness;
             simpleStab.horizonCb.checked = batchState.horizonLock;
+            simpleStab._syncingBatchAutoRotate = true;
+            simpleStab.autoRotateCb.checked = batchState.autoRotate;
+            simpleStab._syncingBatchAutoRotate = false;
             if (batchState.horizonLock) simpleStab.horizonSlider.value = batchState.horizonLockAmount;
             simpleStab.croppingMode.currentIndex = batchState.zoomMode;
             simpleStab.lensCorrectionToggle.checked = batchState.lensCorrection >= 0.5;
@@ -885,6 +937,14 @@ Rectangle {
                 }
                 Hr { visible: simpleDevice.active; }
 
+                ItemLoader {
+                    id: lensGroupConfig;
+                    active: window.lensGroupPanelActive;
+                    width: parent.width;
+                    sourceComponent: Component { Menu.LensGroupConfig { } }
+                }
+                Hr { visible: lensGroupConfig.active; }
+
                 // ── 2. Stabilization ──
                 MenuItem {
                     text: qsTranslate("Stabilization", "Stabilization");
@@ -1179,6 +1239,7 @@ Rectangle {
 
     Component.onCompleted: {
         controller.check_updates();
+        updateLensGroupPanelState();
 
         QT_TRANSLATE_NOOP("App", "An error occured: %1");
         QT_TRANSLATE_NOOP("App", "Gyroflow file exported to %1.");

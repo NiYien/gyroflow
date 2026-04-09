@@ -58,6 +58,8 @@ QQC.Menu {
             text: dlg.text
             icon.name: dlg.icon.name
             icon.source: dlg.icon.source
+            icon.width: dlg.icon.width
+            icon.height: dlg.icon.height
             icon.color: dlg.iconColor
             color: dlg.textColor
             spacing: dlg.spacing

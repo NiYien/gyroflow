@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use biquad::{Biquad, Coefficients, Type, DirectForm2Transposed, ToHertz};
+use biquad::{Biquad, Coefficients, DirectForm2Transposed, ToHertz, Type};
 
-use super::gyro_source::{ TimeIMU, TimeQuat };
+use super::gyro_source::{TimeIMU, TimeQuat};
 
 pub struct Lowpass {
-    filters: [DirectForm2Transposed<f64>; 6]
+    filters: [DirectForm2Transposed<f64>; 6],
 }
 
 impl Lowpass {
     pub fn new(freq: f64, sample_rate: f64) -> Result<Self, biquad::Errors> {
-        let coeffs = Coefficients::<f64>::from_params(Type::LowPass, sample_rate.hz(), freq.hz(), biquad::Q_BUTTERWORTH_F64)?;
+        let coeffs = Coefficients::<f64>::from_params(
+            Type::LowPass,
+            sample_rate.hz(),
+            freq.hz(),
+            biquad::Q_BUTTERWORTH_F64,
+        )?;
         Ok(Self {
             filters: [
                 DirectForm2Transposed::<f64>::new(coeffs),
@@ -20,7 +25,7 @@ impl Lowpass {
                 DirectForm2Transposed::<f64>::new(coeffs),
                 DirectForm2Transposed::<f64>::new(coeffs),
                 DirectForm2Transposed::<f64>::new(coeffs),
-            ]
+            ],
         })
     }
     pub fn run(&mut self, i: usize, data: f64) -> f64 {
@@ -42,7 +47,11 @@ impl Lowpass {
             }
         }
     }
-    pub fn filter_gyro_forward_backward(freq: f64, sample_rate: f64, data: &mut [TimeIMU]) -> Result<(), biquad::Errors> {
+    pub fn filter_gyro_forward_backward(
+        freq: f64,
+        sample_rate: f64,
+        data: &mut [TimeIMU],
+    ) -> Result<(), biquad::Errors> {
         let mut forward = Self::new(freq, sample_rate)?;
         let mut backward = Self::new(freq, sample_rate)?;
         for x in data.iter_mut() {
@@ -71,7 +80,11 @@ impl Lowpass {
         }
         Ok(())
     }
-    pub fn filter_quats_forward_backward(freq: f64, sample_rate: f64, data: &mut TimeQuat) -> Result<(), biquad::Errors> {
+    pub fn filter_quats_forward_backward(
+        freq: f64,
+        sample_rate: f64,
+        data: &mut TimeQuat,
+    ) -> Result<(), biquad::Errors> {
         let mut forward = Self::new(freq, sample_rate)?;
         let mut backward = Self::new(freq, sample_rate)?;
         for (_ts, uq) in data.iter_mut() {
@@ -95,7 +108,7 @@ impl Lowpass {
 }
 
 pub struct Median {
-    filters: [median::Filter<f64>; 6]
+    filters: [median::Filter<f64>; 6],
 }
 
 impl Median {
@@ -108,7 +121,7 @@ impl Median {
                 median::Filter::new(size),
                 median::Filter::new(size),
                 median::Filter::new(size),
-            ]
+            ],
         }
     }
     pub fn run(&mut self, i: usize, data: f64) -> f64 {

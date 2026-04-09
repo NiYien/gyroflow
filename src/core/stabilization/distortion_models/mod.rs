@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
+mod insta360;
 mod opencv_fisheye;
 mod opencv_standard;
 mod poly3;
 mod poly5;
 mod ptlens;
-mod insta360;
 mod sony;
 
-mod gopro_superview;
+mod digital_stretch;
 mod gopro6_superview;
 mod gopro_hyperview;
-mod digital_stretch;
+mod gopro_superview;
 
 use super::KernelParams;
 

@@ -3,10 +3,10 @@
 
 // See https://github.com/gyroflow/gyroflow/issues/43 for research details
 
-use crate::{ stabilization::KernelParams, lens_profile::LensProfile };
+use crate::{lens_profile::LensProfile, stabilization::KernelParams};
 
 #[derive(Default, Clone)]
-pub struct GoProSuperview { }
+pub struct GoProSuperview {}
 
 impl GoProSuperview {
     fn superview(uv: (f32, f32)) -> (f32, f32) {
@@ -14,7 +14,9 @@ impl GoProSuperview {
         let y2 = uv.1 * uv.1;
         (
             uv.0 * (1.2100393 + x2 * (-1.2758402 + x2 * 1.7751845)),
-            uv.1 * (0.9364505 + (0.4465308 - 0.7683315 * y2) * y2 + (-0.3574087 + 1.1584653 * y2 + 0.3529348 * x2) * x2)
+            uv.1 * (0.9364505
+                + (0.4465308 - 0.7683315 * y2) * y2
+                + (-0.3574087 + 1.1584653 * y2 + 0.3529348 * x2) * x2),
         )
     }
 
@@ -22,20 +24,24 @@ impl GoProSuperview {
     /// From superview to wide
     pub fn undistort_point(&self, mut uv: (f32, f32), params: &KernelParams) -> Option<(f32, f32)> {
         let out_c2 = (params.output_width as f32, params.output_height as f32);
-        uv = ((uv.0 / out_c2.0) - 0.5,
-              (uv.1 / out_c2.1) - 0.5);
+        uv = ((uv.0 / out_c2.0) - 0.5, (uv.1 / out_c2.1) - 0.5);
 
         uv = Self::superview(uv);
 
         uv.0 = uv.0 / 1.333333333;
 
-        Some(((uv.0 + 0.5) * out_c2.0,
-              (uv.1 + 0.5) * out_c2.1))
+        Some(((uv.0 + 0.5) * out_c2.0, (uv.1 + 0.5) * out_c2.1))
     }
 
     /// `uv` range: (0,0)...(width, height)
     /// From wide to superview
-    pub fn distort_point(&self, mut x: f32, mut y: f32, _z: f32, params: &KernelParams) -> (f32, f32) {
+    pub fn distort_point(
+        &self,
+        mut x: f32,
+        mut y: f32,
+        _z: f32,
+        params: &KernelParams,
+    ) -> (f32, f32) {
         let size = (params.width as f32, params.height as f32);
         x = (x / size.0) - 0.5;
         y = (y / size.1) - 0.5;
@@ -53,13 +59,15 @@ impl GoProSuperview {
             pp.1 -= diff.1;
         }
 
-        ((pp.0 + 0.5) * size.0,
-         (pp.1 + 0.5) * size.1)
+        ((pp.0 + 0.5) * size.0, (pp.1 + 0.5) * size.1)
     }
     pub fn adjust_lens_profile(&self, profile: &mut LensProfile) {
-        let aspect = (profile.calib_dimension.w as f64 / profile.calib_dimension.h as f64 * 100.0) as usize;
-        if aspect == 133 { // It's 4:3
-            profile.calib_dimension.w = (profile.calib_dimension.w as f64 * 1.3333333333333).round() as usize;
+        let aspect =
+            (profile.calib_dimension.w as f64 / profile.calib_dimension.h as f64 * 100.0) as usize;
+        if aspect == 133 {
+            // It's 4:3
+            profile.calib_dimension.w =
+                (profile.calib_dimension.w as f64 * 1.3333333333333).round() as usize;
         }
         profile.lens_model = "Superview".into();
     }
@@ -67,8 +75,12 @@ impl GoProSuperview {
         None
     }
 
-    pub fn id()   -> &'static str { "gopro_superview" }
-    pub fn name() -> &'static str { "GoPro Superview" }
+    pub fn id() -> &'static str {
+        "gopro_superview"
+    }
+    pub fn name() -> &'static str {
+        "GoPro Superview"
+    }
 
     pub fn opencl_functions(&self) -> &'static str {
         r#"

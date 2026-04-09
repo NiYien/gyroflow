@@ -1,24 +1,35 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-use std::io::{ Result, Read, Seek };
+use std::io::{Read, Result, Seek};
 
 #[unsafe(no_mangle)]
 pub static NvOptimusEnablement: i32 = 1;
 #[unsafe(no_mangle)]
 pub static AmdPowerXpressRequestHighPerformance: i32 = 1;
 
-pub fn get_video_metadata<T: Read + Seek>(stream: &mut T, filesize: usize, url: &str) -> std::result::Result<telemetry_parser::util::VideoMetadata, crate::GyroflowCoreError> {
+pub fn get_video_metadata<T: Read + Seek>(
+    stream: &mut T,
+    filesize: usize,
+    url: &str,
+) -> std::result::Result<telemetry_parser::util::VideoMetadata, crate::GyroflowCoreError> {
     let filename = crate::filesystem::get_filename(url);
     let extensions = ["mp4", "mov", "braw", "insv", "360", "mxf"];
-    if !extensions.into_iter().any(|ext| filename.to_ascii_lowercase().ends_with(ext)) {
+    if !extensions
+        .into_iter()
+        .any(|ext| filename.to_ascii_lowercase().ends_with(ext))
+    {
         return Err(crate::GyroflowCoreError::UnsupportedFormat(filename));
     }
-    Ok(telemetry_parser::util::get_video_metadata(stream, filesize)?)
+    Ok(telemetry_parser::util::get_video_metadata(
+        stream, filesize,
+    )?)
 }
 
 pub fn compress_to_base91<T>(value: &T) -> Option<String>
-where T: serde::Serialize {
+where
+    T: serde::Serialize,
+{
     use std::io::Write;
 
     let data = bincode::serde::encode_to_vec(value, bincode::config::legacy()).ok()?;
@@ -31,7 +42,9 @@ where T: serde::Serialize {
 
 pub fn decompress_from_base91(base91: &str) -> Option<Vec<u8>> {
     use std::io::Read;
-    if base91.is_empty() { return None; }
+    if base91.is_empty() {
+        return None;
+    }
 
     let compressed = base91::slice_decode(base91.as_bytes());
     let mut e = flate2::read::ZlibDecoder::new(&compressed[..]);
@@ -42,7 +55,9 @@ pub fn decompress_from_base91(base91: &str) -> Option<Vec<u8>> {
 }
 
 pub fn compress_to_base91_cbor<T>(value: &T) -> Option<String>
-where T: serde::Serialize {
+where
+    T: serde::Serialize,
+{
     use std::io::Write;
 
     let mut data = Vec::<u8>::new();
@@ -55,16 +70,21 @@ where T: serde::Serialize {
 }
 
 pub fn decompress_from_base91_cbor<'de, T>(base91: &str) -> Result<T>
-where T: serde::de::DeserializeOwned {
+where
+    T: serde::de::DeserializeOwned,
+{
     use std::io::Read;
-    if base91.is_empty() { return Err(std::io::ErrorKind::NotFound.into()); }
+    if base91.is_empty() {
+        return Err(std::io::ErrorKind::NotFound.into());
+    }
 
     let compressed = base91::slice_decode(base91.as_bytes());
     let mut e = flate2::read::ZlibDecoder::new(&compressed[..]);
 
     let mut decompressed = Vec::new();
     e.read_to_end(&mut decompressed)?;
-    ciborium::from_reader(std::io::Cursor::new(decompressed)).map_err(|x| std::io::Error::new(std::io::ErrorKind::Other, format!("{x:?}")))
+    ciborium::from_reader(std::io::Cursor::new(decompressed))
+        .map_err(|x| std::io::Error::new(std::io::ErrorKind::Other, format!("{x:?}")))
 }
 
 use std::collections::BTreeMap;
@@ -73,8 +93,12 @@ pub trait MapClosest<V> {
 }
 impl<V> MapClosest<V> for BTreeMap<i64, V> {
     fn get_closest(&self, key: &i64, max_diff: i64) -> Option<&V> {
-        if self.is_empty() { return None; };
-        if self.contains_key(key) { return self.get(key); };
+        if self.is_empty() {
+            return None;
+        };
+        if self.contains_key(key) {
+            return self.get(key);
+        };
 
         let r1 = self.range(..key);
         let mut r2 = self.range(key..);
@@ -119,7 +143,10 @@ pub fn init_telemetry_parser() {
         match crate::filesystem::open_file(path, false, false) {
             Ok(file) => {
                 let size = file.size;
-                return Ok(tp_fs::FileWrapper { file: Box::new(file), size });
+                return Ok(tp_fs::FileWrapper {
+                    file: Box::new(file),
+                    size,
+                });
             }
             Err(e) => {
                 log::error!("Failed to open file: {e:?}");
@@ -129,20 +156,24 @@ pub fn init_telemetry_parser() {
     }
 
     static TP_INITED: std::sync::Once = std::sync::Once::new();
-    TP_INITED.call_once(|| {
-        unsafe {
-            tp_fs::set_filesystem_functions(tp_fs::FilesystemFunctions {
-                get_filename: crate::filesystem::get_filename,
-                get_folder:   crate::filesystem::get_folder,
-                list_folder:  crate::filesystem::list_folder,
-                open_file:    telemetry_parser_open_file
-            });
-        }
+    TP_INITED.call_once(|| unsafe {
+        tp_fs::set_filesystem_functions(tp_fs::FilesystemFunctions {
+            get_filename: crate::filesystem::get_filename,
+            get_folder: crate::filesystem::get_folder,
+            list_folder: crate::filesystem::list_folder,
+            open_file: telemetry_parser_open_file,
+        });
     });
 }
 
 pub fn map_coord<T>(x: T, in_min: T, in_max: T, out_min: T, out_max: T) -> T
-where T: std::ops::Sub<Output = T> + std::ops::Mul<Output = T> + std::ops::Div<Output = T> + std::ops::Add<Output = T> + Copy {
+where
+    T: std::ops::Sub<Output = T>
+        + std::ops::Mul<Output = T>
+        + std::ops::Div<Output = T>
+        + std::ops::Add<Output = T>
+        + Copy,
+{
     return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
 }
 

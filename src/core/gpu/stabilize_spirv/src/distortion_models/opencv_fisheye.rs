@@ -3,9 +3,9 @@
 
 // Adapted from OpenCV: https://github.com/opencv/opencv/blob/2b60166e5c65f1caccac11964ad760d847c536e4/modules/calib3d/src/fisheye.cpp#L257-L460
 
+use crate::glam::{vec2, Vec2, Vec3};
 use crate::types::*;
-use crate::glam::{ Vec2, vec2, Vec3 };
-pub struct OpenCVFisheye { }
+pub struct OpenCVFisheye {}
 
 impl OpenCVFisheye {
     pub fn undistort_point(point: Vec2, params: &KernelParams) -> Vec2 {
@@ -16,7 +16,9 @@ impl OpenCVFisheye {
         // the current camera model is only valid up to 180 FOV
         // for larger FOV the loop below does not converge
         // clip values so we still get plausible results for super fisheye images > 180 grad
-        theta_d = theta_d.max(-core::f32::consts::PI).min(core::f32::consts::PI);
+        theta_d = theta_d
+            .max(-core::f32::consts::PI)
+            .min(core::f32::consts::PI);
 
         let mut converged = false;
         let mut theta = theta_d;
@@ -27,20 +29,21 @@ impl OpenCVFisheye {
             theta = 0.0;
 
             // compensate distortion iteratively
-            let mut i = 0; while i < 10 {
-            // for _ in 0..10 {
-                let theta2 = theta*theta;
-                let theta4 = theta2*theta2;
-                let theta6 = theta4*theta2;
-                let theta8 = theta6*theta2;
+            let mut i = 0;
+            while i < 10 {
+                // for _ in 0..10 {
+                let theta2 = theta * theta;
+                let theta4 = theta2 * theta2;
+                let theta6 = theta4 * theta2;
+                let theta8 = theta6 * theta2;
                 let k0_theta2 = params.k1.x * theta2;
                 let k1_theta4 = params.k1.y * theta4;
                 let k2_theta6 = params.k1.z * theta6;
                 let k3_theta8 = params.k1.w * theta8;
                 // new_theta = theta - theta_fix, theta_fix = f0(theta) / f0'(theta)
-                let mut theta_fix = (theta * (1.0 + k0_theta2 + k1_theta4 + k2_theta6 + k3_theta8) - theta_d)
-                                    /
-                                    (1.0 + 3.0 * k0_theta2 + 5.0 * k1_theta4 + 7.0 * k2_theta6 + 9.0 * k3_theta8);
+                let mut theta_fix = (theta * (1.0 + k0_theta2 + k1_theta4 + k2_theta6 + k3_theta8)
+                    - theta_d)
+                    / (1.0 + 3.0 * k0_theta2 + 5.0 * k1_theta4 + 7.0 * k2_theta6 + 9.0 * k3_theta8);
 
                 theta_fix = theta_fix.max(-0.9).min(0.9);
 
@@ -74,12 +77,17 @@ impl OpenCVFisheye {
         let r = pt.length();
 
         let theta = r.atan();
-        let theta2 = theta*theta;
-        let theta4 = theta2*theta2;
-        let theta6 = theta4*theta2;
-        let theta8 = theta4*theta4;
+        let theta2 = theta * theta;
+        let theta4 = theta2 * theta2;
+        let theta6 = theta4 * theta2;
+        let theta8 = theta4 * theta4;
 
-        let theta_d = theta * (1.0 + params.k1.x * theta2 + params.k1.y * theta4 + params.k1.z * theta6 + params.k1.w * theta8);
+        let theta_d = theta
+            * (1.0
+                + params.k1.x * theta2
+                + params.k1.y * theta4
+                + params.k1.z * theta6
+                + params.k1.w * theta8);
 
         let scale = if r == 0.0 { 1.0 } else { theta_d / r };
 
@@ -87,5 +95,9 @@ impl OpenCVFisheye {
     }
 
     #[cfg(not(target_arch = "spirv"))]
-    pub fn adjust_lens_profile(_calib_w: &mut usize, _calib_h: &mut usize/*, lens_model: &mut String*/) { }
+    pub fn adjust_lens_profile(
+        _calib_w: &mut usize,
+        _calib_h: &mut usize, /*, lens_model: &mut String*/
+    ) {
+    }
 }

@@ -54,7 +54,10 @@ QQC.Popup {
                 QQC.TabButton {
                     Component.onCompleted: Qt.callLater(popup.resetTab);
                     text: qsTr(modelData);
-                    font: popup.font;
+                    QQCM.Material.foreground: popup.currentTab === index? styleAccentColor : styleTextColor;
+                    font.family: popup.font.family;
+                    font.pixelSize: popup.font.pixelSize;
+                    font.bold: popup.currentTab === index;
                     implicitHeight: popup.itemHeight;
                     padding: 0;
                 }

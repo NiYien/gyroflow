@@ -1,24 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-use crate::{ stabilization::KernelParams, lens_profile::LensProfile };
+use crate::{lens_profile::LensProfile, stabilization::KernelParams};
 
 #[derive(Default, Clone)]
-pub struct DigitalStretch { }
+pub struct DigitalStretch {}
 
 impl DigitalStretch {
     /// `uv` range: (0,0)...(width, height)
     /// From processed to real
     pub fn undistort_point(&self, uv: (f32, f32), params: &KernelParams) -> Option<(f32, f32)> {
-        Some((uv.0 / params.digital_lens_params[0],
-              uv.1 / params.digital_lens_params[1]))
+        Some((
+            uv.0 / params.digital_lens_params[0],
+            uv.1 / params.digital_lens_params[1],
+        ))
     }
 
     /// `uv` range: (0,0)..(width, height)
     /// From real to processed
     pub fn distort_point(&self, x: f32, y: f32, _z: f32, params: &KernelParams) -> (f32, f32) {
-        (x * params.digital_lens_params[0],
-         y * params.digital_lens_params[1])
+        (
+            x * params.digital_lens_params[0],
+            y * params.digital_lens_params[1],
+        )
     }
     pub fn adjust_lens_profile(&self, _profile: &mut LensProfile) {
         // TODO
@@ -27,8 +31,12 @@ impl DigitalStretch {
         None
     }
 
-    pub fn id()   -> &'static str { "digital_stretch" }
-    pub fn name() -> &'static str { "Digital stretch" }
+    pub fn id() -> &'static str {
+        "digital_stretch"
+    }
+    pub fn name() -> &'static str {
+        "Digital stretch"
+    }
 
     pub fn opencl_functions(&self) -> &'static str {
         r#"

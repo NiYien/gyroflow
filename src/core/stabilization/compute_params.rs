@@ -3,12 +3,12 @@
 
 use super::StabilizationManager;
 use super::distortion_models::DistortionModel;
-use crate::stabilization_params::ReadoutDirection;
 use crate::GyroSource;
 use crate::keyframes::KeyframeManager;
 use crate::lens_profile::LensProfile;
-use std::sync::Arc;
+use crate::stabilization_params::ReadoutDirection;
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 #[derive(Default, Clone)]
 pub struct ComputeParams {
@@ -59,7 +59,7 @@ pub struct ComputeParams {
 
     pub distortion_model: DistortionModel,
     pub digital_lens: Option<DistortionModel>,
-    pub digital_lens_params: Option<Vec<f64>>
+    pub digital_lens_params: Option<Vec<f64>>,
 }
 impl ComputeParams {
     pub fn from_manager(mgr: &StabilizationManager) -> Self {
@@ -67,8 +67,13 @@ impl ComputeParams {
 
         let lens = mgr.lens.read().clone();
 
-        let distortion_model = DistortionModel::from_name(lens.distortion_model.as_deref().unwrap_or("opencv_fisheye"));
-        let digital_lens = lens.digital_lens.as_ref().map(|x| DistortionModel::from_name(&x));
+        let distortion_model = DistortionModel::from_name(
+            lens.distortion_model.as_deref().unwrap_or("opencv_fisheye"),
+        );
+        let digital_lens = lens
+            .digital_lens
+            .as_ref()
+            .map(|x| DistortionModel::from_name(&x));
 
         let digital_lens_params = lens.digital_lens_params.clone();
 
@@ -122,7 +127,7 @@ impl ComputeParams {
 
             keyframes: mgr.keyframes.read().clone(),
 
-            zooming_debug_points: false
+            zooming_debug_points: false,
         }
     }
 
@@ -135,10 +140,14 @@ impl ComputeParams {
         self.camera_diagonal_fovs = Vec::with_capacity(frame_count);
         for f in 0..frame_count as i32 {
             let timestamp = crate::timestamp_at_frame(f, self.scaled_fps);
-            let (camera_matrix, _, _, _, _, _) = crate::stabilization::FrameTransform::get_lens_data_at_timestamp(&self, timestamp, false);
+            let (camera_matrix, _, _, _, _, _) =
+                crate::stabilization::FrameTransform::get_lens_data_at_timestamp(
+                    &self, timestamp, false,
+                );
             let diag_length = ((self.width.pow(2) + self.height.pow(2)) as f64).sqrt();
             // let diag_pixel_focal_length = (camera_matrix[(0, 0)].powi(2) + camera_matrix[(1, 1)].powi(2)).sqrt();
-            let d_fov = 2.0 * ((diag_length / (2.0 * camera_matrix[(1, 1)])).atan()) * 180.0 / std::f64::consts::PI;
+            let d_fov = 2.0 * ((diag_length / (2.0 * camera_matrix[(1, 1)])).atan()) * 180.0
+                / std::f64::consts::PI;
             self.camera_diagonal_fovs.push(d_fov);
         }
     }
@@ -148,43 +157,57 @@ impl std::fmt::Debug for ComputeParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let gyro = self.gyro.read();
         f.debug_struct("ComputeParams")
-         .field("gyro.imu_orientation", &gyro.imu_transforms.imu_orientation)
-         .field("gyro.imu_rotation", &gyro.imu_transforms.imu_rotation_angles)
-         .field("gyro.acc_rotation", &gyro.imu_transforms.acc_rotation_angles)
-         .field("gyro.duration_ms", &gyro.duration_ms)
-         .field("gyro.imu_lpf", &gyro.imu_transforms.imu_lpf)
-         .field("gyro.imu_mf", &gyro.imu_transforms.imu_mf)
-         .field("gyro.gyro_bias", &gyro.imu_transforms.gyro_bias)
-         .field("gyro.integration_method", &gyro.integration_method)
-         .field("fovs.len", &self.fovs.len())
-         .field("keyframed", &self.keyframes.get_all_keys())
-
-         .field("frame_count",          &self.frame_count)
-         .field("fov_scale",            &self.fov_scale)
-         .field("fov_overview",         &self.fov_overview)
-         .field("width",                &self.width)
-         .field("height",               &self.height)
-         .field("output_width",         &self.output_width)
-         .field("output_height",        &self.output_height)
-         .field("video_rotation",       &self.video_rotation)
-         .field("lens_correction_amount",    &self.lens_correction_amount)
-         .field("light_refraction_coefficient", &self.light_refraction_coefficient)
-         .field("background_mode",           &self.background_mode)
-         .field("background_margin",         &self.background_margin)
-         .field("background_margin_feather", &self.background_margin_feather)
-         .field("frame_readout_time",        &self.frame_readout_time)
-         .field("frame_readout_direction",   &self.frame_readout_direction)
-         .field("trim_ranges",               &self.trim_ranges)
-         .field("scaled_fps",                &self.scaled_fps)
-         .field("adaptive_zoom_window",      &self.adaptive_zoom_window)
-         .field("adaptive_zoom_center_offset", &self.adaptive_zoom_center_offset)
-         .field("additional_rotation",       &self.additional_rotation)
-         .field("additional_translation",    &self.additional_translation)
-         .field("adaptive_zoom_method",      &self.adaptive_zoom_method)
-         .field("framebuffer_inverted",      &self.framebuffer_inverted)
-         .field("zooming_debug_points",      &self.zooming_debug_points)
-         .field("distortion_model",          &self.distortion_model.id())
-         .field("digital_lens",              &self.digital_lens.as_ref().map(|x| x.id()).unwrap_or("None"))
-         .finish()
+            .field("gyro.imu_orientation", &gyro.imu_transforms.imu_orientation)
+            .field(
+                "gyro.imu_rotation",
+                &gyro.imu_transforms.imu_rotation_angles,
+            )
+            .field(
+                "gyro.acc_rotation",
+                &gyro.imu_transforms.acc_rotation_angles,
+            )
+            .field("gyro.duration_ms", &gyro.duration_ms)
+            .field("gyro.imu_lpf", &gyro.imu_transforms.imu_lpf)
+            .field("gyro.imu_mf", &gyro.imu_transforms.imu_mf)
+            .field("gyro.gyro_bias", &gyro.imu_transforms.gyro_bias)
+            .field("gyro.integration_method", &gyro.integration_method)
+            .field("fovs.len", &self.fovs.len())
+            .field("keyframed", &self.keyframes.get_all_keys())
+            .field("frame_count", &self.frame_count)
+            .field("fov_scale", &self.fov_scale)
+            .field("fov_overview", &self.fov_overview)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("output_width", &self.output_width)
+            .field("output_height", &self.output_height)
+            .field("video_rotation", &self.video_rotation)
+            .field("lens_correction_amount", &self.lens_correction_amount)
+            .field(
+                "light_refraction_coefficient",
+                &self.light_refraction_coefficient,
+            )
+            .field("background_mode", &self.background_mode)
+            .field("background_margin", &self.background_margin)
+            .field("background_margin_feather", &self.background_margin_feather)
+            .field("frame_readout_time", &self.frame_readout_time)
+            .field("frame_readout_direction", &self.frame_readout_direction)
+            .field("trim_ranges", &self.trim_ranges)
+            .field("scaled_fps", &self.scaled_fps)
+            .field("adaptive_zoom_window", &self.adaptive_zoom_window)
+            .field(
+                "adaptive_zoom_center_offset",
+                &self.adaptive_zoom_center_offset,
+            )
+            .field("additional_rotation", &self.additional_rotation)
+            .field("additional_translation", &self.additional_translation)
+            .field("adaptive_zoom_method", &self.adaptive_zoom_method)
+            .field("framebuffer_inverted", &self.framebuffer_inverted)
+            .field("zooming_debug_points", &self.zooming_debug_points)
+            .field("distortion_model", &self.distortion_model.id())
+            .field(
+                "digital_lens",
+                &self.digital_lens.as_ref().map(|x| x.id()).unwrap_or("None"),
+            )
+            .finish()
     }
 }

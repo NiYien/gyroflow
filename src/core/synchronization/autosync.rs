@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use std::sync::atomic::{ AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst };
-use std::sync::Arc;
-use std::borrow::Cow;
 use itertools::Either;
 use parking_lot::RwLock;
+use std::borrow::Cow;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
 
-use crate::StabilizationManager;
-use crate::stabilization::ComputeParams;
 use super::PoseEstimator;
 use super::SyncParams;
+use crate::StabilizationManager;
+use crate::stabilization::ComputeParams;
 
 pub struct AutosyncProcess {
     frame_count: usize,
@@ -26,14 +26,24 @@ pub struct AutosyncProcess {
     compute_params: Arc<RwLock<ComputeParams>>,
     cancel_flag: Arc<AtomicBool>,
     progress_cb: Option<Arc<Box<dyn Fn(f64, usize, usize) + Send + Sync + 'static>>>,
-    finished_cb: Option<Arc<Box<dyn Fn(Either<Vec<(f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static>>>,
+    finished_cb: Option<
+        Arc<
+            Box<
+                dyn Fn(Either<Vec<(f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
+            >,
+        >,
+    >,
 
     sync_params: SyncParams,
 
     thread_pool: rayon::ThreadPool,
 }
 
-pub fn describe_autosync_init_failure(stab: &StabilizationManager, timestamps_fract: &[f64], sync_params: &SyncParams) -> String {
+pub fn describe_autosync_init_failure(
+    stab: &StabilizationManager,
+    timestamps_fract: &[f64],
+    sync_params: &SyncParams,
+) -> String {
     let params = stab.params.read();
     let org_fps = params.fps;
     let scaled_fps = params.get_scaled_fps();
@@ -46,27 +56,39 @@ pub fn describe_autosync_init_failure(stab: &StabilizationManager, timestamps_fr
         time_per_syncpoint *= scale;
     }
     let every_nth_frame = sync_params.every_nth_frame.max(1);
-    let effective_frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps).ceil() as usize)
-        .min(params.frame_count)
-        / every_nth_frame;
+    let effective_frame_count =
+        ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps).ceil() as usize)
+            .min(params.frame_count)
+            / every_nth_frame;
 
     let mut reasons = Vec::new();
     if scaled_duration_ms < 10.0 {
         reasons.push(format!("scaled_duration_ms({scaled_duration_ms:.3}) < 10"));
     }
     if effective_frame_count < 2 {
-        reasons.push(format!("effective_frame_count({effective_frame_count}) < 2"));
+        reasons.push(format!(
+            "effective_frame_count({effective_frame_count}) < 2"
+        ));
     }
     if time_per_syncpoint < 10.0 {
-        reasons.push(format!("time_per_syncpoint_ms({time_per_syncpoint:.3}) < 10"));
+        reasons.push(format!(
+            "time_per_syncpoint_ms({time_per_syncpoint:.3}) < 10"
+        ));
     }
     if sync_params.search_size < 10.0 {
-        reasons.push(format!("search_size_ms({:.3}) < 10", sync_params.search_size));
+        reasons.push(format!(
+            "search_size_ms({:.3}) < 10",
+            sync_params.search_size
+        ));
     }
 
     format!(
         "reasons=[{}], timestamps={}, org_duration_ms={:.3}, scaled_duration_ms={:.3}, params_frame_count={}, effective_frame_count={}, org_fps={:.6}, scaled_fps={:.6}, fps_scale={:?}, every_nth_frame={}, time_per_syncpoint_ms={:.3}, search_size_ms={:.3}, max_sync_points={}, auto_sync_points={}",
-        if reasons.is_empty() { "none".to_owned() } else { reasons.join(", ") },
+        if reasons.is_empty() {
+            "none".to_owned()
+        } else {
+            reasons.join(", ")
+        },
         timestamps_fract.len(),
         org_duration_ms,
         scaled_duration_ms,
@@ -84,7 +106,13 @@ pub fn describe_autosync_init_failure(stab: &StabilizationManager, timestamps_fr
 }
 
 impl AutosyncProcess {
-    pub fn from_manager(stab: &StabilizationManager, timestamps_fract: &[f64], sync_params: SyncParams, mode: String, cancel_flag: Arc<AtomicBool>) -> Result<Self, ()> {
+    pub fn from_manager(
+        stab: &StabilizationManager,
+        timestamps_fract: &[f64],
+        sync_params: SyncParams,
+        mode: String,
+        cancel_flag: Arc<AtomicBool>,
+    ) -> Result<Self, ()> {
         let params = stab.params.read();
         let org_fps = params.fps;
         let scaled_fps = params.get_scaled_fps();
@@ -102,19 +130,30 @@ impl AutosyncProcess {
         if let Some(scale) = &fps_scale {
             time_per_syncpoint *= scale;
         }
-        let frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps).ceil() as usize).min(params.frame_count) / every_nth_frame as usize;
+        let frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps)
+            .ceil() as usize)
+            .min(params.frame_count) / every_nth_frame as usize;
 
         drop(params);
 
-        if duration_ms < 10.0 || frame_count < 2 || time_per_syncpoint < 10.0 || search_size < 10.0 { return Err(()); }
+        if duration_ms < 10.0 || frame_count < 2 || time_per_syncpoint < 10.0 || search_size < 10.0
+        {
+            return Err(());
+        }
 
-        let mut ranges_us: Vec<(i64, i64)> = timestamps_fract.iter().map(|x| {
-            let range = (
-                ((x * org_duration_ms) - (time_per_syncpoint / 2.0)).max(0.0),
-                ((x * org_duration_ms) + (time_per_syncpoint / 2.0)).min(org_duration_ms)
-            );
-            ((range.0 * 1000.0).round() as i64, (range.1 * 1000.0).round() as i64)
-        }).collect();
+        let mut ranges_us: Vec<(i64, i64)> = timestamps_fract
+            .iter()
+            .map(|x| {
+                let range = (
+                    ((x * org_duration_ms) - (time_per_syncpoint / 2.0)).max(0.0),
+                    ((x * org_duration_ms) + (time_per_syncpoint / 2.0)).min(org_duration_ms),
+                );
+                (
+                    (range.0 * 1000.0).round() as i64,
+                    (range.1 * 1000.0).round() as i64,
+                )
+            })
+            .collect();
 
         if mode == "synchronize" && !stab.gyro.read().has_motion() {
             // If no gyro data in file, analyze the entire video
@@ -122,16 +161,27 @@ impl AutosyncProcess {
             ranges_us.push((0, (org_duration_ms * 1000.0).round() as i64));
         }
 
-        let scaled_ranges_us = ranges_us.iter().map(|(f, t)| (
-            (*f as f64 / fps_scale.unwrap_or(1.0)) as i64,
-            (*t as f64 / fps_scale.unwrap_or(1.0)) as i64)
-        ).collect();
+        let scaled_ranges_us = ranges_us
+            .iter()
+            .map(|(f, t)| {
+                (
+                    (*f as f64 / fps_scale.unwrap_or(1.0)) as i64,
+                    (*t as f64 / fps_scale.unwrap_or(1.0)) as i64,
+                )
+            })
+            .collect();
 
         let estimator = stab.pose_estimator.clone();
 
-        estimator.every_nth_frame.store(every_nth_frame.max(1) as u32, SeqCst);
-        estimator.offset_method.store(sync_params.offset_method as u32, SeqCst);
-        estimator.pose_method.store(sync_params.pose_method as u32, SeqCst);
+        estimator
+            .every_nth_frame
+            .store(every_nth_frame.max(1) as u32, SeqCst);
+        estimator
+            .offset_method
+            .store(sync_params.offset_method as u32, SeqCst);
+        estimator
+            .pose_method
+            .store(sync_params.pose_method as u32, SeqCst);
 
         let mut comp_params = ComputeParams::from_manager(stab);
         comp_params.keyframes.clear();
@@ -150,7 +200,8 @@ impl AutosyncProcess {
                     log::error!("Sync thread panic! {:?}", e);
                 }
             })
-            .build().unwrap();
+            .build()
+            .unwrap();
 
         Ok(Self {
             frame_count,
@@ -168,15 +219,26 @@ impl AutosyncProcess {
             finished_cb: None,
             progress_cb: None,
             cancel_flag,
-            thread_pool
+            thread_pool,
         })
     }
 
     pub fn get_ranges(&self) -> Vec<(f64, f64)> {
-        self.ranges_us.iter().map(|&v| (v.0 as f64 / 1000.0, v.1 as f64 / 1000.0)).collect()
+        self.ranges_us
+            .iter()
+            .map(|&v| (v.0 as f64 / 1000.0, v.1 as f64 / 1000.0))
+            .collect()
     }
 
-    pub fn feed_frame(&self, mut timestamp_us: i64, frame_no: usize, mut width: u32, height: u32, stride: usize, pixels: &[u8]) {
+    pub fn feed_frame(
+        &self,
+        mut timestamp_us: i64,
+        frame_no: usize,
+        mut width: u32,
+        height: u32,
+        stride: usize,
+        pixels: &[u8],
+    ) {
         let img = PoseEstimator::yuv_to_gray(width, height, stride as u32, pixels).map(Arc::new);
         if width > stride as u32 {
             width = stride as u32;
@@ -198,11 +260,26 @@ impl AutosyncProcess {
 
         {
             let compute_params = compute_params.read();
-            let frame = crate::frame_at_timestamp(timestamp_us as f64 / 1000.0, compute_params.scaled_fps) as usize;
-            timestamp_us += (compute_params.gyro.read().file_metadata.read().per_frame_time_offsets.get(frame).unwrap_or(&0.0) * 1000.0).round() as i64;
+            let frame =
+                crate::frame_at_timestamp(timestamp_us as f64 / 1000.0, compute_params.scaled_fps)
+                    as usize;
+            timestamp_us += (compute_params
+                .gyro
+                .read()
+                .file_metadata
+                .read()
+                .per_frame_time_offsets
+                .get(frame)
+                .unwrap_or(&0.0)
+                * 1000.0)
+                .round() as i64;
         }
 
-        if let Some(_current_range) = self.scaled_ranges_us.iter().find(|(from, to)| (*from..=*to).contains(&timestamp_us)) {
+        if let Some(_current_range) = self
+            .scaled_ranges_us
+            .iter()
+            .find(|(from, to)| (*from..=*to).contains(&timestamp_us))
+        {
             self.total_read_frames.fetch_add(1, SeqCst);
 
             self.thread_pool.spawn(move || {
@@ -215,7 +292,11 @@ impl AutosyncProcess {
                     total_detected_frames.fetch_add(1, SeqCst);
 
                     if frame_no % 7 == 0 {
-                        estimator.process_detected_frames(org_fps, scaled_fps, &compute_params.read());
+                        estimator.process_detected_frames(
+                            org_fps,
+                            scaled_fps,
+                            &compute_params.read(),
+                        );
                         estimator.recalculate_gyro_data(org_fps, false);
                     }
 
@@ -240,9 +321,14 @@ impl AutosyncProcess {
 
         let progress_cb = self.progress_cb.clone();
 
-        self.estimator.process_detected_frames(self.org_fps, self.scaled_fps, &self.compute_params.read());
+        self.estimator.process_detected_frames(
+            self.org_fps,
+            self.scaled_fps,
+            &self.compute_params.read(),
+        );
         self.estimator.recalculate_gyro_data(self.org_fps, true);
-        self.estimator.cache_optical_flow(if offset_method == 1 { 2 } else { 1 });
+        self.estimator
+            .cache_optical_flow(if offset_method == 1 { 2 } else { 1 });
         self.estimator.cleanup();
 
         let mut scaled_ranges_us = Cow::Borrowed(&self.scaled_ranges_us);
@@ -252,16 +338,37 @@ impl AutosyncProcess {
             let compute_params = self.compute_params.write();
             let mut gyro = compute_params.gyro.write();
 
-            gyro.file_metadata.set_raw_imu(self.estimator.estimated_gyro.read().values().cloned().collect::<Vec<_>>());
+            gyro.file_metadata.set_raw_imu(
+                self.estimator
+                    .estimated_gyro
+                    .read()
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            );
             gyro.apply_transforms();
 
             let timestamps_fract = [0.5];
             let time_per_syncpoint = 500.0;
 
-            scaled_ranges_us = Cow::Owned(timestamps_fract.into_iter().map(|x| (
-                (((x * gyro.duration_ms) - (time_per_syncpoint / 2.0)).max(0.0)              * 1000.0 / self.fps_scale.unwrap_or(1.0)).round() as i64,
-                (((x * gyro.duration_ms) + (time_per_syncpoint / 2.0)).min(gyro.duration_ms) * 1000.0 / self.fps_scale.unwrap_or(1.0)).round() as i64
-            )).collect());
+            scaled_ranges_us = Cow::Owned(
+                timestamps_fract
+                    .into_iter()
+                    .map(|x| {
+                        (
+                            (((x * gyro.duration_ms) - (time_per_syncpoint / 2.0)).max(0.0)
+                                * 1000.0
+                                / self.fps_scale.unwrap_or(1.0))
+                            .round() as i64,
+                            (((x * gyro.duration_ms) + (time_per_syncpoint / 2.0))
+                                .min(gyro.duration_ms)
+                                * 1000.0
+                                / self.fps_scale.unwrap_or(1.0))
+                            .round() as i64,
+                        )
+                    })
+                    .collect(),
+            );
         }
 
         if let Some(cb) = &progress_cb {
@@ -270,7 +377,8 @@ impl AutosyncProcess {
             cb(0.6, d, t);
         }
 
-        let check_negative = self.sync_params.initial_offset_inv && self.sync_params.initial_offset.abs() > 1.0;
+        let check_negative =
+            self.sync_params.initial_offset_inv && self.sync_params.initial_offset.abs() > 1.0;
 
         let for_negative = AtomicBool::new(false);
 
@@ -289,21 +397,49 @@ impl AutosyncProcess {
         if let Some(cb) = &self.finished_cb {
             if self.mode == "estimate_rolling_shutter" {
                 use super::find_offset::visual_features::find_offsets;
-                cb(Either::Left(find_offsets(&self.estimator, &scaled_ranges_us, &self.sync_params, &self.compute_params.read(), true, progress_cb2, self.cancel_flag.clone())));
+                cb(Either::Left(find_offsets(
+                    &self.estimator,
+                    &scaled_ranges_us,
+                    &self.sync_params,
+                    &self.compute_params.read(),
+                    true,
+                    progress_cb2,
+                    self.cancel_flag.clone(),
+                )));
             } else if self.mode == "guess_imu_orientation" {
                 use super::find_offset::rs_sync::FindOffsetsRssync;
-                let guessed = FindOffsetsRssync::new(&scaled_ranges_us, self.estimator.sync_results.clone(), &self.sync_params, &self.compute_params.read(), progress_cb2, self.cancel_flag.clone()).guess_orient();
+                let guessed = FindOffsetsRssync::new(
+                    &scaled_ranges_us,
+                    self.estimator.sync_results.clone(),
+                    &self.sync_params,
+                    &self.compute_params.read(),
+                    progress_cb2,
+                    self.cancel_flag.clone(),
+                )
+                .guess_orient();
                 if !self.cancel_flag.load(SeqCst) {
                     cb(Either::Right(guessed));
                 }
             } else {
-                let offsets = self.estimator.find_offsets(&scaled_ranges_us, &self.sync_params, &self.compute_params.read(), progress_cb2, self.cancel_flag.clone());
+                let offsets = self.estimator.find_offsets(
+                    &scaled_ranges_us,
+                    &self.sync_params,
+                    &self.compute_params.read(),
+                    progress_cb2,
+                    self.cancel_flag.clone(),
+                );
                 if check_negative {
                     for_negative.store(true, SeqCst);
                     // Try also negative rough offset
                     let mut sync_params = self.sync_params.clone();
                     sync_params.initial_offset = -sync_params.initial_offset;
-                    let offsets2 = self.estimator.find_offsets(&scaled_ranges_us, &sync_params, &self.compute_params.read(), progress_cb2, self.cancel_flag.clone());
+                    let offsets2 = self.estimator.find_offsets(
+                        &scaled_ranges_us,
+                        &sync_params,
+                        &self.compute_params.read(),
+                        progress_cb2,
+                        self.cancel_flag.clone(),
+                    );
                     if offsets2.len() > offsets.len() {
                         cb(Either::Left(offsets2));
                     } else if offsets2.len() == offsets.len() {
@@ -326,10 +462,16 @@ impl AutosyncProcess {
         }
     }
 
-    pub fn on_progress<F>(&mut self, cb: F) where F: Fn(f64, usize, usize) + Send + Sync + 'static {
+    pub fn on_progress<F>(&mut self, cb: F)
+    where
+        F: Fn(f64, usize, usize) + Send + Sync + 'static,
+    {
         self.progress_cb = Some(Arc::new(Box::new(cb)));
     }
-    pub fn on_finished<F>(&mut self, cb: F) where F:  Fn(Either<Vec<(f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static {
+    pub fn on_finished<F>(&mut self, cb: F)
+    where
+        F: Fn(Either<Vec<(f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
+    {
         self.finished_cb = Some(Arc::new(Box::new(cb)));
     }
 }

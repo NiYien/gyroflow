@@ -5,7 +5,15 @@ use ash::vk;
 use wgpu::Device;
 use wgpu::hal::api::Vulkan;
 
-pub fn create_texture_from_vk_image(device: &Device, image: vk::Image, width: u32, height: u32, format: wgpu::TextureFormat, is_in: bool, drop: bool) -> wgpu::Texture {
+pub fn create_texture_from_vk_image(
+    device: &Device,
+    image: vk::Image,
+    width: u32,
+    height: u32,
+    format: wgpu::TextureFormat,
+    is_in: bool,
+    drop: bool,
+) -> wgpu::Texture {
     let size = wgpu::Extent3d {
         width: width,
         height: height,
@@ -33,7 +41,7 @@ pub fn create_texture_from_vk_image(device: &Device, image: vk::Image, width: u3
                 memory_flags: wgpu::hal::MemoryFlags::empty(),
             },
             if drop { None } else { Some(drop_guard) },
-           wgpu::hal::vulkan::TextureMemory::External
+            wgpu::hal::vulkan::TextureMemory::External,
         )
     };
 
@@ -58,7 +66,12 @@ pub fn create_texture_from_vk_image(device: &Device, image: vk::Image, width: u3
     }
 }
 
-pub fn create_buffer_from_vk_buffer(device: &Device, buffer: vk::Buffer, size: u64, is_in: bool) -> wgpu::Buffer {
+pub fn create_buffer_from_vk_buffer(
+    device: &Device,
+    buffer: vk::Buffer,
+    size: u64,
+    is_in: bool,
+) -> wgpu::Buffer {
     let buffer = unsafe { <Vulkan as wgpu::hal::Api>::Buffer::from_raw(buffer) };
 
     unsafe {
@@ -68,7 +81,12 @@ pub fn create_buffer_from_vk_buffer(device: &Device, buffer: vk::Buffer, size: u
                 label: None,
                 size,
                 mapped_at_creation: false,
-                usage: wgpu::BufferUsages::STORAGE | (if is_in { wgpu::BufferUsages::COPY_SRC } else { wgpu::BufferUsages::COPY_DST })
+                usage: wgpu::BufferUsages::STORAGE
+                    | (if is_in {
+                        wgpu::BufferUsages::COPY_SRC
+                    } else {
+                        wgpu::BufferUsages::COPY_DST
+                    }),
             },
         )
     }

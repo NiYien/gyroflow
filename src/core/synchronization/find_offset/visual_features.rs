@@ -1,13 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use rayon::iter::{ ParallelIterator, IntoParallelIterator };
-use crate::{ stabilization, stabilization::ComputeParams };
-use std::sync::{ Arc, atomic::{ AtomicBool, Ordering::Relaxed } };
-use super::super::{ PoseEstimator, SyncParams };
+use super::super::{PoseEstimator, SyncParams};
+use crate::{stabilization, stabilization::ComputeParams};
 use parking_lot::RwLock;
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::Relaxed},
+};
 
-pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64, i64)], sync_params: &SyncParams, params_arg: &ComputeParams, for_rs: bool, progress_cb: F, cancel_flag: Arc<AtomicBool>) -> Vec<(f64, f64, f64)> { // Vec<(timestamp, offset, cost)>
+pub fn find_offsets<F: Fn(f64) + Sync>(
+    estimator: &PoseEstimator,
+    ranges: &[(i64, i64)],
+    sync_params: &SyncParams,
+    params_arg: &ComputeParams,
+    for_rs: bool,
+    progress_cb: F,
+    cancel_flag: Arc<AtomicBool>,
+) -> Vec<(f64, f64, f64)> {
+    // Vec<(timestamp, offset, cost)>
     let mut params = params_arg.clone();
     params.gyro = Arc::new(RwLock::new(params_arg.gyro.read().clone()));
     if !for_rs {
@@ -25,7 +37,9 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
     let keys: Vec<i64> = estimator.sync_results.read().keys().copied().collect();
 
     for (i, (from_ts, to_ts)) in ranges.iter().enumerate() {
-        if cancel_flag.load(Relaxed) { break; }
+        if cancel_flag.load(Relaxed) {
+            break;
+        }
         progress_cb(i as f64 / ranges_len);
 
         let mut matched_points = Vec::new();
@@ -36,9 +50,13 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
                         if !lines.0.1.is_empty() && lines.0.1.len() == lines.1.1.len() {
                             matched_points.push(lines);
                         } else {
-                            log::warn!("Invalid point pairs {} {}", lines.0.1.len(), lines.1.1.len());
+                            log::warn!(
+                                "Invalid point pairs {} {}",
+                                lines.0.1.len(),
+                                lines.1.1.len()
+                            );
                         }
-                    },
+                    }
                     _ => {
                         log::warn!("No detected features for ts {}", ts);
                     }
@@ -57,18 +75,39 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
             }
 
             for ((ts, pts1), (next_ts, pts2)) in &matched_points {
-                let timestamp_ms  = *ts as f64 / 1000.0;
+                let timestamp_ms = *ts as f64 / 1000.0;
                 let timestamp_ms2 = *next_ts as f64 / 1000.0;
 
-                let undistorted_points1 = stabilization::undistort_points_with_rolling_shutter(&pts1, timestamp_ms - offs, None, params_ref, 1.0, false);
-                let undistorted_points2 = stabilization::undistort_points_with_rolling_shutter(&pts2, timestamp_ms2 - offs, None, params_ref, 1.0, false);
+                let undistorted_points1 = stabilization::undistort_points_with_rolling_shutter(
+                    &pts1,
+                    timestamp_ms - offs,
+                    None,
+                    params_ref,
+                    1.0,
+                    false,
+                );
+                let undistorted_points2 = stabilization::undistort_points_with_rolling_shutter(
+                    &pts2,
+                    timestamp_ms2 - offs,
+                    None,
+                    params_ref,
+                    1.0,
+                    false,
+                );
 
                 let mut distances = Vec::with_capacity(undistorted_points1.len());
                 for (p1, p2) in undistorted_points1.iter().zip(undistorted_points2.iter()) {
-                    if p1.0 > 0.0 && p1.0 < w as f32 && p1.1 > 0.0 && p1.1 < h as f32 &&
-                       p2.0 > 0.0 && p2.0 < w as f32 && p2.1 > 0.0 && p2.1 < h as f32 {
-                        let dist = ((p2.0 - p1.0) * (p2.0 - p1.0))
-                                      + ((p2.1 - p1.1) * (p2.1 - p1.1));
+                    if p1.0 > 0.0
+                        && p1.0 < w as f32
+                        && p1.1 > 0.0
+                        && p1.1 < h as f32
+                        && p2.0 > 0.0
+                        && p2.0 < w as f32
+                        && p2.1 > 0.0
+                        && p2.1 < h as f32
+                    {
+                        let dist =
+                            ((p2.0 - p1.0) * (p2.0 - p1.0)) + ((p2.1 - p1.1) * (p2.1 - p1.1));
                         distances.push(dist as u64);
                     }
                 }
@@ -82,17 +121,17 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
             total_dist
         };
 
-        let find_min = |a: (f64, f64), b: (f64, f64)| -> (f64, f64) { if a.1 < b.1 { a } else { b } };
+        let find_min =
+            |a: (f64, f64), b: (f64, f64)| -> (f64, f64) { if a.1 < b.1 { a } else { b } };
 
-        if for_rs { // Estimate rolling shutter
+        if for_rs {
+            // Estimate rolling shutter
             // First search every 1 ms
             let max_rs = 1000.0 / fps;
             let steps = max_rs as isize;
             let lowest = (-steps..steps)
                 .into_par_iter()
-                .map(|i| {
-                    (i as f64, calculate_distance(0.0, Some(i as f64)))
-                })
+                .map(|i| (i as f64, calculate_distance(0.0, Some(i as f64))))
                 .reduce_with(find_min)
                 .and_then(|lowest| {
                     // Then refine to 0.01 ms
@@ -114,7 +153,8 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
             let lowest = (0..steps)
                 .into_par_iter()
                 .map(|i| {
-                    let offs = sync_params.initial_offset + (-(sync_params.search_size / 2.0) + (i as f64));
+                    let offs = sync_params.initial_offset
+                        + (-(sync_params.search_size / 2.0) + (i as f64));
                     (offs, calculate_distance(offs, None))
                 })
                 .reduce_with(find_min)
@@ -137,7 +177,11 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
                 if (lowest.0 - sync_params.initial_offset).abs() < sync_params.search_size * 0.9 {
                     final_offsets.push((middle_timestamp, lowest.0, lowest.1));
                 } else {
-                    log::warn!("Sync point out of acceptable range {} < {}", (lowest.0 - sync_params.initial_offset).abs(), sync_params.search_size * 0.9);
+                    log::warn!(
+                        "Sync point out of acceptable range {} < {}",
+                        (lowest.0 - sync_params.initial_offset).abs(),
+                        sync_params.search_size * 0.9
+                    );
                 }
             }
         }
@@ -145,8 +189,6 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
 
     final_offsets
 }
-
-
 
 /////////////////////// DEBUG ///////////////////////
 /*let l = self.sync_results.read();

@@ -1,20 +1,28 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-use super::super::{ PoseEstimator, OpticalFlowPoints, FrameResult, SyncParams };
-use crate::gyro_source::{ Quat64, TimeQuat, GyroSource };
-use crate::stabilization::{ undistort_points_for_optical_flow, ComputeParams };
+use super::super::{FrameResult, OpticalFlowPoints, PoseEstimator, SyncParams};
+use crate::gyro_source::{GyroSource, Quat64, TimeQuat};
+use crate::stabilization::{ComputeParams, undistort_points_for_optical_flow};
 use nalgebra::Vector3;
-use rs_sync::SyncProblem;
-use std::f64::consts::PI;
 use parking_lot::RwLock;
+use rs_sync::SyncProblem;
 use std::collections::BTreeMap;
+use std::f64::consts::PI;
 use std::sync::{
-    atomic::{ AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst },
     Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst},
 };
 
-pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64, i64)], sync_params: &SyncParams, params: &ComputeParams, progress_cb: F, cancel_flag: Arc<AtomicBool>) -> Vec<(f64, f64, f64)> { // Vec<(timestamp, offset, cost)>
+pub fn find_offsets<F: Fn(f64) + Sync>(
+    estimator: &PoseEstimator,
+    ranges: &[(i64, i64)],
+    sync_params: &SyncParams,
+    params: &ComputeParams,
+    progress_cb: F,
+    cancel_flag: Arc<AtomicBool>,
+) -> Vec<(f64, f64, f64)> {
+    // Vec<(timestamp, offset, cost)>
     // Try essential matrix first, because it's much faster
     let mut sync_params = sync_params.clone();
 
@@ -34,7 +42,14 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
             }
         }
 
-        let offsets = super::essential_matrix::find_offsets(estimator, &ranges, &sync_params, params, &progress_cb, cancel_flag.clone());
+        let offsets = super::essential_matrix::find_offsets(
+            estimator,
+            &ranges,
+            &sync_params,
+            params,
+            &progress_cb,
+            cancel_flag.clone(),
+        );
         if !offsets.is_empty() {
             let median_offset = median(offsets.iter().map(|x| x.1).collect());
             sync_params.initial_offset = median_offset;
@@ -44,7 +59,15 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
         }
     }
 
-    let offsets = FindOffsetsRssync::new(ranges, estimator.sync_results.clone(), &sync_params, params, progress_cb, cancel_flag).full_sync();
+    let offsets = FindOffsetsRssync::new(
+        ranges,
+        estimator.sync_results.clone(),
+        &sync_params,
+        params,
+        progress_cb,
+        cancel_flag,
+    )
+    .full_sync();
     offsets
 }
 
@@ -52,12 +75,12 @@ pub struct FindOffsetsRssync<'a> {
     sync: SyncProblem<'a>,
     gyro_source: Arc<RwLock<GyroSource>>,
     frame_readout_time: f64,
-    sync_points: Vec::<(i64, i64)>,
+    sync_points: Vec<(i64, i64)>,
     sync_params: &'a SyncParams,
     is_guess_orient: Arc<AtomicBool>,
 
     current_sync_point: Arc<AtomicUsize>,
-    current_orientation: Arc<AtomicUsize>
+    current_orientation: Arc<AtomicUsize>,
 }
 
 impl FindOffsetsRssync<'_> {
@@ -88,18 +111,25 @@ impl FindOffsetsRssync<'_> {
             sync_params,
             is_guess_orient: Arc::new(AtomicBool::new(false)),
             current_sync_point: Arc::new(AtomicUsize::new(0)),
-            current_orientation: Arc::new(AtomicUsize::new(0))
+            current_orientation: Arc::new(AtomicUsize::new(0)),
         };
-
 
         {
             let num_sync_points = matched_points.len() as f64;
             let is_guess_orient = ret.is_guess_orient.clone();
             let cur_sync_point = ret.current_sync_point.clone();
             let cur_orientation = ret.current_orientation.clone();
-            ret.sync.on_progress( move |progress| -> bool {
-                let num_orientations  = if is_guess_orient.load(SeqCst) { 48.0 } else { 1.0 };
-                progress_cb((cur_orientation.load(SeqCst) as f64 + ((cur_sync_point.load(SeqCst) as f64 + progress) / num_sync_points)) / num_orientations);
+            ret.sync.on_progress(move |progress| -> bool {
+                let num_orientations = if is_guess_orient.load(SeqCst) {
+                    48.0
+                } else {
+                    1.0
+                };
+                progress_cb(
+                    (cur_orientation.load(SeqCst) as f64
+                        + ((cur_sync_point.load(SeqCst) as f64 + progress) / num_sync_points))
+                        / num_orientations,
+                );
                 !cancel_flag.load(Relaxed)
             });
         }
@@ -118,7 +148,7 @@ impl FindOffsetsRssync<'_> {
                 }
                 to_ts = b_t;
                 let a = undistort_points_for_optical_flow(&a_p, a_t, &params, frame_size);
-                let b = undistort_points_for_optical_flow(&b_p, to_ts,   &params, frame_size);
+                let b = undistort_points_for_optical_flow(&b_p, to_ts, &params, frame_size);
 
                 let mut points3d_a = Vec::new();
                 let mut points3d_b = Vec::new();
@@ -129,8 +159,10 @@ impl FindOffsetsRssync<'_> {
 
                 let height = frame_size.1 as f64;
                 for (i, (ap, bp)) in a.iter().zip(b.iter()).enumerate() {
-                    let ts_a = a_t as f64 / 1000_000.0 + frame_readout_time * (a_p[i].1 as f64 / height);
-                    let ts_b = b_t as f64 / 1000_000.0 + frame_readout_time * (b_p[i].1 as f64 / height);
+                    let ts_a =
+                        a_t as f64 / 1000_000.0 + frame_readout_time * (a_p[i].1 as f64 / height);
+                    let ts_b =
+                        b_t as f64 / 1000_000.0 + frame_readout_time * (b_p[i].1 as f64 / height);
 
                     let ap = Vector3::new(ap.0 as f64, ap.1 as f64, 1.0).normalize();
                     let bp = Vector3::new(bp.0 as f64, bp.1 as f64, 1.0).normalize();
@@ -142,15 +174,16 @@ impl FindOffsetsRssync<'_> {
                     tss_b.push(ts_b);
                 }
 
-                ret.sync.set_track_result(a_t, &tss_a, &tss_b, &points3d_a, &points3d_b);
+                ret.sync
+                    .set_track_result(a_t, &tss_a, &tss_b, &points3d_a, &points3d_b);
             }
             ret.sync_points.push((from_ts, to_ts));
-
         }
         ret
     }
 
-    pub fn full_sync(&mut self) -> Vec<(f64, f64, f64)> { // Vec<(timestamp, offset, cost)>
+    pub fn full_sync(&mut self) -> Vec<(f64, f64, f64)> {
+        // Vec<(timestamp, offset, cost)>
         self.is_guess_orient.store(false, SeqCst);
 
         let mut offsets = Vec::new();
@@ -160,7 +193,6 @@ impl FindOffsetsRssync<'_> {
         }
 
         for (from_ts, to_ts) in &self.sync_points {
-
             let presync_step = 3.0;
             let presync_radius = self.sync_params.search_size;
             let initial_delay = -self.sync_params.initial_offset;
@@ -179,7 +211,11 @@ impl FindOffsetsRssync<'_> {
                     let offset = -offset - (self.frame_readout_time * 1000.0 / 2.0);
                     offsets.push(((from_ts + to_ts) as f64 / 2.0 / 1000.0, offset, delay.0));
                 } else {
-                    log::warn!("Sync point out of acceptable range {} < {}", (offset - initial_delay).abs(), presync_radius * 0.9);
+                    log::warn!(
+                        "Sync point out of acceptable range {} < {}",
+                        (offset - initial_delay).abs(),
+                        presync_radius * 0.9
+                    );
                 }
             }
             self.current_sync_point.fetch_add(1, SeqCst);
@@ -196,32 +232,52 @@ impl FindOffsetsRssync<'_> {
             "YxZ", "Xyz", "XZy", "Zxy", "zyX", "yxZ", "ZXY", "zYx", "ZYX", "yXz", "YZX", "XyZ",
             "Yzx", "zXy", "YXz", "xyz", "yZx", "XYZ", "zxy", "xYz", "XYz", "zxY", "zXY", "xZy",
             "zyx", "xyZ", "Yxz", "xzy", "yZX", "yzX", "ZYx", "xYZ", "zYX", "ZxY", "yzx", "xZY",
-            "Xzy", "XzY", "YzX", "Zyx", "XZY", "yxz", "xzY", "ZyX", "YXZ", "yXZ", "YZx", "ZXy"
+            "Xzy", "XzY", "YzX", "Zyx", "XZY", "yxz", "xzY", "ZyX", "YXZ", "yXZ", "YZx", "ZXy",
         ];
 
-        possible_orientations.iter().map(|orient| {
-            clone_source.imu_transforms.imu_orientation = Some(orient.to_string());
-            clone_source.apply_transforms();
+        possible_orientations
+            .iter()
+            .map(|orient| {
+                clone_source.imu_transforms.imu_orientation = Some(orient.to_string());
+                clone_source.apply_transforms();
 
-            set_quats(&mut self.sync, &clone_source.quaternions);
+                set_quats(&mut self.sync, &clone_source.quaternions);
 
-            let total_cost: f64 = self.sync_points.iter().map(|(from_ts, to_ts)| {
-                self.sync.pre_sync(
-                    -self.sync_params.initial_offset / 1000.0,
-                    *from_ts,
-                    *to_ts,
-                    3.0 / 1000.0,
-                    self.sync_params.search_size / 1000.0
-                ).unwrap_or((0.0,0.0))
-            }).map(|v| {v.0}).sum();
+                let total_cost: f64 = self
+                    .sync_points
+                    .iter()
+                    .map(|(from_ts, to_ts)| {
+                        self.sync
+                            .pre_sync(
+                                -self.sync_params.initial_offset / 1000.0,
+                                *from_ts,
+                                *to_ts,
+                                3.0 / 1000.0,
+                                self.sync_params.search_size / 1000.0,
+                            )
+                            .unwrap_or((0.0, 0.0))
+                    })
+                    .map(|v| v.0)
+                    .sum();
 
-            self.current_orientation.fetch_add(1, SeqCst);
+                self.current_orientation.fetch_add(1, SeqCst);
 
-            (orient.to_string(), total_cost)
-        }).reduce(|a: (String, f64), b: (String, f64)| -> (String, f64) { if a.1 < b.1 { a } else { b } })
+                (orient.to_string(), total_cost)
+            })
+            .reduce(|a: (String, f64), b: (String, f64)| -> (String, f64) {
+                if a.1 < b.1 { a } else { b }
+            })
     }
 
-    fn collect_points(sync_results: Arc<RwLock<BTreeMap<i64, FrameResult>>>, ranges: &[(i64, i64)]) -> Vec<Vec<(((i64, OpticalFlowPoints), (i64, OpticalFlowPoints)), (u32, u32))>> {
+    fn collect_points(
+        sync_results: Arc<RwLock<BTreeMap<i64, FrameResult>>>,
+        ranges: &[(i64, i64)],
+    ) -> Vec<
+        Vec<(
+            ((i64, OpticalFlowPoints), (i64, OpticalFlowPoints)),
+            (u32, u32),
+        )>,
+    > {
         let mut points = Vec::new();
         for (from_ts, to_ts) in ranges {
             let mut points_per_range = Vec::new();
@@ -239,7 +295,6 @@ impl FindOffsetsRssync<'_> {
         }
         points
     }
-
 }
 
 fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {

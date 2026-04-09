@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use std::collections::{ HashSet, BTreeMap };
 use itertools::Itertools;
+use std::collections::{BTreeMap, HashSet};
 
-use serde::{ Serialize, Deserialize };
+use serde::{Deserialize, Serialize};
 
 use crate::stabilization::distortion_models::DistortionModel;
 use crate::stabilization_params::ReadoutDirection;
@@ -13,12 +13,20 @@ use crate::stabilization_params::ReadoutDirection;
 use super::LensCalibrator;
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug)]
-pub struct Dimensions { pub w: usize, pub h: usize }
+pub struct Dimensions {
+    pub w: usize,
+    pub h: usize,
+}
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug)]
 #[serde(default)]
 #[allow(non_snake_case)]
-pub struct CameraParams { pub RMS_error: f64, pub camera_matrix: Vec<[f64; 3]>, pub distortion_coeffs: Vec<f64>, pub radial_distortion_limit: Option<f64> }
+pub struct CameraParams {
+    pub RMS_error: f64,
+    pub camera_matrix: Vec<[f64; 3]>,
+    pub distortion_coeffs: Vec<f64>,
+    pub radial_distortion_limit: Option<f64>,
+}
 
 #[derive(Deserialize, Serialize, Default, Clone, Debug)]
 #[serde(default)]
@@ -85,36 +93,53 @@ pub struct LensProfile {
 impl LensProfile {
     pub fn init(&mut self) {
         if !self.fisheye_params.distortion_coeffs.is_empty() {
-            let distortion_model = DistortionModel::from_name(self.distortion_model.as_deref().unwrap_or("opencv_fisheye"));
-            self.fisheye_params.radial_distortion_limit = distortion_model.radial_distortion_limit(&self.get_distortion_coeffs());
+            let distortion_model = DistortionModel::from_name(
+                self.distortion_model.as_deref().unwrap_or("opencv_fisheye"),
+            );
+            self.fisheye_params.radial_distortion_limit =
+                distortion_model.radial_distortion_limit(&self.get_distortion_coeffs());
         }
     }
 
     pub fn from_value(json: serde_json::Value) -> Result<Self, serde_json::Error> {
         let mut lens: Result<Self, serde_json::Error> = serde_json::from_value(json);
-        if let Ok(ref mut lens) = lens { lens.init(); }
+        if let Ok(ref mut lens) = lens {
+            lens.init();
+        }
         lens
     }
     pub fn from_json(json: &str) -> Result<Self, serde_json::Error> {
         let mut lens: Result<Self, serde_json::Error> = serde_json::from_str(json);
-        if let Ok(ref mut lens) = lens { lens.init(); }
+        if let Ok(ref mut lens) = lens {
+            lens.init();
+        }
         lens
     }
 
-    pub fn load_from_data(&mut self, data: &str) -> std::result::Result<(), crate::GyroflowCoreError> {
+    pub fn load_from_data(
+        &mut self,
+        data: &str,
+    ) -> std::result::Result<(), crate::GyroflowCoreError> {
         *self = Self::from_json(&data)?;
 
         // Trust lens profiles loaded from file
         self.official = true;
 
-        if self.calibrator_version.is_empty() || self.fisheye_params.camera_matrix.is_empty() || self.calib_dimension.w <= 0 || self.calib_dimension.h <= 0 {
+        if self.calibrator_version.is_empty()
+            || self.fisheye_params.camera_matrix.is_empty()
+            || self.calib_dimension.w <= 0
+            || self.calib_dimension.h <= 0
+        {
             return Err(crate::GyroflowCoreError::InvalidData);
         }
 
         Ok(())
     }
 
-    pub fn load_from_file(&mut self, url: &str) -> std::result::Result<(), crate::GyroflowCoreError> {
+    pub fn load_from_file(
+        &mut self,
+        url: &str,
+    ) -> std::result::Result<(), crate::GyroflowCoreError> {
         self.load_from_data(&crate::filesystem::read_to_string(url)?)
     }
 
@@ -126,11 +151,21 @@ impl LensProfile {
 
     #[cfg(feature = "opencv")]
     pub fn set_from_calibrator(&mut self, cal: &LensCalibrator) {
-        if self.input_horizontal_stretch <= 0.01 { self.input_horizontal_stretch = 1.0; }
-        if self.input_vertical_stretch   <= 0.01 { self.input_vertical_stretch   = 1.0; }
+        if self.input_horizontal_stretch <= 0.01 {
+            self.input_horizontal_stretch = 1.0;
+        }
+        if self.input_vertical_stretch <= 0.01 {
+            self.input_vertical_stretch = 1.0;
+        }
 
-        self.calib_dimension = Dimensions { w: cal.width, h: cal.height };
-        self.orig_dimension  = Dimensions { w: cal.width, h: cal.height };
+        self.calib_dimension = Dimensions {
+            w: cal.width,
+            h: cal.height,
+        };
+        self.orig_dimension = Dimensions {
+            w: cal.width,
+            h: cal.height,
+        };
         self.num_images = cal.used_points.len();
         self.digital_lens = cal.digital_lens.clone();
         self.optimal_fov = None;
@@ -141,11 +176,13 @@ impl LensProfile {
             RMS_error: cal.rms,
             camera_matrix: cal.k.row_iter().map(|x| [x[0], x[1], x[2]]).collect(),
             distortion_coeffs: cal.d.as_slice().to_vec(),
-            radial_distortion_limit: None
+            radial_distortion_limit: None,
         };
 
         self.calibrator_version = env!("CARGO_PKG_VERSION").to_string();
-        self.date = time::OffsetDateTime::now_local().map(|v| v.date().to_string()).unwrap_or_default();
+        self.date = time::OffsetDateTime::now_local()
+            .map(|v| v.date().to_string())
+            .unwrap_or_default();
         self.name = self.get_name();
     }
 
@@ -167,8 +204,23 @@ impl LensProfile {
     }
 
     pub fn get_name(&self) -> String {
-        let setting = if self.camera_setting.is_empty() { &self.note } else { &self.camera_setting };
-        format!("{}_{}_{}_{}_{}_{}_{}x{}-{:.2}fps", self.camera_brand, self.camera_model, self.lens_model, setting, self.get_size_str(), self.get_aspect_ratio().replace(':', "by"), self.calib_dimension.w, self.calib_dimension.h, self.fps)
+        let setting = if self.camera_setting.is_empty() {
+            &self.note
+        } else {
+            &self.camera_setting
+        };
+        format!(
+            "{}_{}_{}_{}_{}_{}_{}x{}-{:.2}fps",
+            self.camera_brand,
+            self.camera_model,
+            self.lens_model,
+            setting,
+            self.get_size_str(),
+            self.get_aspect_ratio().replace(':', "by"),
+            self.calib_dimension.w,
+            self.calib_dimension.h,
+            self.fps
+        )
     }
 
     pub fn get_aspect_ratio(&self) -> String {
@@ -178,13 +230,20 @@ impl LensProfile {
 
         let ratios = [
             (1.0, "1:1"),
-            (3.0/2.0, "3:2"), (2.0/3.0, "2:3"),
-            (4.0/3.0, "4:3"), (3.0/4.0, "3:4"),
-            (8.0/7.0, "8:7"), (7.0/8.0, "7:8"),
-            (16.0/9.0, "16:9"), (9.0/16.0, "9:16")
+            (3.0 / 2.0, "3:2"),
+            (2.0 / 3.0, "2:3"),
+            (4.0 / 3.0, "4:3"),
+            (3.0 / 4.0, "3:4"),
+            (8.0 / 7.0, "8:7"),
+            (7.0 / 8.0, "7:8"),
+            (16.0 / 9.0, "16:9"),
+            (9.0 / 16.0, "9:16"),
         ];
         let ratio = self.calib_dimension.w as f64 / self.calib_dimension.h as f64;
-        let mut diffs = ratios.into_iter().map(|x| ((x.0 - ratio).abs(), x.1)).collect::<Vec<_>>();
+        let mut diffs = ratios
+            .into_iter()
+            .map(|x| ((x.0 - ratio).abs(), x.1))
+            .collect::<Vec<_>>();
         diffs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Less));
         let (lowest_diff, ratio_str) = *diffs.first().unwrap();
         if lowest_diff < 0.05 {
@@ -203,22 +262,39 @@ impl LensProfile {
         }
     }
     pub fn get_size_str(&self) -> &'static str {
-             if self.calib_dimension.w >= 8000 { "8k" }
-        else if self.calib_dimension.w >= 6000 { "6k" }
-        else if self.calib_dimension.w >= 5000 { "5k" }
-        else if self.calib_dimension.w >  4000 { "C4k" }
-        else if self.calib_dimension.w >= 3840 { "4k" }
-        else if self.calib_dimension.w >= 2700 { "2.7k" }
-        else if self.calib_dimension.w >= 2500 { "2.5k" }
-        else if self.calib_dimension.w >= 2000 { "2k" }
-        else if self.calib_dimension.w == 1920 && self.calib_dimension.h == 1440 { "1440p" }
-        else if self.calib_dimension.w >= 1920 { "1080p" }
-        else if self.calib_dimension.w >= 1280 { "720p" }
-        else if self.calib_dimension.w >= 640  { "480p" }
-        else { "" }
+        if self.calib_dimension.w >= 8000 {
+            "8k"
+        } else if self.calib_dimension.w >= 6000 {
+            "6k"
+        } else if self.calib_dimension.w >= 5000 {
+            "5k"
+        } else if self.calib_dimension.w > 4000 {
+            "C4k"
+        } else if self.calib_dimension.w >= 3840 {
+            "4k"
+        } else if self.calib_dimension.w >= 2700 {
+            "2.7k"
+        } else if self.calib_dimension.w >= 2500 {
+            "2.5k"
+        } else if self.calib_dimension.w >= 2000 {
+            "2k"
+        } else if self.calib_dimension.w == 1920 && self.calib_dimension.h == 1440 {
+            "1440p"
+        } else if self.calib_dimension.w >= 1920 {
+            "1080p"
+        } else if self.calib_dimension.w >= 1280 {
+            "720p"
+        } else if self.calib_dimension.w >= 640 {
+            "480p"
+        } else {
+            ""
+        }
     }
 
-    pub fn save_to_file(&mut self, url: &str) -> std::result::Result<String, crate::GyroflowCoreError> {
+    pub fn save_to_file(
+        &mut self,
+        url: &str,
+    ) -> std::result::Result<String, crate::GyroflowCoreError> {
         let json = self.get_json()?;
 
         crate::filesystem::write(url, json.as_bytes())?;
@@ -233,7 +309,10 @@ impl LensProfile {
         if let Some(ref mut out) = ret.output_dimension {
             std::mem::swap(&mut out.w, &mut out.h);
         }
-        std::mem::swap(&mut ret.input_horizontal_stretch, &mut ret.input_vertical_stretch);
+        std::mem::swap(
+            &mut ret.input_horizontal_stretch,
+            &mut ret.input_vertical_stretch,
+        );
 
         if ret.fisheye_params.camera_matrix.len() == 3 {
             let mut mtrx0 = ret.fisheye_params.camera_matrix[0];
@@ -247,12 +326,15 @@ impl LensProfile {
         // Swap compatible settings
         for x in ret.compatible_settings.iter_mut() {
             if let Some(x) = x.as_object_mut() {
-                match (x.get("width").and_then(|x| x.as_u64()), x.get("height").and_then(|x| x.as_u64())) {
+                match (
+                    x.get("width").and_then(|x| x.as_u64()),
+                    x.get("height").and_then(|x| x.as_u64()),
+                ) {
                     (Some(w), Some(h)) => {
                         x["width"] = h.into();
                         x["height"] = w.into();
                     }
-                    _ => { }
+                    _ => {}
                 }
             }
         }
@@ -270,7 +352,7 @@ impl LensProfile {
             let mut mat = nalgebra::Matrix3::from_rows(&[
                 self.fisheye_params.camera_matrix[0].into(),
                 self.fisheye_params.camera_matrix[1].into(),
-                self.fisheye_params.camera_matrix[2].into()
+                self.fisheye_params.camera_matrix[2].into(),
             ]);
             if !self.asymmetrical {
                 mat[(0, 2)] = self.calib_dimension.w as f64 / 2.0;
@@ -287,7 +369,11 @@ impl LensProfile {
             None
         }
     }
-    pub fn get_camera_matrix(&self, size: (usize, usize), invert_h: bool) -> nalgebra::Matrix3<f64> {
+    pub fn get_camera_matrix(
+        &self,
+        size: (usize, usize),
+        invert_h: bool,
+    ) -> nalgebra::Matrix3<f64> {
         if self.fisheye_params.camera_matrix.len() == 3 {
             let mat = self.get_camera_matrix_internal(invert_h).unwrap();
 
@@ -326,19 +412,30 @@ impl LensProfile {
             cpy.compatible_settings.clear();
             if let Some(x) = x.as_object() {
                 if x.contains_key("width") && x.contains_key("height") {
-                    let (new_w, new_h) = (x["width"].as_u64().unwrap_or_default(), x["height"].as_u64().unwrap_or_default());
+                    let (new_w, new_h) = (
+                        x["width"].as_u64().unwrap_or_default(),
+                        x["height"].as_u64().unwrap_or_default(),
+                    );
                     if new_w > 0 && new_h > 0 {
                         let mut ratiow = new_w as f64 / cpy.calib_dimension.w as f64;
                         let ratioh = new_h as f64 / cpy.calib_dimension.h as f64;
                         match x.get("digital_lens").and_then(|x| x.as_str()) {
-                            Some("gopro_superview") => { ratiow /= 1.33333333333; },
-                            Some("gopro6_superview") => { ratiow /= 1.33333333333; },
-                            Some("gopro_hyperview") => { ratiow /= 1.55555555555; },
-                            _ => { }
+                            Some("gopro_superview") => {
+                                ratiow /= 1.33333333333;
+                            }
+                            Some("gopro6_superview") => {
+                                ratiow /= 1.33333333333;
+                            }
+                            Some("gopro_hyperview") => {
+                                ratiow /= 1.55555555555;
+                            }
+                            _ => {}
                         }
                         fn scale(val: &mut usize, ratio: f64, pad: bool) {
                             *val = (*val as f64 * ratio).round() as usize;
-                            if pad && *val % 2 != 0 { *val -= 1; }
+                            if pad && *val % 2 != 0 {
+                                *val -= 1;
+                            }
                         }
                         scale(&mut cpy.calib_dimension.w, ratiow, true);
                         scale(&mut cpy.calib_dimension.h, ratioh, true);
@@ -348,7 +445,8 @@ impl LensProfile {
                             // If aspect ratio is different, then we treat it as a sensor crop.
                             // In this case, we don't want to scale the camera matrix
                             // Otherwise, it's not a crop, but sub- or super-sampling so we simply "zoom" the entire video
-                            if (ratiow - ratioh).abs() < 0.001 { // if x and y aspect ratios are the same
+                            if (ratiow - ratioh).abs() < 0.001 {
+                                // if x and y aspect ratios are the same
                                 cpy.fisheye_params.camera_matrix[0][0] *= ratiow;
                                 cpy.fisheye_params.camera_matrix[0][2] *= ratiow;
                                 cpy.fisheye_params.camera_matrix[1][1] *= ratioh;
@@ -369,14 +467,32 @@ impl LensProfile {
                         cpy.fps = fps;
                     }
                 }
-                if x.contains_key("crop") { cpy.crop = x["crop"].as_f64(); }
-                if x.contains_key("interpolations") { cpy.interpolations = x.get("interpolations").cloned(); }
-                if x.contains_key("digital_lens")   { cpy.digital_lens   = x.get("digital_lens").and_then(|x| x.as_str().map(|x| x.to_owned())); }
-                if x.contains_key("focal_length")   { cpy.focal_length   = x.get("focal_length").and_then(|x| x.as_f64()); }
-                if x.contains_key("crop_factor")    { cpy.crop_factor    = x.get("crop_factor").and_then(|x| x.as_f64()); }
-                if let Some(v) = x.get("input_horizontal_stretch").and_then(|x| x.as_f64()) { cpy.input_horizontal_stretch = v; }
-                if let Some(v) = x.get("input_vertical_stretch")  .and_then(|x| x.as_f64()) { cpy.input_vertical_stretch   = v; }
-                if let Some(v) = x.get("lens_model")  .and_then(|x| x.as_str()) { cpy.lens_model = v.to_owned(); }
+                if x.contains_key("crop") {
+                    cpy.crop = x["crop"].as_f64();
+                }
+                if x.contains_key("interpolations") {
+                    cpy.interpolations = x.get("interpolations").cloned();
+                }
+                if x.contains_key("digital_lens") {
+                    cpy.digital_lens = x
+                        .get("digital_lens")
+                        .and_then(|x| x.as_str().map(|x| x.to_owned()));
+                }
+                if x.contains_key("focal_length") {
+                    cpy.focal_length = x.get("focal_length").and_then(|x| x.as_f64());
+                }
+                if x.contains_key("crop_factor") {
+                    cpy.crop_factor = x.get("crop_factor").and_then(|x| x.as_f64());
+                }
+                if let Some(v) = x.get("input_horizontal_stretch").and_then(|x| x.as_f64()) {
+                    cpy.input_horizontal_stretch = v;
+                }
+                if let Some(v) = x.get("input_vertical_stretch").and_then(|x| x.as_f64()) {
+                    cpy.input_vertical_stretch = v;
+                }
+                if let Some(v) = x.get("lens_model").and_then(|x| x.as_str()) {
+                    cpy.lens_model = v.to_owned();
+                }
                 if let Some(row) = x.get("distortion_coeffs").and_then(|x| x.as_array()) {
                     for (i, v) in row.iter().enumerate() {
                         if let Some(v) = v.as_f64() {
@@ -385,15 +501,23 @@ impl LensProfile {
                     }
                 }
                 if let Some(odim) = x.get("output_dimension").and_then(|x| x.as_object()) {
-                    if let (Some(w), Some(h)) = (odim.get("w").and_then(|x| x.as_u64()), odim.get("h").and_then(|x| x.as_u64())) {
-                        cpy.output_dimension = Some(Dimensions { w: w as usize, h: h as usize });
+                    if let (Some(w), Some(h)) = (
+                        odim.get("w").and_then(|x| x.as_u64()),
+                        odim.get("h").and_then(|x| x.as_u64()),
+                    ) {
+                        cpy.output_dimension = Some(Dimensions {
+                            w: w as usize,
+                            h: h as usize,
+                        });
                     }
                 }
 
                 if x.contains_key("sync_settings") {
                     if let Some(obj) = x.get("sync_settings") {
                         if let Some(ref mut ss) = cpy.sync_settings {
-                            if obj.get("custom_sync_pattern").is_some() && ss.get("custom_sync_pattern").is_some() {
+                            if obj.get("custom_sync_pattern").is_some()
+                                && ss.get("custom_sync_pattern").is_some()
+                            {
                                 ss.as_object_mut().unwrap().remove("custom_sync_pattern");
                             }
                             crate::util::merge_json(ss, obj);
@@ -419,24 +543,37 @@ impl LensProfile {
         let mut all_sizes = HashSet::new();
         let mut all_fps = HashSet::new();
         all_sizes.insert(self.calib_dimension.w * 10000 + self.calib_dimension.h);
-        if self.fps > 0.0 { all_fps.insert((self.fps * 10000.0) as usize); }
+        if self.fps > 0.0 {
+            all_fps.insert((self.fps * 10000.0) as usize);
+        }
         for x in &self.compatible_settings {
             if let Some(x) = x.as_object() {
-                match (x.get("width").and_then(|v| v.as_u64()), x.get("height").and_then(|v| v.as_u64())) {
-                    (Some(w), Some(h)) => { all_sizes.insert(w as usize * 10000 + h as usize); }
-                    _ => { }
+                match (
+                    x.get("width").and_then(|v| v.as_u64()),
+                    x.get("height").and_then(|v| v.as_u64()),
+                ) {
+                    (Some(w), Some(h)) => {
+                        all_sizes.insert(w as usize * 10000 + h as usize);
+                    }
+                    _ => {}
                 }
                 match x.get("fps").and_then(|v| v.as_f64()) {
-                    Some(fps) => { all_fps.insert((fps * 10000.0).round() as usize); }
-                    _ => { }
+                    Some(fps) => {
+                        all_fps.insert((fps * 10000.0).round() as usize);
+                    }
+                    _ => {}
                 }
             }
         }
 
         let include_size = all_sizes.len() <= 1;
-        let include_fps = all_fps.len() <= 1 || (all_fps.len() == 2 && all_fps.into_iter().next().unwrap() >= 200_0000);
+        let include_fps = all_fps.len() <= 1
+            || (all_fps.len() == 2 && all_fps.into_iter().next().unwrap() >= 200_0000);
 
-        let mut final_name = vec![&self.camera_brand, &self.camera_model].into_iter().filter(|x| !x.is_empty()).join(" ");
+        let mut final_name = vec![&self.camera_brand, &self.camera_model]
+            .into_iter()
+            .filter(|x| !x.is_empty())
+            .join(" ");
         if include_size {
             final_name.push(' ');
             final_name.push_str(&self.get_size_str());
@@ -445,10 +582,18 @@ impl LensProfile {
         final_name.push_str(&self.get_aspect_ratio());
 
         final_name.push(' ');
-        final_name.push_str(&Self::cleanup_name(vec![&self.lens_model, &self.camera_setting, &self.note].into_iter().filter(|x| !x.is_empty()).join(" ")));
+        final_name.push_str(&Self::cleanup_name(
+            vec![&self.lens_model, &self.camera_setting, &self.note]
+                .into_iter()
+                .filter(|x| !x.is_empty())
+                .join(" "),
+        ));
 
         if include_size {
-            final_name.push_str(&format!(" {}x{}", self.calib_dimension.w, self.calib_dimension.h));
+            final_name.push_str(&format!(
+                " {}x{}",
+                self.calib_dimension.w, self.calib_dimension.h
+            ));
         }
         if include_fps && self.fps > 0.0 {
             final_name.push_str(&format!(" {:.2}fps", self.fps));
@@ -498,11 +643,13 @@ impl LensProfile {
         if !self.parsed_interpolations.is_empty() {
             let key = (val * 1000000.0).round() as i64;
 
-            if let Some(v) = self.parsed_interpolations.get(&key) { return v.clone(); }
+            if let Some(v) = self.parsed_interpolations.get(&key) {
+                return v.clone();
+            }
 
             if let Some(&first) = self.parsed_interpolations.keys().next() {
                 if let Some(&last) = self.parsed_interpolations.keys().next_back() {
-                    let lookup = (key).min(last-1).max(first+1);
+                    let lookup = (key).min(last - 1).max(first + 1);
                     if let Some(p1) = self.parsed_interpolations.range(..=lookup).next_back() {
                         if *p1.0 == lookup {
                             return p1.1.clone();
@@ -515,28 +662,56 @@ impl LensProfile {
                             let l2 = p2.1;
                             // println!("interpolated at {:.4}, fract: {:.4}", val, fract);
 
-                            cpy.fisheye_params.camera_matrix[0][0] = l1.fisheye_params.camera_matrix[0][0] * (1.0 - fract) + (l2.fisheye_params.camera_matrix[0][0] * fract);
-                            cpy.fisheye_params.camera_matrix[1][1] = l1.fisheye_params.camera_matrix[1][1] * (1.0 - fract) + (l2.fisheye_params.camera_matrix[1][1] * fract);
-                            cpy.fisheye_params.camera_matrix[0][2] = l1.fisheye_params.camera_matrix[0][2] * (1.0 - fract) + (l2.fisheye_params.camera_matrix[0][2] * fract);
-                            cpy.fisheye_params.camera_matrix[1][2] = l1.fisheye_params.camera_matrix[1][2] * (1.0 - fract) + (l2.fisheye_params.camera_matrix[1][2] * fract);
+                            cpy.fisheye_params.camera_matrix[0][0] =
+                                l1.fisheye_params.camera_matrix[0][0] * (1.0 - fract)
+                                    + (l2.fisheye_params.camera_matrix[0][0] * fract);
+                            cpy.fisheye_params.camera_matrix[1][1] =
+                                l1.fisheye_params.camera_matrix[1][1] * (1.0 - fract)
+                                    + (l2.fisheye_params.camera_matrix[1][1] * fract);
+                            cpy.fisheye_params.camera_matrix[0][2] =
+                                l1.fisheye_params.camera_matrix[0][2] * (1.0 - fract)
+                                    + (l2.fisheye_params.camera_matrix[0][2] * fract);
+                            cpy.fisheye_params.camera_matrix[1][2] =
+                                l1.fisheye_params.camera_matrix[1][2] * (1.0 - fract)
+                                    + (l2.fisheye_params.camera_matrix[1][2] * fract);
 
-                            if cpy.fisheye_params.distortion_coeffs.len() == l1.fisheye_params.distortion_coeffs.len() && l1.fisheye_params.distortion_coeffs.len() == l2.fisheye_params.distortion_coeffs.len() {
+                            if cpy.fisheye_params.distortion_coeffs.len()
+                                == l1.fisheye_params.distortion_coeffs.len()
+                                && l1.fisheye_params.distortion_coeffs.len()
+                                    == l2.fisheye_params.distortion_coeffs.len()
+                            {
                                 for i in 0..l1.fisheye_params.distortion_coeffs.len() {
-                                    cpy.fisheye_params.distortion_coeffs[i] = l1.fisheye_params.distortion_coeffs[i] * (1.0 - fract) + (l2.fisheye_params.distortion_coeffs[i] * fract);
+                                    cpy.fisheye_params.distortion_coeffs[i] =
+                                        l1.fisheye_params.distortion_coeffs[i] * (1.0 - fract)
+                                            + (l2.fisheye_params.distortion_coeffs[i] * fract);
                                 }
                             }
-                            cpy.crop = Some(l1.crop.unwrap_or(1.0) * (1.0 - fract) + (l2.crop.unwrap_or(1.0) * fract));
+                            cpy.crop = Some(
+                                l1.crop.unwrap_or(1.0) * (1.0 - fract)
+                                    + (l2.crop.unwrap_or(1.0) * fract),
+                            );
 
                             match (l1.focal_length, l2.focal_length) {
-                                (Some(fl1), Some(fl2)) => { cpy.focal_length = Some(fl1 * (1.0 - fract) + (fl2 * fract))},
-                                _ => { }
+                                (Some(fl1), Some(fl2)) => {
+                                    cpy.focal_length = Some(fl1 * (1.0 - fract) + (fl2 * fract))
+                                }
+                                _ => {}
                             }
 
-                            cpy.calib_dimension.w = (l1.calib_dimension.w as f64 * (1.0 - fract) + (l2.calib_dimension.w as f64 * fract)).round() as usize;
-                            cpy.calib_dimension.h = (l1.calib_dimension.h as f64 * (1.0 - fract) + (l2.calib_dimension.h as f64 * fract)).round() as usize;
+                            cpy.calib_dimension.w = (l1.calib_dimension.w as f64 * (1.0 - fract)
+                                + (l2.calib_dimension.w as f64 * fract))
+                                .round()
+                                as usize;
+                            cpy.calib_dimension.h = (l1.calib_dimension.h as f64 * (1.0 - fract)
+                                + (l2.calib_dimension.h as f64 * fract))
+                                .round()
+                                as usize;
 
-                            cpy.input_horizontal_stretch = l1.input_horizontal_stretch * (1.0 - fract) + (l2.input_horizontal_stretch * fract);
-                            cpy.input_vertical_stretch   = l1.input_vertical_stretch   * (1.0 - fract) + (l2.input_vertical_stretch   * fract);
+                            cpy.input_horizontal_stretch = l1.input_horizontal_stretch
+                                * (1.0 - fract)
+                                + (l2.input_horizontal_stretch * fract);
+                            cpy.input_vertical_stretch = l1.input_vertical_stretch * (1.0 - fract)
+                                + (l2.input_vertical_stretch * fract);
 
                             // TODO: digital lens interpolation?
                         }
@@ -548,7 +723,10 @@ impl LensProfile {
         cpy
     }
 
-    pub fn resolve_interpolations(&mut self, db: &crate::lens_profile_database::LensProfileDatabase) {
+    pub fn resolve_interpolations(
+        &mut self,
+        db: &crate::lens_profile_database::LensProfileDatabase,
+    ) {
         if !self.parsed_interpolations.is_empty() {
             return; // Already resolved
         }

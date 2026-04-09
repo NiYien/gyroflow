@@ -15,8 +15,8 @@
 use std::collections::BTreeMap;
 
 use super::*;
-use nalgebra::*;
 use crate::keyframes::*;
+use nalgebra::*;
 
 const MAX_VELOCITY: f64 = 500.0;
 // Use 120 diagonal FOV as reference. Anything below (long focal length) scales the smoothness down. Anything above (short focal length) scales the smoothness up.
@@ -38,48 +38,64 @@ pub struct DefaultAlgo {
 }
 
 impl Default for DefaultAlgo {
-    fn default() -> Self { Self {
-        smoothness: 0.5,
-        smoothness_pitch: 0.5,
-        smoothness_yaw: 0.5,
-        smoothness_roll: 0.5,
-        per_axis: false,
-        second_pass: true,
-        trim_range_only: true,
-        max_smoothness: 1.0,
-        alpha_0_1s: 0.1
-    } }
+    fn default() -> Self {
+        Self {
+            smoothness: 0.5,
+            smoothness_pitch: 0.5,
+            smoothness_yaw: 0.5,
+            smoothness_roll: 0.5,
+            per_axis: false,
+            second_pass: true,
+            trim_range_only: true,
+            max_smoothness: 1.0,
+            alpha_0_1s: 0.1,
+        }
+    }
 }
 
 impl SmoothingAlgorithm for DefaultAlgo {
-    fn get_name(&self) -> String { "Default".to_owned() }
+    fn get_name(&self) -> String {
+        "Default".to_owned()
+    }
 
     fn set_parameter(&mut self, name: &str, val: f64) {
         match name {
-            "smoothness"       => self.smoothness = val,
+            "smoothness" => self.smoothness = val,
             "smoothness_pitch" => self.smoothness_pitch = val,
-            "smoothness_yaw"   => self.smoothness_yaw = val,
-            "smoothness_roll"  => self.smoothness_roll = val,
-            "per_axis"         => self.per_axis = val > 0.1,
+            "smoothness_yaw" => self.smoothness_yaw = val,
+            "smoothness_roll" => self.smoothness_roll = val,
+            "per_axis" => self.per_axis = val > 0.1,
             // "second_pass"      => self.second_pass = val > 0.1,
-            "trim_range_only"  => self.trim_range_only = val > 0.1,
-            "max_smoothness"   => self.max_smoothness = val,
-            "alpha_0_1s"       => self.alpha_0_1s = val,
-            _ => log::error!("Invalid parameter name: {}", name)
+            "trim_range_only" => self.trim_range_only = val > 0.1,
+            "max_smoothness" => self.max_smoothness = val,
+            "alpha_0_1s" => self.alpha_0_1s = val,
+            _ => log::error!("Invalid parameter name: {}", name),
         }
     }
     fn get_parameter(&self, name: &str) -> f64 {
         match name {
-            "smoothness"       => self.smoothness,
+            "smoothness" => self.smoothness,
             "smoothness_pitch" => self.smoothness_pitch,
-            "smoothness_yaw"   => self.smoothness_yaw,
-            "smoothness_roll"  => self.smoothness_roll,
-            "per_axis"         => if self.per_axis { 1.0 } else { 0.0 },
+            "smoothness_yaw" => self.smoothness_yaw,
+            "smoothness_roll" => self.smoothness_roll,
+            "per_axis" => {
+                if self.per_axis {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
             // "second_pass"      => if self.second_pass { 1.0 } else { 0.0 },
-            "trim_range_only"  => if self.trim_range_only { 1.0 } else { 0.0 },
-            "max_smoothness"   => self.max_smoothness,
-            "alpha_0_1s"       => self.alpha_0_1s,
-            _ => 0.0
+            "trim_range_only" => {
+                if self.trim_range_only {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            "max_smoothness" => self.max_smoothness,
+            "alpha_0_1s" => self.alpha_0_1s,
+            _ => 0.0,
         }
     }
 
@@ -210,48 +226,97 @@ impl SmoothingAlgorithm for DefaultAlgo {
         hasher.finish()
     }
 
-    fn smooth(&self, quats: &TimeQuat, duration_ms: f64, compute_params: &ComputeParams) -> TimeQuat { // TODO Result<>?
-        if quats.is_empty() || duration_ms <= 0.0 { return quats.clone(); }
+    fn smooth(
+        &self,
+        quats: &TimeQuat,
+        duration_ms: f64,
+        compute_params: &ComputeParams,
+    ) -> TimeQuat {
+        // TODO Result<>?
+        if quats.is_empty() || duration_ms <= 0.0 {
+            return quats.clone();
+        }
 
         let sample_rate: f64 = quats.len() as f64 / (duration_ms / 1000.0);
         let rad_to_deg_per_sec: f64 = sample_rate * RAD_TO_DEG;
 
-        let get_alpha = |time_constant: f64| {
-            1.0 - (-(1.0 / sample_rate) / time_constant).exp()
-        };
+        let get_alpha = |time_constant: f64| 1.0 - (-(1.0 / sample_rate) / time_constant).exp();
         let noop = |v| v;
 
         let keyframes = &compute_params.keyframes;
 
-        let quats = Smoothing::get_trimmed_quats(quats, compute_params.scaled_duration_ms, self.trim_range_only, &compute_params.trim_ranges);
+        let quats = Smoothing::get_trimmed_quats(
+            quats,
+            compute_params.scaled_duration_ms,
+            self.trim_range_only,
+            &compute_params.trim_ranges,
+        );
         let quats = quats.as_ref();
 
-        let get_keyframed_param = |typ: &KeyframeType, def: f64, cb: &dyn Fn(f64) -> f64| -> BTreeMap<i64, f64> {
+        let get_keyframed_param = |typ: &KeyframeType,
+                                   def: f64,
+                                   cb: &dyn Fn(f64) -> f64|
+         -> BTreeMap<i64, f64> {
             let mut ret = BTreeMap::<i64, f64>::new();
-            if keyframes.is_keyframed(typ) || (compute_params.video_speed_affects_smoothing && (compute_params.video_speed != 1.0 || keyframes.is_keyframed(&KeyframeType::VideoSpeed))) {
-                ret = quats.iter().map(|(ts, _)| {
-                    let timestamp_ms = *ts as f64 / 1000.0;
-                    let mut val = keyframes.value_at_gyro_timestamp(typ, timestamp_ms).unwrap_or(def);
-                    if compute_params.video_speed_affects_smoothing {
-                        let vid_speed = keyframes.value_at_gyro_timestamp(&KeyframeType::VideoSpeed, timestamp_ms).unwrap_or(compute_params.video_speed).abs();
-                        if typ == &KeyframeType::SmoothingParamTimeConstant || typ == &KeyframeType::SmoothingParamTimeConstant2 {
-                            val *= 1.0 + ((vid_speed - 1.0) / 2.0);
-                        } else {
-                            val *= vid_speed;
+            if keyframes.is_keyframed(typ)
+                || (compute_params.video_speed_affects_smoothing
+                    && (compute_params.video_speed != 1.0
+                        || keyframes.is_keyframed(&KeyframeType::VideoSpeed)))
+            {
+                ret = quats
+                    .iter()
+                    .map(|(ts, _)| {
+                        let timestamp_ms = *ts as f64 / 1000.0;
+                        let mut val = keyframes
+                            .value_at_gyro_timestamp(typ, timestamp_ms)
+                            .unwrap_or(def);
+                        if compute_params.video_speed_affects_smoothing {
+                            let vid_speed = keyframes
+                                .value_at_gyro_timestamp(&KeyframeType::VideoSpeed, timestamp_ms)
+                                .unwrap_or(compute_params.video_speed)
+                                .abs();
+                            if typ == &KeyframeType::SmoothingParamTimeConstant
+                                || typ == &KeyframeType::SmoothingParamTimeConstant2
+                            {
+                                val *= 1.0 + ((vid_speed - 1.0) / 2.0);
+                            } else {
+                                val *= vid_speed;
+                            }
                         }
-                    }
-                    (*ts, cb(val))
-                }).collect();
+                        (*ts, cb(val))
+                    })
+                    .collect();
             }
             ret
         };
 
-        let alpha_smoothness_per_timestamp = get_keyframed_param(&KeyframeType::SmoothingParamTimeConstant, self.max_smoothness, &get_alpha);
-        let alpha_0_1s_per_timestamp = get_keyframed_param(&KeyframeType::SmoothingParamTimeConstant2, self.alpha_0_1s, &get_alpha);
-        let smoothness_per_timestamp = get_keyframed_param(&KeyframeType::SmoothingParamSmoothness, self.smoothness, &noop);
-        let smoothness_pitch_per_timestamp = get_keyframed_param(&KeyframeType::SmoothingParamPitch, self.smoothness_pitch, &noop);
-        let smoothness_yaw_per_timestamp = get_keyframed_param(&KeyframeType::SmoothingParamYaw, self.smoothness_yaw, &noop);
-        let smoothness_roll_per_timestamp = get_keyframed_param(&KeyframeType::SmoothingParamRoll, self.smoothness_roll, &noop);
+        let alpha_smoothness_per_timestamp = get_keyframed_param(
+            &KeyframeType::SmoothingParamTimeConstant,
+            self.max_smoothness,
+            &get_alpha,
+        );
+        let alpha_0_1s_per_timestamp = get_keyframed_param(
+            &KeyframeType::SmoothingParamTimeConstant2,
+            self.alpha_0_1s,
+            &get_alpha,
+        );
+        let smoothness_per_timestamp = get_keyframed_param(
+            &KeyframeType::SmoothingParamSmoothness,
+            self.smoothness,
+            &noop,
+        );
+        let smoothness_pitch_per_timestamp = get_keyframed_param(
+            &KeyframeType::SmoothingParamPitch,
+            self.smoothness_pitch,
+            &noop,
+        );
+        let smoothness_yaw_per_timestamp =
+            get_keyframed_param(&KeyframeType::SmoothingParamYaw, self.smoothness_yaw, &noop);
+        let smoothness_roll_per_timestamp = get_keyframed_param(
+            &KeyframeType::SmoothingParamRoll,
+            self.smoothness_roll,
+            &noop,
+        );
 
         let alpha_smoothness = get_alpha(self.max_smoothness);
         let alpha_0_1s = get_alpha(self.alpha_0_1s);
@@ -267,13 +332,19 @@ impl SmoothingAlgorithm for DefaultAlgo {
             let dist = prev_quat.inverse() * quat;
             if self.per_axis {
                 let euler = dist.euler_angles();
-                velocity.insert(*timestamp, Vector3::new(
-                    euler.0.abs() * rad_to_deg_per_sec,
-                    euler.1.abs() * rad_to_deg_per_sec,
-                    euler.2.abs() * rad_to_deg_per_sec
-                ));
+                velocity.insert(
+                    *timestamp,
+                    Vector3::new(
+                        euler.0.abs() * rad_to_deg_per_sec,
+                        euler.1.abs() * rad_to_deg_per_sec,
+                        euler.2.abs() * rad_to_deg_per_sec,
+                    ),
+                );
             } else {
-                velocity.insert(*timestamp, Vector3::from_element(dist.angle() * rad_to_deg_per_sec));
+                velocity.insert(
+                    *timestamp,
+                    Vector3::from_element(dist.angle() * rad_to_deg_per_sec),
+                );
             }
             prev_quat = *quat;
         }
@@ -291,16 +362,27 @@ impl SmoothingAlgorithm for DefaultAlgo {
 
         // Normalize velocity
         for (ts, vel) in velocity.iter_mut() {
-            let smoothness_pitch = smoothness_pitch_per_timestamp.get(ts).unwrap_or(&self.smoothness_pitch);
-            let smoothness_yaw   = smoothness_yaw_per_timestamp  .get(ts).unwrap_or(&self.smoothness_yaw);
-            let smoothness_roll  = smoothness_roll_per_timestamp .get(ts).unwrap_or(&self.smoothness_roll);
-            let smoothness       = smoothness_per_timestamp      .get(ts).unwrap_or(&self.smoothness);
+            let smoothness_pitch = smoothness_pitch_per_timestamp
+                .get(ts)
+                .unwrap_or(&self.smoothness_pitch);
+            let smoothness_yaw = smoothness_yaw_per_timestamp
+                .get(ts)
+                .unwrap_or(&self.smoothness_yaw);
+            let smoothness_roll = smoothness_roll_per_timestamp
+                .get(ts)
+                .unwrap_or(&self.smoothness_roll);
+            let smoothness = smoothness_per_timestamp.get(ts).unwrap_or(&self.smoothness);
 
-            let frame = crate::frame_at_timestamp(*ts as f64 / 1000.0, compute_params.scaled_fps) as usize;
+            let frame =
+                crate::frame_at_timestamp(*ts as f64 / 1000.0, compute_params.scaled_fps) as usize;
             let mut fov_ratio = if compute_params.camera_diagonal_fovs.len() == 1 {
                 compute_params.camera_diagonal_fovs[0] / FOV_REFERENCE
             } else {
-                compute_params.camera_diagonal_fovs.get(frame).map(|x| *x / FOV_REFERENCE).unwrap_or(1.0)
+                compute_params
+                    .camera_diagonal_fovs
+                    .get(frame)
+                    .map(|x| *x / FOV_REFERENCE)
+                    .unwrap_or(1.0)
             };
 
             if let Some(fov_limit_ratio) = compute_params.smoothing_fov_limit_per_frame.get(frame) {
@@ -311,8 +393,8 @@ impl SmoothingAlgorithm for DefaultAlgo {
             let mut max_velocity = [MAX_VELOCITY, MAX_VELOCITY, MAX_VELOCITY];
             if self.per_axis {
                 max_velocity[0] *= smoothness_pitch * fov_ratio;
-                max_velocity[1] *= smoothness_yaw   * fov_ratio;
-                max_velocity[2] *= smoothness_roll  * fov_ratio;
+                max_velocity[1] *= smoothness_yaw * fov_ratio;
+                max_velocity[2] *= smoothness_roll * fov_ratio;
             } else {
                 max_velocity[0] *= smoothness * fov_ratio;
             }
@@ -336,55 +418,66 @@ impl SmoothingAlgorithm for DefaultAlgo {
         // Plain 3D smoothing with varying alpha
         // Forward pass
         let mut q = *quats.iter().next().unwrap().1;
-        let smoothed1: TimeQuat = quats.iter().map(|(ts, x)| {
-            let ratio = velocity[ts];
-            let alpha_smoothness = alpha_smoothness_per_timestamp.get(ts).unwrap_or(&alpha_smoothness);
-            let alpha_0_1s = alpha_0_1s_per_timestamp.get(ts).unwrap_or(&alpha_0_1s);
-            if self.per_axis {
-                let pitch_factor = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
-                let yaw_factor = alpha_smoothness * (1.0 - ratio[1]) + alpha_0_1s * ratio[1];
-                let roll_factor = alpha_smoothness * (1.0 - ratio[2]) + alpha_0_1s * ratio[2];
+        let smoothed1: TimeQuat = quats
+            .iter()
+            .map(|(ts, x)| {
+                let ratio = velocity[ts];
+                let alpha_smoothness = alpha_smoothness_per_timestamp
+                    .get(ts)
+                    .unwrap_or(&alpha_smoothness);
+                let alpha_0_1s = alpha_0_1s_per_timestamp.get(ts).unwrap_or(&alpha_0_1s);
+                if self.per_axis {
+                    let pitch_factor = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
+                    let yaw_factor = alpha_smoothness * (1.0 - ratio[1]) + alpha_0_1s * ratio[1];
+                    let roll_factor = alpha_smoothness * (1.0 - ratio[2]) + alpha_0_1s * ratio[2];
 
-                let euler_rot = (q.inverse() * x).euler_angles();
+                    let euler_rot = (q.inverse() * x).euler_angles();
 
-                let quat_rot = Quat64::from_euler_angles(
-                    euler_rot.0 * pitch_factor.min(1.0),
-                    euler_rot.1 * yaw_factor.min(1.0),
-                    euler_rot.2 * roll_factor.min(1.0),
-                );
-                q *= quat_rot;
-            } else {
-                let val = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
-                q = q.slerp(x, val.min(1.0));
-            }
-            (*ts, q)
-        }).collect();
+                    let quat_rot = Quat64::from_euler_angles(
+                        euler_rot.0 * pitch_factor.min(1.0),
+                        euler_rot.1 * yaw_factor.min(1.0),
+                        euler_rot.2 * roll_factor.min(1.0),
+                    );
+                    q *= quat_rot;
+                } else {
+                    let val = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
+                    q = q.slerp(x, val.min(1.0));
+                }
+                (*ts, q)
+            })
+            .collect();
 
         // Reverse pass
         let mut q = *smoothed1.iter().next_back().unwrap().1;
-        let smoothed2: TimeQuat = smoothed1.into_iter().rev().map(|(ts, x)| {
-            let alpha_smoothness = alpha_smoothness_per_timestamp.get(&ts).unwrap_or(&alpha_smoothness);
-            let alpha_0_1s = alpha_0_1s_per_timestamp.get(&ts).unwrap_or(&alpha_0_1s);
-            let ratio = velocity[&ts];
-            if self.per_axis {
-                let pitch_factor = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
-                let yaw_factor = alpha_smoothness * (1.0 - ratio[1]) + alpha_0_1s * ratio[1];
-                let roll_factor = alpha_smoothness * (1.0 - ratio[2]) + alpha_0_1s * ratio[2];
+        let smoothed2: TimeQuat = smoothed1
+            .into_iter()
+            .rev()
+            .map(|(ts, x)| {
+                let alpha_smoothness = alpha_smoothness_per_timestamp
+                    .get(&ts)
+                    .unwrap_or(&alpha_smoothness);
+                let alpha_0_1s = alpha_0_1s_per_timestamp.get(&ts).unwrap_or(&alpha_0_1s);
+                let ratio = velocity[&ts];
+                if self.per_axis {
+                    let pitch_factor = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
+                    let yaw_factor = alpha_smoothness * (1.0 - ratio[1]) + alpha_0_1s * ratio[1];
+                    let roll_factor = alpha_smoothness * (1.0 - ratio[2]) + alpha_0_1s * ratio[2];
 
-                let euler_rot = (q.inverse() * x).euler_angles();
+                    let euler_rot = (q.inverse() * x).euler_angles();
 
-                let quat_rot = Quat64::from_euler_angles(
-                    euler_rot.0 * pitch_factor.min(1.0),
-                    euler_rot.1 * yaw_factor.min(1.0),
-                    euler_rot.2 * roll_factor.min(1.0),
-                );
-                q *= quat_rot;
-            } else {
-                let val = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
-                q = q.slerp(&x, val.min(1.0));
-            }
-            (ts, q)
-        }).collect();
+                    let quat_rot = Quat64::from_euler_angles(
+                        euler_rot.0 * pitch_factor.min(1.0),
+                        euler_rot.1 * yaw_factor.min(1.0),
+                        euler_rot.2 * roll_factor.min(1.0),
+                    );
+                    q *= quat_rot;
+                } else {
+                    let val = alpha_smoothness * (1.0 - ratio[0]) + alpha_0_1s * ratio[0];
+                    q = q.slerp(&x, val.min(1.0));
+                }
+                (ts, q)
+            })
+            .collect();
 
         if !self.second_pass {
             return smoothed2;
@@ -397,29 +490,42 @@ impl SmoothingAlgorithm for DefaultAlgo {
             let dist = quats[ts].inverse() * quat;
             if self.per_axis {
                 let euler = dist.euler_angles();
-                distance.insert(*ts, Vector3::new(
-                    euler.0.abs(),
-                    euler.1.abs(),
-                    euler.2.abs()
-                ));
-                if euler.0.abs() > max_distance[0] { max_distance[0] = euler.0.abs(); }
-                if euler.1.abs() > max_distance[1] { max_distance[1] = euler.1.abs(); }
-                if euler.2.abs() > max_distance[2] { max_distance[2] = euler.2.abs(); }
+                distance.insert(
+                    *ts,
+                    Vector3::new(euler.0.abs(), euler.1.abs(), euler.2.abs()),
+                );
+                if euler.0.abs() > max_distance[0] {
+                    max_distance[0] = euler.0.abs();
+                }
+                if euler.1.abs() > max_distance[1] {
+                    max_distance[1] = euler.1.abs();
+                }
+                if euler.2.abs() > max_distance[2] {
+                    max_distance[2] = euler.2.abs();
+                }
             } else {
                 distance.insert(*ts, Vector3::from_element(dist.angle()));
-                if dist.angle() > max_distance[0] { max_distance[0] = dist.angle(); }
+                if dist.angle() > max_distance[0] {
+                    max_distance[0] = dist.angle();
+                }
             }
         }
 
         // Normalize distance and discard under 0.5
         for (_ts, dist) in distance.iter_mut() {
             dist[0] /= max_distance[0];
-            if dist[0] < 0.5 { dist[0] = 0.0; }
+            if dist[0] < 0.5 {
+                dist[0] = 0.0;
+            }
             if self.per_axis {
                 dist[1] /= max_distance[1];
-                if dist[1] < 0.5 { dist[1] = 0.0; }
+                if dist[1] < 0.5 {
+                    dist[1] = 0.0;
+                }
                 dist[2] /= max_distance[2];
-                if dist[2] < 0.5 { dist[2] = 0.0; }
+                if dist[2] < 0.5 {
+                    dist[2] = 0.0;
+                }
             }
         }
 
@@ -437,10 +543,16 @@ impl SmoothingAlgorithm for DefaultAlgo {
         // Get max distance
         max_distance = Vector3::from_element(0.0);
         for (_ts, dist) in distance.iter_mut() {
-            if dist[0] > max_distance[0] { max_distance[0] = dist[0]; }
+            if dist[0] > max_distance[0] {
+                max_distance[0] = dist[0];
+            }
             if self.per_axis {
-                if dist[1] > max_distance[1] { max_distance[1] = dist[1]; }
-                if dist[2] > max_distance[2] { max_distance[2] = dist[2]; }
+                if dist[1] > max_distance[1] {
+                    max_distance[1] = dist[1];
+                }
+                if dist[2] > max_distance[2] {
+                    max_distance[2] = dist[2];
+                }
             }
         }
 
@@ -459,56 +571,75 @@ impl SmoothingAlgorithm for DefaultAlgo {
         // Plain 3D smoothing with varying alpha
         // Forward pass
         let mut q = *smoothed2.iter().next().unwrap().1;
-        let smoothed1: TimeQuat = smoothed2.into_iter().map(|(ts, x)| {
-            let alpha_smoothness = alpha_smoothness_per_timestamp.get(&ts).unwrap_or(&alpha_smoothness);
-            let alpha_0_1s = alpha_0_1s_per_timestamp.get(&ts).unwrap_or(&alpha_0_1s);
-            let vel_ratio = velocity[&ts];
-            let dist_ratio = distance[&ts];
-            if self.per_axis {
-                let pitch_factor = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0]) + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
-                let yaw_factor = alpha_smoothness * (1.0 - vel_ratio[1] * dist_ratio[1]) + alpha_0_1s * vel_ratio[1] * dist_ratio[1];
-                let roll_factor = alpha_smoothness * (1.0 - vel_ratio[2] * dist_ratio[2]) + alpha_0_1s * vel_ratio[2] * dist_ratio[2];
+        let smoothed1: TimeQuat = smoothed2
+            .into_iter()
+            .map(|(ts, x)| {
+                let alpha_smoothness = alpha_smoothness_per_timestamp
+                    .get(&ts)
+                    .unwrap_or(&alpha_smoothness);
+                let alpha_0_1s = alpha_0_1s_per_timestamp.get(&ts).unwrap_or(&alpha_0_1s);
+                let vel_ratio = velocity[&ts];
+                let dist_ratio = distance[&ts];
+                if self.per_axis {
+                    let pitch_factor = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
+                        + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
+                    let yaw_factor = alpha_smoothness * (1.0 - vel_ratio[1] * dist_ratio[1])
+                        + alpha_0_1s * vel_ratio[1] * dist_ratio[1];
+                    let roll_factor = alpha_smoothness * (1.0 - vel_ratio[2] * dist_ratio[2])
+                        + alpha_0_1s * vel_ratio[2] * dist_ratio[2];
 
-                let euler_rot = (q.inverse() * x).euler_angles();
+                    let euler_rot = (q.inverse() * x).euler_angles();
 
-                let quat_rot = Quat64::from_euler_angles(
-                    euler_rot.0 * pitch_factor.min(1.0),
-                    euler_rot.1 * yaw_factor.min(1.0),
-                    euler_rot.2 * roll_factor.min(1.0),
-                );
-                q *= quat_rot;
-            } else {
-                let val = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0]) + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
-                q = q.slerp(&x, val.min(1.0));
-            }
-            (ts, q)
-        }).collect();
+                    let quat_rot = Quat64::from_euler_angles(
+                        euler_rot.0 * pitch_factor.min(1.0),
+                        euler_rot.1 * yaw_factor.min(1.0),
+                        euler_rot.2 * roll_factor.min(1.0),
+                    );
+                    q *= quat_rot;
+                } else {
+                    let val = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
+                        + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
+                    q = q.slerp(&x, val.min(1.0));
+                }
+                (ts, q)
+            })
+            .collect();
 
         // Reverse pass
         let mut q = *smoothed1.iter().next_back().unwrap().1;
-        smoothed1.into_iter().rev().map(|(ts, x)| {
-            let alpha_smoothness = alpha_smoothness_per_timestamp.get(&ts).unwrap_or(&alpha_smoothness);
-            let alpha_0_1s = alpha_0_1s_per_timestamp.get(&ts).unwrap_or(&alpha_0_1s);
-            let vel_ratio = velocity[&ts];
-            let dist_ratio = distance[&ts];
-            if self.per_axis {
-                let pitch_factor = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0]) + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
-                let yaw_factor = alpha_smoothness * (1.0 - vel_ratio[1] * dist_ratio[1]) + alpha_0_1s * vel_ratio[1] * dist_ratio[1];
-                let roll_factor = alpha_smoothness * (1.0 - vel_ratio[2] * dist_ratio[2]) + alpha_0_1s * vel_ratio[2] * dist_ratio[2];
+        smoothed1
+            .into_iter()
+            .rev()
+            .map(|(ts, x)| {
+                let alpha_smoothness = alpha_smoothness_per_timestamp
+                    .get(&ts)
+                    .unwrap_or(&alpha_smoothness);
+                let alpha_0_1s = alpha_0_1s_per_timestamp.get(&ts).unwrap_or(&alpha_0_1s);
+                let vel_ratio = velocity[&ts];
+                let dist_ratio = distance[&ts];
+                if self.per_axis {
+                    let pitch_factor = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
+                        + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
+                    let yaw_factor = alpha_smoothness * (1.0 - vel_ratio[1] * dist_ratio[1])
+                        + alpha_0_1s * vel_ratio[1] * dist_ratio[1];
+                    let roll_factor = alpha_smoothness * (1.0 - vel_ratio[2] * dist_ratio[2])
+                        + alpha_0_1s * vel_ratio[2] * dist_ratio[2];
 
-                let euler_rot = (q.inverse() * x).euler_angles();
+                    let euler_rot = (q.inverse() * x).euler_angles();
 
-                let quat_rot = Quat64::from_euler_angles(
-                    euler_rot.0 * pitch_factor.min(1.0),
-                    euler_rot.1 * yaw_factor.min(1.0),
-                    euler_rot.2 * roll_factor.min(1.0),
-                );
-                q *= quat_rot;
-            } else {
-                let val = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0]) + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
-                q = q.slerp(&x, val.min(1.0));
-            }
-            (ts, q)
-        }).collect()
+                    let quat_rot = Quat64::from_euler_angles(
+                        euler_rot.0 * pitch_factor.min(1.0),
+                        euler_rot.1 * yaw_factor.min(1.0),
+                        euler_rot.2 * roll_factor.min(1.0),
+                    );
+                    q *= quat_rot;
+                } else {
+                    let val = alpha_smoothness * (1.0 - vel_ratio[0] * dist_ratio[0])
+                        + alpha_0_1s * vel_ratio[0] * dist_ratio[0];
+                    q = q.slerp(&x, val.min(1.0));
+                }
+                (ts, q)
+            })
+            .collect()
     }
 }

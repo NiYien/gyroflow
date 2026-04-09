@@ -42,7 +42,7 @@ QQC.ComboBox {
     Ease on scale {  }
 
     contentItem: Text {
-        text: qsTranslate("Popup", root.displayText);
+        text: typeof root.displayText === "string" ? qsTranslate("Popup", root.displayText) : "";
         color: styleTextColor;
         font: root.font;
         anchors.left: parent.left;

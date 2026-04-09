@@ -1,0 +1,7 @@
+{
+  "name": "Blazar Remus 45mm 1.50x",
+  "squeeze_direction": "horizontal",
+  "squeeze_ratio": 1.5,
+  "distortion_coeffs": [-0.02, 0.15, -0.5, -1.5],
+  "distortion_model": "opencv_fisheye"
+}

@@ -2,8 +2,8 @@
 // Copyright © 2021-2022 Elvin Chen
 
 use super::*;
-use nalgebra::*;
 use crate::keyframes::*;
+use nalgebra::*;
 
 #[derive(Default, Clone)]
 pub struct Fixed {
@@ -13,22 +13,24 @@ pub struct Fixed {
 }
 
 impl SmoothingAlgorithm for Fixed {
-    fn get_name(&self) -> String { "Fixed camera".to_owned() }
+    fn get_name(&self) -> String {
+        "Fixed camera".to_owned()
+    }
 
     fn set_parameter(&mut self, name: &str, val: f64) {
         match name {
-            "roll"  => self.roll  = val,
+            "roll" => self.roll = val,
             "pitch" => self.pitch = val,
-            "yaw"   => self.yaw   = val,
-            _ => log::error!("Invalid parameter name: {}", name)
+            "yaw" => self.yaw = val,
+            _ => log::error!("Invalid parameter name: {}", name),
         }
     }
     fn get_parameter(&self, name: &str) -> f64 {
         match name {
-            "roll"  => self.roll,
+            "roll" => self.roll,
             "pitch" => self.pitch,
-            "yaw"   => self.yaw,
-            _ => 0.0
+            "yaw" => self.yaw,
+            _ => 0.0,
         }
     }
 
@@ -69,7 +71,9 @@ impl SmoothingAlgorithm for Fixed {
             }
         ])
     }
-    fn get_status_json(&self) -> serde_json::Value { serde_json::json!([]) }
+    fn get_status_json(&self) -> serde_json::Value {
+        serde_json::json!([])
+    }
 
     fn get_checksum(&self) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -80,7 +84,9 @@ impl SmoothingAlgorithm for Fixed {
     }
 
     fn smooth(&self, quats: &TimeQuat, duration: f64, compute_params: &ComputeParams) -> TimeQuat {
-        if quats.is_empty() || duration <= 0.0 { return quats.clone(); }
+        if quats.is_empty() || duration <= 0.0 {
+            return quats.clone();
+        }
 
         let keyframes = &compute_params.keyframes;
 
@@ -94,7 +100,8 @@ impl SmoothingAlgorithm for Fixed {
             let rot_y = Rotation3::from_axis_angle(&y_axis, (roll + 90.0) * DEG2RAD);
             let rot_z = Rotation3::from_axis_angle(&z_axis, yaw * DEG2RAD);
 
-            let correction = Rotation3::from_axis_angle(&z_axis, 90.0 * DEG2RAD) * Rotation3::from_axis_angle(&y_axis, 90.0 * DEG2RAD);
+            let correction = Rotation3::from_axis_angle(&z_axis, 90.0 * DEG2RAD)
+                * Rotation3::from_axis_angle(&y_axis, 90.0 * DEG2RAD);
 
             // Z rotation corresponds to body-centric roll, so placed last
             // using x as second rotation corresponds gives the usual pan/tilt combination
@@ -106,20 +113,29 @@ impl SmoothingAlgorithm for Fixed {
         let fixed_quat = quat_for_rpy(self.roll, self.pitch, self.yaw);
 
         let is_keyframed = keyframes.is_keyframed(&KeyframeType::SmoothingParamRoll)
-                        || keyframes.is_keyframed(&KeyframeType::SmoothingParamPitch)
-                        || keyframes.is_keyframed(&KeyframeType::SmoothingParamYaw);
+            || keyframes.is_keyframed(&KeyframeType::SmoothingParamPitch)
+            || keyframes.is_keyframed(&KeyframeType::SmoothingParamYaw);
 
-        quats.iter().map(|x| {
-            if is_keyframed {
-                let timestamp_ms = *x.0 as f64 / 1000.0;
-                let r = keyframes.value_at_gyro_timestamp(&KeyframeType::SmoothingParamRoll, timestamp_ms).unwrap_or(self.roll);
-                let p = keyframes.value_at_gyro_timestamp(&KeyframeType::SmoothingParamPitch, timestamp_ms).unwrap_or(self.pitch);
-                let y = keyframes.value_at_gyro_timestamp(&KeyframeType::SmoothingParamYaw, timestamp_ms).unwrap_or(self.yaw);
-                (*x.0, quat_for_rpy(r, p, y))
-            } else {
-                (*x.0, fixed_quat)
-            }
-        }).collect()
+        quats
+            .iter()
+            .map(|x| {
+                if is_keyframed {
+                    let timestamp_ms = *x.0 as f64 / 1000.0;
+                    let r = keyframes
+                        .value_at_gyro_timestamp(&KeyframeType::SmoothingParamRoll, timestamp_ms)
+                        .unwrap_or(self.roll);
+                    let p = keyframes
+                        .value_at_gyro_timestamp(&KeyframeType::SmoothingParamPitch, timestamp_ms)
+                        .unwrap_or(self.pitch);
+                    let y = keyframes
+                        .value_at_gyro_timestamp(&KeyframeType::SmoothingParamYaw, timestamp_ms)
+                        .unwrap_or(self.yaw);
+                    (*x.0, quat_for_rpy(r, p, y))
+                } else {
+                    (*x.0, fixed_quat)
+                }
+            })
+            .collect()
         // No need to reverse the BTreeMap, because it's sorted by definition
     }
 }

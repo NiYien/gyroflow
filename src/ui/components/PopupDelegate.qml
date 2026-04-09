@@ -3,9 +3,7 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
-import QtQuick.Controls.impl as QQCI
-import QtQuick.Controls.Material.impl as QQCMI
-
+import QtQuick.Controls.Material as QQCM
 QQC.ItemDelegate {
     property QQC.Popup parentPopup: null;
     property Item lv: null;
@@ -13,25 +11,50 @@ QQC.ItemDelegate {
     id: dlg;
     width: parent? parent.width : 0;
     implicitHeight: parentPopup.itemHeight;
+    readonly property var itemData: modelData
+    readonly property string itemText: {
+        if (typeof itemData === "string") return itemData;
+        if (itemData && typeof itemData === "object") {
+            if (typeof itemData.label === "string") return itemData.label;
+            if (typeof itemData.name  === "string") return itemData.name;
+            if (typeof itemData.text  === "string") return itemData.text;
+        }
+        return "";
+    }
+    readonly property string itemIconName: {
+        if (itemData && typeof itemData === "object" && typeof itemData.iconName === "string") {
+            return itemData.iconName;
+        }
+        return parentPopup.icons[index] || "";
+    }
+    readonly property color itemColor: {
+        if (itemData && typeof itemData === "object" && itemData.color) {
+            return itemData.color;
+        }
+        return parentPopup.colors[index] || styleTextColor;
+    }
+    readonly property bool itemEnabled: {
+        if (itemData && typeof itemData === "object" && typeof itemData.enabled === "boolean") {
+            return itemData.enabled;
+        }
+        return true;
+    }
+    text: qsTranslate("Popup", itemText)
+    enabled: itemEnabled
+    leftPadding: 12 * dpiScale
+    rightPadding: 12 * dpiScale
+    topPadding: parentPopup.itemHeight / 3.5
+    bottomPadding: parentPopup.itemHeight / 3.5
+    font: parentPopup.font
+    icon.name: itemIconName
+    icon.source: itemIconName ? "qrc:/resources/icons/svg/" + itemIconName + ".svg" : ""
+    icon.width: parentPopup.itemHeight / 2 + 1 * dpiScale
+    icon.height: parentPopup.itemHeight / 2 + 1 * dpiScale
+    icon.color: itemEnabled ? itemColor : Qt.rgba(itemColor.r, itemColor.g, itemColor.b, 0.38)
 
-    contentItem: QQCI.IconLabel {
-        anchors.fill: parent;
-        text: qsTranslate("Popup", modelData);
-        icon.name: parentPopup.icons[index] || "";
-        icon.source: parentPopup.icons[index] ? "qrc:/resources/icons/svg/" + parentPopup.icons[index] + ".svg" : "";
-        icon.color: c;
-        icon.height: parentPopup.itemHeight / 2 + 5 * dpiScale;
-        icon.width: parentPopup.itemHeight / 2 + 5 * dpiScale;
-        alignment: Qt.AlignLeft;
-        leftPadding: 12 * dpiScale;
-        rightPadding: 12 * dpiScale;
-        color: c;
-        property color c: parentPopup.colors[index] || styleTextColor;
-        topPadding: parentPopup.itemHeight / 3.5;
-        bottomPadding: parentPopup.itemHeight / 3.5;
-
-        font: parentPopup.font;
-        onImplicitWidthChanged: { if (implicitWidth > parentPopup.maxItemWidth) parentPopup.maxItemWidth = implicitWidth; }
+    QQCM.Material.foreground: itemEnabled ? itemColor : Qt.rgba(itemColor.r, itemColor.g, itemColor.b, 0.38)
+    onImplicitWidthChanged: {
+        if (implicitWidth > parentPopup.maxItemWidth) parentPopup.maxItemWidth = implicitWidth;
     }
 
     scale: dlg.down? 0.970 : 1.0;
@@ -40,6 +63,7 @@ QQC.ItemDelegate {
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.NoButton; cursorShape: Qt.PointingHandCursor; }
 
     function clickHandler(): void {
+        if (!dlg.itemEnabled) return;
         parentPopup.focus = false;
         parentPopup.parent.focus = true;
         parentPopup.clicked(index);
@@ -54,22 +78,5 @@ QQC.ItemDelegate {
         }
     }
 
-    background: Rectangle {
-        color: dlg.checked? styleAccentColor : (dlg.hovered || dlg.highlighted? styleHighlightColor : "transparent");
-        anchors.fill: parent;
-        anchors.margins: 2 * dpiScale;
-        radius: 4 * dpiScale;
-        opacity: dlg.checked? 0.5 : 1.0;
-
-        Rectangle {
-            x: 1 * dpiScale;
-            color: styleAccentColor;
-            height: parent.height * 0.45;
-            width: 3 * dpiScale;
-            radius: width;
-            y: (parent.height - height) / 2;
-            visible: lv.currentIndex === index;
-        }
-    }
     highlighted: parentPopup.highlightedIndex === index;
 }

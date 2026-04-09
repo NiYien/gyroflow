@@ -13,10 +13,23 @@ Item {
     property alias dt: dt;
     property alias isDragging: lv.isDragging;
     property bool shown: false;
+    readonly property bool lightTheme: style === "light"
 
     // --- Batch gyro match state ---
     property var gyroFilesInfo: []
-    property var gyroColors: ["#76baed", "#70e574", "#f6a00b", "#e87de8", "#ed7676", "#5ce0d8"]
+    readonly property var darkGyroColors:  ["#76baed", "#70e574", "#f6a00b", "#e87de8", "#ed7676", "#5ce0d8"]
+    readonly property var lightGyroColors: ["#2f78b6", "#2d8c4d", "#ad6a00", "#9b55b7", "#c55d5d", "#1f8f9f"]
+    readonly property var gyroColors: lightTheme ? lightGyroColors : darkGyroColors
+    readonly property color gyroTimeTextColor: lightTheme ? "#17324d" : "#ffffff"
+    readonly property color matchedStatusColor: lightTheme ? "#256c3f" : "#70e574"
+    readonly property color manualStatusColor: lightTheme ? "#9a5f00" : "#f0c040"
+    readonly property color calibrationStatusColor: lightTheme ? "#1f6fa8" : "#76baed"
+    readonly property color skippedStatusColor: lightTheme ? "#5b6470" : "#888888"
+    readonly property color finishedStatusColor: lightTheme ? "#2a8a4c" : "#70e574"
+    readonly property color errorStatusColor: lightTheme ? "#d16b6b" : "#ed7676"
+    readonly property color queueOutlineColor: lightTheme ? Qt.rgba(styleTextColor.r, styleTextColor.g, styleTextColor.b, 0.12) : "#70ffffff"
+    readonly property real matchedGyroOpacity: lightTheme ? 0.28 : 0.30
+    readonly property real unmatchedGyroOpacity: lightTheme ? 0.18 : 0.15
     property bool hasGyroFiles: render_queue.has_gyro_files()
     property int pairingGyroIndex: -1
     property string pairingGyroFilename: ""
@@ -59,6 +72,9 @@ Item {
         if (ms === null || ms === undefined) return "??:??:??";
         var d = new Date(ms);
         return Qt.formatTime(d, "HH:mm:ss");
+    }
+    function withAlpha(color, alpha) {
+        return Qt.rgba(color.r, color.g, color.b, alpha);
     }
     property bool allGyroParsed: {
         if (gyroFilesInfo.length === 0) return false;
@@ -465,7 +481,7 @@ Item {
             property var matchStatus: { root.matchVersion; return root.hasGyroFiles ? JSON.parse(render_queue.get_match_status_json(job_id)) : ({status: "none"}); }
             property string matchState: matchStatus.status || "none"
             property int matchGyroIndex: matchStatus.gyro_index !== undefined && matchStatus.gyro_index !== null ? matchStatus.gyro_index : -1
-            property string matchColor: matchGyroIndex >= 0 ? root.gyroColors[matchGyroIndex % root.gyroColors.length] : "transparent"
+            property color matchColor: matchGyroIndex >= 0 ? root.gyroColors[matchGyroIndex % root.gyroColors.length] : "transparent"
             property string gyroFilename: matchStatus.gyro_filename || ""
             property int manualGyroIndex: { root.matchVersion; return render_queue.get_manual_pair_gyro_index(job_id); }
             // [queue-gyro-column T8, T14] 双模式属性：已匹配 vs 未匹配
@@ -473,6 +489,7 @@ Item {
             property bool isMatched: root.matchExecuted
             property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
             property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
+            property color statusAccentColor: isSkipped ? root.skippedStatusColor : isFinished ? root.finishedStatusColor : isError ? root.errorStatusColor : isQuestion ? styleAccentColor : "transparent"
             // [T15] 通过 Rust 端直接判断相邻 item 是否同一 gyro 组，
             // 避免 QML 绑定时序问题和 delegate 创建顺序问题。
             // [T22] 从缓存读取 sameGyro 状态（match 完成后一次性计算，不受渲染/queue变化影响）
@@ -559,6 +576,13 @@ Item {
                     }
                 }
             }
+            Component {
+                id: gyroPairActionComponent;
+                Action {
+                    property int gyroIdx: -1
+                }
+            }
+
             Menu {
                 id: contextMenu;
                 font.pixelSize: 11.5 * dpiScale;
@@ -597,27 +621,40 @@ Item {
                     title: qsTr("Pair with Gyro");
                     enabled: root.hasGyroFiles;
                     width: 300 * dpiScale;
-                    onAboutToShow: {
-                        // Clear old items
-                        while (gyroSubMenu.count > 0) {
-                            gyroSubMenu.removeItem(gyroSubMenu.itemAt(0));
+                    property var dynamicGyroActions: []
+                    function clearDynamicGyroActions(): void {
+                        for (let i = 0; i < dynamicGyroActions.length; ++i) {
+                            const action = dynamicGyroActions[i];
+                            if (action) {
+                                gyroSubMenu.removeAction(action);
+                                action.destroy();
+                            }
                         }
+                        dynamicGyroActions = [];
+                    }
+                    onAboutToShow: {
+                        clearDynamicGyroActions();
+                        let actions = [];
                         // Add items for each gyro file
                         for (let i = 0; i < root.gyroFilesInfo.length; i++) {
                             const info = root.gyroFilesInfo[i];
                             const label = info.filename + (info.duration_ms ? " (" + (info.duration_ms / 1000).toFixed(1) + "s)" : "");
-                            const item = Qt.createQmlObject(
-                                'import QtQuick.Controls; MenuItem { text: "' +
-                                label.replace(/\\/g, '\\\\').replace(/"/g, '\\"') +
-                                '"; property int gyroIdx: ' + i + ' }',
-                                gyroSubMenu
-                            );
-                            item.triggered.connect(function() {
-                                render_queue.manual_set_calibration_pair(job_id, item.gyroIdx);
+                            const action = gyroPairActionComponent.createObject(gyroSubMenu, {
+                                text: label,
+                                gyroIdx: i
                             });
-                            gyroSubMenu.addItem(item);
+                            if (!action)
+                                continue;
+                            action.triggered.connect(function() {
+                                render_queue.manual_set_calibration_pair(job_id, action.gyroIdx);
+                            });
+                            gyroSubMenu.addAction(action);
+                            actions.push(action);
                         }
+                        dynamicGyroActions = actions;
                     }
+                    onClosed: clearDynamicGyroActions()
+                    Component.onDestruction: clearDynamicGyroActions()
                 }
                 // [queue-pair-ux T2] Unpair 选项已移除，Rust 端 unpair_video() 保留
             }
@@ -628,7 +665,7 @@ Item {
                 opacity: 0.2;
                 radius: 5 * dpiScale;
                 border.width: window.isMobileLayout && !statusBg.shown? 1 * dpiScale : 0;
-                border.color: "#70ffffff";
+                border.color: root.queueOutlineColor;
             }
             // [queue-gyro-column] 左列 gyro 区域（从 gyroColorBar 改造而来）
             // [queue-gyro-column T8] 双模式：已匹配时按 matchGyroIndex 对齐，未匹配时按行 index 填入
@@ -646,18 +683,22 @@ Item {
                 // 颜色背景（半透明），独立 Rectangle 避免影响文字 opacity
                 // [queue-gyro-column T8] 已匹配用 matchColor/0.3，未匹配用 gyroColors[unmatchedGyroIndex]/0.15
                 Rectangle {
+                    id: gyroFill;
                     anchors.fill: parent;
-                    color: {
+                    property color baseColor: {
                         if (dlg.isMatched) return dlg.matchColor;
                         if (dlg.unmatchedGyroIndex >= 0) return root.gyroColors[dlg.unmatchedGyroIndex % root.gyroColors.length];
                         return "transparent";
                     }
+                    color: baseColor;
                     opacity: {
-                        if (dlg.isMatched) return (style === "light" ? 0.2 : 0.3);
-                        if (dlg.unmatchedGyroIndex >= 0) return (style === "light" ? 0.1 : 0.15);
+                        if (dlg.isMatched) return root.matchedGyroOpacity;
+                        if (dlg.unmatchedGyroIndex >= 0) return root.unmatchedGyroOpacity;
                         return 0;
                     }
                     radius: (dlg.isMatched && (dlg.sameGyroAsPrev || dlg.sameGyroAsNext)) ? 0 : 3 * dpiScale;
+                    border.width: (root.lightTheme && baseColor.a > 0) ? 1 * dpiScale : 0;
+                    border.color: root.withAlpha(baseColor, dlg.isMatched ? 0.40 : 0.32);
                     Ease on opacity { }
                 }
 
@@ -674,7 +715,7 @@ Item {
                     // [T22] debug: 追踪时间文字可见性变化
                     onVisibleChanged: if (visible && dlg.isMatched) console.log("[QML T22] gyroTimeText VISIBLE job_id=" + job_id + " matchGyroIdx=" + dlg.matchGyroIndex + " sameAsPrev=" + dlg.sameGyroAsPrev + " file=" + input_filename);
                     text: root.formatGyroTime(dlg.displayGyroIndex);
-                    color: style === "light" ? "#111111" : "#ffffff";
+                    color: root.gyroTimeTextColor;
                     font.pixelSize: 11 * dpiScale;
                     font.bold: true;
                     leftPadding: 0;
@@ -745,20 +786,20 @@ Item {
                     width: parent.parent.width;
                     height: parent.height;
                     radius: 5 * dpiScale;
-                    color: "#70e574";
-                    opacity: 0.35;
+                    color: root.finishedStatusColor;
+                    opacity: root.lightTheme ? 0.22 : 0.35;
                 }
             }
             Rectangle {
                 id: statusBg;
                 anchors.fill: parent;
-                color: "#30" + border.color.toString().substring(1);
+                color: root.withAlpha(border.color, root.lightTheme ? 0.12 : 0.19);
                 radius: 5 * dpiScale;
                 opacity: shown? 0.8 : 0;
                 Ease on opacity { }
                 property bool shown: isFinished || isError || isQuestion || isSkipped;
                 visible: opacity > 0;
-                border.color: isSkipped? "#888888" : isFinished? "#70e574" : isError? "#ed7676" : isQuestion? styleAccentColor : "transparent";
+                border.color: dlg.statusAccentColor;
                 border.width: 1;
             }
 
@@ -923,6 +964,10 @@ Item {
                             font.pixelSize: basicTextSize;
                         }
                         BasicText {
+                            text: qsTranslate("Stabilization", "Auto rotate") + " " + (dlg.displayParams.auto_rotate ? "✓" : "✗");
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
                             property string zm: dlg.displayParams.zoom_mode || "none";
                             text: (zm === "static" ? qsTranslate("Popup", "Static zoom") : zm === "dynamic" ? qsTranslate("Popup", "Dynamic zooming") : qsTranslate("Popup", "No zooming"));
                             font.pixelSize: basicTextSize;
@@ -945,7 +990,7 @@ Item {
                         BasicText {
                             visible: dlg.manualGyroIndex >= 0;
                             text: qsTr("Manual") + " ⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "");
-                            color: "#f0c040";
+                            color: root.manualStatusColor;
                             font.pixelSize: basicTextSize;
                             font.bold: true;
                         }
@@ -953,14 +998,14 @@ Item {
                             visible: dlg.manualGyroIndex < 0 && dlg.matchState === "Matched";
                             // [queue-batch-streamline T2] 显示 detected_source
                             text: "✓ " + dlg.gyroFilename + (dlg.matchStatus.detected_source ? " (" + dlg.matchStatus.detected_source + ")" : "");
-                            color: "#70e574";
+                            color: root.matchedStatusColor;
                             font.pixelSize: basicTextSize;
                             font.bold: true;
                         }
                         BasicText {
                             visible: dlg.manualGyroIndex < 0 && dlg.matchState === "CalibrationPair";
                             text: qsTr("Calibration") + " · " + dlg.gyroFilename;
-                            color: "#76baed";
+                            color: root.calibrationStatusColor;
                             font.pixelSize: basicTextSize;
                             font.bold: true;
                         }
@@ -971,7 +1016,7 @@ Item {
                         text: dlg.skipReason === "no_gyro" ? qsTr("Skipped - no gyro data")
                             : dlg.skipReason === "calibration" ? qsTr("Skipped - calibration pair")
                             : "";
-                        color: "#888888";
+                        color: root.skippedStatusColor;
                         font.pixelSize: basicTextSize;
                         font.bold: true;
                     }
@@ -1111,12 +1156,33 @@ Item {
             font.pixelSize: 13 * dpiScale;
             leftPadding: 16 * dpiScale;
             rightPadding: 16 * dpiScale;
-            onClicked: {
+            function beginMatch(): void {
                 matching = true;
                 root.matchWarning = "";
+                render_queue.auto_rotate = window.batchState ? window.batchState.autoRotate : false;
                 loader.text = qsTr("Matching...");
                 loader.active = true;
                 matchTimer.start();
+            }
+            onClicked: {
+                let hasLensGroupConfig = false;
+                try {
+                    const configs = JSON.parse(controller.lens_group_config || "[]");
+                    hasLensGroupConfig = Array.isArray(configs) && configs.length > 0;
+                } catch (e) {
+                    console.warn("lens_group_config parse error:", e);
+                }
+                if (hasLensGroupConfig) {
+                    messageBox(Modal.Question, qsTr("Re-matching will clear lens group settings. Continue?"), [
+                        { text: qsTr("Yes"), accent: true, clicked: () => {
+                            controller.set_lens_group_config("[]");
+                            beginMatch();
+                        } },
+                        { text: qsTr("Cancel") }
+                    ]);
+                } else {
+                    beginMatch();
+                }
             }
         }
         Button {
@@ -1296,32 +1362,47 @@ Item {
             v = Math.min(6, Math.max(v, 1));
 
             render_queue.parallel_renders = v;
-
-            for (let i = 0; i < menuItem.count; ++i) {
-                if (menuItem.itemAt(i) instanceof QQC.MenuItem) { menuItem.actionAt(i).checked = i == v - 1; }
-            }
             settings.setValue("parallelRenders", v);
+
+            if (!menuItem || typeof menuItem.count !== "number") return;
+            for (let i = 0; i < menuItem.count; ++i) {
+                const item = menuItem.itemAt(i);
+                const action = menuItem.actionAt(i);
+                if (item && action && item instanceof QQC.MenuItem) {
+                    action.checked = i == v - 1;
+                }
+            }
         }
         function setOverwriteAction(v: int, menuItem: Menu): void {
             v = Math.min(3, Math.max(v, 0));
 
             render_queue.overwrite_mode = v;
-
-            for (let i = 0, j = 0; i < menuItem.count; ++i) {
-                if (menuItem.itemAt(i) instanceof QQC.MenuItem) { menuItem.actionAt(i).checked = j == v; j++;  }
-            }
             settings.setValue("defaultOverwriteAction", v);
 
+            if (!menuItem || typeof menuItem.count !== "number") return;
+            for (let i = 0, j = 0; i < menuItem.count; ++i) {
+                const item = menuItem.itemAt(i);
+                const action = menuItem.actionAt(i);
+                if (item && action && item instanceof QQC.MenuItem) {
+                    action.checked = j == v;
+                    j++;
+                }
+            }
         }
         function setExportMode(v: int, menuItem: Menu): void {
             v = Math.min(4, Math.max(v, 0));
 
             render_queue.export_project = v;
-
-            for (let i = 0; i < menuItem.count; ++i) {
-                if (menuItem.itemAt(i) instanceof QQC.MenuItem) { menuItem.actionAt(i).checked = i == v; }
-            }
             settings.setValue("exportMode", v);
+
+            if (!menuItem || typeof menuItem.count !== "number") return;
+            for (let i = 0; i < menuItem.count; ++i) {
+                const item = menuItem.itemAt(i);
+                const action = menuItem.actionAt(i);
+                if (item && action && item instanceof QQC.MenuItem) {
+                    action.checked = i == v;
+                }
+            }
         }
 
         Menu {
@@ -1377,7 +1458,10 @@ Item {
     Timer {
         id: matchTimer;
         interval: 100;
-        onTriggered: render_queue.batch_match_gyro();
+        onTriggered: {
+            render_queue.auto_rotate = window.batchState ? window.batchState.autoRotate : false;
+            render_queue.batch_match_gyro();
+        }
     }
 
     // R3D sequential loader: loads R3D files one at a time to avoid REDline SDK concurrent crash

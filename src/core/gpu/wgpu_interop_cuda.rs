@@ -4,16 +4,16 @@
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
 
-use wgpu::hal::api::Vulkan;
-use ash::vk::{ self, ImageCreateInfo, BufferCreateInfo };
-use std::collections::HashMap;
+use ash::vk::{self, BufferCreateInfo, ImageCreateInfo};
 use parking_lot::RwLock;
+use std::collections::HashMap;
+use wgpu::hal::api::Vulkan;
 
-use CUmemAllocationType::*;
-use CUmemAllocationHandleType::*;
-use CUmemLocationType::*;
-use CUmemAllocationGranularity_flags::*;
 use CUmemAccess_flags::*;
+use CUmemAllocationGranularity_flags::*;
+use CUmemAllocationHandleType::*;
+use CUmemAllocationType::*;
+use CUmemLocationType::*;
 
 macro_rules! cuda {
     ($cfn:ident.$func:ident($($arg:tt)*)) => {
@@ -34,7 +34,7 @@ pub struct CudaSharedMemory {
     pub shared_handle: isize,
     pub cuda_alloc_size: usize,
     pub vulkan_pitch_alignment: usize,
-    pub additional_drop_func: Option<Box<dyn FnOnce()>>
+    pub additional_drop_func: Option<Box<dyn FnOnce()>>,
 }
 impl Drop for CudaSharedMemory {
     fn drop(&mut self) {
@@ -54,19 +54,23 @@ impl Drop for CudaSharedMemory {
         }
     }
 }
-unsafe impl Send for CudaSharedMemory { }
+unsafe impl Send for CudaSharedMemory {}
 
 pub fn get_current_cuda_device() -> i32 {
     let mut dev = 0;
     if let Ok(cuda) = CUDA.as_ref() {
-        unsafe { (cuda.cudaGetDevice)(&mut dev); }
+        unsafe {
+            (cuda.cudaGetDevice)(&mut dev);
+        }
     }
     dev
 }
 pub fn get_device_uuid(device: usize) -> String {
     let mut uuid = CUuuid::default();
     if let Ok(cuda) = CUDA.as_ref() {
-        unsafe { (cuda.cuDeviceGetUuid)(&mut uuid, device as _); }
+        unsafe {
+            (cuda.cuDeviceGetUuid)(&mut uuid, device as _);
+        }
     }
     uuid.bytes.iter().map(|x| format!("{:02x}", x)).collect()
 }
@@ -105,10 +109,21 @@ pub fn get_current_device_id_by_uuid(adapters: &Vec<wgpu::Adapter>) -> usize {
                 unsafe {
                     if let Some(device) = device.as_hal::<Vulkan>() {
                         let mut id_props = ash::vk::PhysicalDeviceIDProperties::default();
-                        let mut device_properties = ash::vk::PhysicalDeviceProperties2::default().push_next(&mut id_props);
-                        device.shared_instance().raw_instance().get_physical_device_properties2(device.raw_physical_device(), &mut device_properties);
+                        let mut device_properties =
+                            ash::vk::PhysicalDeviceProperties2::default().push_next(&mut id_props);
+                        device
+                            .shared_instance()
+                            .raw_instance()
+                            .get_physical_device_properties2(
+                                device.raw_physical_device(),
+                                &mut device_properties,
+                            );
 
-                        let dev_uuid = id_props.device_uuid.iter().map(|x| format!("{:02x}", x)).collect::<String>();
+                        let dev_uuid = id_props
+                            .device_uuid
+                            .iter()
+                            .map(|x| format!("{:02x}", x))
+                            .collect::<String>();
                         UUIDMAP.write().insert(dev_uuid.clone(), i);
                         log::debug!("Device #{i} uuid: {dev_uuid}");
                         if dev_uuid == uuid {
@@ -122,11 +137,24 @@ pub fn get_current_device_id_by_uuid(adapters: &Vec<wgpu::Adapter>) -> usize {
     adapter_id
 }
 
-fn align(a: usize, b: usize) -> usize { ((a + b - 1) / b) * b }
+fn align(a: usize, b: usize) -> usize {
+    ((a + b - 1) / b) * b
+}
 
-pub fn cuda_2d_copy_on_device(bpp: usize, _width: usize, height: usize, mut row_bytes: usize, dst: CUdeviceptr, dst_pitch: usize, src: CUdeviceptr, src_pitch: usize) {
+pub fn cuda_2d_copy_on_device(
+    bpp: usize,
+    _width: usize,
+    height: usize,
+    mut row_bytes: usize,
+    dst: CUdeviceptr,
+    dst_pitch: usize,
+    src: CUdeviceptr,
+    src_pitch: usize,
+) {
     if !(row_bytes <= dst_pitch && row_bytes <= src_pitch) {
-        log::error!("cuMemcpy2D_v2: row_bytes ({row_bytes}) exceeds pitch (dst: {dst_pitch}, src: {src_pitch})");
+        log::error!(
+            "cuMemcpy2D_v2: row_bytes ({row_bytes}) exceeds pitch (dst: {dst_pitch}, src: {src_pitch})"
+        );
         let min_pitch = dst_pitch.min(src_pitch);
         row_bytes = (row_bytes.min(min_pitch) / bpp) * bpp;
     }
@@ -178,15 +206,18 @@ pub fn cuda_synchronize() {
     }
 }
 
-pub fn import_external_d3d12_resource(ptr: *mut std::ffi::c_void, size: usize) -> Result<CudaSharedMemory, Box<dyn std::error::Error>> {
+pub fn import_external_d3d12_resource(
+    ptr: *mut std::ffi::c_void,
+    size: usize,
+) -> Result<CudaSharedMemory, Box<dyn std::error::Error>> {
     let cuda = CUDA.as_ref()?;
     let desc = CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st {
         type_: CUexternalMemoryHandleType_enum::CU_EXTERNAL_MEMORY_HANDLE_TYPE_D3D12_RESOURCE,
         handle: CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st__bindgen_ty_1 {
             win32: CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st__bindgen_ty_1__bindgen_ty_1 {
                 handle: ptr,
-                name: std::ptr::null_mut()
-            }
+                name: std::ptr::null_mut(),
+            },
         },
         size: size as u64,
         flags: 1, // CUDA_EXTERNAL_MEMORY_DEDICATED
@@ -216,7 +247,9 @@ pub fn import_external_d3d12_resource(ptr: *mut std::ffi::c_void, size: usize) -
     })
 }
 
-pub fn allocate_shared_cuda_memory(size: usize) -> Result<CudaSharedMemory, Box<dyn std::error::Error>> {
+pub fn allocate_shared_cuda_memory(
+    size: usize,
+) -> Result<CudaSharedMemory, Box<dyn std::error::Error>> {
     let share_type = if cfg!(target_os = "windows") {
         CU_MEM_HANDLE_TYPE_WIN32
     } else {
@@ -225,12 +258,25 @@ pub fn allocate_shared_cuda_memory(size: usize) -> Result<CudaSharedMemory, Box<
 
     let cuda = CUDA.as_ref()?;
     let mut dev = 0;
-    unsafe { (cuda.cudaGetDevice)(&mut dev); }
-    let location = CUmemLocation { type_: CU_MEM_LOCATION_TYPE_DEVICE, id: dev };
+    unsafe {
+        (cuda.cudaGetDevice)(&mut dev);
+    }
+    let location = CUmemLocation {
+        type_: CU_MEM_LOCATION_TYPE_DEVICE,
+        id: dev,
+    };
 
     let mut uuid = CUuuid::default();
-    unsafe { (cuda.cuDeviceGetUuid)(&mut uuid, dev); }
-    log::debug!("Device #{dev} UUID: {}", uuid.bytes.iter().map(|x| format!("{:02x}", x)).collect::<String>());
+    unsafe {
+        (cuda.cuDeviceGetUuid)(&mut uuid, dev);
+    }
+    log::debug!(
+        "Device #{dev} UUID: {}",
+        uuid.bytes
+            .iter()
+            .map(|x| format!("{:02x}", x))
+            .collect::<String>()
+    );
 
     let mut device_ptr: CUdeviceptr = 0u64;
     let mut shared_handle = 0isize;
@@ -241,14 +287,14 @@ pub fn allocate_shared_cuda_memory(size: usize) -> Result<CudaSharedMemory, Box<
         requestedHandleTypes: share_type,
         location,
         win32HandleMetaData: std::ptr::null_mut(),
-        allocFlags: CUmemAllocationProp_st__bindgen_ty_1::default()
+        allocFlags: CUmemAllocationProp_st__bindgen_ty_1::default(),
     };
 
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::Security::{ *, Authorization::* };
-        use windows::Win32::Foundation::*;
         use windows::Wdk::Foundation::*;
+        use windows::Win32::Foundation::*;
+        use windows::Win32::Security::{Authorization::*, *};
         use windows::core::*;
         std::thread_local! {
             static OBJ_ATTRIBUTES: Option<OBJECT_ATTRIBUTES> = unsafe {
@@ -279,19 +325,39 @@ pub fn allocate_shared_cuda_memory(size: usize) -> Result<CudaSharedMemory, Box<
     }
 
     let mut granularity = 0usize;
-    cuda!(cuda.cuMemGetAllocationGranularity(&mut granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM));
+    cuda!(cuda.cuMemGetAllocationGranularity(
+        &mut granularity,
+        &prop,
+        CU_MEM_ALLOC_GRANULARITY_MINIMUM
+    ));
 
     let asize = align(size, granularity);
 
     cuda!(cuda.cuMemAddressReserve(&mut device_ptr, asize, granularity, 0, 0));
     cuda!(cuda.cuMemCreate(&mut cu_mem_handle, asize, &prop, 0));
-    cuda!(cuda.cuMemExportToShareableHandle((&mut shared_handle) as *mut isize as *mut _, cu_mem_handle, share_type, 0));
-    log::debug!("Creating CUDA memory 0x{device_ptr:08x} (device {}) | size: {size}, aligned size: {asize}", dev);
+    cuda!(cuda.cuMemExportToShareableHandle(
+        (&mut shared_handle) as *mut isize as *mut _,
+        cu_mem_handle,
+        share_type,
+        0
+    ));
+    log::debug!(
+        "Creating CUDA memory 0x{device_ptr:08x} (device {}) | size: {size}, aligned size: {asize}",
+        dev
+    );
 
     cuda!(cuda.cuMemMap(device_ptr, asize, 0, cu_mem_handle, 0));
     cuda!(cuda.cuMemRelease(cu_mem_handle));
 
-    cuda!(cuda.cuMemSetAccess(device_ptr, asize, &CUmemAccessDesc_st { location, flags: CU_MEM_ACCESS_FLAGS_PROT_READWRITE }, 1));
+    cuda!(cuda.cuMemSetAccess(
+        device_ptr,
+        asize,
+        &CUmemAccessDesc_st {
+            location,
+            flags: CU_MEM_ACCESS_FLAGS_PROT_READWRITE
+        },
+        1
+    ));
 
     Ok(CudaSharedMemory {
         device_ptr,
@@ -303,7 +369,11 @@ pub fn allocate_shared_cuda_memory(size: usize) -> Result<CudaSharedMemory, Box<
     })
 }
 
-pub fn create_vk_image_backed_by_cuda_memory(device: &wgpu::Device, size: (usize, usize, usize), format: wgpu::TextureFormat) -> Result<(vk::Image, CudaSharedMemory), Box<dyn std::error::Error>> {
+pub fn create_vk_image_backed_by_cuda_memory(
+    device: &wgpu::Device,
+    size: (usize, usize, usize),
+    format: wgpu::TextureFormat,
+) -> Result<(vk::Image, CudaSharedMemory), Box<dyn std::error::Error>> {
     let mut cuda_mem = allocate_shared_cuda_memory(size.2 * size.1)?;
 
     let handle_type = if cfg!(target_os = "windows") {
@@ -328,28 +398,41 @@ pub fn create_vk_image_backed_by_cuda_memory(device: &wgpu::Device, size: (usize
                     .handle_type(handle_type)
                     .fd(cuda_mem.shared_handle as std::ffi::c_int);
 
-                let mut ext_create_info = vk::ExternalMemoryImageCreateInfo::default().handle_types(handle_type);
+                let mut ext_create_info =
+                    vk::ExternalMemoryImageCreateInfo::default().handle_types(handle_type);
 
                 let image_create_info = ImageCreateInfo::default()
                     .push_next(&mut ext_create_info)
                     .image_type(vk::ImageType::TYPE_2D)
                     .format(super::wgpu_interop_vulkan::format_wgpu_to_vulkan(format))
-                    .extent(vk::Extent3D { width: size.0 as u32, height: size.1 as u32, depth: 1 })
+                    .extent(vk::Extent3D {
+                        width: size.0 as u32,
+                        height: size.1 as u32,
+                        depth: 1,
+                    })
                     .mip_levels(1)
                     .array_layers(1)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .tiling(vk::ImageTiling::LINEAR)
-                    .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC | vk::ImageUsageFlags::TRANSFER_DST)
+                    .usage(
+                        vk::ImageUsageFlags::COLOR_ATTACHMENT
+                            | vk::ImageUsageFlags::TRANSFER_SRC
+                            | vk::ImageUsageFlags::TRANSFER_DST,
+                    )
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
                 let raw_image = raw_device.create_image(&image_create_info, None)?;
 
-                let layout = raw_device.get_image_subresource_layout(raw_image, vk::ImageSubresource::default());
+                let layout = raw_device
+                    .get_image_subresource_layout(raw_image, vk::ImageSubresource::default());
                 cuda_mem.vulkan_pitch_alignment = layout.row_pitch as usize;
 
                 let memory_type_index = {
                     let mem_requirements = raw_device.get_image_memory_requirements(raw_image);
-                    let memory_properties = device.shared_instance().raw_instance().get_physical_device_memory_properties(device.raw_physical_device());
+                    let memory_properties = device
+                        .shared_instance()
+                        .raw_instance()
+                        .get_physical_device_memory_properties(device.raw_physical_device());
                     let mut memory_type_index = 0;
                     for i in 0..memory_properties.memory_type_count as usize {
                         if (mem_requirements.memory_type_bits & (1 << i)) == 0 {
@@ -381,17 +464,23 @@ pub fn create_vk_image_backed_by_cuda_memory(device: &wgpu::Device, size: (usize
                 // On Windows, the application retains ownership of NT handles after import and must close them.
                 // On Linux, the fd ownership is transferred to Vulkan on import — closing it would be a spec violation.
                 #[cfg(target_os = "windows")]
-                let _ = windows::Win32::Foundation::CloseHandle(windows::Win32::Foundation::HANDLE(cuda_mem.shared_handle as *mut _));
+                let _ = windows::Win32::Foundation::CloseHandle(
+                    windows::Win32::Foundation::HANDLE(cuda_mem.shared_handle as *mut _),
+                );
 
                 Ok::<ash::vk::Image, vk::Result>(raw_image)
             })
-        }.unwrap()?; // TODO: unwrap
+        }
+        .unwrap()?; // TODO: unwrap
 
         Ok((raw_image, cuda_mem))
     }
 }
 
-pub fn create_vk_buffer_backed_by_cuda_memory(device: &wgpu::Device, size: (usize, usize, usize)) -> Result<(vk::Buffer, CudaSharedMemory), Box<dyn std::error::Error>> {
+pub fn create_vk_buffer_backed_by_cuda_memory(
+    device: &wgpu::Device,
+    size: (usize, usize, usize),
+) -> Result<(vk::Buffer, CudaSharedMemory), Box<dyn std::error::Error>> {
     let buffer_size = size.2 * size.1;
     let mut cuda_mem = allocate_shared_cuda_memory(buffer_size)?;
 
@@ -419,19 +508,27 @@ pub fn create_vk_buffer_backed_by_cuda_memory(device: &wgpu::Device, size: (usiz
                     .handle_type(handle_type)
                     .fd(cuda_mem.shared_handle as std::ffi::c_int);
 
-                let mut ext_create_info = vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle_type);
+                let mut ext_create_info =
+                    vk::ExternalMemoryBufferCreateInfo::default().handle_types(handle_type);
 
                 let buffer_create_info = BufferCreateInfo::default()
                     .push_next(&mut ext_create_info)
                     .size(cuda_mem.cuda_alloc_size as vk::DeviceSize)
-                    .usage(vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC | vk::BufferUsageFlags::TRANSFER_DST)
+                    .usage(
+                        vk::BufferUsageFlags::STORAGE_BUFFER
+                            | vk::BufferUsageFlags::TRANSFER_SRC
+                            | vk::BufferUsageFlags::TRANSFER_DST,
+                    )
                     .sharing_mode(vk::SharingMode::EXCLUSIVE);
 
                 let raw_buffer = raw_device.create_buffer(&buffer_create_info, None)?;
 
                 let memory_type_index = {
                     let mem_requirements = raw_device.get_buffer_memory_requirements(raw_buffer);
-                    let memory_properties = device.shared_instance().raw_instance().get_physical_device_memory_properties(device.raw_physical_device());
+                    let memory_properties = device
+                        .shared_instance()
+                        .raw_instance()
+                        .get_physical_device_memory_properties(device.raw_physical_device());
                     let mut memory_type_index = 0;
                     for i in 0..memory_properties.memory_type_count as usize {
                         if (mem_requirements.memory_type_bits & (1 << i)) == 0 {
@@ -463,16 +560,18 @@ pub fn create_vk_buffer_backed_by_cuda_memory(device: &wgpu::Device, size: (usiz
                 // On Windows, the application retains ownership of NT handles after import and must close them.
                 // On Linux, the fd ownership is transferred to Vulkan on import — closing it would be a spec violation.
                 #[cfg(target_os = "windows")]
-                let _ = windows::Win32::Foundation::CloseHandle(windows::Win32::Foundation::HANDLE(cuda_mem.shared_handle as *mut _));
+                let _ = windows::Win32::Foundation::CloseHandle(
+                    windows::Win32::Foundation::HANDLE(cuda_mem.shared_handle as *mut _),
+                );
 
                 Ok::<ash::vk::Buffer, vk::Result>(raw_buffer)
             })
-        }.unwrap()?; // TODO: unwrap
+        }
+        .unwrap()?; // TODO: unwrap
 
         Ok((raw_buffer, cuda_mem))
     }
 }
-
 
 ////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////
@@ -734,38 +833,104 @@ pub struct CUuuid {
     pub bytes: [::core::ffi::c_char; 16usize],
 }
 
-#[cfg(target_os = "windows")]
-use libloading::os::windows as dl;
 #[cfg(target_os = "linux")]
 use libloading::os::unix as dl;
+#[cfg(target_os = "windows")]
+use libloading::os::windows as dl;
 
 pub struct CudaFunctions {
     _cudart: dl::Library,
     _nvcuda: dl::Library,
     pub cudaDeviceSynchronize: dl::Symbol<unsafe extern "C" fn() -> i32>,
-    pub cudaFree:              dl::Symbol<unsafe extern "C" fn(ptr: *mut c_void) -> i32>,
-    pub cudaGetDevice:         dl::Symbol<unsafe extern "C" fn(device: *mut c_int) -> i32>,
+    pub cudaFree: dl::Symbol<unsafe extern "C" fn(ptr: *mut c_void) -> i32>,
+    pub cudaGetDevice: dl::Symbol<unsafe extern "C" fn(device: *mut c_int) -> i32>,
 
-    pub cuMemExportToShareableHandle:    dl::Symbol<unsafe extern "C" fn(shareableHandle: *mut c_void, handle: CUmemGenericAllocationHandle, handleType: CUmemAllocationHandleType, flags: c_ulonglong) -> CUresult>,
-    pub cuMemGetAllocationGranularity:   dl::Symbol<unsafe extern "C" fn(granularity: *mut usize, prop: *const CUmemAllocationProp, option: CUmemAllocationGranularity_flags) -> CUresult>,
-    pub cuMemCreate:                     dl::Symbol<unsafe extern "C" fn(handle: *mut CUmemGenericAllocationHandle, size: usize, prop: *const CUmemAllocationProp, flags: c_ulonglong) -> CUresult>,
-    pub cuMemFree:                       dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr) -> CUresult>,
-    pub cuMemAddressReserve:             dl::Symbol<unsafe extern "C" fn(ptr: *mut CUdeviceptr, size: usize, alignment: usize, addr: CUdeviceptr, flags: c_ulonglong) -> CUresult>,
-    pub cuMemMap:                        dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr, size: usize, offset: usize, handle: CUmemGenericAllocationHandle, flags: c_ulonglong) -> CUresult>,
-    pub cuMemSetAccess:                  dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr, size: usize, desc: *const CUmemAccessDesc_st, count: usize) -> CUresult>,
-    pub cuMemUnmap:                      dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr, size: usize) -> CUresult>,
-    pub cuMemRelease:                    dl::Symbol<unsafe extern "C" fn(handle: CUmemGenericAllocationHandle) -> CUresult>,
-    pub cuMemcpy:                        dl::Symbol<unsafe extern "C" fn(dst: CUdeviceptr, src: CUdeviceptr, ByteCount: usize) -> CUresult>,
-    pub cuMemcpy2D_v2:                   dl::Symbol<unsafe extern "C" fn(pCopy: *const CUDA_MEMCPY2D_st) -> CUresult>,
-    pub cuMemAddressFree:                dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr, size: usize) -> CUresult>,
-    pub cuCtxSynchronize:                dl::Symbol<unsafe extern "C" fn() -> CUresult>,
-    pub cuMemGetAddressRange_v2:         dl::Symbol<unsafe extern "C" fn(pbase: *mut CUdeviceptr, psize: *mut usize, dptr: CUdeviceptr) -> CUresult>,
+    pub cuMemExportToShareableHandle: dl::Symbol<
+        unsafe extern "C" fn(
+            shareableHandle: *mut c_void,
+            handle: CUmemGenericAllocationHandle,
+            handleType: CUmemAllocationHandleType,
+            flags: c_ulonglong,
+        ) -> CUresult,
+    >,
+    pub cuMemGetAllocationGranularity: dl::Symbol<
+        unsafe extern "C" fn(
+            granularity: *mut usize,
+            prop: *const CUmemAllocationProp,
+            option: CUmemAllocationGranularity_flags,
+        ) -> CUresult,
+    >,
+    pub cuMemCreate: dl::Symbol<
+        unsafe extern "C" fn(
+            handle: *mut CUmemGenericAllocationHandle,
+            size: usize,
+            prop: *const CUmemAllocationProp,
+            flags: c_ulonglong,
+        ) -> CUresult,
+    >,
+    pub cuMemFree: dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr) -> CUresult>,
+    pub cuMemAddressReserve: dl::Symbol<
+        unsafe extern "C" fn(
+            ptr: *mut CUdeviceptr,
+            size: usize,
+            alignment: usize,
+            addr: CUdeviceptr,
+            flags: c_ulonglong,
+        ) -> CUresult,
+    >,
+    pub cuMemMap: dl::Symbol<
+        unsafe extern "C" fn(
+            ptr: CUdeviceptr,
+            size: usize,
+            offset: usize,
+            handle: CUmemGenericAllocationHandle,
+            flags: c_ulonglong,
+        ) -> CUresult,
+    >,
+    pub cuMemSetAccess: dl::Symbol<
+        unsafe extern "C" fn(
+            ptr: CUdeviceptr,
+            size: usize,
+            desc: *const CUmemAccessDesc_st,
+            count: usize,
+        ) -> CUresult,
+    >,
+    pub cuMemUnmap: dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr, size: usize) -> CUresult>,
+    pub cuMemRelease:
+        dl::Symbol<unsafe extern "C" fn(handle: CUmemGenericAllocationHandle) -> CUresult>,
+    pub cuMemcpy: dl::Symbol<
+        unsafe extern "C" fn(dst: CUdeviceptr, src: CUdeviceptr, ByteCount: usize) -> CUresult,
+    >,
+    pub cuMemcpy2D_v2: dl::Symbol<unsafe extern "C" fn(pCopy: *const CUDA_MEMCPY2D_st) -> CUresult>,
+    pub cuMemAddressFree:
+        dl::Symbol<unsafe extern "C" fn(ptr: CUdeviceptr, size: usize) -> CUresult>,
+    pub cuCtxSynchronize: dl::Symbol<unsafe extern "C" fn() -> CUresult>,
+    pub cuMemGetAddressRange_v2: dl::Symbol<
+        unsafe extern "C" fn(
+            pbase: *mut CUdeviceptr,
+            psize: *mut usize,
+            dptr: CUdeviceptr,
+        ) -> CUresult,
+    >,
 
-    pub cuDeviceGetUuid:                 dl::Symbol<unsafe extern "C" fn(uuid: *mut CUuuid, dev: c_int) -> CUresult>,
+    pub cuDeviceGetUuid:
+        dl::Symbol<unsafe extern "C" fn(uuid: *mut CUuuid, dev: c_int) -> CUresult>,
 
-    pub cuImportExternalMemory:          dl::Symbol<unsafe extern "C" fn(extMem_out: *mut CUexternalMemory, memHandleDesc: *const CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st) -> CUresult>,
-    pub cuExternalMemoryGetMappedBuffer: dl::Symbol<unsafe extern "C" fn(devPtr: *mut CUdeviceptr, extMem: CUexternalMemory, bufferDesc: *const CUDA_EXTERNAL_MEMORY_BUFFER_DESC_st) -> CUresult>,
-    pub cuDestroyExternalMemory:         dl::Symbol<unsafe extern "C" fn(extMem: CUexternalMemory) -> CUresult>,
+    pub cuImportExternalMemory: dl::Symbol<
+        unsafe extern "C" fn(
+            extMem_out: *mut CUexternalMemory,
+            memHandleDesc: *const CUDA_EXTERNAL_MEMORY_HANDLE_DESC_st,
+        ) -> CUresult,
+    >,
+    pub cuExternalMemoryGetMappedBuffer: dl::Symbol<
+        unsafe extern "C" fn(
+            devPtr: *mut CUdeviceptr,
+            extMem: CUexternalMemory,
+            bufferDesc: *const CUDA_EXTERNAL_MEMORY_BUFFER_DESC_st,
+        ) -> CUresult,
+    >,
+    pub cuDestroyExternalMemory:
+        dl::Symbol<unsafe extern "C" fn(extMem: CUexternalMemory) -> CUresult>,
 }
 
 impl CudaFunctions {
@@ -799,36 +964,44 @@ impl CudaFunctions {
                     break;
                 }
             }
-            if cudart.is_none() { return Err(libloading::Error::DlOpenUnknown); }
+            if cudart.is_none() {
+                return Err(libloading::Error::DlOpenUnknown);
+            }
             let cudart = cudart.unwrap();
 
-            let nvcuda = dl::Library::new(if cfg!(target_os = "windows") { "nvcuda.dll" } else { "libcuda.so.1" })?;
+            let nvcuda = dl::Library::new(if cfg!(target_os = "windows") {
+                "nvcuda.dll"
+            } else {
+                "libcuda.so.1"
+            })?;
 
             Ok(Self {
-                cudaDeviceSynchronize:           cudart.get(b"cudaDeviceSynchronize")?,
-                cudaGetDevice:                   cudart.get(b"cudaGetDevice")?,
-                cudaFree:                        cudart.get(b"cudaFree")?,
+                cudaDeviceSynchronize: cudart.get(b"cudaDeviceSynchronize")?,
+                cudaGetDevice: cudart.get(b"cudaGetDevice")?,
+                cudaFree: cudart.get(b"cudaFree")?,
 
-                cuMemExportToShareableHandle:    nvcuda.get(b"cuMemExportToShareableHandle")?,
-                cuMemGetAllocationGranularity:   nvcuda.get(b"cuMemGetAllocationGranularity")?,
-                cuMemCreate:                     nvcuda.get(b"cuMemCreate")?,
-                cuMemFree:                       nvcuda.get(b"cuMemFree")?,
-                cuMemAddressReserve:             nvcuda.get(b"cuMemAddressReserve")?,
-                cuMemMap:                        nvcuda.get(b"cuMemMap")?,
-                cuMemSetAccess:                  nvcuda.get(b"cuMemSetAccess")?,
-                cuMemUnmap:                      nvcuda.get(b"cuMemUnmap")?,
-                cuMemRelease:                    nvcuda.get(b"cuMemRelease")?,
-                cuMemcpy:                        nvcuda.get(b"cuMemcpy")?,
-                cuMemcpy2D_v2:                   nvcuda.get(b"cuMemcpy2D_v2")?,
-                cuMemAddressFree:                nvcuda.get(b"cuMemAddressFree")?,
-                cuCtxSynchronize:                nvcuda.get(b"cuCtxSynchronize")?,
-                cuMemGetAddressRange_v2:         nvcuda.get(b"cuMemGetAddressRange_v2")?,
+                cuMemExportToShareableHandle: nvcuda.get(b"cuMemExportToShareableHandle")?,
+                cuMemGetAllocationGranularity: nvcuda.get(b"cuMemGetAllocationGranularity")?,
+                cuMemCreate: nvcuda.get(b"cuMemCreate")?,
+                cuMemFree: nvcuda.get(b"cuMemFree")?,
+                cuMemAddressReserve: nvcuda.get(b"cuMemAddressReserve")?,
+                cuMemMap: nvcuda.get(b"cuMemMap")?,
+                cuMemSetAccess: nvcuda.get(b"cuMemSetAccess")?,
+                cuMemUnmap: nvcuda.get(b"cuMemUnmap")?,
+                cuMemRelease: nvcuda.get(b"cuMemRelease")?,
+                cuMemcpy: nvcuda.get(b"cuMemcpy")?,
+                cuMemcpy2D_v2: nvcuda.get(b"cuMemcpy2D_v2")?,
+                cuMemAddressFree: nvcuda.get(b"cuMemAddressFree")?,
+                cuCtxSynchronize: nvcuda.get(b"cuCtxSynchronize")?,
+                cuMemGetAddressRange_v2: nvcuda.get(b"cuMemGetAddressRange_v2")?,
 
-                cuDeviceGetUuid:                 nvcuda.get(b"cuDeviceGetUuid_v2").or_else(|_| nvcuda.get(b"cuDeviceGetUuid"))?,
+                cuDeviceGetUuid: nvcuda
+                    .get(b"cuDeviceGetUuid_v2")
+                    .or_else(|_| nvcuda.get(b"cuDeviceGetUuid"))?,
 
-                cuImportExternalMemory:          nvcuda.get(b"cuImportExternalMemory")?,
+                cuImportExternalMemory: nvcuda.get(b"cuImportExternalMemory")?,
                 cuExternalMemoryGetMappedBuffer: nvcuda.get(b"cuExternalMemoryGetMappedBuffer")?,
-                cuDestroyExternalMemory:         nvcuda.get(b"cuDestroyExternalMemory")?,
+                cuDestroyExternalMemory: nvcuda.get(b"cuDestroyExternalMemory")?,
 
                 _cudart: cudart,
                 _nvcuda: nvcuda,

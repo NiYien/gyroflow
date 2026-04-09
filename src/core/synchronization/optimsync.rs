@@ -4,7 +4,7 @@
 use crate::gyro_source::GyroSource;
 use itertools::izip;
 use nalgebra::{ComplexField, Vector3};
-use rustfft::{num_complex::Complex, FftPlanner};
+use rustfft::{FftPlanner, num_complex::Complex};
 use std::f32::consts::PI;
 use std::iter::zip;
 pub struct OptimSync {
@@ -47,7 +47,8 @@ impl OptimSync {
                 return Vector3::from_column_slice(&left.gyro.unwrap_or_default());
             }
             (Vector3::from_column_slice(&left.gyro.unwrap_or_default()) * (right.timestamp_ms - ts)
-                + Vector3::from_column_slice(&right.gyro.unwrap_or_default()) * (ts - left.timestamp_ms))
+                + Vector3::from_column_slice(&right.gyro.unwrap_or_default())
+                    * (ts - left.timestamp_ms))
                 / (right.timestamp_ms - left.timestamp_ms)
         };
 
@@ -171,7 +172,9 @@ impl OptimSync {
 
         let mut rank_nms = rank.clone();
         for i in 0..rank.len() {
-            for j in (i as i64 - nms_radius as i64).max(0) as usize..(i + nms_radius).min(rank.len() - 1) {
+            for j in
+                (i as i64 - nms_radius as i64).max(0) as usize..(i + nms_radius).min(rank.len() - 1)
+            {
                 if rank[j] < rank[i] {
                     rank_nms[j] = 0.0;
                 }
@@ -186,7 +189,8 @@ impl OptimSync {
                 let end = std::cmp::min(start + segment_size, rank_nms.len());
 
                 // Find the maximum value within the current interval along with its index.
-                let max_pair = rank_nms.get(start..end)?
+                let max_pair = rank_nms
+                    .get(start..end)?
                     .iter()
                     .enumerate()
                     .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -196,7 +200,10 @@ impl OptimSync {
                     } else {
                         let absolute_idx = start + relative_idx;
                         Some(
-                            (absolute_idx as f64 * step_size_samples as f64 + fft_size as f64 / 2.0) / self.sample_rate * 1000.0
+                            (absolute_idx as f64 * step_size_samples as f64
+                                + fft_size as f64 / 2.0)
+                                / self.sample_rate
+                                * 1000.0,
                         )
                     }
                 })

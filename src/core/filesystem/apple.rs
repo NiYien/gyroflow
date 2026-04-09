@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2023 Adrian <adrian.eddy at gmail>
 
+use super::normalize_url;
+use crate::{dbg_call, function_name};
 use objc2_core_foundation::*;
-use std::io::{ Read, Write };
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
+use std::io::{Read, Write};
 use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering::SeqCst;
-use super::normalize_url;
-use crate::{ function_name, dbg_call };
 
 const UTF8_ENCODING: CFStringEncoding = CFStringBuiltInEncodings::EncodingUTF8.0;
 
@@ -19,12 +19,16 @@ lazy_static::lazy_static! {
 }
 
 pub fn start_accessing_url(url: &str, is_folder: bool) {
-    if !url.contains("://") { return; }
+    if !url.contains("://") {
+        return;
+    }
     let url = normalize_url(url, is_folder);
     dbg_call!(url);
     let mut map = OPENED_URLS.lock();
     match map.entry(url.clone()) {
-        Entry::Occupied(o) => { *o.into_mut() += 1; }
+        Entry::Occupied(o) => {
+            *o.into_mut() += 1;
+        }
         Entry::Vacant(v) => {
             log::info!("start_accessing_url: {url} - OPEN");
             start_accessing_security_scoped_resource(&url);
@@ -33,7 +37,9 @@ pub fn start_accessing_url(url: &str, is_folder: bool) {
     }
 }
 pub fn stop_accessing_url(url: &str, is_folder: bool) {
-    if !url.contains("://") { return; }
+    if !url.contains("://") {
+        return;
+    }
     let url = normalize_url(url, is_folder);
     dbg_call!(url);
     let mut map = OPENED_URLS.lock();
@@ -49,18 +55,27 @@ pub fn stop_accessing_url(url: &str, is_folder: bool) {
                 panic!("Cannot happen!")
             }
         }
-        Entry::Vacant(_) => { panic!("Stop accessing url without starting! {url}"); }
+        Entry::Vacant(_) => {
+            panic!("Stop accessing url without starting! {url}");
+        }
     }
 }
 
-fn timestamp() -> usize { std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH).unwrap().as_secs() as usize }
+fn timestamp() -> usize {
+    std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize
+}
 // We need to defer closing the url for 10 seconds
 // We have a lot of functions which start and stop url access and they happen asynchronously so we need to avoid opening and closing them too often
 fn spawn_close_thread() {
     let is_thread_running = CLOSE_TIMEOUT.load(SeqCst) != 0;
     CLOSE_TIMEOUT.store(timestamp() + 10, SeqCst); // 10 seconds
 
-    if is_thread_running { return; }
+    if is_thread_running {
+        return;
+    }
     std::thread::spawn(|| {
         while CLOSE_TIMEOUT.load(SeqCst) > timestamp() {
             std::thread::sleep(std::time::Duration::from_secs(1));
@@ -83,7 +98,15 @@ fn spawn_close_thread() {
 
 fn url_from_bytes(url: &str) -> Option<CFRetained<CFURL>> {
     let bytes = url.as_bytes();
-    unsafe { CFURL::with_bytes(None, bytes.as_ptr(), bytes.len() as isize, UTF8_ENCODING, None) }
+    unsafe {
+        CFURL::with_bytes(
+            None,
+            bytes.as_ptr(),
+            bytes.len() as isize,
+            UTF8_ENCODING,
+            None,
+        )
+    }
 }
 
 pub fn start_accessing_security_scoped_resource(url: &str) -> bool {
@@ -105,11 +128,15 @@ pub fn stop_accessing_security_scoped_resource(url: &str) -> bool {
 
 pub fn create_bookmark(url: &str, is_folder: bool, project_url: Option<&str>) -> String {
     let mut ret = String::new();
-    if url.is_empty() { return ret; }
+    if url.is_empty() {
+        return ret;
+    }
     start_accessing_url(url, is_folder);
     unsafe {
         let project_url_ref = if let Some(project_url) = project_url {
-            if !super::exists(project_url) && !project_url.ends_with('/') { let _ = super::write(project_url, &[]); } // Create empty file if not exists
+            if !super::exists(project_url) && !project_url.ends_with('/') {
+                let _ = super::write(project_url, &[]);
+            } // Create empty file if not exists
             start_accessing_url(project_url, false);
             url_from_bytes(project_url)
         } else {
@@ -118,15 +145,27 @@ pub fn create_bookmark(url: &str, is_folder: bool, project_url: Option<&str>) ->
         if let Some(url_ref) = url_from_bytes(url) {
             let opts = CFURLBookmarkCreationOptions(1usize << 11); // kCFURLBookmarkCreationWithSecurityScope
             let mut error = std::ptr::null_mut();
-            let bookmark_data = CFURL::new_bookmark_data(None, Some(&*url_ref), opts, None, project_url_ref.as_ref().map(|x| &**x), &mut error);
+            let bookmark_data = CFURL::new_bookmark_data(
+                None,
+                Some(&*url_ref),
+                opts,
+                None,
+                project_url_ref.as_ref().map(|x| &**x),
+                &mut error,
+            );
             if error.is_null() {
                 if let Some(bookmark_data) = bookmark_data {
                     let len = bookmark_data.length();
                     let ptr = bookmark_data.byte_ptr();
                     if len > 0 {
-                        let mut e = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::best());
-                        e.write_all(&std::slice::from_raw_parts(ptr, len as usize)).unwrap();
-                        ret = String::from_utf8(base91::slice_encode(&e.finish().unwrap())).unwrap_or_default();
+                        let mut e = flate2::write::ZlibEncoder::new(
+                            Vec::new(),
+                            flate2::Compression::best(),
+                        );
+                        e.write_all(&std::slice::from_raw_parts(ptr, len as usize))
+                            .unwrap();
+                        ret = String::from_utf8(base91::slice_encode(&e.finish().unwrap()))
+                            .unwrap_or_default();
                     }
                 }
             } else {
@@ -145,7 +184,9 @@ pub fn create_bookmark(url: &str, is_folder: bool, project_url: Option<&str>) ->
 pub fn resolve_bookmark(bookmark_data: &str, project_url: Option<&str>) -> (String, bool) {
     let mut ret = String::new();
     let mut is_stale = false;
-    if bookmark_data.is_empty() { return (ret, is_stale); }
+    if bookmark_data.is_empty() {
+        return (ret, is_stale);
+    }
     let compressed = base91::slice_decode(bookmark_data.as_bytes());
     if !compressed.is_empty() {
         let mut e = flate2::read::ZlibDecoder::new(&compressed[..]);
@@ -153,17 +194,29 @@ pub fn resolve_bookmark(bookmark_data: &str, project_url: Option<&str>) -> (Stri
         e.read_to_end(&mut decompressed).unwrap();
         unsafe {
             let project_url_ref = if let Some(project_url) = project_url {
-                if !super::exists(project_url) && !project_url.ends_with('/') { let _ = super::write(project_url, &[]); } // Create empty file if not exists
+                if !super::exists(project_url) && !project_url.ends_with('/') {
+                    let _ = super::write(project_url, &[]);
+                } // Create empty file if not exists
                 start_accessing_url(project_url, false);
                 url_from_bytes(project_url)
             } else {
                 None
             };
-            if let Some(data_ref) = CFData::new(None, decompressed.as_ptr(), decompressed.len() as isize) {
+            if let Some(data_ref) =
+                CFData::new(None, decompressed.as_ptr(), decompressed.len() as isize)
+            {
                 let mut error = std::ptr::null_mut();
                 let opts = CFURLBookmarkResolutionOptions(1usize << 10); // kCFURLBookmarkResolutionWithSecurityScope
                 let mut is_stale_cf: u8 = 0;
-                let url = CFURL::new_by_resolving_bookmark_data(None, Some(&*data_ref), opts, project_url_ref.as_ref().map(|x| &**x), None, &mut is_stale_cf, &mut error);
+                let url = CFURL::new_by_resolving_bookmark_data(
+                    None,
+                    Some(&*data_ref),
+                    opts,
+                    project_url_ref.as_ref().map(|x| &**x),
+                    None,
+                    &mut is_stale_cf,
+                    &mut error,
+                );
                 if error.is_null() {
                     if let Some(url) = url {
                         let len = url.bytes(std::ptr::null_mut(), 0);
@@ -188,18 +241,43 @@ pub fn resolve_bookmark(bookmark_data: &str, project_url: Option<&str>) -> (Stri
 }
 
 unsafe fn get_error(err: *mut CFError) -> String {
-    if err.is_null() { return String::from("Unknown error"); }
+    if err.is_null() {
+        return String::from("Unknown error");
+    }
     let err = unsafe { &*err };
     if let Some(cf_str) = err.description() {
         let c_string = cf_str.c_string_ptr(UTF8_ENCODING);
         if !c_string.is_null() {
             return unsafe { std::ffi::CStr::from_ptr(c_string).to_string_lossy().into() };
         }
-        let range = CFRange { location: 0, length: cf_str.length() };
+        let range = CFRange {
+            location: 0,
+            length: cf_str.length(),
+        };
         let mut len: CFIndex = 0;
-        unsafe { cf_str.bytes(range, UTF8_ENCODING, 0, false, std::ptr::null_mut(), 0, &mut len); }
+        unsafe {
+            cf_str.bytes(
+                range,
+                UTF8_ENCODING,
+                0,
+                false,
+                std::ptr::null_mut(),
+                0,
+                &mut len,
+            );
+        }
         let mut buffer = vec![0u8; len as usize];
-        unsafe { cf_str.bytes(range, UTF8_ENCODING, 0, false, buffer.as_mut_ptr(), buffer.len() as isize, std::ptr::null_mut()); }
+        unsafe {
+            cf_str.bytes(
+                range,
+                UTF8_ENCODING,
+                0,
+                false,
+                buffer.as_mut_ptr(),
+                buffer.len() as isize,
+                std::ptr::null_mut(),
+            );
+        }
         return unsafe { String::from_utf8_unchecked(buffer) };
     }
     String::from("Unknown error")

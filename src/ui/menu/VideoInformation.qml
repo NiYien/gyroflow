@@ -13,6 +13,7 @@ MenuItem {
     objectName: "info";
 
     property real videoRotation: 0;
+    property real metadataRotation: 0;
     property real fps: 0;
     property real org_fps: 0;
     property string filename: "";
@@ -87,7 +88,8 @@ MenuItem {
 
         root.pixelFormat = getPixelFormat(md) || "---";
 
-        root.videoRotation = (360 - (md["stream.video[0].rotation"] || 0)) % 360; // Constrain to 0-360
+        root.metadataRotation = (360 - (md["stream.video[0].rotation"] || 0)) % 360; // Constrain to 0-360
+        root.videoRotation = root.metadataRotation;
 
         list.model["Dimensions"]   = w && h? w + "x" + h : "---";
         list.model["Duration"]     = getDuration(md) || "---";

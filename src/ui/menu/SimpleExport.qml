@@ -116,7 +116,7 @@ Column {
             }
             LinkButton {
                 id: simpleLockAspect;
-                checked: true;
+                checked: exportSettings ? exportSettings.lockAspectRatioChecked : true;
                 height: parent.height * 0.75;
                 iconName: checked ? "lock" : "unlocked";
                 topPadding: 4 * dpiScale;
@@ -126,11 +126,23 @@ Column {
                 anchors.verticalCenter: parent.verticalCenter;
                 anchors.left: simpleOutputWidth.right;
                 anchors.leftMargin: 5 * dpiScale;
-                onClicked: checked = !checked;
+                onClicked: {
+                    checked = !checked;
+                    if (exportSettings && exportSettings.lockAspectRatioChecked !== checked) {
+                        exportSettings.lockAspectRatioChecked = checked;
+                    }
+                }
                 textColor: checked ? styleAccentColor : styleTextColor;
                 display: QQC.Button.IconOnly;
                 tooltip: qsTranslate("Export", "Lock aspect ratio");
-                onCheckedChanged: if (checked && exportSettings) { exportSettings.aspectRatio = simpleOutputWidth.value / Math.max(1, simpleOutputHeight.value); }
+                onCheckedChanged: {
+                    if (exportSettings && exportSettings.lockAspectRatioChecked !== checked) {
+                        exportSettings.lockAspectRatioChecked = checked;
+                    }
+                    if (checked && exportSettings) {
+                        exportSettings.aspectRatio = simpleOutputWidth.value / Math.max(1, simpleOutputHeight.value);
+                    }
+                }
             }
             NumberField {
                 id: simpleOutputHeight;
@@ -165,8 +177,7 @@ Column {
                 onClicked: {
                     // Reuse Full mode's size menu
                     if (exportSettings && exportSettings.sizeMenu) {
-                        exportSettings.sizeMenu.y = exportSettings.sizeMenu.parent.y + exportSettings.sizeMenu.parent.height;
-                        exportSettings.sizeMenu.open();
+                        exportSettings.sizeMenu.openFrom(sizeMenuBtn);
                     }
                 }
             }
@@ -211,5 +222,6 @@ Column {
         function onOutWidthChanged(): void { simpleOutputWidth.value = exportSettings.outWidth; }
         function onOutHeightChanged(): void { simpleOutputHeight.value = exportSettings.outHeight; }
         function onOutBitrateChanged(): void { simpleBitrate.value = exportSettings.outBitrate; }
+        function onLockAspectRatioCheckedChanged(): void { simpleLockAspect.checked = exportSettings.lockAspectRatioChecked; }
     }
 }

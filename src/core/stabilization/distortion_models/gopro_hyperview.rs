@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-use crate::{ stabilization::KernelParams, lens_profile::LensProfile };
+use crate::{lens_profile::LensProfile, stabilization::KernelParams};
 
 #[derive(Default, Clone)]
-pub struct GoProHyperview { }
+pub struct GoProHyperview {}
 
 impl GoProHyperview {
     fn hyperview(uv: (f32, f32)) -> (f32, f32) {
         let x2 = uv.0 * uv.0;
         let y2 = uv.1 * uv.1;
         (
-            uv.0 * (1.5805143 + x2 * (-8.1668825 + x2 * (74.5198746 + x2 * (-451.5002441 + x2 * (1551.2922363 + x2 * (-2735.5422363 + x2 * 1923.1572266))))) + y2 * -0.1086027),
-            uv.1 * (1.0238225 + y2 * -0.1025671 + x2 * (-0.2639930 + x2 * 0.2979266))
+            uv.0 * (1.5805143
+                + x2 * (-8.1668825
+                    + x2 * (74.5198746
+                        + x2 * (-451.5002441
+                            + x2 * (1551.2922363 + x2 * (-2735.5422363 + x2 * 1923.1572266)))))
+                + y2 * -0.1086027),
+            uv.1 * (1.0238225 + y2 * -0.1025671 + x2 * (-0.2639930 + x2 * 0.2979266)),
         )
     }
 
@@ -20,20 +25,24 @@ impl GoProHyperview {
     /// From hyperview to wide
     pub fn undistort_point(&self, mut uv: (f32, f32), params: &KernelParams) -> Option<(f32, f32)> {
         let out_c2 = (params.output_width as f32, params.output_height as f32);
-        uv = ((uv.0 / out_c2.0) - 0.5,
-              (uv.1 / out_c2.1) - 0.5);
+        uv = ((uv.0 / out_c2.0) - 0.5, (uv.1 / out_c2.1) - 0.5);
 
         uv = Self::hyperview(uv);
 
         uv.0 = uv.0 / 1.555555555;
 
-        Some(((uv.0 + 0.5) * out_c2.0,
-              (uv.1 + 0.5) * out_c2.1))
+        Some(((uv.0 + 0.5) * out_c2.0, (uv.1 + 0.5) * out_c2.1))
     }
 
     /// `uv` range: (0,0)...(width, height)
     /// From wide to hyperview
-    pub fn distort_point(&self, mut x: f32, mut y: f32, _z: f32, params: &KernelParams) -> (f32, f32) {
+    pub fn distort_point(
+        &self,
+        mut x: f32,
+        mut y: f32,
+        _z: f32,
+        params: &KernelParams,
+    ) -> (f32, f32) {
         let size = (params.width as f32, params.height as f32);
         x = (x / size.0) - 0.5;
         y = (y / size.1) - 0.5;
@@ -51,13 +60,15 @@ impl GoProHyperview {
             pp.1 -= diff.1;
         }
 
-        ((pp.0 + 0.5) * size.0,
-         (pp.1 + 0.5) * size.1)
+        ((pp.0 + 0.5) * size.0, (pp.1 + 0.5) * size.1)
     }
     pub fn adjust_lens_profile(&self, profile: &mut LensProfile) {
-        let aspect = (profile.calib_dimension.w as f64 / profile.calib_dimension.h as f64 * 100.0) as usize;
-        if aspect == 114 { // It's 8:7
-            profile.calib_dimension.w = (profile.calib_dimension.w as f64 * 1.55555555555).round() as usize;
+        let aspect =
+            (profile.calib_dimension.w as f64 / profile.calib_dimension.h as f64 * 100.0) as usize;
+        if aspect == 114 {
+            // It's 8:7
+            profile.calib_dimension.w =
+                (profile.calib_dimension.w as f64 * 1.55555555555).round() as usize;
         }
         profile.lens_model = "Hyperview".into();
     }
@@ -65,8 +76,12 @@ impl GoProHyperview {
         None
     }
 
-    pub fn id()   -> &'static str { "gopro_hyperview" }
-    pub fn name() -> &'static str { "GoPro Hyperview" }
+    pub fn id() -> &'static str {
+        "gopro_hyperview"
+    }
+    pub fn name() -> &'static str {
+        "GoPro Hyperview"
+    }
 
     pub fn opencl_functions(&self) -> &'static str {
         r#"

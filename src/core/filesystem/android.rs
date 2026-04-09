@@ -1,23 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2023 Adrian <adrian.eddy at gmail>
 
-use jni::objects::{ JValue, JObject, JString };
-use jni::{ jni_str, jni_sig };
-use std::collections::HashMap;
 use super::*;
-use crate::{ function_name, dbg_call };
+use crate::{dbg_call, function_name};
+use jni::objects::{JObject, JString, JValue};
+use jni::{jni_sig, jni_str};
+use std::collections::HashMap;
 
 macro_rules! check_exception {
     ($env:expr, $typ:ty; $block:tt) => {{
-        let res = (|| -> Result<$typ> {
-            $block
-        })();
+        let res = (|| -> Result<$typ> { $block })();
         if res.is_err() {
             $env.exception_describe();
             $env.exception_clear();
         }
         res
-    }}
+    }};
 }
 
 pub fn get_jvm() -> jni::JavaVM {
@@ -43,7 +41,7 @@ impl super::FileWrapper {
 
 // 1. No local lifetimes attached to the struct
 pub struct AndroidFileHandle {
-    jvm: jni::JavaVM,                      // Store the JavaVM directly
+    jvm: jni::JavaVM,                            // Store the JavaVM directly
     parcel: jni::refs::Global<JObject<'static>>, // Store a Global reference to survive the JNI frame
     pub fd: i32,
 }
@@ -78,18 +76,19 @@ pub fn open_file(jvm: &jni::JavaVM, url: &str, open_mode: &str) -> Result<Androi
         let uri = Uri::parse(&mut env, url)?;
         let resolver = ContentResolver::get(&mut env)?;
 
-        let parcel = env.call_method(
-            resolver,
-            jni_str!("openFileDescriptor"),
-            jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;"),
-            &[
-                JValue::Object(&uri),
-                JValue::Object(&open_mode_jstr)
-            ]
-        )?.l()?;
+        let parcel = env
+            .call_method(
+                resolver,
+                jni_str!("openFileDescriptor"),
+                jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/os/ParcelFileDescriptor;"),
+                &[JValue::Object(&uri), JValue::Object(&open_mode_jstr)],
+            )?
+            .l()?;
 
         // Standard JNI int signature "()I"
-        let fd = env.call_method(&parcel, jni_str!("getFd"), jni_sig!("()I"), &[])?.i()?;
+        let fd = env
+            .call_method(&parcel, jni_str!("getFd"), jni_sig!("()I"), &[])?
+            .i()?;
 
         if fd <= 0 {
             log::error!("Failed to query android file descriptor: {fd}!");
@@ -113,7 +112,7 @@ pub struct AndroidFileInfo {
     pub size: Option<usize>,
     pub path: Option<String>,
     pub url: Option<String>,
-    pub is_dir: bool
+    pub is_dir: bool,
 }
 
 pub fn get_url_info(url: &str) -> Result<AndroidFileInfo> {
@@ -225,9 +224,15 @@ pub fn remove_file(url: &str) -> Result<bool> {
 
 pub fn is_dir_url(url: &str) -> bool {
     fn inner(url: &str) -> bool {
-        if !url.contains("/tree/")   { return false; }
-        if url.ends_with("/")        { return true; }
-        if url.contains("/children") { return true; }
+        if !url.contains("/tree/") {
+            return false;
+        }
+        if url.ends_with("/") {
+            return true;
+        }
+        if url.contains("/children") {
+            return true;
+        }
 
         match get_url_info(url) {
             Ok(x) => x.is_dir,
@@ -238,7 +243,10 @@ pub fn is_dir_url(url: &str) -> bool {
                         log::error!("Failed to get url info for {url}: {e:?}");
                         // Check if the file has extension - not ideal but should work for most cases
                         // FIXME: write this properly
-                        url.split('/').last().map(|x| !x.contains('.')).unwrap_or(false)
+                        url.split('/')
+                            .last()
+                            .map(|x| !x.contains('.'))
+                            .unwrap_or(false)
                     }
                 }
             }
@@ -264,28 +272,52 @@ impl Uri {
         };
 
         let url = env.new_string(&url)?;
-        Ok(env.call_static_method(jni_str!("android/net/Uri"), jni_str!("parse"), jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"), &[JValue::Object(&url.into())])?.l()?)
+        Ok(env
+            .call_static_method(
+                jni_str!("android/net/Uri"),
+                jni_str!("parse"),
+                jni_sig!("(Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(&url.into())],
+            )?
+            .l()?)
     }
     pub fn to_string<'a>(env: &mut jni::Env<'a>, uri: &JObject<'a>) -> Result<String> {
-        let uri_str = env.call_method(uri, jni_str!("toString"), jni_sig!(() -> JString), &[])?.l()?;
+        let uri_str = env
+            .call_method(uri, jni_str!("toString"), jni_sig!(() -> JString), &[])?
+            .l()?;
         Ok(env.as_cast::<JString>(&uri_str)?.to_string())
     }
     pub fn get_authority<'a>(env: &mut jni::Env<'a>, uri: &JObject<'a>) -> Result<JObject<'a>> {
-        Ok(env.call_method(uri, jni_str!("getAuthority"), jni_sig!(() -> JString), &[])?.l()?)
+        Ok(env
+            .call_method(uri, jni_str!("getAuthority"), jni_sig!(() -> JString), &[])?
+            .l()?)
     }
 }
 
 struct ContentResolver;
 impl ContentResolver {
     pub fn get<'a>(env: &mut jni::Env<'a>) -> Result<JObject<'a>> {
-        let context = unsafe { JObject::from_raw(env, ndk_context::android_context().context().cast()) };
-        Ok(env.call_method(context, jni_str!("getContentResolver"), jni_sig!("()Landroid/content/ContentResolver;"), &[])?.l()?)
+        let context =
+            unsafe { JObject::from_raw(env, ndk_context::android_context().context().cast()) };
+        Ok(env
+            .call_method(
+                context,
+                jni_str!("getContentResolver"),
+                jni_sig!("()Landroid/content/ContentResolver;"),
+                &[],
+            )?
+            .l()?)
     }
-    pub fn query<'a>(env: &mut jni::Env<'a>, uri: &JObject<'a>, projections: &[&str]) -> Result<Vec<HashMap<String, String>>> {
+    pub fn query<'a>(
+        env: &mut jni::Env<'a>,
+        uri: &JObject<'a>,
+        projections: &[&str],
+    ) -> Result<Vec<HashMap<String, String>>> {
         let resolver = Self::get(env)?;
 
         let mut projections_java = Vec::new();
-        let projections_arr = jni::objects::JObjectArray::<JString>::new(env, projections.len(), JString::null())?;
+        let projections_arr =
+            jni::objects::JObjectArray::<JString>::new(env, projections.len(), JString::null())?;
         for (i, arg) in projections.iter().enumerate() {
             projections_java.push(JString::from_str(env, arg)?);
             projections_arr.set_element(env, i as _, &projections_java[i])?;
@@ -300,20 +332,47 @@ impl ContentResolver {
         let mut ret = Vec::new();
 
         if !cursor.as_raw().is_null() {
-            while env.call_method(&cursor, jni_str!("moveToNext"), jni_sig!("()Z"), &[])?.z()? {
+            while env
+                .call_method(&cursor, jni_str!("moveToNext"), jni_sig!("()Z"), &[])?
+                .z()?
+            {
                 let mut map = HashMap::new();
                 for (i, x) in projections.iter().enumerate() {
-                    let column = env.call_method(&cursor, jni_str!("getColumnIndex"), jni_sig!("(Ljava/lang/String;)I"), &[JValue::Object(&projections_java[i])])?.i()?;
+                    let column = env
+                        .call_method(
+                            &cursor,
+                            jni_str!("getColumnIndex"),
+                            jni_sig!("(Ljava/lang/String;)I"),
+                            &[JValue::Object(&projections_java[i])],
+                        )?
+                        .i()?;
                     if column > -1 {
                         match *x {
                             "_size" => {
-                                let val = env.call_method(&cursor, jni_str!("getLong"), jni_sig!("(I)J"), &[JValue::Int(column)])?.j()?;
+                                let val = env
+                                    .call_method(
+                                        &cursor,
+                                        jni_str!("getLong"),
+                                        jni_sig!("(I)J"),
+                                        &[JValue::Int(column)],
+                                    )?
+                                    .j()?;
                                 map.insert(x.to_string(), format!("{}", val));
                             }
                             _ => {
-                                let val = env.call_method(&cursor, jni_str!("getString"), jni_sig!("(I)Ljava/lang/String;"), &[JValue::Int(column)])?.l()?;
+                                let val = env
+                                    .call_method(
+                                        &cursor,
+                                        jni_str!("getString"),
+                                        jni_sig!("(I)Ljava/lang/String;"),
+                                        &[JValue::Int(column)],
+                                    )?
+                                    .l()?;
                                 if !val.as_raw().is_null() {
-                                    map.insert(x.to_string(), env.as_cast::<JString>(&val)?.to_string());
+                                    map.insert(
+                                        x.to_string(),
+                                        env.as_cast::<JString>(&val)?.to_string(),
+                                    );
                                 }
                             }
                         }
@@ -333,23 +392,62 @@ impl ContentResolver {
 
 struct DocumentsContract;
 impl DocumentsContract {
-    pub fn build_document_uri_using_tree<'a>(env: &mut jni::Env<'a>, tree_uri: &JObject<'a>, doc_id: &str) -> Result<String> {
+    pub fn build_document_uri_using_tree<'a>(
+        env: &mut jni::Env<'a>,
+        tree_uri: &JObject<'a>,
+        doc_id: &str,
+    ) -> Result<String> {
         let doc_id = env.new_string(doc_id)?;
-        let document_uri = env.call_static_method(jni_str!("android/provider/DocumentsContract"), jni_str!("buildDocumentUriUsingTree"), jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;"), &[JValue::Object(tree_uri), JValue::Object(&doc_id)])?.l()?;
+        let document_uri = env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("buildDocumentUriUsingTree"),
+                jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(tree_uri), JValue::Object(&doc_id)],
+            )?
+            .l()?;
 
         Uri::to_string(env, &document_uri)
     }
-    pub fn build_children_uri_using_tree<'a>(env: &mut jni::Env<'a>, tree_uri: &JObject<'a>, doc_id: &str) -> Result<String> {
+    pub fn build_children_uri_using_tree<'a>(
+        env: &mut jni::Env<'a>,
+        tree_uri: &JObject<'a>,
+        doc_id: &str,
+    ) -> Result<String> {
         let authority = Uri::get_authority(env, tree_uri)?;
         let doc_id = env.new_string(doc_id)?;
-        let document_uri = env.call_static_method(jni_str!("android/provider/DocumentsContract"), jni_str!("buildChildDocumentsUri"), jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;"), &[JValue::Object(&authority), JValue::Object(&doc_id)])?.l()?;
+        let document_uri = env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("buildChildDocumentsUri"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(&authority), JValue::Object(&doc_id)],
+            )?
+            .l()?;
 
         Uri::to_string(env, &document_uri)
     }
-    pub fn build_child_documents_uri_using_tree<'a>(env: &mut jni::Env<'a>, url: &str) -> Result<JObject<'a>> {
+    pub fn build_child_documents_uri_using_tree<'a>(
+        env: &mut jni::Env<'a>,
+        url: &str,
+    ) -> Result<JObject<'a>> {
         let uri = Uri::parse(env, url)?;
-        let doc_id = env.call_static_method(jni_str!("android/provider/DocumentsContract"), jni_str!("getTreeDocumentId"), jni_sig!("(Landroid/net/Uri;)Ljava/lang/String;"), &[JValue::Object(&uri)])?.l()?;
-        let children_uri = env.call_static_method(jni_str!("android/provider/DocumentsContract"), jni_str!("buildChildDocumentsUriUsingTree"), jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;"), &[JValue::Object(&uri), JValue::Object(&doc_id)])?.l()?;
+        let doc_id = env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("getTreeDocumentId"),
+                jni_sig!("(Landroid/net/Uri;)Ljava/lang/String;"),
+                &[JValue::Object(&uri)],
+            )?
+            .l()?;
+        let children_uri = env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("buildChildDocumentsUriUsingTree"),
+                jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(&uri), JValue::Object(&doc_id)],
+            )?
+            .l()?;
 
         Ok(children_uri)
     }
@@ -366,14 +464,28 @@ impl DocumentsContract {
         let uri = Uri::parse(env, url)?;
         Ok(env.call_static_method("android/provider/DocumentsContract", "isDocumentUri", "(Landroid/net/Uri;)Z", &[JValue::Object(&uri)])?.z()?)
     }*/
-    pub fn delete_document<'a>(env: &mut jni::Env<'a>, resolver: &JObject<'a>, url: &str) -> Result<bool> {
+    pub fn delete_document<'a>(
+        env: &mut jni::Env<'a>,
+        resolver: &JObject<'a>,
+        url: &str,
+    ) -> Result<bool> {
         let uri = Uri::parse(env, url)?;
-        Ok(env.call_static_method(jni_str!("android/provider/DocumentsContract"), jni_str!("deleteDocument"), jni_sig!("(Landroid/content/ContentResolver;Landroid/net/Uri;)Z"), &[
-            JValue::Object(resolver),
-            JValue::Object(&uri),
-        ])?.z()?)
+        Ok(env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("deleteDocument"),
+                jni_sig!("(Landroid/content/ContentResolver;Landroid/net/Uri;)Z"),
+                &[JValue::Object(resolver), JValue::Object(&uri)],
+            )?
+            .z()?)
     }
-    pub fn create_document<'a>(env: &mut jni::Env<'a>, resolver: &JObject<'a>, tree_url: &str, filename: &str, mime_type: &str) -> Result<String> {
+    pub fn create_document<'a>(
+        env: &mut jni::Env<'a>,
+        resolver: &JObject<'a>,
+        tree_url: &str,
+        filename: &str,
+        mime_type: &str,
+    ) -> Result<String> {
         let filename = env.new_string(filename)?;
         let mime_type = env.new_string(mime_type)?;
         let tree_uri = DocumentsContract::build_child_documents_uri_using_tree(env, tree_url)?;

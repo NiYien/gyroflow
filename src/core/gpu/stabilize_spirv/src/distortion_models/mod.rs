@@ -1,20 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2023 Adrian <adrian.eddy at gmail>
 
+pub mod insta360;
 pub mod opencv_fisheye;
 pub mod opencv_standard;
 pub mod poly3;
 pub mod poly5;
 pub mod ptlens;
-pub mod insta360;
 pub mod sony;
 
-pub mod gopro_superview;
-pub mod gopro_hyperview;
 pub mod digital_stretch;
+pub mod gopro_hyperview;
+pub mod gopro_superview;
 
+use crate::glam::{Vec2, Vec3};
 use crate::KernelParams;
-use crate::glam::{ Vec2, Vec3 };
 
 macro_rules! impl_models {
     ($($id:tt::$name:tt,)*) => {
@@ -74,11 +74,18 @@ impl_models! {
 }
 
 mod none {
-    use crate::glam::{ Vec2, Vec3 };
-    pub struct None { }
+    use crate::glam::{Vec2, Vec3};
+    pub struct None {}
     impl None {
-        #[inline] pub fn undistort_point(p: Vec2, _: &crate::KernelParams) -> Vec2 { p }
-        #[inline] pub fn distort_point(p: Vec3, _: &crate::KernelParams) -> Vec2 { Vec2::new(p.x, p.y) }
-        #[cfg(not(target_arch = "spirv"))] pub fn adjust_lens_profile(_: &mut usize, _: &mut usize/*, _: &mut String*/) { }
+        #[inline]
+        pub fn undistort_point(p: Vec2, _: &crate::KernelParams) -> Vec2 {
+            p
+        }
+        #[inline]
+        pub fn distort_point(p: Vec3, _: &crate::KernelParams) -> Vec2 {
+            Vec2::new(p.x, p.y)
+        }
+        #[cfg(not(target_arch = "spirv"))]
+        pub fn adjust_lens_profile(_: &mut usize, _: &mut usize /*, _: &mut String*/) {}
     }
 }

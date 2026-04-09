@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2022 Adrian <adrian.eddy at gmail>
 
-use std::{ collections::BTreeMap, collections::btree_map::Entry, str::FromStr };
 use crate::gyro_source::GyroSource;
-use std::sync::{ Arc, Mutex }; // parking_lot::Mutex can't be used across catch_unwind
+use std::sync::{Arc, Mutex};
+use std::{collections::BTreeMap, collections::btree_map::Entry, str::FromStr}; // parking_lot::Mutex can't be used across catch_unwind
 
 macro_rules! define_keyframes {
     ($($name:ident, $color:literal, $text:literal, $format:expr,)*) => {
@@ -55,13 +55,24 @@ define_keyframes! {
     VideoSpeed,                  "#f6e926", "Video speed",                      |v| format!("{:.1}%", v * 100.0),
 }
 
-#[derive(Default, Debug, Copy, Clone, PartialEq, PartialOrd, Eq, Ord, ::serde::Serialize, ::serde::Deserialize)]
+#[derive(
+    Default,
+    Debug,
+    Copy,
+    Clone,
+    PartialEq,
+    PartialOrd,
+    Eq,
+    Ord,
+    ::serde::Serialize,
+    ::serde::Deserialize,
+)]
 pub enum Easing {
     #[default]
     NoEasing, // Linear
     EaseIn,
     EaseOut,
-    EaseInOut
+    EaseInOut,
 }
 
 #[derive(Debug, Copy, Clone, Default, ::serde::Serialize, ::serde::Deserialize)]
@@ -69,48 +80,62 @@ pub struct Keyframe {
     #[serde(default = "default_id")]
     pub id: u32,
     pub value: f64,
-    pub easing: Easing
+    pub easing: Easing,
 }
-fn default_id() -> u32 { fastrand::u32(1..2147483640) }
+fn default_id() -> u32 {
+    fastrand::u32(1..2147483640)
+}
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct KeyframeManager {
     keyframes: BTreeMap<KeyframeType, BTreeMap<i64, Keyframe>>,
     gyro_offsets: BTreeMap<i64, f64>,
     #[serde(skip)]
-    custom_provider: Option<Arc<Mutex<dyn FnMut(&KeyframeManager, &KeyframeType, f64) -> Option<f64> + Send + 'static>>>,
+    custom_provider: Option<
+        Arc<Mutex<dyn FnMut(&KeyframeManager, &KeyframeType, f64) -> Option<f64> + Send + 'static>>,
+    >,
     pub timestamp_scale: Option<f64>,
 }
 
 impl KeyframeManager {
-    pub fn new() -> Self { Self::default() }
+    pub fn new() -> Self {
+        Self::default()
+    }
 
     fn get_closest_timestamp(&self, typ: &KeyframeType, timestamp_us: i64) -> i64 {
         if let Some(x) = self.keyframes.get(typ) {
-            if let Some(existing) = x.range(timestamp_us-1000..=timestamp_us+1000).next() {
+            if let Some(existing) = x.range(timestamp_us - 1000..=timestamp_us + 1000).next() {
                 return *existing.0;
             }
         }
         timestamp_us
     }
 
-    pub fn set_custom_provider(&mut self, cb: impl FnMut(&KeyframeManager, &KeyframeType, f64) -> Option<f64> + Send + 'static) {
+    pub fn set_custom_provider(
+        &mut self,
+        cb: impl FnMut(&KeyframeManager, &KeyframeType, f64) -> Option<f64> + Send + 'static,
+    ) {
         self.custom_provider = Some(Arc::new(Mutex::new(cb)));
     }
     pub fn set(&mut self, typ: &KeyframeType, mut timestamp_us: i64, value: f64) {
         let kf = Keyframe {
             id: default_id(),
             value,
-            easing: Easing::EaseInOut
+            easing: Easing::EaseInOut,
         };
         timestamp_us = self.get_closest_timestamp(typ, timestamp_us);
         if let Some(x) = self.keyframes.get_mut(typ) {
             match x.entry(timestamp_us) {
-                Entry::Occupied(o) => { o.into_mut().value = value; }
-                Entry::Vacant(v) => { v.insert(kf); }
+                Entry::Occupied(o) => {
+                    o.into_mut().value = value;
+                }
+                Entry::Vacant(v) => {
+                    v.insert(kf);
+                }
             }
         } else {
-            self.keyframes.insert(typ.clone(), BTreeMap::from([(timestamp_us, kf)]));
+            self.keyframes
+                .insert(typ.clone(), BTreeMap::from([(timestamp_us, kf)]));
         }
     }
     pub fn set_easing(&mut self, typ: &KeyframeType, mut timestamp_us: i64, easing: Easing) {
@@ -169,7 +194,11 @@ impl KeyframeManager {
     pub fn value_at_video_timestamp(&self, typ: &KeyframeType, timestamp_ms: f64) -> Option<f64> {
         if let Some(custom) = &self.custom_provider {
             if let Ok(mut custom) = custom.lock() {
-                if let Some(v) = (*custom)(self, typ, timestamp_ms * self.timestamp_scale.unwrap_or(1.0)) {
+                if let Some(v) = (*custom)(
+                    self,
+                    typ,
+                    timestamp_ms * self.timestamp_scale.unwrap_or(1.0),
+                ) {
                     return Some(v);
                 }
             }
@@ -181,7 +210,9 @@ impl KeyframeManager {
             _ => {
                 if let Some(&first_ts) = keyframes.keys().next() {
                     if let Some(&last_ts) = keyframes.keys().next_back() {
-                        let timestamp_us = (timestamp_ms * 1000.0 * self.timestamp_scale.unwrap_or(1.0)).round() as i64;
+                        let timestamp_us =
+                            (timestamp_ms * 1000.0 * self.timestamp_scale.unwrap_or(1.0)).round()
+                                as i64;
                         let lookup_ts = timestamp_us.min(last_ts).max(first_ts);
                         if let Some(offs1) = keyframes.range(..=lookup_ts).next_back() {
                             if *offs1.0 == lookup_ts {
@@ -202,7 +233,11 @@ impl KeyframeManager {
         }
     }
 
-    pub fn value_at_gyro_timestamp(&self, typ: &KeyframeType, mut timestamp_ms: f64) -> Option<f64> {
+    pub fn value_at_gyro_timestamp(
+        &self,
+        typ: &KeyframeType,
+        mut timestamp_ms: f64,
+    ) -> Option<f64> {
         timestamp_ms += GyroSource::offset_at_timestamp(&self.gyro_offsets, timestamp_ms);
         self.value_at_video_timestamp(typ, timestamp_ms)
     }
@@ -212,7 +247,11 @@ impl KeyframeManager {
     }
 
     pub fn get_all_keys(&self) -> Vec<&KeyframeType> {
-        self.keyframes.iter().filter(|(_, v)| !v.is_empty()).map(|(k, _)| k).collect()
+        self.keyframes
+            .iter()
+            .filter(|(_, v)| !v.is_empty())
+            .map(|(k, _)| k)
+            .collect()
     }
 
     pub fn update_gyro(&mut self, gyro: &GyroSource) {
@@ -236,25 +275,33 @@ impl KeyframeManager {
         }
     }
 
-    pub fn next_keyframe(&self, ts: i64, typ: Option<KeyframeType>) -> Option<(KeyframeType, i64, Keyframe)> {
+    pub fn next_keyframe(
+        &self,
+        ts: i64,
+        typ: Option<KeyframeType>,
+    ) -> Option<(KeyframeType, i64, Keyframe)> {
         if let Some(kf) = typ {
-            let res = self.keyframes.get(&kf)?.range(ts+1..).next()?;
+            let res = self.keyframes.get(&kf)?.range(ts + 1..).next()?;
             Some((kf, *res.0, *res.1))
         } else {
             self.keyframes
                 .iter()
-                .filter_map(|(&k, _)| self.next_keyframe(ts, Some(k)) )
+                .filter_map(|(&k, _)| self.next_keyframe(ts, Some(k)))
                 .min_by_key(|(_nt, nts, _nk)| (nts - ts).abs())
         }
     }
-    pub fn prev_keyframe(&self, ts: i64, typ: Option<KeyframeType>) -> Option<(KeyframeType, i64, Keyframe)> {
-       if let Some(kf) = typ {
+    pub fn prev_keyframe(
+        &self,
+        ts: i64,
+        typ: Option<KeyframeType>,
+    ) -> Option<(KeyframeType, i64, Keyframe)> {
+        if let Some(kf) = typ {
             let res = self.keyframes.get(&kf)?.range(..ts).next_back()?;
             Some((kf, *res.0, *res.1))
         } else {
             self.keyframes
                 .iter()
-                .filter_map(|(&k, _)| self.prev_keyframe(ts, Some(k)) )
+                .filter_map(|(&k, _)| self.prev_keyframe(ts, Some(k)))
                 .min_by_key(|(_nt, nts, _nk)| (nts - ts).abs())
         }
     }
@@ -262,17 +309,25 @@ impl KeyframeManager {
 
 impl FromStr for KeyframeType {
     type Err = serde_json::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> { serde_json::from_str(&format!("\"{}\"", s)) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(&format!("\"{}\"", s))
+    }
 }
 impl ToString for KeyframeType {
-    fn to_string(&self) -> String { format!("{:?}", self) }
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
 }
 impl FromStr for Easing {
     type Err = serde_json::Error;
-    fn from_str(s: &str) -> Result<Self, Self::Err> { serde_json::from_str(&format!("\"{}\"", s)) }
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        serde_json::from_str(&format!("\"{}\"", s))
+    }
 }
 impl ToString for Easing {
-    fn to_string(&self) -> String { format!("{:?}", self) }
+    fn to_string(&self) -> String {
+        format!("{:?}", self)
+    }
 }
 
 impl Easing {
@@ -280,20 +335,26 @@ impl Easing {
         // let a_in  = a == &Self::EaseIn  || a == &Self::EaseInOut;
         // let b_out = b == &Self::EaseOut || b == &Self::EaseInOut;
         let a_out = a == &Self::EaseOut || a == &Self::EaseInOut;
-        let b_in  = b == &Self::EaseIn  || b == &Self::EaseInOut;
+        let b_in = b == &Self::EaseIn || b == &Self::EaseInOut;
 
-        if a_out && b_in { return Self::EaseInOut; }
-        if b_in { return Self::EaseOut; }
-        if a_out { return Self::EaseIn; }
+        if a_out && b_in {
+            return Self::EaseInOut;
+        }
+        if b_in {
+            return Self::EaseOut;
+        }
+        if a_out {
+            return Self::EaseIn;
+        }
 
         Self::NoEasing
     }
     pub fn interpolate(&self, a: f64, b: f64, mut x: f64) -> f64 {
         x = match self {
-            Self::EaseIn    => simple_easing::sine_in    (x as f32) as f64, // https://easings.net/#easeInSine
-            Self::EaseOut   => simple_easing::sine_out   (x as f32) as f64, // https://easings.net/#easeOutSine
+            Self::EaseIn => simple_easing::sine_in(x as f32) as f64, // https://easings.net/#easeInSine
+            Self::EaseOut => simple_easing::sine_out(x as f32) as f64, // https://easings.net/#easeOutSine
             Self::EaseInOut => simple_easing::sine_in_out(x as f32) as f64, // https://easings.net/#easeInOutSine
-            _ => x
+            _ => x,
         };
 
         a * (1.0 - x) + b * x

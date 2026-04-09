@@ -4,7 +4,17 @@
 use crate::gpu::drawing::*;
 
 // Ported from OpenCV: https://github.com/opencv/opencv/blob/4.x/modules/calib3d/src/calibinit.cpp#L2078
-pub fn draw_chessboard_corners(org_width: usize, org_height: usize, w: usize, h: usize, drawing: &mut DrawCanvas, pattern_size: (usize, usize), corners: &[(f32, f32)], found: bool, inverted: bool) {
+pub fn draw_chessboard_corners(
+    org_width: usize,
+    org_height: usize,
+    w: usize,
+    h: usize,
+    drawing: &mut DrawCanvas,
+    pattern_size: (usize, usize),
+    corners: &[(f32, f32)],
+    found: bool,
+    inverted: bool,
+) {
     const LINE_COLORS: &[Color] = &[
         Color::Red,     // #ff0000
         Color::Blue2,   // #0080ff
@@ -12,7 +22,7 @@ pub fn draw_chessboard_corners(org_width: usize, org_height: usize, w: usize, h:
         Color::Green,   // #00ff00
         Color::Blue3,   // #00C8C8
         Color::Blue,    // #0000ff
-        Color::Magenta  // #ff00ff
+        Color::Magenta, // #ff00ff
     ];
 
     let ratio_w = w as f32 / org_width as f32;
@@ -54,15 +64,31 @@ pub fn draw_chessboard_corners(org_width: usize, org_height: usize, w: usize, h:
 }
 
 fn line(drawing: &mut DrawCanvas, p1: (f32, f32), p2: (f32, f32), color: Color) {
-    let points = line_drawing::Bresenham::new((p1.0 as isize, p1.1 as isize), (p2.0 as isize, p2.1 as isize));
+    let points = line_drawing::Bresenham::new(
+        (p1.0 as isize, p1.1 as isize),
+        (p2.0 as isize, p2.1 as isize),
+    );
     draw_pixels(drawing, color, points);
 }
 fn circle(drawing: &mut DrawCanvas, center: (f32, f32), radius: f32, color: Color) {
-    let points = line_drawing::BresenhamCircle::new(center.0 as isize, center.1 as isize, radius as isize);
+    let points =
+        line_drawing::BresenhamCircle::new(center.0 as isize, center.1 as isize, radius as isize);
     draw_pixels(drawing, color, points);
 }
-fn draw_pixels(drawing: &mut DrawCanvas, color: Color, points: impl Iterator<Item = line_drawing::Point<isize>>) {
+fn draw_pixels(
+    drawing: &mut DrawCanvas,
+    color: Color,
+    points: impl Iterator<Item = line_drawing::Point<isize>>,
+) {
     for point in points {
-        drawing.put_pixel(point.0 as i32, point.1 as i32, color, Alpha::Alpha100, Stage::OnInput, false, 1);
+        drawing.put_pixel(
+            point.0 as i32,
+            point.1 as i32,
+            color,
+            Alpha::Alpha100,
+            Stage::OnInput,
+            false,
+            1,
+        );
     }
 }

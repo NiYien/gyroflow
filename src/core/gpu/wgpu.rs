@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
+use super::wgpu_interop::*;
+use crate::gpu::{BufferSource, Buffers};
+use crate::stabilization::KernelParams;
+use crate::stabilization::distortion_models::DistortionModel;
+use parking_lot::{Mutex, RwLock};
 use std::borrow::Cow;
-use std::sync::atomic::{ AtomicUsize, Ordering::SeqCst };
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use wgpu::Adapter;
 use wgpu::BufferUsages;
 use wgpu::util::DeviceExt;
-use parking_lot::{ RwLock, Mutex };
-use crate::gpu:: { Buffers, BufferSource };
-use crate::stabilization::KernelParams;
-use crate::stabilization::distortion_models::DistortionModel;
-use super::wgpu_interop::*;
 
 #[derive(Debug)]
 pub enum WgpuError {
@@ -22,10 +22,10 @@ pub enum WgpuError {
 enum PipelineType {
     None,
     Render(wgpu::RenderPipeline),
-    Compute(wgpu::ComputePipeline)
+    Compute(wgpu::ComputePipeline),
 }
 
-pub struct WgpuWrapper  {
+pub struct WgpuWrapper {
     staging_buffer: Option<wgpu::Buffer>,
     buf_matrices: Option<wgpu::Buffer>,
     buf_params: Option<wgpu::Buffer>,
@@ -61,7 +61,10 @@ impl Drop for WgpuWrapper {
         self.pipeline = PipelineType::None;
         self.bind_group = None;
 
-        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
     }
 }
 
@@ -77,10 +80,15 @@ impl WgpuWrapper {
     pub fn list_devices() -> Vec<String> {
         if ADAPTERS.read().is_empty() {
             let devices = std::panic::catch_unwind(|| -> Vec<Adapter> {
-                pollster::block_on(INSTANCE.lock().enumerate_adapters(wgpu::Backends::all())).into_iter().filter(|x| !EXCLUSIONS.iter().any(|e| x.get_info().name.contains(e))).collect()
+                pollster::block_on(INSTANCE.lock().enumerate_adapters(wgpu::Backends::all()))
+                    .into_iter()
+                    .filter(|x| !EXCLUSIONS.iter().any(|e| x.get_info().name.contains(e)))
+                    .collect()
             });
             match devices {
-                Ok(devices) => { *ADAPTERS.write() = devices; },
+                Ok(devices) => {
+                    *ADAPTERS.write() = devices;
+                }
                 Err(e) => {
                     if let Some(s) = e.downcast_ref::<&str>() {
                         log::error!("Failed to initialize wgpu {}", s);
@@ -93,7 +101,14 @@ impl WgpuWrapper {
             }
         }
 
-        ADAPTERS.read().iter().map(|x| { let x = x.get_info(); format!("{} ({:?})", x.name, x.backend) }).collect()
+        ADAPTERS
+            .read()
+            .iter()
+            .map(|x| {
+                let x = x.get_info();
+                format!("{} ({:?})", x.name, x.backend)
+            })
+            .collect()
     }
 
     pub fn set_device(index: usize) -> Option<()> {
@@ -127,7 +142,8 @@ impl WgpuWrapper {
             power_preference: wgpu::PowerPreference::HighPerformance,
             force_fallback_adapter: false,
             compatible_surface: None,
-        })).ok()?;
+        }))
+        .ok()?;
         let info = adapter.get_info();
         log::debug!("WGPU adapter: {:?}", &info);
         if info.device_type == wgpu::DeviceType::Cpu {
@@ -143,10 +159,30 @@ impl WgpuWrapper {
         Some((name, list_name))
     }
 
-    pub fn new(params: &KernelParams, wgpu_format: (wgpu::TextureFormat, &str, bool), distortion_model: DistortionModel, digital_lens: Option<DistortionModel>, buffers: &Buffers, mut drawing_len: usize) -> Result<Self, WgpuError> {
-        let max_matrix_count = 14 * if (params.flags & 16) == 16 { params.width } else { params.height } as usize;
+    pub fn new(
+        params: &KernelParams,
+        wgpu_format: (wgpu::TextureFormat, &str, bool),
+        distortion_model: DistortionModel,
+        digital_lens: Option<DistortionModel>,
+        buffers: &Buffers,
+        mut drawing_len: usize,
+    ) -> Result<Self, WgpuError> {
+        let max_matrix_count = 14
+            * if (params.flags & 16) == 16 {
+                params.width
+            } else {
+                params.height
+            } as usize;
 
-        if params.height < 4 || params.output_height < 4 || buffers.input.size.0 < 16 || buffers.input.size.2 < 16 || buffers.output.size.0 < 16 || buffers.output.size.2 < 16 || params.width > 16384 || params.output_width > 16384 {
+        if params.height < 4
+            || params.output_height < 4
+            || buffers.input.size.0 < 16
+            || buffers.input.size.2 < 16
+            || buffers.output.size.0 < 16
+            || buffers.output.size.2 < 16
+            || params.width > 16384
+            || params.output_width > 16384
+        {
             return Err(WgpuError::ParamCheck);
         }
 
@@ -161,7 +197,9 @@ impl WgpuWrapper {
 
         let mut adapter_id = ADAPTER.load(SeqCst);
         let adapter_initialized = ADAPTERS.read().get(adapter_id).is_some();
-        if !adapter_initialized { Self::initialize_context(); }
+        if !adapter_initialized {
+            Self::initialize_context();
+        }
         let lock = ADAPTERS.read();
         adapter_id = ADAPTER.load(SeqCst);
 
@@ -171,67 +209,113 @@ impl WgpuWrapper {
         }
 
         if let Some(adapter) = lock.get(adapter_id) {
-            log::debug!("WGPU initializing adapter #{adapter_id}: {:?}", adapter.get_info());
+            log::debug!(
+                "WGPU initializing adapter #{adapter_id}: {:?}",
+                adapter.get_info()
+            );
             let (device, queue) = match &buffers.input.data {
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
-                BufferSource::Metal { command_queue, .. } |
-                BufferSource::MetalBuffer { command_queue, .. } if !(*command_queue).is_null() => {
-                    unsafe {
-                        use objc2::rc::Retained;
-                        use objc2::runtime::ProtocolObject;
-                        use objc2_metal::*;
-                        use wgpu::hal::api::Metal;
+                BufferSource::Metal { command_queue, .. }
+                | BufferSource::MetalBuffer { command_queue, .. }
+                    if !(*command_queue).is_null() =>
+                unsafe {
+                    use objc2::rc::Retained;
+                    use objc2::runtime::ProtocolObject;
+                    use objc2_metal::*;
+                    use wgpu::hal::api::Metal;
 
-                        let mtl_cq: Retained<ProtocolObject<dyn MTLCommandQueue>> =
-                            Retained::retain(*command_queue as *mut ProtocolObject<dyn MTLCommandQueue>).unwrap();
-                        let mtl_dev = mtl_cq.device();
+                    let mtl_cq: Retained<ProtocolObject<dyn MTLCommandQueue>> = Retained::retain(
+                        *command_queue as *mut ProtocolObject<dyn MTLCommandQueue>,
+                    )
+                    .unwrap();
+                    let mtl_dev = mtl_cq.device();
 
-                        let max_buffer_bits = if cfg!(any(target_os = "android", target_os = "ios")) { 29 } else { 31 };
-                        let max_storage_buffer_bits = if cfg!(any(target_os = "android", target_os = "ios")) { 27 } else { 31 };
+                    let max_buffer_bits = if cfg!(any(target_os = "android", target_os = "ios")) {
+                        29
+                    } else {
+                        31
+                    };
+                    let max_storage_buffer_bits =
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            27
+                        } else {
+                            31
+                        };
 
-                        let adapter_limits = adapter.limits();
-                        let mut limits = wgpu::Limits::default().using_resolution(adapter_limits.clone());
+                    let adapter_limits = adapter.limits();
+                    let mut limits =
+                        wgpu::Limits::default().using_resolution(adapter_limits.clone());
 
-                        limits.max_storage_buffers_per_shader_stage = 6.min(adapter_limits.max_storage_buffers_per_shader_stage);
-                        limits.max_storage_textures_per_shader_stage = 4.min(adapter_limits.max_storage_textures_per_shader_stage);
-                        limits.max_buffer_size = ((1 << max_buffer_bits) - 1).min(adapter_limits.max_buffer_size);
-                        limits.max_storage_buffer_binding_size = ((1 << max_storage_buffer_bits) - 1+5).min(adapter_limits.max_storage_buffer_binding_size);
+                    limits.max_storage_buffers_per_shader_stage =
+                        6.min(adapter_limits.max_storage_buffers_per_shader_stage);
+                    limits.max_storage_textures_per_shader_stage =
+                        4.min(adapter_limits.max_storage_textures_per_shader_stage);
+                    limits.max_buffer_size =
+                        ((1 << max_buffer_bits) - 1).min(adapter_limits.max_buffer_size);
+                    limits.max_storage_buffer_binding_size = ((1 << max_storage_buffer_bits) - 1
+                        + 5)
+                    .min(adapter_limits.max_storage_buffer_binding_size);
 
-                        adapter.create_device_from_hal(wgpu::hal::OpenDevice::<Metal> {
-                            device: <Metal as wgpu::hal::Api>::Device::device_from_raw(mtl_dev, wgpu::Features::empty()),
-                            queue: <Metal as wgpu::hal::Api>::Queue::queue_from_raw(mtl_cq, 1.0)
-                        }, &wgpu::DeviceDescriptor {
-                            label: None,
-                            required_features: wgpu::Features::empty(),
-                            required_limits: limits,
-                            memory_hints: wgpu::MemoryHints::Performance,
-                            trace: wgpu::Trace::Off,
-                            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                        }).map_err(|e| WgpuError::RequestDevice(e))?
-                    }
+                    adapter
+                        .create_device_from_hal(
+                            wgpu::hal::OpenDevice::<Metal> {
+                                device: <Metal as wgpu::hal::Api>::Device::device_from_raw(
+                                    mtl_dev,
+                                    wgpu::Features::empty(),
+                                ),
+                                queue: <Metal as wgpu::hal::Api>::Queue::queue_from_raw(
+                                    mtl_cq, 1.0,
+                                ),
+                            },
+                            &wgpu::DeviceDescriptor {
+                                label: None,
+                                required_features: wgpu::Features::empty(),
+                                required_limits: limits,
+                                memory_hints: wgpu::MemoryHints::Performance,
+                                trace: wgpu::Trace::Off,
+                                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                            },
+                        )
+                        .map_err(|e| WgpuError::RequestDevice(e))?
                 },
                 _ => {
-                    let max_buffer_bits = if cfg!(any(target_os = "android", target_os = "ios")) { 29 } else { 31 };
-                    let max_storage_buffer_bits = if cfg!(any(target_os = "android", target_os = "ios")) { 27 } else { 31 };
+                    let max_buffer_bits = if cfg!(any(target_os = "android", target_os = "ios")) {
+                        29
+                    } else {
+                        31
+                    };
+                    let max_storage_buffer_bits =
+                        if cfg!(any(target_os = "android", target_os = "ios")) {
+                            27
+                        } else {
+                            31
+                        };
                     let adapter_limits = adapter.limits();
 
-                    let mut limits = wgpu::Limits::default().using_resolution(adapter_limits.clone());
+                    let mut limits =
+                        wgpu::Limits::default().using_resolution(adapter_limits.clone());
 
-                    limits.max_storage_buffers_per_shader_stage = 6.min(adapter_limits.max_storage_buffers_per_shader_stage);
-                    limits.max_storage_textures_per_shader_stage = 4.min(adapter_limits.max_storage_textures_per_shader_stage);
-                    limits.max_buffer_size = ((1 << max_buffer_bits) - 1).min(adapter_limits.max_buffer_size);
-                    limits.max_storage_buffer_binding_size = ((1 << max_storage_buffer_bits) - 1+5).min(adapter_limits.max_storage_buffer_binding_size);
+                    limits.max_storage_buffers_per_shader_stage =
+                        6.min(adapter_limits.max_storage_buffers_per_shader_stage);
+                    limits.max_storage_textures_per_shader_stage =
+                        4.min(adapter_limits.max_storage_textures_per_shader_stage);
+                    limits.max_buffer_size =
+                        ((1 << max_buffer_bits) - 1).min(adapter_limits.max_buffer_size);
+                    limits.max_storage_buffer_binding_size = ((1 << max_storage_buffer_bits) - 1
+                        + 5)
+                    .min(adapter_limits.max_storage_buffer_binding_size);
 
                     let mut result = Err(WgpuError::NoAvailableAdapter);
                     for _ in 0..4 {
-                        let device = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-                            label: None,
-                            required_features: wgpu::Features::empty(),
-                            required_limits: limits.clone(),
-                            memory_hints: wgpu::MemoryHints::Performance,
-                            trace: wgpu::Trace::Off,
-                            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                        }));
+                        let device =
+                            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                                label: None,
+                                required_features: wgpu::Features::empty(),
+                                required_limits: limits.clone(),
+                                memory_hints: wgpu::MemoryHints::Performance,
+                                trace: wgpu::Trace::Off,
+                                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                            }));
                         if let Err(e) = &device {
                             let e_str = format!("{e:?}");
                             let re = regex::Regex::new("FailedLimit \\{ name: \"(.*?)\", requested: [0-9]+, allowed: ([0-9]+)").unwrap();
@@ -239,11 +323,26 @@ impl WgpuWrapper {
                                 log::debug!("Catching wgpu limit error: {e_str}");
                                 let (_, [name, allowed]) = captures.extract();
                                 match name {
-                                    "max_storage_buffers_per_shader_stage"  => { limits.max_storage_buffers_per_shader_stage  = allowed.parse().unwrap(); continue; },
-                                    "max_storage_textures_per_shader_stage" => { limits.max_storage_textures_per_shader_stage = allowed.parse().unwrap(); continue; },
-                                    "max_buffer_size"                       => { limits.max_buffer_size                       = allowed.parse().unwrap(); continue; },
-                                    "max_storage_buffer_binding_size"       => { limits.max_storage_buffer_binding_size       = allowed.parse().unwrap(); continue; },
-                                    _ => { }
+                                    "max_storage_buffers_per_shader_stage" => {
+                                        limits.max_storage_buffers_per_shader_stage =
+                                            allowed.parse().unwrap();
+                                        continue;
+                                    }
+                                    "max_storage_textures_per_shader_stage" => {
+                                        limits.max_storage_textures_per_shader_stage =
+                                            allowed.parse().unwrap();
+                                        continue;
+                                    }
+                                    "max_buffer_size" => {
+                                        limits.max_buffer_size = allowed.parse().unwrap();
+                                        continue;
+                                    }
+                                    "max_storage_buffer_binding_size" => {
+                                        limits.max_storage_buffer_binding_size =
+                                            allowed.parse().unwrap();
+                                        continue;
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -264,7 +363,12 @@ impl WgpuWrapper {
             let mut lens_model_functions = distortion_model.wgsl_functions().to_string();
             let default_digital_lens = "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }
                                         fn digital_distort_point  (uv: vec2<f32>) -> vec2<f32> { return uv; }";
-            lens_model_functions.push_str(digital_lens.as_ref().map(|x| x.wgsl_functions()).unwrap_or(default_digital_lens));
+            lens_model_functions.push_str(
+                digital_lens
+                    .as_ref()
+                    .map(|x| x.wgsl_functions())
+                    .unwrap_or(default_digital_lens),
+            );
             kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_model_functions);
             kernel = kernel.replace("SCALAR", wgpu_format.1);
 
@@ -290,7 +394,7 @@ impl WgpuWrapper {
 
             let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 source: wgpu::ShaderSource::Wgsl(Cow::Owned(kernel)),
-                label: None
+                label: None,
             });
 
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as i32;
@@ -298,40 +402,206 @@ impl WgpuWrapper {
             let padded_out_stride = output_stride + padding;
             let staging_size = padded_out_stride * output_height;
 
-            let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor { size: staging_size as u64, usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST, label: None, mapped_at_creation: false });
-            let buf_matrices  = device.create_buffer(&wgpu::BufferDescriptor { size: params_size, usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, label: None, mapped_at_creation: false });
-            let buf_params = device.create_buffer(&wgpu::BufferDescriptor { size: std::mem::size_of::<KernelParams>() as u64, usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST, label: None, mapped_at_creation: false });
-            let buf_drawing = device.create_buffer(&wgpu::BufferDescriptor { size: drawing_len as u64, usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, label: None, mapped_at_creation: false });
-            let buf_coeffs  = device.create_buffer_init(&wgpu::util::BufferInitDescriptor { label: None, contents: bytemuck::cast_slice(&crate::stabilization::COEFFS), usage: wgpu::BufferUsages::STORAGE });
-            let buf_mesh_data = device.create_buffer(&wgpu::BufferDescriptor { size: (crate::gyro_source::splines::MAX_BUFFER_SIZE * std::mem::size_of::<f32>()).max(4096) as _, usage: BufferUsages::STORAGE | BufferUsages::COPY_DST, label: None, mapped_at_creation: false });
+            let staging_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                size: staging_size as u64,
+                usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                label: None,
+                mapped_at_creation: false,
+            });
+            let buf_matrices = device.create_buffer(&wgpu::BufferDescriptor {
+                size: params_size,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                label: None,
+                mapped_at_creation: false,
+            });
+            let buf_params = device.create_buffer(&wgpu::BufferDescriptor {
+                size: std::mem::size_of::<KernelParams>() as u64,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                label: None,
+                mapped_at_creation: false,
+            });
+            let buf_drawing = device.create_buffer(&wgpu::BufferDescriptor {
+                size: drawing_len as u64,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                label: None,
+                mapped_at_creation: false,
+            });
+            let buf_coeffs = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: None,
+                contents: bytemuck::cast_slice(&crate::stabilization::COEFFS),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+            let buf_mesh_data = device.create_buffer(&wgpu::BufferDescriptor {
+                size: (crate::gyro_source::splines::MAX_BUFFER_SIZE * std::mem::size_of::<f32>())
+                    .max(4096) as _,
+                usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                label: None,
+                mapped_at_creation: false,
+            });
 
             let bind_group_layout = if uses_textures {
                 let sample_type = match wgpu_format.1 {
                     "f32" => wgpu::TextureSampleType::Float { filterable: false },
                     "u32" => wgpu::TextureSampleType::Uint,
-                    _ => { log::error!("Unknown texture scalar: {:?}", wgpu_format); wgpu::TextureSampleType::Float { filterable: false } }
+                    _ => {
+                        log::error!("Unknown texture scalar: {:?}", wgpu_format);
+                        wgpu::TextureSampleType::Float { filterable: false }
+                    }
                 };
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     entries: &[
-                        wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<KernelParams>() as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(params_size as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new((crate::stabilization::COEFFS.len() * std::mem::size_of::<f32>()) as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(4096) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(drawing_len as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::FRAGMENT, ty: wgpu::BindingType::Texture { sample_type, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false }, count: None },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                    KernelParams,
+                                >(
+                                )
+                                    as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(params_size as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    (crate::stabilization::COEFFS.len()
+                                        * std::mem::size_of::<f32>())
+                                        as _,
+                                ),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(4096),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(drawing_len as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type,
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
+                            },
+                            count: None,
+                        },
                     ],
                     label: None,
                 })
             } else {
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                     entries: &[
-                        wgpu::BindGroupLayoutEntry { binding: 0, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<KernelParams>() as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 1, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(params_size as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 2, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new((crate::stabilization::COEFFS.len() * std::mem::size_of::<f32>()) as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 3, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(4096) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 4, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(drawing_len as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 5, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(in_size as _) }, count: None },
-                        wgpu::BindGroupLayoutEntry { binding: 6, visibility: wgpu::ShaderStages::COMPUTE, ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(out_size as _) }, count: None },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<
+                                    KernelParams,
+                                >(
+                                )
+                                    as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(params_size as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(
+                                    (crate::stabilization::COEFFS.len()
+                                        * std::mem::size_of::<f32>())
+                                        as _,
+                                ),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(4096),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(drawing_len as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(in_size as _),
+                            },
+                            count: None,
+                        },
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 6,
+                            visibility: wgpu::ShaderStages::COMPUTE,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(out_size as _),
+                            },
+                            count: None,
+                        },
                     ],
                     label: None,
                 })
@@ -340,57 +610,61 @@ impl WgpuWrapper {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: None,
                 bind_group_layouts: &[Some(&bind_group_layout)],
-                immediate_size: 0
+                immediate_size: 0,
             });
 
             let compilation_options = wgpu::PipelineCompilationOptions {
                 constants: &[
-                    ("100", params.interpolation     as f64),
+                    ("100", params.interpolation as f64),
                     ("101", params.pix_element_count as f64),
-                    ("102", params.bytes_per_pixel   as f64),
-                    ("103", params.flags             as f64),
+                    ("102", params.bytes_per_pixel as f64),
+                    ("103", params.flags as f64),
                 ],
                 ..Default::default()
             };
 
             let pipeline = if uses_textures {
-                PipelineType::Render(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: None,
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("undistort_vertex"),
-                        buffers: &[],
-                        compilation_options: compilation_options.clone(),
+                PipelineType::Render(device.create_render_pipeline(
+                    &wgpu::RenderPipelineDescriptor {
+                        label: None,
+                        layout: Some(&pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &shader,
+                            entry_point: Some("undistort_vertex"),
+                            buffers: &[],
+                            compilation_options: compilation_options.clone(),
+                        },
+                        fragment: Some(wgpu::FragmentState {
+                            module: &shader,
+                            entry_point: Some("undistort_fragment"),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format: wgpu_format.0,
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::default(),
+                            })],
+                            compilation_options,
+                        }),
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleStrip,
+                            ..wgpu::PrimitiveState::default()
+                        },
+                        multiview_mask: None,
+                        depth_stencil: None,
+                        multisample: wgpu::MultisampleState::default(),
+                        cache: Default::default(),
                     },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("undistort_fragment"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: wgpu_format.0,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::default(),
-                        })],
-                        compilation_options,
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleStrip,
-                        ..wgpu::PrimitiveState::default()
-                    },
-                    multiview_mask: None,
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    cache: Default::default()
-                }))
+                ))
             } else {
-                PipelineType::Compute(device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                    module: &shader,
-                    entry_point: Some("undistort_compute"),
-                    label: None,
-                    layout: Some(&pipeline_layout),
-                    compilation_options,
-                    cache: Default::default()
-                }))
+                PipelineType::Compute(device.create_compute_pipeline(
+                    &wgpu::ComputePipelineDescriptor {
+                        module: &shader,
+                        entry_point: Some("undistort_compute"),
+                        label: None,
+                        layout: Some(&pipeline_layout),
+                        compilation_options,
+                        cache: Default::default(),
+                    },
+                ))
             };
 
             let bind_group = match &pipeline {
@@ -399,31 +673,84 @@ impl WgpuWrapper {
                     Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &p.get_bind_group_layout(0),
-                        entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: buf_params.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 1, resource: buf_matrices.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 2, resource: buf_coeffs.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 3, resource: buf_mesh_data.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 4, resource: buf_drawing.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&in_texture.wgpu_texture.as_ref().unwrap().create_view(&wgpu::TextureViewDescriptor::default())) },
-                        ],
+                        entries:
+                            &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: buf_params.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: buf_matrices.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: buf_coeffs.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: buf_mesh_data.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: buf_drawing.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource:
+                                        wgpu::BindingResource::TextureView(
+                                            &in_texture.wgpu_texture.as_ref().unwrap().create_view(
+                                                &wgpu::TextureViewDescriptor::default(),
+                                            ),
+                                        ),
+                                },
+                            ],
                     }))
-                },
-                PipelineType::Compute(p) => {
-                    Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
+                }
+                PipelineType::Compute(p) => Some(
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: None,
                         layout: &p.get_bind_group_layout(0),
                         entries: &[
-                            wgpu::BindGroupEntry { binding: 0, resource: buf_params.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 1, resource: buf_matrices.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 2, resource: buf_coeffs.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 3, resource: buf_mesh_data.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 4, resource: buf_drawing.as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 5, resource: in_texture.wgpu_buffer.as_ref().unwrap().as_entire_binding() },
-                            wgpu::BindGroupEntry { binding: 6, resource: out_texture.wgpu_buffer.as_ref().unwrap().as_entire_binding() },
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: buf_params.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: buf_matrices.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: buf_coeffs.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: buf_mesh_data.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: buf_drawing.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: in_texture
+                                    .wgpu_buffer
+                                    .as_ref()
+                                    .unwrap()
+                                    .as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: out_texture
+                                    .wgpu_buffer
+                                    .as_ref()
+                                    .unwrap()
+                                    .as_entire_binding(),
+                            },
                         ],
-                    }))
-                }
+                    }),
+                ),
             };
 
             Ok(Self {
@@ -443,48 +770,114 @@ impl WgpuWrapper {
                 params_size,
                 drawing_size: drawing_len as u64,
                 pixel_format: wgpu_format.0,
-                padded_out_stride: padded_out_stride as u32
+                padded_out_stride: padded_out_stride as u32,
             })
         } else {
             Err(WgpuError::NoAvailableAdapter)
         }
     }
 
-    pub fn undistort_image(&self, buffers: &mut Buffers, itm: &crate::stabilization::FrameTransform, drawing_buffer: &[u8]) -> bool {
+    pub fn undistort_image(
+        &self,
+        buffers: &mut Buffers,
+        itm: &crate::stabilization::FrameTransform,
+        drawing_buffer: &[u8],
+    ) -> bool {
         let matrices = bytemuck::cast_slice(&itm.matrices);
 
         let in_size = (buffers.input.size.2 * buffers.input.size.1) as u64;
         let out_size = (buffers.output.size.2 * buffers.output.size.1) as u64;
-        if self.in_size  != in_size  { log::error!("Buffer size mismatch! {} vs {}", self.in_size,  in_size);  return false; }
-        if self.out_size != out_size { log::error!("Buffer size mismatch! {} vs {}", self.out_size, out_size); return false; }
+        if self.in_size != in_size {
+            log::error!("Buffer size mismatch! {} vs {}", self.in_size, in_size);
+            return false;
+        }
+        if self.out_size != out_size {
+            log::error!("Buffer size mismatch! {} vs {}", self.out_size, out_size);
+            return false;
+        }
 
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
 
-        let _temp_texture = handle_input_texture(&self.device, &buffers.input, &self.queue, &mut encoder, &self.in_texture, self.pixel_format, self.padded_out_stride);
+        let _temp_texture = handle_input_texture(
+            &self.device,
+            &buffers.input,
+            &self.queue,
+            &mut encoder,
+            &self.in_texture,
+            self.pixel_format,
+            self.padded_out_stride,
+        );
 
-        if self.params_size < matrices.len() as u64    { log::error!("Buffer size mismatch! {} vs {}", self.params_size, matrices.len()); return false; }
+        if self.params_size < matrices.len() as u64 {
+            log::error!(
+                "Buffer size mismatch! {} vs {}",
+                self.params_size,
+                matrices.len()
+            );
+            return false;
+        }
 
-        self.queue.write_buffer(self.buf_matrices.as_ref().unwrap(), 0, matrices);
-        self.queue.write_buffer(self.buf_params.as_ref().unwrap(), 0, bytemuck::bytes_of(&itm.kernel_params));
+        self.queue
+            .write_buffer(self.buf_matrices.as_ref().unwrap(), 0, matrices);
+        self.queue.write_buffer(
+            self.buf_params.as_ref().unwrap(),
+            0,
+            bytemuck::bytes_of(&itm.kernel_params),
+        );
         if !drawing_buffer.is_empty() {
-            if self.drawing_size < drawing_buffer.len() as u64 { log::error!("Buffer size mismatch! {} vs {}", self.drawing_size, drawing_buffer.len()); return false; }
-            self.queue.write_buffer(self.buf_drawing.as_ref().unwrap(), 0, drawing_buffer);
+            if self.drawing_size < drawing_buffer.len() as u64 {
+                log::error!(
+                    "Buffer size mismatch! {} vs {}",
+                    self.drawing_size,
+                    drawing_buffer.len()
+                );
+                return false;
+            }
+            self.queue
+                .write_buffer(self.buf_drawing.as_ref().unwrap(), 0, drawing_buffer);
         }
         if !itm.mesh_data.is_empty() {
-            if self.buf_mesh_data.is_none() || (self.buf_mesh_data.as_ref().unwrap().size() as usize * 4) < itm.mesh_data.len() { log::error!("Buffer size mismatch buf_mesh_data! {} vs {}", self.buf_mesh_data.as_ref().unwrap().size() * 4, itm.mesh_data.len()); return false; }
-            self.queue.write_buffer(self.buf_mesh_data.as_ref().unwrap(), 0, bytemuck::cast_slice(&itm.mesh_data));
+            if self.buf_mesh_data.is_none()
+                || (self.buf_mesh_data.as_ref().unwrap().size() as usize * 4) < itm.mesh_data.len()
+            {
+                log::error!(
+                    "Buffer size mismatch buf_mesh_data! {} vs {}",
+                    self.buf_mesh_data.as_ref().unwrap().size() * 4,
+                    itm.mesh_data.len()
+                );
+                return false;
+            }
+            self.queue.write_buffer(
+                self.buf_mesh_data.as_ref().unwrap(),
+                0,
+                bytemuck::cast_slice(&itm.mesh_data),
+            );
         }
 
         match &self.pipeline {
-            PipelineType::None => { },
+            PipelineType::None => {}
             PipelineType::Compute(p) => {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: None,
+                    timestamp_writes: None,
+                });
                 cpass.set_pipeline(p);
                 cpass.set_bind_group(0, self.bind_group.as_ref(), &[]);
-                cpass.dispatch_workgroups((buffers.output.size.0 as f32 / 8.0).ceil() as u32, (buffers.output.size.1 as f32 / 8.0).ceil() as u32, 1);
-            },
+                cpass.dispatch_workgroups(
+                    (buffers.output.size.0 as f32 / 8.0).ceil() as u32,
+                    (buffers.output.size.1 as f32 / 8.0).ceil() as u32,
+                    1,
+                );
+            }
             PipelineType::Render(p) => {
-                let view = self.out_texture.wgpu_texture.as_ref().unwrap().create_view(&wgpu::TextureViewDescriptor::default());
+                let view = self
+                    .out_texture
+                    .wgpu_texture
+                    .as_ref()
+                    .unwrap()
+                    .create_view(&wgpu::TextureViewDescriptor::default());
                 let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: None,
                     timestamp_writes: None,
@@ -496,7 +889,7 @@ impl WgpuWrapper {
                             load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                             store: wgpu::StoreOp::Store,
                         },
-                        depth_slice: None
+                        depth_slice: None,
                     })],
                     multiview_mask: None,
                     depth_stencil_attachment: None,
@@ -507,7 +900,16 @@ impl WgpuWrapper {
             }
         }
 
-        let _temp_texture2 = handle_output_texture(&self.device, &buffers.output, &self.queue, &mut encoder, &self.out_texture, self.pixel_format, self.staging_buffer.as_ref().unwrap(), self.padded_out_stride);
+        let _temp_texture2 = handle_output_texture(
+            &self.device,
+            &buffers.output,
+            &self.queue,
+            &mut encoder,
+            &self.out_texture,
+            self.pixel_format,
+            self.staging_buffer.as_ref().unwrap(),
+            self.padded_out_stride,
+        );
 
         let sub_index = self.queue.submit(Some(encoder.finish()));
 
@@ -517,13 +919,17 @@ impl WgpuWrapper {
                 let (sender, receiver) = futures_intrusive::channel::shared::oneshot_channel();
                 buffer_slice.map_async(wgpu::MapMode::Read, move |v| sender.send(v).unwrap());
 
-                let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+                let _ = self.device.poll(wgpu::PollType::Wait {
+                    submission_index: None,
+                    timeout: None,
+                });
 
                 if let Some(Ok(())) = pollster::block_on(receiver.receive()) {
                     let data = buffer_slice.get_mapped_range();
                     if self.padded_out_stride == buffers.output.size.2 as u32 {
                         // Fast path
-                        (&mut buffer[..buffers.output.size.1 * buffers.output.size.2]).copy_from_slice(data.as_ref());
+                        (&mut buffer[..buffers.output.size.1 * buffers.output.size.2])
+                            .copy_from_slice(data.as_ref());
                     } else {
                         // data.as_ref()
                         //     .chunks(self.padded_out_stride as usize)
@@ -531,8 +937,8 @@ impl WgpuWrapper {
                         //     .for_each(|(src, dest)| {
                         //         dest.copy_from_slice(&src[0..buffers.output_size.2]);
                         //     });
-                        use rayon::prelude::{ ParallelSliceMut, ParallelSlice };
-                        use rayon::iter::{ ParallelIterator, IndexedParallelIterator };
+                        use rayon::iter::{IndexedParallelIterator, ParallelIterator};
+                        use rayon::prelude::{ParallelSlice, ParallelSliceMut};
                         data.as_ref()
                             .par_chunks(self.padded_out_stride as usize)
                             .zip(buffer.par_chunks_mut(buffers.output.size.2))
@@ -550,7 +956,15 @@ impl WgpuWrapper {
                     return false;
                 }
             }
-            _ => { handle_output_texture_post(&self.device, &buffers.output, &self.out_texture, self.pixel_format, sub_index); }
+            _ => {
+                handle_output_texture_post(
+                    &self.device,
+                    &buffers.output,
+                    &self.out_texture,
+                    self.pixel_format,
+                    sub_index,
+                );
+            }
         }
 
         true
@@ -559,17 +973,17 @@ impl WgpuWrapper {
 
 pub fn is_buffer_supported(buffers: &Buffers) -> bool {
     match buffers.input.data {
-        BufferSource::None           => false,
-        BufferSource::Cpu     { .. } => true,
-        BufferSource::OpenGL  { .. } => false,
+        BufferSource::None => false,
+        BufferSource::Cpu { .. } => true,
+        BufferSource::OpenGL { .. } => false,
         #[cfg(target_os = "windows")]
         BufferSource::DirectX11 { .. } => true,
         #[cfg(feature = "use-opencl")]
-        BufferSource::OpenCL  { .. } => false,
+        BufferSource::OpenCL { .. } => false,
         #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-        BufferSource::Vulkan  { .. } => true,
+        BufferSource::Vulkan { .. } => true,
         #[cfg(any(target_os = "windows", target_os = "linux"))]
-        BufferSource::CUDABuffer{ .. } => true,
+        BufferSource::CUDABuffer { .. } => true,
         #[cfg(any(target_os = "macos", target_os = "ios"))]
         BufferSource::Metal { .. } | BufferSource::MetalBuffer { .. } => true,
     }

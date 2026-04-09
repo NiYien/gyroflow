@@ -1,13 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2025 Adrian <adrian.eddy at gmail>
 
-use telemetry_parser::tags_impl::{ GroupedTagMap, GetWithType, GroupId, TagId };
 use crate::gyro_source::FileMetadata;
+use telemetry_parser::tags_impl::{GetWithType, GroupId, GroupedTagMap, TagId};
 
-pub fn init_lens_profile(md: &mut FileMetadata, input: &telemetry_parser::Input, tag_map: &GroupedTagMap, size: (usize, usize), info: &telemetry_parser::util::SampleInfo) {
-
+pub fn init_lens_profile(
+    md: &mut FileMetadata,
+    input: &telemetry_parser::Input,
+    tag_map: &GroupedTagMap,
+    size: (usize, usize),
+    info: &telemetry_parser::util::SampleInfo,
+) {
     if let Some(lens) = tag_map.get(&GroupId::Lens) {
-        if let Some(corrections) = lens.get_t(TagId::Custom("EnabledCorrections".into())) as Option<&Vec<u8>> {
+        if let Some(corrections) =
+            lens.get_t(TagId::Custom("EnabledCorrections".into())) as Option<&Vec<u8>>
+        {
             if corrections.len() == 4 && corrections[2] == 0 {
                 // No internal distortion correction - use OpenCV params
                 let timestamp_us = (info.timestamp_ms * 1000.0).round() as i64;
@@ -22,7 +29,8 @@ pub fn init_lens_profile(md: &mut FileMetadata, input: &telemetry_parser::Input,
                             lp.distortion_coefficients.push(distortion[2] as f64); // k3
                             lp.distortion_coefficients.push(distortion[3] as f64); // k4
                             lp.distortion_coefficients.push(distortion[4] as f64); // k5
-                            lp.distortion_coefficients.push(distortion[5] as f64); // k6
+                            lp.distortion_coefficients.push(distortion[5] as f64);
+                            // k6
                         }
                     }
                 }
@@ -42,12 +50,15 @@ pub fn init_lens_profile(md: &mut FileMetadata, input: &telemetry_parser::Input,
                                 let video_rotation = info.video_rotation.unwrap_or_default().abs();
                                 let is_vertical = video_rotation == 90 || video_rotation == 270;
 
-                                let focal_length_str = tag_map.get(&GroupId::Lens)
+                                let focal_length_str = tag_map
+                                    .get(&GroupId::Lens)
                                     .and_then(|x| x.get_t(TagId::FocalLength) as Option<&f32>)
                                     .map(|x| format!("{:.2} mm", *x));
 
                                 let mut lens_name = String::new();
-                                if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| map.get_t(TagId::DisplayName) as Option<&String>) {
+                                if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| {
+                                    map.get_t(TagId::DisplayName) as Option<&String>
+                                }) {
                                     lens_name = v.clone();
                                 }
                                 md.lens_profile = Some(serde_json::json!({
@@ -91,7 +102,13 @@ pub fn init_lens_profile(md: &mut FileMetadata, input: &telemetry_parser::Input,
     }
 }
 
-pub fn get_time_offset(md: &FileMetadata, _input: &telemetry_parser::Input, tag_map: &GroupedTagMap, sample_rate: f64, fps: f64) -> Option<f64> {
+pub fn get_time_offset(
+    md: &FileMetadata,
+    _input: &telemetry_parser::Input,
+    tag_map: &GroupedTagMap,
+    sample_rate: f64,
+    fps: f64,
+) -> Option<f64> {
     let exposure = (tag_map.get(&GroupId::Imager)?.get_t(TagId::ExposureTime) as Option<&f64>)?;
     let frame_time = 1000.0 / md.frame_rate.unwrap_or(fps);
     let frame_readout_time = md.frame_readout_time.unwrap_or(14.0); // better approx than nothing

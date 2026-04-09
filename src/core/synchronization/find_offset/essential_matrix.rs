@@ -1,16 +1,27 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-use rayon::iter::{ ParallelIterator, IntoParallelIterator };
-use std::sync::{ Arc, atomic::{ AtomicBool, Ordering::Relaxed } };
-use std::collections::BTreeMap;
+use super::super::{PoseEstimator, SyncParams};
 use crate::filtering::Lowpass;
 use crate::stabilization::ComputeParams;
-use super::super::{ PoseEstimator, SyncParams };
+use rayon::iter::{IntoParallelIterator, ParallelIterator};
+use std::collections::BTreeMap;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering::Relaxed},
+};
 
 use crate::gyro_source::TimeIMU;
 
-pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64, i64)], sync_params: &SyncParams, params: &ComputeParams, progress_cb: F, cancel_flag: Arc<AtomicBool>) -> Vec<(f64, f64, f64)> { // Vec<(timestamp, offset, cost)>
+pub fn find_offsets<F: Fn(f64) + Sync>(
+    estimator: &PoseEstimator,
+    ranges: &[(i64, i64)],
+    sync_params: &SyncParams,
+    params: &ComputeParams,
+    progress_cb: F,
+    cancel_flag: Arc<AtomicBool>,
+) -> Vec<(f64, f64, f64)> {
+    // Vec<(timestamp, offset, cost)>
     let estimated_gyro = estimator.estimated_gyro.read().clone();
 
     let mut offsets = Vec::new();
@@ -21,42 +32,64 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
 
     if !estimated_gyro.is_empty() && gyro.duration_ms > 0.0 && raw_imu_len > 0 {
         for (i, (from_ts, to_ts)) in ranges.iter().enumerate() {
-            if cancel_flag.load(Relaxed) { break; }
+            if cancel_flag.load(Relaxed) {
+                break;
+            }
             progress_cb(i as f64 / ranges_len);
-            if to_ts <= from_ts { continue; }
+            if to_ts <= from_ts {
+                continue;
+            }
 
-            let mut of_item: Vec<TimeIMU> = estimated_gyro.range(from_ts..to_ts).map(|v| v.1.clone()).collect();
+            let mut of_item: Vec<TimeIMU> = estimated_gyro
+                .range(from_ts..to_ts)
+                .map(|v| v.1.clone())
+                .collect();
             if !of_item.is_empty() {
                 let last_of_timestamp = of_item.last().map(|x| x.timestamp_ms).unwrap_or_default();
-                let mut gyro_item: Vec<TimeIMU> = gyro.raw_imu(&gyro.file_metadata.read()).iter().filter_map(|x| {
-                    let ts = x.timestamp_ms + sync_params.initial_offset;
-                    if ts >= of_item[0].timestamp_ms - sync_params.search_size && ts <= last_of_timestamp + sync_params.search_size {
-                        Some(x.clone())
-                    } else {
-                        None
-                    }
-                }).collect();
+                let mut gyro_item: Vec<TimeIMU> = gyro
+                    .raw_imu(&gyro.file_metadata.read())
+                    .iter()
+                    .filter_map(|x| {
+                        let ts = x.timestamp_ms + sync_params.initial_offset;
+                        if ts >= of_item[0].timestamp_ms - sync_params.search_size
+                            && ts <= last_of_timestamp + sync_params.search_size
+                        {
+                            Some(x.clone())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
                 let max_angle = get_max_angle(&of_item);
                 if max_angle < 3.0 {
-                    ::log::info!("No movement detected, max gyro angle: {}. Skipping sync point.", max_angle);
+                    ::log::info!(
+                        "No movement detected, max gyro angle: {}. Skipping sync point.",
+                        max_angle
+                    );
                     continue;
                 }
 
                 let sample_rate = raw_imu_len as f64 / (gyro.duration_ms / 1000.0);
-                let _ = Lowpass::filter_gyro_forward_backward(20.0, params.scaled_fps, &mut of_item);
+                let _ =
+                    Lowpass::filter_gyro_forward_backward(20.0, params.scaled_fps, &mut of_item);
                 let _ = Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
 
-                let gyro_bintree: BTreeMap<usize, TimeIMU> = gyro_item.into_iter().map(|x| ((x.timestamp_ms * 1000.0) as usize, x)).collect();
+                let gyro_bintree: BTreeMap<usize, TimeIMU> = gyro_item
+                    .into_iter()
+                    .map(|x| ((x.timestamp_ms * 1000.0) as usize, x))
+                    .collect();
 
-                let find_min = |a: (f64, f64), b: (f64, f64)| -> (f64, f64) { if a.1 < b.1 { a } else { b } };
+                let find_min =
+                    |a: (f64, f64), b: (f64, f64)| -> (f64, f64) { if a.1 < b.1 { a } else { b } };
 
                 // First search every 1 ms
                 let steps = sync_params.search_size as usize * 2;
                 let lowest = (0..steps)
                     .into_par_iter()
                     .map(|i| {
-                        let offs = sync_params.initial_offset - sync_params.search_size + (i as f64);
+                        let offs =
+                            sync_params.initial_offset - sync_params.search_size + (i as f64);
                         (offs, calculate_cost(offs, &of_item, &gyro_bintree))
                     })
                     .reduce_with(find_min)
@@ -75,13 +108,19 @@ pub fn find_offsets<F: Fn(f64) + Sync>(estimator: &PoseEstimator, ranges: &[(i64
                     });
 
                 if let Some(lowest) = lowest {
-                    let middle_timestamp = (*from_ts as f64 + (to_ts - from_ts) as f64 / 2.0) / 1000.0;
+                    let middle_timestamp =
+                        (*from_ts as f64 + (to_ts - from_ts) as f64 / 2.0) / 1000.0;
 
                     // Only accept offsets that are within 90% of search size range
-                    if (lowest.0 - sync_params.initial_offset).abs() < sync_params.search_size * 0.9 {
+                    if (lowest.0 - sync_params.initial_offset).abs() < sync_params.search_size * 0.9
+                    {
                         offsets.push((middle_timestamp, lowest.0, lowest.1));
                     } else {
-                        log::warn!("Sync point out of acceptable range {} < {}", (lowest.0 - sync_params.initial_offset).abs(), sync_params.search_size * 0.9);
+                        log::warn!(
+                            "Sync point out of acceptable range {} < {}",
+                            (lowest.0 - sync_params.initial_offset).abs(),
+                            sync_params.search_size * 0.9
+                        );
                     }
                 }
             }
@@ -94,9 +133,15 @@ fn get_max_angle(item: &[TimeIMU]) -> f64 {
     let mut max = 0.0;
     for x in item {
         if let Some(g) = x.gyro {
-            if g[0].abs() > max { max = g[0].abs(); }
-            if g[1].abs() > max { max = g[1].abs(); }
-            if g[2].abs() > max { max = g[2].abs(); }
+            if g[0].abs() > max {
+                max = g[0].abs();
+            }
+            if g[1].abs() > max {
+                max = g[1].abs();
+            }
+            if g[2].abs() > max {
+                max = g[2].abs();
+            }
         }
     }
     max

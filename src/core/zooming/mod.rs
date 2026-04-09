@@ -4,9 +4,9 @@
 pub mod fov_iterative;
 pub mod zoom_dynamic;
 
+use std::collections::BTreeMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::Hasher;
-use std::collections::BTreeMap;
 
 use crate::stabilization::ComputeParams;
 
@@ -22,7 +22,10 @@ impl From<i32> for ZoomMethod {
         match v {
             0 => Self::GaussianFilter,
             1 => Self::EnvelopeFollower,
-            _ => { log::error!("Invalid zooming method: {v}"); Self::GaussianFilter }
+            _ => {
+                log::error!("Invalid zooming method: {v}");
+                Self::GaussianFilter
+            }
         }
     }
 }
@@ -32,7 +35,11 @@ pub trait FieldOfViewAlgorithm {
     fn get_debug_points(&self) -> BTreeMap<i64, Vec<(f64, f64)>>;
 }
 
-pub fn calculate_fovs(compute_params: &ComputeParams, timestamps: &[(usize, f64)], method: ZoomMethod) -> (Vec<f64>, Vec<f64>, BTreeMap<i64, Vec<(f64, f64)>>)  {
+pub fn calculate_fovs(
+    compute_params: &ComputeParams,
+    timestamps: &[(usize, f64)],
+    method: ZoomMethod,
+) -> (Vec<f64>, Vec<f64>, BTreeMap<i64, Vec<(f64, f64)>>) {
     if timestamps.is_empty() {
         return Default::default();
     }
@@ -64,7 +71,11 @@ pub fn calculate_fovs(compute_params: &ComputeParams, timestamps: &[(usize, f64)
         // Disabled zoom
         (vec![1.0; fov_values.len()], fov_values)
     };
-    (final_fovs, final_fovs_minimal, fov_estimator.get_debug_points())
+    (
+        final_fovs,
+        final_fovs_minimal,
+        fov_estimator.get_debug_points(),
+    )
 }
 
 pub fn get_checksum(compute_params: &ComputeParams) -> u64 {

@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
-use std::collections::BTreeMap;
 use parking_lot::RwLock;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::{TimeIMU, TimeQuat, TimeVec, splines};
 use crate::camera_identifier::CameraIdentifier;
 use crate::stabilization_params::ReadoutDirection;
-use super::{ TimeIMU, TimeQuat, TimeVec, splines };
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct LensParams {
-    pub focal_length: Option<f32>, // millimeters
-    pub pixel_pitch: Option<(u32, u32)>, // nanometers
-    pub sensor_size_px: Option<(u32, u32)>, // pixels
+    pub focal_length: Option<f32>,               // millimeters
+    pub pixel_pitch: Option<(u32, u32)>,         // nanometers
+    pub sensor_size_px: Option<(u32, u32)>,      // pixels
     pub capture_area_origin: Option<(f32, f32)>, // pixels
-    pub capture_area_size: Option<(f32, f32)>, // pixels
-    pub pixel_focal_length: Option<f32>, // pixels
+    pub capture_area_size: Option<(f32, f32)>,   // pixels
+    pub pixel_focal_length: Option<f32>,         // pixels
     pub distortion_coefficients: Vec<f64>,
-    pub focus_distance: Option<f32>
+    pub focus_distance: Option<f32>,
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -30,66 +30,66 @@ pub struct CameraStabData {
     pub crop_area: (f32, f32, f32, f32),
     pub pixel_pitch: (u32, u32),
     pub ibis_spline: splines::CatmullRom<nalgebra::Vector3<f64>>,
-    pub ois_spline: splines::CatmullRom<nalgebra::Vector3<f64>>
+    pub ois_spline: splines::CatmullRom<nalgebra::Vector3<f64>>,
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct FileMetadata {
-    pub imu_orientation:     Option<String>,
-    pub raw_imu:             Vec<TimeIMU>,
-    pub quaternions:         TimeQuat,
-    pub gravity_vectors:     Option<TimeVec>,
-    pub image_orientations:  Option<TimeQuat>,
-    pub detected_source:     Option<String>,
-    pub frame_readout_time:  Option<f64>,
+    pub imu_orientation: Option<String>,
+    pub raw_imu: Vec<TimeIMU>,
+    pub quaternions: TimeQuat,
+    pub gravity_vectors: Option<TimeVec>,
+    pub image_orientations: Option<TimeQuat>,
+    pub detected_source: Option<String>,
+    pub frame_readout_time: Option<f64>,
     pub frame_readout_direction: ReadoutDirection,
-    pub frame_rate:          Option<f64>,
-    pub record_frame_rate:   Option<f64>,
-    pub camera_identifier:   Option<CameraIdentifier>,
-    pub lens_profile:        Option<serde_json::Value>,
-    pub lens_positions:      BTreeMap<i64, f64>,
-    pub lens_params:         BTreeMap<i64, LensParams>,
+    pub frame_rate: Option<f64>,
+    pub record_frame_rate: Option<f64>,
+    pub camera_identifier: Option<CameraIdentifier>,
+    pub lens_profile: Option<serde_json::Value>,
+    pub lens_positions: BTreeMap<i64, f64>,
+    pub lens_params: BTreeMap<i64, LensParams>,
     pub unit_pixel_focal_length: Option<f64>,
-    pub digital_zoom:        Option<f64>,
+    pub digital_zoom: Option<f64>,
     pub has_accurate_timestamps: bool,
-    pub creation_date:       Option<String>,
-    pub timezone_offset:     Option<String>,
-    pub creation_date_utc:   Option<String>,
-    pub additional_data:     serde_json::Value,
+    pub creation_date: Option<String>,
+    pub timezone_offset: Option<String>,
+    pub creation_date_utc: Option<String>,
+    pub additional_data: serde_json::Value,
     pub per_frame_time_offsets: Vec<f64>,
-    pub camera_stab_data:    Vec<CameraStabData>,
-    pub mesh_correction:     Vec<(Vec<f64>, Vec<f32>)>,
-    pub duration_ms:         f64,
+    pub camera_stab_data: Vec<CameraStabData>,
+    pub mesh_correction: Vec<(Vec<f64>, Vec<f32>)>,
+    pub duration_ms: f64,
 }
 impl FileMetadata {
     pub fn thin(&self) -> Self {
         Self {
-            imu_orientation:         self.imu_orientation.clone(),
-            raw_imu:                 Default::default(),
-            quaternions:             Default::default(),
-            gravity_vectors:         Default::default(),
-            image_orientations:      Default::default(),
-            detected_source:         self.detected_source.clone(),
-            frame_readout_time:      self.frame_readout_time.clone(),
+            imu_orientation: self.imu_orientation.clone(),
+            raw_imu: Default::default(),
+            quaternions: Default::default(),
+            gravity_vectors: Default::default(),
+            image_orientations: Default::default(),
+            detected_source: self.detected_source.clone(),
+            frame_readout_time: self.frame_readout_time.clone(),
             frame_readout_direction: self.frame_readout_direction.clone(),
-            frame_rate:              self.frame_rate.clone(),
-            record_frame_rate:       self.record_frame_rate.clone(),
-            camera_identifier:       self.camera_identifier.clone(),
-            lens_profile:            self.lens_profile.clone(),
-            lens_positions:          Default::default(),
-            lens_params:             Default::default(),
+            frame_rate: self.frame_rate.clone(),
+            record_frame_rate: self.record_frame_rate.clone(),
+            camera_identifier: self.camera_identifier.clone(),
+            lens_profile: self.lens_profile.clone(),
+            lens_positions: Default::default(),
+            lens_params: Default::default(),
             unit_pixel_focal_length: self.unit_pixel_focal_length.clone(),
-            digital_zoom:            self.digital_zoom.clone(),
+            digital_zoom: self.digital_zoom.clone(),
             has_accurate_timestamps: self.has_accurate_timestamps.clone(),
-            creation_date:           self.creation_date.clone(),
-            timezone_offset:         self.timezone_offset.clone(),
-            creation_date_utc:       self.creation_date_utc.clone(),
-            additional_data:         self.additional_data.clone(),
-            per_frame_time_offsets:  Default::default(),
-            camera_stab_data:        Default::default(),
-            mesh_correction:         Default::default(),
-            duration_ms:             self.duration_ms,
+            creation_date: self.creation_date.clone(),
+            timezone_offset: self.timezone_offset.clone(),
+            creation_date_utc: self.creation_date_utc.clone(),
+            additional_data: self.additional_data.clone(),
+            per_frame_time_offsets: Default::default(),
+            camera_stab_data: Default::default(),
+            mesh_correction: Default::default(),
+            duration_ms: self.duration_ms,
         }
     }
     pub fn has_motion(&self) -> bool {
@@ -123,13 +123,21 @@ impl ReadOnlyFileMetadata {
     }
 }
 impl serde::Serialize for ReadOnlyFileMetadata {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: serde::Serializer {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
         self.0.read().serialize(serializer)
     }
 }
 impl<'de> serde::Deserialize<'de> for ReadOnlyFileMetadata {
-	fn deserialize<D>(deserializer: D) -> Result<Self, D::Error> where D: serde::Deserializer<'de> {
-        Ok(Self(Arc::new(RwLock::new(FileMetadata::deserialize(deserializer)?))))
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Self(Arc::new(RwLock::new(FileMetadata::deserialize(
+            deserializer,
+        )?))))
     }
 }
 // ------------- ReadOnlyFileMetadata -------------

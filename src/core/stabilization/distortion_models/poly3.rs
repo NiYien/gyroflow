@@ -6,7 +6,7 @@
 use crate::stabilization::KernelParams;
 
 #[derive(Default, Clone)]
-pub struct Poly3 { }
+pub struct Poly3 {}
 
 const NEWTON_EPS: f32 = 0.00001;
 
@@ -15,7 +15,9 @@ impl Poly3 {
         let inv_k1 = 1.0 / params.k[0];
 
         let rd = (point.0 * point.0 + point.1 * point.1).sqrt();
-        if rd == 0.0 { return None; }
+        if rd == 0.0 {
+            return None;
+        }
 
         let rd_div_k1 = rd * inv_k1;
 
@@ -45,10 +47,7 @@ impl Poly3 {
 
         ru = ru / rd;
 
-        Some((
-            point.0 * ru,
-            point.1 * ru
-        ))
+        Some((point.0 * ru, point.1 * ru))
     }
 
     pub fn distort_point(&self, x: f32, y: f32, z: f32, params: &KernelParams) -> (f32, f32) {
@@ -56,20 +55,17 @@ impl Poly3 {
         let y = y / z;
         let poly2 = params.k[0] * (x.powi(2) + y.powi(2)) + 1.0;
 
-        (
-            x * poly2,
-            y * poly2
-        )
+        (x * poly2, y * poly2)
     }
-    pub fn adjust_lens_profile(&self, _profile: &mut crate::LensProfile) { }
+    pub fn adjust_lens_profile(&self, _profile: &mut crate::LensProfile) {}
 
     pub fn distortion_derivative(&self, theta: f64, k: &[f64]) -> Option<f64> {
-        if k.len() < 1 { return None; }
+        if k.len() < 1 {
+            return None;
+        }
         let inv_k1 = 1.0 / k[0];
         let ru = theta;
-        Some(
-            3.0 * ru * ru + inv_k1
-        )
+        Some(3.0 * ru * ru + inv_k1)
     }
 
     pub fn rescale_coeffs(k: &mut [f64], hugin_scaling: f64) {
@@ -77,11 +73,19 @@ impl Poly3 {
         k[0] *= hugin_scaling.powi(2) / d.powi(3);
     }
 
-    pub fn id() -> &'static str { "poly3" }
-    pub fn name() -> &'static str { "Poly3" }
+    pub fn id() -> &'static str {
+        "poly3"
+    }
+    pub fn name() -> &'static str {
+        "Poly3"
+    }
 
-    pub fn opencl_functions(&self) -> &'static str { include_str!("poly3.cl") }
-    pub fn wgsl_functions(&self)   -> &'static str { include_str!("poly3.wgsl") }
+    pub fn opencl_functions(&self) -> &'static str {
+        include_str!("poly3.cl")
+    }
+    pub fn wgsl_functions(&self) -> &'static str {
+        include_str!("poly3.wgsl")
+    }
 }
 
 // TODO
@@ -97,4 +101,3 @@ impl Poly3 {
 // let hugin_scale_in_millimeters = 36.0.hypot(24.0) / crop_factor / aspect_ratio.hypot(1.0) / 2.0;
 // let hugin_scaling = real_focal / hugin_scale_in_millimeters;
 // rescale_coeffs(k, hugin_scaling);
-

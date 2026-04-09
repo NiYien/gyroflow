@@ -71,6 +71,14 @@ pub struct Controller {
     get_image_sequence_fps: qt_method!(fn(&self, url: QUrl) -> f64),
     load_lens_profile: qt_method!(fn(&mut self, url_or_id: QString)),
     get_preset_contents: qt_method!(fn(&mut self, url_or_id: QString) -> QString),
+    lens_group_config: qt_property!(QString; READ get_lens_group_config NOTIFY lens_group_config_changed),
+    lens_group_config_changed: qt_signal!(),
+    set_lens_group_config: qt_method!(fn(&self, json: String)),
+    lens_group_status: qt_property!(QString; READ get_lens_group_status NOTIFY lens_group_status_changed),
+    lens_group_status_changed: qt_signal!(),
+    get_lens_group_status: qt_method!(fn(&self) -> QString),
+    refresh_lens_group_status: qt_method!(fn(&self)),
+    get_anamorphic_presets: qt_method!(fn(&self) -> QString),
     export_lens_profile: qt_method!(fn(&mut self, url: QUrl, info: QJsonObject, upload: bool)),
     export_lens_profile_filename: qt_method!(fn(&mut self, info: QJsonObject) -> QString),
 
@@ -1365,6 +1373,22 @@ impl Controller {
                 .unwrap_or_default(),
         )
     }
+    fn get_lens_group_config(&self) -> QString {
+        QString::from(self.stabilizer.get_lens_group_config_json())
+    }
+    fn set_lens_group_config(&self, json: String) {
+        self.stabilizer.set_lens_group_config_json(&json);
+        self.lens_group_config_changed();
+    }
+    fn get_lens_group_status(&self) -> QString {
+        QString::from(self.stabilizer.get_lens_group_status_json())
+    }
+    fn refresh_lens_group_status(&self) {
+        self.lens_group_status_changed();
+    }
+    fn get_anamorphic_presets(&self) -> QString {
+        QString::from(self.stabilizer.get_anamorphic_presets_json())
+    }
 
     fn set_preview_resolution(&mut self, target_height: i32, player: QJSValue) {
         self.preview_resolution = target_height;
@@ -2535,7 +2559,7 @@ impl Controller {
             DeviceEvent::TimeReceived(time) => {
                 let formatted = Self::format_device_time(&time);
                 self.device_time = QString::from(formatted.clone());
-                ::log::info!("NiYien: device time received {}", formatted);
+                // ::log::info!("NiYien: device time received {}", formatted);
                 self.device_state_changed();
             }
             DeviceEvent::TimeSyncResult(success) => {

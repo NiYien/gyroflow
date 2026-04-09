@@ -1,0 +1,905 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright © 2026 Adrian <adrian.eddy at gmail>
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+
+use crate::gyro_source::{FileMetadata, LensParams};
+use crate::lens_profile::{CameraParams, Dimensions, LensProfile};
+
+pub const LENS_GROUP_COUNT: usize = 6;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SqueezeDirection {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AnamorphicPreset {
+    pub id: String,
+    pub name: String,
+    pub squeeze_direction: SqueezeDirection,
+    pub squeeze_ratio: f64,
+    pub distortion_coeffs: Vec<f64>,
+    pub distortion_model: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LensGroupConfig {
+    pub lens_index: usize,
+    pub focal_length_mm: Option<f64>,
+    pub anamorphic_enabled: bool,
+    pub preset_id: Option<String>,
+    pub squeeze_direction: Option<SqueezeDirection>,
+    pub squeeze_ratio: Option<f64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LensGroupStatus {
+    pub lens_index: usize,
+    pub used: bool,
+    pub has_auto_focus: bool,
+    pub has_missing_focus: bool,
+    pub auto_focus_length_mm: Option<f64>,
+    pub video_count: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FocalLengthSource {
+    Auto,
+    Manual,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ResolvedAnamorphic {
+    pub squeeze_direction: SqueezeDirection,
+    pub squeeze_ratio: f64,
+    pub distortion_coeffs: Vec<f64>,
+    pub distortion_model: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct PresetIndexFile {
+    version: u32,
+    presets: Vec<PresetIndexEntry>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct PresetIndexEntry {
+    id: String,
+    name: String,
+    file: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+struct PresetFile {
+    name: String,
+    squeeze_direction: SqueezeDirection,
+    squeeze_ratio: f64,
+    distortion_coeffs: Vec<f64>,
+    distortion_model: String,
+}
+
+const BUILTIN_INDEX_JSON: &str = include_str!("../../resources/anamorphic_presets/index.json");
+
+fn builtin_preset_file(name: &str) -> Option<&'static str> {
+    match name {
+        "sirui_xingchen_50mm_1_33x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/sirui_xingchen_50mm_1_33x.json"
+        )),
+        "blazar_mantis_25mm_1_33x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/blazar_mantis_25mm_1_33x.json"
+        )),
+        "blazar_remus_45mm_1_50x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/blazar_remus_45mm_1_50x.json"
+        )),
+        "blazar_viper_35mm_1_50x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/blazar_viper_35mm_1_50x.json"
+        )),
+        "blazar_viper_75mm_1_50x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/blazar_viper_75mm_1_50x.json"
+        )),
+        "sirui_35mm_f1_8_1_33x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/sirui_35mm_f1_8_1_33x.json"
+        )),
+        "sirui_saturn_35mm_t2_9_1_60x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/sirui_saturn_35mm_t2_9_1_60x.json"
+        )),
+        "sirui_saturn_50mm_t2_9_1_60x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/sirui_saturn_50mm_t2_9_1_60x.json"
+        )),
+        "laowa_nanomorph_35mm_t2_4_1_50x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/laowa_nanomorph_35mm_t2_4_1_50x.json"
+        )),
+        "aivascope_58mm_1_50x_vertical.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/aivascope_58mm_1_50x_vertical.json"
+        )),
+        _ => None,
+    }
+}
+
+pub fn default_lens_group_configs() -> Vec<LensGroupConfig> {
+    (0..LENS_GROUP_COUNT)
+        .map(|lens_index| LensGroupConfig {
+            lens_index,
+            ..Default::default()
+        })
+        .collect()
+}
+
+pub fn default_lens_group_statuses() -> Vec<LensGroupStatus> {
+    (0..LENS_GROUP_COUNT)
+        .map(|lens_index| LensGroupStatus {
+            lens_index,
+            ..Default::default()
+        })
+        .collect()
+}
+
+pub fn normalize_lens_group_configs(input: &[LensGroupConfig]) -> Vec<LensGroupConfig> {
+    let mut normalized = default_lens_group_configs();
+    for (position, cfg) in input.iter().enumerate() {
+        let lens_index = if cfg.lens_index < LENS_GROUP_COUNT {
+            cfg.lens_index
+        } else if position < LENS_GROUP_COUNT {
+            position
+        } else {
+            continue;
+        };
+        let mut next = cfg.clone();
+        next.lens_index = lens_index;
+        next.focal_length_mm = sanitize_positive(next.focal_length_mm);
+        next.squeeze_ratio = sanitize_positive(next.squeeze_ratio);
+        if !next.anamorphic_enabled {
+            next.preset_id = None;
+            next.squeeze_direction = None;
+            next.squeeze_ratio = None;
+        }
+        normalized[lens_index] = next;
+    }
+    normalized
+}
+
+pub fn lens_group_config_to_json(configs: &[LensGroupConfig]) -> String {
+    let normalized = normalize_lens_group_configs(configs);
+    if !normalized.iter().any(LensGroupConfig::has_values) {
+        return "[]".to_owned();
+    }
+    serde_json::to_string(&normalized).unwrap_or_else(|_| "[]".to_owned())
+}
+
+pub fn lens_group_status_to_json(statuses: &[LensGroupStatus]) -> String {
+    let mut normalized = default_lens_group_statuses();
+    for status in statuses {
+        if status.lens_index < LENS_GROUP_COUNT {
+            normalized[status.lens_index] = status.clone();
+        }
+    }
+    serde_json::to_string(&normalized).unwrap_or_else(|_| "[]".to_owned())
+}
+
+pub fn lens_group_configs_from_json(json: &str) -> Vec<LensGroupConfig> {
+    if json.trim().is_empty() || json.trim() == "[]" {
+        return default_lens_group_configs();
+    }
+    match serde_json::from_str::<Vec<LensGroupConfig>>(json) {
+        Ok(configs) => normalize_lens_group_configs(&configs),
+        Err(err) => {
+            log::warn!("Failed to parse lens group config JSON: {err}");
+            default_lens_group_configs()
+        }
+    }
+}
+
+pub fn lens_group_statuses_from_json(json: &str) -> Vec<LensGroupStatus> {
+    if json.trim().is_empty() {
+        return default_lens_group_statuses();
+    }
+    match serde_json::from_str::<Vec<LensGroupStatus>>(json) {
+        Ok(statuses) => {
+            let mut normalized = default_lens_group_statuses();
+            for status in statuses {
+                let lens_index = status.lens_index;
+                if lens_index < LENS_GROUP_COUNT {
+                    normalized[lens_index] = status;
+                }
+            }
+            normalized
+        }
+        Err(err) => {
+            log::warn!("Failed to parse lens group status JSON: {err}");
+            default_lens_group_statuses()
+        }
+    }
+}
+
+impl LensGroupConfig {
+    pub fn has_values(&self) -> bool {
+        self.focal_length_mm.unwrap_or_default() > 0.0
+            || self.anamorphic_enabled
+            || self
+                .preset_id
+                .as_ref()
+                .map(|v| !v.is_empty())
+                .unwrap_or(false)
+    }
+}
+
+pub fn extract_lens_index(additional_data: &serde_json::Value) -> Option<usize> {
+    additional_data
+        .get("lens_index")
+        .and_then(value_to_u64)
+        .map(|value| value as usize)
+        .filter(|value| *value < LENS_GROUP_COUNT)
+}
+
+pub fn extract_focus_length_mm(additional_data: &serde_json::Value) -> Option<f64> {
+    sanitize_positive(
+        additional_data
+            .get("focus_length")
+            .and_then(value_to_f64)
+            .map(|value| value / 10.0),
+    )
+}
+
+pub fn extract_video_focus_length_mm(metadata: &FileMetadata) -> Option<f64> {
+    extract_focus_length_mm(&metadata.additional_data)
+        .or_else(|| {
+            metadata
+                .lens_params
+                .values()
+                .next()
+                .and_then(|params| params.focal_length)
+                .map(|value| value as f64)
+                .and_then(|value| sanitize_positive(Some(value)))
+        })
+        .or_else(|| {
+            sanitize_positive(
+                metadata
+                    .camera_identifier
+                    .as_ref()
+                    .and_then(|id| id.focal_length),
+            )
+        })
+}
+
+pub fn update_status_from_metadata(statuses: &mut [LensGroupStatus], metadata: &FileMetadata) {
+    let Some(lens_index) = extract_lens_index(&metadata.additional_data) else {
+        return;
+    };
+    let Some(status) = statuses.get_mut(lens_index) else {
+        return;
+    };
+    status.used = true;
+    status.video_count += 1;
+    if let Some(focal_length_mm) = extract_video_focus_length_mm(metadata) {
+        status.has_auto_focus = true;
+        if status.auto_focus_length_mm.is_none() {
+            status.auto_focus_length_mm = Some(focal_length_mm);
+        }
+    } else {
+        status.has_missing_focus = true;
+    }
+}
+
+pub fn select_focal_length(
+    auto_focus_length_mm: Option<f64>,
+    manual_focus_length_mm: Option<f64>,
+) -> Option<(f64, FocalLengthSource)> {
+    if let Some(value) = sanitize_positive(auto_focus_length_mm) {
+        return Some((value, FocalLengthSource::Auto));
+    }
+    sanitize_positive(manual_focus_length_mm).map(|value| (value, FocalLengthSource::Manual))
+}
+
+pub fn apply_focal_length_fallback_to_metadata(metadata: &mut FileMetadata, focal_length_mm: f64) {
+    let Some(focal_length_mm) = sanitize_positive(Some(focal_length_mm)) else {
+        return;
+    };
+    let pixel_focal_length = metadata
+        .unit_pixel_focal_length
+        .map(|upfl| (focal_length_mm * upfl) as f32);
+
+    if metadata.lens_params.is_empty() {
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                focal_length: Some(focal_length_mm as f32),
+                pixel_focal_length,
+                ..Default::default()
+            },
+        );
+        return;
+    }
+
+    for params in metadata.lens_params.values_mut() {
+        params.focal_length = Some(focal_length_mm as f32);
+        params.pixel_focal_length = pixel_focal_length;
+    }
+}
+
+pub fn build_camera_matrix(
+    focal_length_mm: f64,
+    unit_pixel_focal_length: Option<f64>,
+    size: (usize, usize),
+) -> Option<Vec<[f64; 3]>> {
+    let upfl = sanitize_positive(unit_pixel_focal_length)?;
+    let fx = focal_length_mm * upfl;
+    Some(vec![
+        [fx, 0.0, size.0 as f64 / 2.0],
+        [0.0, fx, size.1 as f64 / 2.0],
+        [0.0, 0.0, 1.0],
+    ])
+}
+
+pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<ResolvedAnamorphic> {
+    let config = config?;
+    if !config.anamorphic_enabled {
+        return None;
+    }
+
+    if let Some(preset_id) = config
+        .preset_id
+        .as_deref()
+        .filter(|value| !value.is_empty())
+    {
+        if let Some(preset) = load_presets()
+            .into_iter()
+            .find(|preset| preset.id == preset_id)
+        {
+            return Some(ResolvedAnamorphic {
+                squeeze_direction: preset.squeeze_direction,
+                squeeze_ratio: preset.squeeze_ratio,
+                distortion_coeffs: preset.distortion_coeffs,
+                distortion_model: Some(preset.distortion_model),
+            });
+        }
+        log::warn!("Anamorphic preset not found: {preset_id}");
+    }
+
+    let squeeze_ratio = sanitize_positive(config.squeeze_ratio)?;
+    Some(ResolvedAnamorphic {
+        squeeze_direction: config.squeeze_direction.unwrap_or_default(),
+        squeeze_ratio,
+        distortion_coeffs: Vec::new(),
+        distortion_model: None,
+    })
+}
+
+pub fn build_lens_profile(
+    metadata: &FileMetadata,
+    size: (usize, usize),
+    config: Option<&LensGroupConfig>,
+    fallback_lens: Option<&LensProfile>,
+) -> Option<LensProfile> {
+    let auto_focus_length_mm = extract_video_focus_length_mm(metadata);
+    let manual_focus_length_mm = config.and_then(|cfg| cfg.focal_length_mm);
+    let (focal_length_mm, _) = select_focal_length(auto_focus_length_mm, manual_focus_length_mm)?;
+    let camera_matrix =
+        build_camera_matrix(focal_length_mm, metadata.unit_pixel_focal_length, size)?;
+
+    let mut profile = fallback_lens.cloned().unwrap_or_default();
+    populate_profile_metadata(&mut profile, metadata, fallback_lens, size);
+    profile.focal_length = Some(focal_length_mm);
+    profile.fisheye_params.camera_matrix = camera_matrix;
+    if fallback_lens.is_none() {
+        profile.fisheye_params = CameraParams {
+            RMS_error: 0.0,
+            camera_matrix: profile.fisheye_params.camera_matrix.clone(),
+            distortion_coeffs: Vec::new(),
+            radial_distortion_limit: None,
+        };
+        profile.input_horizontal_stretch = 1.0;
+        profile.input_vertical_stretch = 1.0;
+        profile.distortion_model = None;
+    }
+
+    if let Some(anamorphic) = resolve_anamorphic_config(config) {
+        match anamorphic.squeeze_direction {
+            SqueezeDirection::Horizontal => {
+                profile.input_horizontal_stretch = anamorphic.squeeze_ratio;
+            }
+            SqueezeDirection::Vertical => {
+                profile.input_vertical_stretch = anamorphic.squeeze_ratio;
+            }
+        }
+        if !anamorphic.distortion_coeffs.is_empty() || anamorphic.distortion_model.is_some() {
+            profile.fisheye_params.distortion_coeffs = anamorphic.distortion_coeffs;
+            profile.distortion_model = anamorphic.distortion_model;
+        }
+    }
+
+    profile.init();
+    Some(profile)
+}
+
+pub fn load_presets() -> Vec<AnamorphicPreset> {
+    let mut presets = load_builtin_presets();
+    merge_presets(&mut presets, load_external_presets());
+    presets
+}
+
+pub fn load_presets_json() -> String {
+    serde_json::to_string(&load_presets()).unwrap_or_else(|_| "[]".to_owned())
+}
+
+fn load_builtin_presets() -> Vec<AnamorphicPreset> {
+    load_presets_from_index(BUILTIN_INDEX_JSON, None, true)
+}
+
+fn load_external_presets() -> Vec<AnamorphicPreset> {
+    let root = settings_dir().join("anamorphic_presets");
+    if !root.exists() {
+        return Vec::new();
+    }
+    let index_path = root.join("index.json");
+    if index_path.is_file() {
+        match std::fs::read_to_string(&index_path) {
+            Ok(index_json) => load_presets_from_index(&index_json, Some(&root), false),
+            Err(err) => {
+                log::warn!(
+                    "Failed to read anamorphic preset index {}: {err}",
+                    index_path.display()
+                );
+                Vec::new()
+            }
+        }
+    } else {
+        load_presets_from_dir_without_index(&root)
+    }
+}
+
+fn load_presets_from_index(
+    index_json: &str,
+    root: Option<&Path>,
+    built_in: bool,
+) -> Vec<AnamorphicPreset> {
+    let index = match serde_json::from_str::<PresetIndexFile>(index_json) {
+        Ok(index) => index,
+        Err(err) => {
+            log::warn!("Failed to parse anamorphic preset index: {err}");
+            return Vec::new();
+        }
+    };
+    if index.version == 0 {
+        log::warn!("Anamorphic preset index version is missing or invalid");
+    }
+
+    let mut presets = Vec::new();
+    for entry in index.presets {
+        let source = if built_in {
+            builtin_preset_file(&entry.file).map(|contents| contents.to_owned())
+        } else {
+            root.and_then(|dir| std::fs::read_to_string(dir.join(&entry.file)).ok())
+        };
+
+        let Some(contents) = source else {
+            log::warn!(
+                "Anamorphic preset file is missing: {}",
+                format_source_path(root, &entry.file, built_in)
+            );
+            continue;
+        };
+
+        if let Some(preset) = parse_preset_file(&entry.id, &entry.name, &contents) {
+            presets.push(preset);
+        }
+    }
+    presets
+}
+
+fn load_presets_from_dir_without_index(root: &Path) -> Vec<AnamorphicPreset> {
+    let mut presets = Vec::new();
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) => {
+            log::warn!(
+                "Failed to read anamorphic preset directory {}: {err}",
+                root.display()
+            );
+            return presets;
+        }
+    };
+
+    let mut files = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .filter(|entry| entry.file_name() != "index.json")
+        .collect::<Vec<_>>();
+    files.sort_by_key(|entry| entry.file_name());
+
+    for entry in files {
+        let path = entry.path();
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => {
+                let id = path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or_default()
+                    .to_owned();
+                if let Some(preset) = parse_preset_file(&id, "", &contents) {
+                    presets.push(preset);
+                }
+            }
+            Err(err) => {
+                log::warn!("Failed to read anamorphic preset {}: {err}", path.display());
+            }
+        }
+    }
+    presets
+}
+
+fn parse_preset_file(id: &str, fallback_name: &str, contents: &str) -> Option<AnamorphicPreset> {
+    let parsed = match serde_json::from_str::<PresetFile>(contents) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            log::warn!("Failed to parse anamorphic preset {id}: {err}");
+            return None;
+        }
+    };
+
+    if parsed.name.trim().is_empty()
+        || parsed.squeeze_ratio <= 0.0
+        || parsed.distortion_coeffs.len() != 4
+        || parsed.distortion_model.trim().is_empty()
+    {
+        log::warn!("Anamorphic preset {id} is missing required fields");
+        return None;
+    }
+
+    Some(AnamorphicPreset {
+        id: id.to_owned(),
+        name: if parsed.name.trim().is_empty() {
+            fallback_name.to_owned()
+        } else {
+            parsed.name
+        },
+        squeeze_direction: parsed.squeeze_direction,
+        squeeze_ratio: parsed.squeeze_ratio,
+        distortion_coeffs: parsed.distortion_coeffs,
+        distortion_model: parsed.distortion_model,
+    })
+}
+
+fn merge_presets(target: &mut Vec<AnamorphicPreset>, incoming: Vec<AnamorphicPreset>) {
+    let mut index_map: HashMap<String, usize> = target
+        .iter()
+        .enumerate()
+        .map(|(index, preset)| (preset.id.clone(), index))
+        .collect();
+
+    for preset in incoming {
+        if let Some(index) = index_map.get(&preset.id).copied() {
+            target[index] = preset;
+        } else {
+            index_map.insert(preset.id.clone(), target.len());
+            target.push(preset);
+        }
+    }
+}
+
+fn populate_profile_metadata(
+    profile: &mut LensProfile,
+    metadata: &FileMetadata,
+    fallback_lens: Option<&LensProfile>,
+    size: (usize, usize),
+) {
+    if let Some(fallback) = fallback_lens {
+        profile.camera_brand = fallback.camera_brand.clone();
+        profile.camera_model = fallback.camera_model.clone();
+        profile.lens_model = fallback.lens_model.clone();
+        profile.camera_setting = fallback.camera_setting.clone();
+        profile.calibrated_by = fallback.calibrated_by.clone();
+        profile.frame_readout_time = fallback.frame_readout_time;
+        profile.frame_readout_direction = fallback.frame_readout_direction;
+        profile.global_shutter = fallback.global_shutter;
+        profile.crop_factor = fallback.crop_factor;
+    }
+
+    if profile.camera_brand.is_empty() || profile.camera_model.is_empty() {
+        if let Some(camera_identifier) = &metadata.camera_identifier {
+            if profile.camera_brand.is_empty() {
+                profile.camera_brand = camera_identifier.brand.clone();
+            }
+            if profile.camera_model.is_empty() {
+                profile.camera_model = camera_identifier.model.clone();
+            }
+            if profile.lens_model.is_empty() && !camera_identifier.lens_model.is_empty() {
+                profile.lens_model = camera_identifier.lens_model.clone();
+            }
+        } else if let Some(detected) = metadata.detected_source.as_deref() {
+            let mut parts = detected.splitn(2, ' ');
+            if profile.camera_brand.is_empty() {
+                profile.camera_brand = parts.next().unwrap_or_default().to_owned();
+            }
+            if profile.camera_model.is_empty() {
+                profile.camera_model = parts.next().unwrap_or_default().to_owned();
+            }
+        }
+    }
+
+    if profile.calibrated_by.is_empty() {
+        profile.calibrated_by = "NiYien".to_owned();
+    }
+    if profile.frame_readout_time.is_none() {
+        profile.frame_readout_time = metadata.frame_readout_time;
+    }
+    if profile.frame_readout_direction.is_none() && profile.frame_readout_time.is_some() {
+        profile.frame_readout_direction = Some(metadata.frame_readout_direction);
+    }
+
+    profile.calib_dimension = Dimensions {
+        w: size.0,
+        h: size.1,
+    };
+    profile.orig_dimension = Dimensions {
+        w: size.0,
+        h: size.1,
+    };
+    profile.output_dimension = None;
+    profile.official = true;
+    profile.asymmetrical = false;
+}
+
+fn sanitize_positive(value: Option<f64>) -> Option<f64> {
+    match value {
+        Some(value) if value.is_finite() && value > 0.0 => Some(value),
+        _ => None,
+    }
+}
+
+fn value_to_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| {
+            value
+                .as_i64()
+                .filter(|value| *value >= 0)
+                .map(|value| value as u64)
+        })
+        .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
+}
+
+fn value_to_f64(value: &serde_json::Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str().and_then(|value| value.parse::<f64>().ok()))
+}
+
+fn format_source_path(root: Option<&Path>, file: &str, built_in: bool) -> String {
+    if built_in {
+        format!("builtin:{file}")
+    } else {
+        root.map(|root| root.join(file).display().to_string())
+            .unwrap_or_else(|| file.to_owned())
+    }
+}
+
+fn settings_dir() -> PathBuf {
+    crate::settings::data_dir()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn camera_matrix_uses_unit_pixel_focal_length() {
+        let matrix = build_camera_matrix(35.0, Some(107.0), (3840, 2160)).unwrap();
+        assert_eq!(matrix[0], [3745.0, 0.0, 1920.0]);
+        assert_eq!(matrix[1], [0.0, 3745.0, 1080.0]);
+        assert_eq!(matrix[2], [0.0, 0.0, 1.0]);
+    }
+
+    #[test]
+    fn focal_length_prefers_auto_focus() {
+        let selected = select_focal_length(Some(35.0), Some(50.0)).unwrap();
+        assert_eq!(selected.0, 35.0);
+        assert_eq!(selected.1, FocalLengthSource::Auto);
+    }
+
+    #[test]
+    fn extracts_video_focus_length_from_lens_params() {
+        let mut metadata = FileMetadata::default();
+        metadata.lens_params.insert(
+            0,
+            crate::gyro_source::LensParams {
+                focal_length: Some(35.0),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(extract_video_focus_length_mm(&metadata), Some(35.0));
+    }
+
+    #[test]
+    fn extracts_video_focus_length_from_additional_data_first() {
+        let mut metadata = FileMetadata::default();
+        metadata.additional_data = serde_json::json!({
+            "focus_length": 300
+        });
+        metadata.lens_params.insert(
+            0,
+            crate::gyro_source::LensParams {
+                focal_length: Some(35.0),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(extract_video_focus_length_mm(&metadata), Some(30.0));
+    }
+
+    #[test]
+    fn manual_anamorphic_only_sets_stretch() {
+        let config = LensGroupConfig {
+            lens_index: 0,
+            anamorphic_enabled: true,
+            squeeze_direction: Some(SqueezeDirection::Horizontal),
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        };
+        let resolved = resolve_anamorphic_config(Some(&config)).unwrap();
+        assert_eq!(resolved.squeeze_direction, SqueezeDirection::Horizontal);
+        assert_eq!(resolved.squeeze_ratio, 1.5);
+        assert!(resolved.distortion_coeffs.is_empty());
+        assert_eq!(resolved.distortion_model, None);
+    }
+
+    #[test]
+    fn preset_anamorphic_uses_builtin_coeffs() {
+        let config = LensGroupConfig {
+            lens_index: 0,
+            anamorphic_enabled: true,
+            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            ..Default::default()
+        };
+        let resolved = resolve_anamorphic_config(Some(&config)).unwrap();
+        assert_eq!(resolved.squeeze_direction, SqueezeDirection::Horizontal);
+        assert_eq!(resolved.squeeze_ratio, 1.6);
+        assert_eq!(resolved.distortion_coeffs.len(), 4);
+        assert_eq!(resolved.distortion_model.as_deref(), Some("opencv_fisheye"));
+    }
+
+    #[test]
+    fn status_keeps_missing_focus_if_any_video_in_group_is_missing() {
+        let mut statuses = default_lens_group_statuses();
+
+        let mut with_focus = FileMetadata::default();
+        with_focus.additional_data = serde_json::json!({
+            "lens_index": 1,
+            "focus_length": 350
+        });
+        update_status_from_metadata(&mut statuses, &with_focus);
+
+        let mut without_focus = FileMetadata::default();
+        without_focus.additional_data = serde_json::json!({
+            "lens_index": 1
+        });
+        update_status_from_metadata(&mut statuses, &without_focus);
+
+        assert!(statuses[1].used);
+        assert!(statuses[1].has_auto_focus);
+        assert!(statuses[1].has_missing_focus);
+        assert_eq!(statuses[1].auto_focus_length_mm, Some(35.0));
+    }
+
+    #[test]
+    fn build_lens_profile_preserves_fallback_readout_and_distortion() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let fallback = LensProfile {
+            frame_readout_time: Some(12.5),
+            frame_readout_direction: Some(
+                crate::stabilization_params::ReadoutDirection::BottomToTop,
+            ),
+            distortion_model: Some("opencv_fisheye".to_owned()),
+            fisheye_params: CameraParams {
+                RMS_error: 0.42,
+                camera_matrix: vec![[2000.0, 0.0, 960.0], [0.0, 2000.0, 540.0], [0.0, 0.0, 1.0]],
+                distortion_coeffs: vec![0.1, 0.2, 0.3, 0.4],
+                radial_distortion_limit: Some(0.9),
+            },
+            ..Default::default()
+        };
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(30.0),
+            ..Default::default()
+        };
+
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback)).unwrap();
+
+        assert_eq!(profile.focal_length, Some(30.0));
+        assert_eq!(profile.frame_readout_time, Some(12.5));
+        assert_eq!(
+            profile.frame_readout_direction,
+            Some(crate::stabilization_params::ReadoutDirection::BottomToTop)
+        );
+        assert_eq!(profile.distortion_model.as_deref(), Some("opencv_fisheye"));
+        assert_eq!(
+            profile.fisheye_params.distortion_coeffs,
+            vec![0.1, 0.2, 0.3, 0.4]
+        );
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[0],
+            [3000.0, 0.0, 960.0]
+        );
+        assert_eq!(
+            profile.fisheye_params.camera_matrix[1],
+            [0.0, 3000.0, 540.0]
+        );
+    }
+
+    #[test]
+    fn build_lens_profile_uses_metadata_readout_direction_when_fallback_missing() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+        metadata.frame_readout_time = Some(8.4);
+        metadata.frame_readout_direction =
+            crate::stabilization_params::ReadoutDirection::BottomToTop;
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(28.0),
+            ..Default::default()
+        };
+
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+
+        assert_eq!(profile.frame_readout_time, Some(8.4));
+        assert_eq!(
+            profile.frame_readout_direction,
+            Some(crate::stabilization_params::ReadoutDirection::BottomToTop)
+        );
+    }
+
+    #[test]
+    fn apply_focal_length_fallback_populates_empty_lens_params() {
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+
+        apply_focal_length_fallback_to_metadata(&mut metadata, 30.0);
+
+        let params = metadata.lens_params.get(&0).unwrap();
+        assert_eq!(params.focal_length, Some(30.0));
+        assert_eq!(params.pixel_focal_length, Some(3000.0));
+    }
+
+    #[test]
+    fn apply_focal_length_fallback_updates_existing_lens_params() {
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(50.0),
+            ..Default::default()
+        };
+        metadata.lens_params.insert(
+            10,
+            LensParams {
+                focal_length: None,
+                pixel_focal_length: None,
+                ..Default::default()
+            },
+        );
+
+        apply_focal_length_fallback_to_metadata(&mut metadata, 24.0);
+
+        let params = metadata.lens_params.get(&10).unwrap();
+        assert_eq!(params.focal_length, Some(24.0));
+        assert_eq!(params.pixel_focal_length, Some(1200.0));
+    }
+}

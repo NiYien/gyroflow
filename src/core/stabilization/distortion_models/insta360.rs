@@ -4,7 +4,7 @@
 use crate::stabilization::KernelParams;
 
 #[derive(Default, Clone)]
-pub struct Insta360 { }
+pub struct Insta360 {}
 
 impl Insta360 {
     pub fn undistort_point(&self, point: (f32, f32), params: &KernelParams) -> Option<(f32, f32)> {
@@ -24,7 +24,13 @@ impl Insta360 {
         Some((px, py))
     }
 
-    pub fn distort_point(&self, mut x: f32, mut y: f32, z: f32, params: &KernelParams) -> (f32, f32) {
+    pub fn distort_point(
+        &self,
+        mut x: f32,
+        mut y: f32,
+        z: f32,
+        params: &KernelParams,
+    ) -> (f32, f32) {
         let k1 = params.k[0];
         let k2 = params.k[1];
         let k3 = params.k[2];
@@ -37,24 +43,32 @@ impl Insta360 {
         x = (x / len) / ((z / len) + xi);
         y = (y / len) / ((z / len) + xi);
 
-        let r2 = x*x + y*y;
+        let r2 = x * x + y * y;
         let r4 = r2 * r2;
         let r6 = r4 * r2;
 
         (
-            x * (1.0 + k1*r2 + k2*r4 + k3*r6) + 2.0*p1*x*y + p2*(r2 + 2.0*x*x),
-            y * (1.0 + k1*r2 + k2*r4 + k3*r6) + 2.0*p2*x*y + p1*(r2 + 2.0*y*y)
+            x * (1.0 + k1 * r2 + k2 * r4 + k3 * r6) + 2.0 * p1 * x * y + p2 * (r2 + 2.0 * x * x),
+            y * (1.0 + k1 * r2 + k2 * r4 + k3 * r6) + 2.0 * p2 * x * y + p1 * (r2 + 2.0 * y * y),
         )
     }
-    pub fn adjust_lens_profile(&self, _profile: &mut crate::LensProfile) { }
+    pub fn adjust_lens_profile(&self, _profile: &mut crate::LensProfile) {}
 
     pub fn distortion_derivative(&self, _theta: f64, _k: &[f64]) -> Option<f64> {
         None
     }
 
-    pub fn id() -> &'static str { "insta360" }
-    pub fn name() -> &'static str { "Insta360" }
+    pub fn id() -> &'static str {
+        "insta360"
+    }
+    pub fn name() -> &'static str {
+        "Insta360"
+    }
 
-    pub fn opencl_functions(&self) -> &'static str { include_str!("insta360.cl") }
-    pub fn wgsl_functions(&self)   -> &'static str { include_str!("insta360.wgsl") }
+    pub fn opencl_functions(&self) -> &'static str {
+        include_str!("insta360.cl")
+    }
+    pub fn wgsl_functions(&self) -> &'static str {
+        include_str!("insta360.wgsl")
+    }
 }

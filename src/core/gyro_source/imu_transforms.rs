@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
-use nalgebra::*;
 use super::DEG2RAD;
+use nalgebra::*;
 
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IMUTransforms {
@@ -38,7 +38,9 @@ impl IMUTransforms {
         self.imu_orientation.as_deref().is_some_and(|x| x != "XYZ")
             || self.imu_rotation.is_some()
             || self.acc_rotation.is_some()
-            || self.gyro_bias.is_some_and(|x| x[0].abs() > 0.0 || x[1].abs() > 0.0 || x[2].abs() > 0.0)
+            || self
+                .gyro_bias
+                .is_some_and(|x| x[0].abs() > 0.0 || x[1].abs() > 0.0 || x[2].abs() > 0.0)
             || self.imu_lpf > 0.0
             || self.imu_mf > 0
     }
@@ -49,7 +51,7 @@ impl IMUTransforms {
             self.imu_rotation = Some(Rotation3::from_euler_angles(
                 yaw_deg * DEG2RAD,
                 pitch_deg * DEG2RAD,
-                roll_deg * DEG2RAD
+                roll_deg * DEG2RAD,
             ));
         } else {
             self.imu_rotation_angles = None;
@@ -62,7 +64,7 @@ impl IMUTransforms {
             self.acc_rotation = Some(Rotation3::from_euler_angles(
                 yaw_deg * DEG2RAD,
                 pitch_deg * DEG2RAD,
-                roll_deg * DEG2RAD
+                roll_deg * DEG2RAD,
             ));
         } else {
             self.acc_rotation_angles = None;
@@ -73,13 +75,18 @@ impl IMUTransforms {
     fn orient(inp: &[f64; 3], io: &[u8]) -> [f64; 3] {
         let map = |o: u8| -> f64 {
             match o as char {
-                'X' => inp[0], 'x' => -inp[0],
-                'Y' => inp[1], 'y' => -inp[1],
-                'Z' => inp[2], 'z' => -inp[2],
-                err => { panic!("Invalid orientation {}", err); }
+                'X' => inp[0],
+                'x' => -inp[0],
+                'Y' => inp[1],
+                'y' => -inp[1],
+                'Z' => inp[2],
+                'z' => -inp[2],
+                err => {
+                    panic!("Invalid orientation {}", err);
+                }
             }
         };
-        [map(io[0]), map(io[1]), map(io[2]) ]
+        [map(io[0]), map(io[1]), map(io[2])]
     }
     fn rotate(inp: &[f64; 3], rot: Rotation3<f64>) -> [f64; 3] {
         let rotated = rot.transform_vector(&Vector3::new(inp[0], inp[1], inp[2]));

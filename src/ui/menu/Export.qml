@@ -107,6 +107,7 @@ MenuItem {
     property alias outHeight: outputHeight.value;
     property alias defaultWidth: outputWidth.defaultValue;
     property alias defaultHeight: outputHeight.defaultValue;
+    property alias lockAspectRatioChecked: lockAspectRatio.checked;
 
     property alias outCodec: codec.currentText;
     property alias outBitrate: bitrate.value;
@@ -390,11 +391,12 @@ MenuItem {
                 anchors.right: parent.right;
                 display: QQC.Button.IconOnly;
                 tooltip: qsTr("Output size preset");
-                onClicked: { sizeMenu.y = y + height; sizeMenu.open(); }
+                onClicked: sizeMenu.openFrom(sizeMenuBtn);
             }
             TabbedPopup {
                 id: sizeMenu;
-                width: parent.width;
+                parent: window;
+                width: sizeMenuBtn.parent.width;
                 font.pixelSize: 11.5 * dpiScale;
                 itemHeight: 27 * dpiScale;
                 editable: true;
@@ -430,6 +432,27 @@ MenuItem {
                 onClicked: function(index) {
                     const item = model[tabs[currentTab]][index];
                     sizeMenu.setSize(item[1], item[2]);
+                }
+                function openFrom(trigger: Item): void {
+                    if (!trigger) {
+                        open();
+                        return;
+                    }
+
+                    const margin = 8 * dpiScale;
+                    const popupWidth = Math.max(width, implicitWidth);
+                    const popupHeight = Math.max(height, implicitHeight);
+                    const maxX = Math.max(margin, window.width - popupWidth - margin);
+                    const maxY = Math.max(margin, window.height - popupHeight - margin);
+                    const pt = window.mapFromItem(trigger, 0, 0);
+                    const preferredX = pt.x + trigger.width - popupWidth;
+                    const belowY = pt.y + trigger.height;
+                    const aboveY = pt.y - popupHeight;
+                    const preferredY = (belowY + popupHeight <= window.height - margin || aboveY < margin)? belowY : aboveY;
+
+                    x = Math.max(margin, Math.min(maxX, preferredX));
+                    y = Math.max(margin, Math.min(maxY, preferredY));
+                    open();
                 }
                 onEdit: function() {
                     sizeMenu.close();

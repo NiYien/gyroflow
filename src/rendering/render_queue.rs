@@ -5,17 +5,20 @@ use qmetaobject::*;
 
 use crate::core::StabilizationManager;
 use crate::{core, rendering, util};
+use core::anamorphic_presets;
+use core::camera_identifier::CameraIdentifier;
 use core::filesystem;
 use core::gyro_source::GyroSource;
+use core::lens_profile::LensProfile;
 use core::stabilization_params::ReadoutDirection;
-use parking_lot::RwLock;
+use parking_lot::{Mutex as ParkingMutex, RwLock};
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+    Arc,
 };
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
@@ -60,12 +63,94 @@ pub enum JobStatus {
 struct Job {
     queue_index: usize,
     render_options: RenderOptions,
+    auto_rotate: bool,
     additional_data: String,
     cancel_flag: Arc<AtomicBool>,
     project_data: Option<String>,
     stab: Option<Arc<StabilizationManager>>,
+    base_lens_metadata: Option<JobLensMetadataBackup>,
     // [T20] 保存 video_created_at，stab 释放后排序仍可用
     video_created_at: Option<i64>,
+    original_video_rotation: f64,
+}
+
+#[derive(Clone, Debug)]
+struct JobLensMetadataBackup {
+    lens_params: BTreeMap<i64, core::gyro_source::LensParams>,
+    lens_positions: BTreeMap<i64, f64>,
+    lens_profile: Option<serde_json::Value>,
+    unit_pixel_focal_length: Option<f64>,
+    camera_identifier: Option<CameraIdentifier>,
+    detected_source: Option<String>,
+    frame_readout_time: Option<f64>,
+    frame_readout_direction: ReadoutDirection,
+}
+impl JobLensMetadataBackup {
+    fn from_metadata(md: &core::gyro_source::FileMetadata) -> Self {
+        Self {
+            lens_params: md.lens_params.clone(),
+            lens_positions: md.lens_positions.clone(),
+            lens_profile: md.lens_profile.clone(),
+            unit_pixel_focal_length: md.unit_pixel_focal_length,
+            camera_identifier: md.camera_identifier.clone(),
+            detected_source: md.detected_source.clone(),
+            frame_readout_time: md.frame_readout_time,
+            frame_readout_direction: md.frame_readout_direction,
+        }
+    }
+
+    fn apply_missing_to_metadata(&self, md: &mut core::gyro_source::FileMetadata) {
+        if md.lens_params.is_empty() {
+            md.lens_params = self.lens_params.clone();
+        }
+        if md.lens_positions.is_empty() {
+            md.lens_positions = self.lens_positions.clone();
+        }
+        if md.lens_profile.is_none() {
+            md.lens_profile = self.lens_profile.clone();
+        }
+        if md.unit_pixel_focal_length.is_none() {
+            md.unit_pixel_focal_length = self.unit_pixel_focal_length;
+        }
+
+        let should_restore_camera_identifier = md
+            .camera_identifier
+            .as_ref()
+            .map(|id| id.brand.trim().is_empty() || id.brand == "SenseFlow")
+            .unwrap_or(true);
+        if should_restore_camera_identifier {
+            md.camera_identifier = self.camera_identifier.clone();
+        }
+
+        let should_restore_detected_source = md
+            .detected_source
+            .as_deref()
+            .map(|source| source.trim().is_empty() || source.starts_with("SenseFlow"))
+            .unwrap_or(true);
+        if should_restore_detected_source {
+            md.detected_source = self.detected_source.clone();
+        }
+
+        let should_restore_readout_time = md
+            .frame_readout_time
+            .map(|value| !value.is_finite())
+            .unwrap_or(true);
+        if should_restore_readout_time {
+            md.frame_readout_time = self.frame_readout_time.filter(|value| value.is_finite());
+            md.frame_readout_direction = self.frame_readout_direction;
+        }
+    }
+
+    fn overwrite_metadata(&self, md: &mut core::gyro_source::FileMetadata) {
+        md.lens_params = self.lens_params.clone();
+        md.lens_positions = self.lens_positions.clone();
+        md.lens_profile = self.lens_profile.clone();
+        md.unit_pixel_focal_length = self.unit_pixel_focal_length;
+        md.camera_identifier = self.camera_identifier.clone();
+        md.detected_source = self.detected_source.clone();
+        md.frame_readout_time = self.frame_readout_time;
+        md.frame_readout_direction = self.frame_readout_direction;
+    }
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -256,6 +341,7 @@ struct GyroFileInfo {
     filename: String,
     created_at_ms: Option<i64>,
     duration_ms: Option<f64>,
+    detected_source: Option<String>,
     parsed: bool,
     error: Option<String>,
     /// 缓存完整的 telemetry 数据，避免重复解析原始文件
@@ -268,6 +354,11 @@ struct GyroFileInfo {
 struct CachedGyroMetadataRange {
     range_ms: Option<(f64, f64)>,
     metadata: Arc<core::gyro_source::FileMetadata>,
+}
+
+fn denormalize_video_rotation_metadata(normalized_rotation: f64) -> i32 {
+    let normalized = normalized_rotation.round() as i32;
+    (360 - normalized).rem_euclid(360)
 }
 
 #[derive(Default, QObject)]
@@ -316,10 +407,12 @@ pub struct RenderQueue {
     current_frame: qt_property!(u64; READ get_current_frame NOTIFY progress_changed),
     total_frames: qt_property!(u64; READ get_total_frames NOTIFY queue_changed),
     pub status: qt_property!(QString; NOTIFY status_changed),
+    pub auto_rotate: qt_property!(bool; NOTIFY auto_rotate_changed),
 
     pub progress_changed: qt_signal!(),
     pub queue_changed: qt_signal!(),
     pub status_changed: qt_signal!(),
+    pub auto_rotate_changed: qt_signal!(),
 
     pub render_progress: qt_signal!(job_id: u32, progress: f64, current_frame: usize, total_frames: usize, finished: bool, start_time: f64, is_conversion: bool),
     pub encoder_initialized: qt_signal!(job_id: u32, encoder_name: String),
@@ -383,6 +476,8 @@ pub struct RenderQueue {
     has_gyro_files: qt_method!(fn(&self) -> bool),
     batch_match_gyro: qt_method!(fn(&mut self)),
     apply_match_results: qt_method!(fn(&mut self)),
+    reapply_batch_auto_rotate: qt_method!(fn(&mut self, job_ids_json: String)),
+    reapply_lens_group_config: qt_method!(fn(&mut self)),
     manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
@@ -401,6 +496,7 @@ pub struct RenderQueue {
     get_cached_same_gyro_next: qt_method!(fn(&self, job_id: u32) -> bool),
 
     get_job_display_params: qt_method!(fn(&self, job_id: u32) -> QString),
+    set_batch_auto_rotate: qt_method!(fn(&mut self, job_ids_json: String, enabled: bool)),
     batch_update_params: qt_method!(fn(&mut self, job_ids_json: String, params_json: String)),
 
     pub gyro_files_changed: qt_signal!(),
@@ -661,18 +757,27 @@ impl RenderQueue {
         render_options.input_url = stab.input_file.read().url.clone();
         render_options.input_filename = filesystem::get_filename(&stab.input_file.read().url);
 
+        let base_lens_metadata = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            Some(JobLensMetadataBackup::from_metadata(&md))
+        };
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
+        let original_video_rotation = stab.params.read().video_rotation;
         self.jobs.insert(
             job_id,
             Job {
                 queue_index: 0,
                 render_options,
+                auto_rotate: false,
                 additional_data,
                 cancel_flag: Default::default(),
                 project_data,
                 stab: Some(stab.clone()),
+                base_lens_metadata,
                 video_created_at,
+                original_video_rotation,
             },
         );
         self.update_queue_indices();
@@ -1110,6 +1215,11 @@ impl RenderQueue {
                         .and_then(|vi| vi.get("focal_length"))
                         .and_then(|f| f.as_f64())
                         .unwrap_or(0.0);
+                    let detected_source = v
+                        .get("gyro_source")
+                        .and_then(|gs| gs.get("detected_source"))
+                        .and_then(|ds| ds.as_str())
+                        .unwrap_or("");
                     let result = serde_json::json!({
                         "smoothness": smoothness,
                         "horizon_lock_amount": horizon_lock_amount,
@@ -1117,12 +1227,26 @@ impl RenderQueue {
                         "zoom_mode": zoom_mode,
                         "framerate": framerate,
                         "focal_length": focal_length,
+                        "detected_source": detected_source,
+                        "auto_rotate": job.auto_rotate,
                     });
                     return QString::from(result.to_string());
                 }
             }
         }
         QString::from("{}")
+    }
+
+    fn set_batch_auto_rotate(&mut self, job_ids_json: String, enabled: bool) {
+        let job_ids: Vec<u32> = match serde_json::from_str(&job_ids_json) {
+            Ok(ids) => ids,
+            Err(_) => return,
+        };
+        for job_id in job_ids {
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                job.auto_rotate = enabled;
+            }
+        }
     }
 
     pub fn batch_update_params(&mut self, job_ids_json: String, params_json: String) {
@@ -2099,7 +2223,15 @@ impl RenderQueue {
                                     info.frame_count,
                                     video_size,
                                 );
-                                stab.set_video_rotation(((360 - info.rotation) % 360) as f64);
+                                let normalized_metadata_rotation =
+                                    ((360 - info.rotation) % 360) as f64;
+                                ::log::info!(
+                                    "[video_rotation] file='{}' metadata_raw={} metadata_normalized={}",
+                                    filesystem::get_filename(&url),
+                                    info.rotation,
+                                    normalized_metadata_rotation
+                                );
+                                stab.set_video_rotation(normalized_metadata_rotation);
                                 stab.params.write().video_created_at = info.created_at;
 
                                 stab.input_file.write().url = url.clone();
@@ -2784,11 +2916,12 @@ impl RenderQueue {
         // T2: Background metadata parsing
         let on_parsed = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            move |this, result: (Option<i64>, Option<f64>, Option<String>)| {
+            move |this, result: (Option<i64>, Option<f64>, Option<String>, Option<String>)| {
                 if let Some(info) = this.gyro_files.get_mut(index) {
                     info.created_at_ms = result.0;
                     info.duration_ms = result.1;
-                    info.error = result.2.clone();
+                    info.detected_source = result.2.clone();
+                    info.error = result.3.clone();
                     info.parsed = true;
                 }
                 this.gyro_files_changed();
@@ -2798,7 +2931,7 @@ impl RenderQueue {
         core::run_threaded(move || {
             let t = std::time::Instant::now();
             match parse_gyro_metadata(&url) {
-                Ok((created_at, duration)) => {
+                Ok((created_at, duration, detected_source)) => {
                     ::log::info!(
                         "[add_gyro_file] parsed '{}': {:.1}ms (created_at={}, duration={:.0}ms)",
                         filesystem::get_filename(&url),
@@ -2806,7 +2939,7 @@ impl RenderQueue {
                         created_at,
                         duration
                     );
-                    on_parsed((Some(created_at), Some(duration), None));
+                    on_parsed((Some(created_at), Some(duration), detected_source, None));
                 }
                 Err(e) => {
                     ::log::warn!(
@@ -2815,7 +2948,7 @@ impl RenderQueue {
                         t.elapsed().as_secs_f64() * 1000.0,
                         e
                     );
-                    on_parsed((None, None, Some(e.to_string())));
+                    on_parsed((None, None, None, Some(e.to_string())));
                 }
             }
         });
@@ -2925,6 +3058,7 @@ impl RenderQueue {
         );
         self.gyro_files.clear();
         self.match_results = None;
+        self.stabilizer.clear_lens_group_status();
         self.manual_pairs.clear();
         self.restore_original_order();
         self.gyro_files_changed();
@@ -2947,6 +3081,7 @@ impl RenderQueue {
                     "filename": info.filename,
                     "created_at_ms": info.created_at_ms,
                     "duration_ms": info.duration_ms,
+                    "detected_source": info.detected_source,
                     "parsed": info.parsed,
                     "error": info.error,
                 })
@@ -2960,6 +3095,7 @@ impl RenderQueue {
     // T3: Collect metadata and run batch matching algorithm.
     fn batch_match_gyro(&mut self) {
         let t_total = std::time::Instant::now();
+        self.stabilizer.clear_lens_group_status();
 
         // [queue-render-skip] 重新 match 前，清除所有已有的 Skipped 标记
         {
@@ -3114,13 +3250,206 @@ impl RenderQueue {
     // T4: Apply match results by loading gyro data into each matched job.
     // Runs heavy gyro parsing on a background thread to avoid blocking the UI.
     fn apply_match_results(&mut self) {
+        self.apply_match_results_filtered(None);
+    }
+
+    fn reapply_batch_auto_rotate(&mut self, job_ids_json: String) {
+        let job_ids: HashSet<u32> = match serde_json::from_str::<Vec<u32>>(&job_ids_json) {
+            Ok(ids) => ids.into_iter().collect(),
+            Err(_) => return,
+        };
+        if job_ids.is_empty() {
+            return;
+        }
+        self.apply_match_results_filtered(Some(job_ids));
+    }
+
+    fn reapply_lens_group_config(&mut self) {
+        let lens_group_config = self.stabilizer.lens_group_config.read().clone();
+
+        // Collect jobs that have a live StabilizationManager
+        let items: Vec<(
+            u32,
+            Arc<StabilizationManager>,
+            String,
+            RenderOptions,
+            JobLensMetadataBackup,
+            String,
+        )> = self
+            .jobs
+            .iter()
+            .filter_map(|(job_id, job)| {
+                let stab = job.stab.as_ref()?.clone();
+                let base_lens_metadata = job.base_lens_metadata.clone().or_else(|| {
+                    let gyro = stab.gyro.read();
+                    let md = gyro.file_metadata.read();
+                    Some(JobLensMetadataBackup::from_metadata(&md))
+                })?;
+                let gyro_file_url = {
+                    let gyro = stab.gyro.read();
+                    gyro.file_url.clone()
+                };
+                Some((
+                    *job_id,
+                    stab,
+                    job.additional_data.clone(),
+                    job.render_options.clone(),
+                    base_lens_metadata,
+                    gyro_file_url,
+                ))
+            })
+            .collect();
+
+        if items.is_empty() {
+            return;
+        }
+
+        ::log::info!(
+            "[reapply_lens_group_config] starting for {} jobs",
+            items.len()
+        );
+
+        let on_done = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, job_updates: Vec<(u32, Option<String>, RenderOptions)>| {
+                let updated_count = job_updates
+                    .iter()
+                    .filter(|(_, data, _)| data.is_some())
+                    .count();
+                for (job_id, project_data, render_options) in job_updates {
+                    if let Some(job) = this.jobs.get_mut(&job_id) {
+                        if let Some(data) = project_data {
+                            job.project_data = Some(data);
+                        }
+                        job.render_options = render_options;
+                    }
+                }
+                ::log::info!(
+                    "[reapply_lens_group_config] done, updated {} jobs",
+                    updated_count
+                );
+            },
+        );
+
+        core::run_threaded(move || {
+            let job_updates: Vec<(u32, Option<String>, RenderOptions)> = items
+                .par_iter()
+                .filter_map(
+                    |(
+                        job_id,
+                        stab,
+                        additional_data,
+                        render_options,
+                        base_lens_metadata,
+                        gyro_file_url,
+                    )| {
+                        let (lens_index, size) = {
+                            let gyro = stab.gyro.read();
+                            let md = gyro.file_metadata.read();
+                            let li = anamorphic_presets::extract_lens_index(&md.additional_data);
+                            let sz = stab.params.read().size;
+                            (li, sz)
+                        };
+
+                        let lens_index = lens_index?;
+                        let group_config = lens_group_config.get(lens_index)?.clone();
+
+                        let mut base_metadata = {
+                            let gyro = stab.gyro.read();
+                            let mut md = gyro.file_metadata.write();
+                            base_lens_metadata.overwrite_metadata(&mut md);
+                            let mut snapshot = md.thin();
+                            base_lens_metadata.overwrite_metadata(&mut snapshot);
+                            snapshot
+                        };
+                        let auto_focus =
+                            anamorphic_presets::extract_video_focus_length_mm(&base_metadata);
+
+                        stab.apply_main_video_telemetry(&mut base_metadata, gyro_file_url, true);
+                        *stab.camera_id.write() = base_metadata.camera_identifier.clone();
+                        if let Err(err) = stab.autoload_lens_from_camera_id() {
+                            ::log::warn!(
+                                "[reapply_lens_group_config] job[{}] autoload lens profile failed: {}",
+                                job_id,
+                                err
+                            );
+                        }
+                        sync_readout_params_from_lens(stab.as_ref());
+
+                        let manual_focus_mm = group_config
+                            .focal_length_mm
+                            .filter(|v| v.is_finite() && *v > 0.0);
+                        let manual_fallback =
+                            if auto_focus.is_none() { manual_focus_mm } else { None };
+
+                        if let Some(focal_length_mm) = manual_fallback {
+                            anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                &mut base_metadata,
+                                focal_length_mm,
+                            );
+                            {
+                                let gyro = stab.gyro.read();
+                                let mut md = gyro.file_metadata.write();
+                                anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                    &mut md,
+                                    focal_length_mm,
+                                );
+                            }
+                            stab.set_user_focal_length(focal_length_mm);
+                            ::log::info!(
+                                "[reapply_lens_group_config] job[{}] applied focal length {:.1}mm",
+                                job_id,
+                                focal_length_mm
+                            );
+                        }
+
+                        if group_config.anamorphic_enabled {
+                            let existing_lens = stab.lens.read().clone();
+                            let profile = anamorphic_presets::build_lens_profile(
+                                &base_metadata,
+                                size,
+                                Some(&group_config),
+                                Some(&existing_lens),
+                            );
+                            if let Some(profile) = profile {
+                                *stab.lens.write() = profile;
+                                ::log::info!(
+                                    "[reapply_lens_group_config] job[{}] applied anamorphic profile for group #{}",
+                                    job_id,
+                                    lens_index
+                                );
+                            }
+                        }
+
+                        sync_readout_params_from_lens(stab.as_ref());
+                        stab.invalidate_smoothing();
+                        stab.invalidate_zooming();
+                        let additional_data_str =
+                            prepare_project_additional_data(additional_data, render_options);
+                        let data = stab
+                            .export_gyroflow_data(
+                                core::GyroflowProjectType::WithGyroData,
+                                &additional_data_str,
+                                None,
+                            )
+                            .ok();
+
+                        Some((*job_id, data, render_options.clone()))
+                    },
+                )
+                .collect();
+
+            on_done(job_updates);
+        });
+    }
+
+    fn apply_match_results_filtered(&mut self, filter_job_ids: Option<HashSet<u32>>) {
         let results = match &self.match_results {
             Some(r) => r.results.clone(),
             None => return,
         };
 
-        let job_ids = self.get_ordered_job_ids();
-
+        let lens_group_config = self.stabilizer.lens_group_config.read().clone();
         // Build a mapping from parsed gyro index back to gyro_files index.
         let parsed_gyro_indices: Vec<usize> = self
             .gyro_files
@@ -3138,6 +3467,10 @@ impl RenderQueue {
             gyro_start_ms: Option<f64>,
             gyro_end_ms: Option<f64>,
             additional_data: String,
+            render_options: RenderOptions,
+            auto_rotate: bool,
+            original_video_rotation: f64,
+            base_lens_metadata: Option<JobLensMetadataBackup>,
             stab: Arc<StabilizationManager>,
         }
         #[derive(Clone)]
@@ -3164,18 +3497,43 @@ impl RenderQueue {
                 Some(&idx) => idx,
                 None => continue,
             };
-            let job_id = match job_ids.get(result.video_index) {
-                Some(&id) => id,
+            // Use pre-resolved job_id from batch_match (line 3159) instead of
+            // re-looking up via video_index, because the queue order may have
+            // changed between batch_match and apply_match_results (e.g. QML
+            // sort_jobs_by_created_at triggered by match_results_changed signal).
+            let job_id = match result.job_id {
+                Some(id) => id,
                 None => continue,
             };
+            if let Some(filter_job_ids) = filter_job_ids.as_ref() {
+                if !filter_job_ids.contains(&job_id) {
+                    continue;
+                }
+            }
             let requested_range =
                 normalize_time_range_ms(result.gyro_start_ms.zip(result.gyro_end_ms));
-            let (stab, gyro_path, additional_data) = match self.jobs.get(&job_id) {
+            let (
+                stab,
+                gyro_path,
+                additional_data,
+                render_options,
+                auto_rotate,
+                original_video_rotation,
+                base_lens_metadata,
+            ) = match self.jobs.get(&job_id) {
                 Some(job) => match (&job.stab, self.gyro_files.get(gyro_files_idx)) {
                     (Some(stab), Some(gyro_info)) => (
                         stab.clone(),
                         gyro_info.path.clone(),
-                        prepare_project_additional_data(&job.additional_data, &job.render_options),
+                        job.additional_data.clone(),
+                        job.render_options.clone(),
+                        job.auto_rotate,
+                        job.original_video_rotation,
+                        job.base_lens_metadata.clone().or_else(|| {
+                            let gyro = stab.gyro.read();
+                            let md = gyro.file_metadata.read();
+                            Some(JobLensMetadataBackup::from_metadata(&md))
+                        }),
                     ),
                     _ => continue,
                 },
@@ -3205,6 +3563,10 @@ impl RenderQueue {
                 gyro_start_ms: result.gyro_start_ms,
                 gyro_end_ms: result.gyro_end_ms,
                 additional_data,
+                render_options,
+                auto_rotate,
+                original_video_rotation,
+                base_lens_metadata,
                 stab,
             });
         }
@@ -3224,10 +3586,15 @@ impl RenderQueue {
         let on_done = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this,
-                  (applied_job_ids, exported_project_data, cache_updates, t_bg_end): (
-                Vec<u32>,
-                Vec<(u32, String)>,
+                  (job_updates, cache_updates, lens_group_status, t_bg_end): (
+                Vec<(
+                    u32,
+                    Option<String>,
+                    RenderOptions,
+                    Option<JobLensMetadataBackup>,
+                )>,
                 Vec<(usize, Vec<CachedGyroMetadataRange>)>,
+                Vec<anamorphic_presets::LensGroupStatus>,
                 std::time::Instant,
             )| {
                 let t_cb = std::time::Instant::now();
@@ -3261,14 +3628,36 @@ impl RenderQueue {
                     t_cache_write.elapsed().as_secs_f64() * 1000.0
                 );
 
+                this.stabilizer.set_lens_group_status(lens_group_status);
+
+                let applied_job_ids: Vec<u32> = job_updates
+                    .iter()
+                    .map(|(job_id, _, _, _)| *job_id)
+                    .collect();
                 let t_project = std::time::Instant::now();
-                for (job_id, data) in exported_project_data {
+                for (job_id, project_data, render_options, base_lens_metadata) in job_updates {
+                    let mut export_settings = None;
                     if let Some(job) = this.jobs.get_mut(&job_id) {
-                        job.project_data = Some(data);
+                        if let Some(data) = project_data {
+                            job.project_data = Some(data);
+                        }
+                        job.render_options = render_options;
+                        if let Some(base_lens_metadata) = base_lens_metadata {
+                            job.base_lens_metadata = Some(base_lens_metadata);
+                        }
+                        if let Some(ref stab) = job.stab {
+                            export_settings =
+                                Some(job.render_options.settings_string(stab.params.read().fps));
+                        }
+                    }
+                    if let Some(export_settings) = export_settings {
+                        update_model!(this, job_id, itm {
+                            itm.export_settings = QString::from(export_settings.as_str());
+                        });
                     }
                 }
                 ::log::info!(
-                    "[apply_match] project_data update: {:.1}ms ({} jobs)",
+                    "[apply_match] project/render_options update: {:.1}ms ({} jobs)",
                     t_project.elapsed().as_secs_f64() * 1000.0,
                     applied_job_ids.len()
                 );
@@ -3336,6 +3725,9 @@ impl RenderQueue {
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
+            let lens_group_status = Arc::new(ParkingMutex::new(
+                anamorphic_presets::default_lens_group_statuses(),
+            ));
 
             // 按区间缓存 telemetry 数据，避免超大 gyro 文件被整段解析
             let mut gyro_cache = existing_caches.clone();
@@ -3523,7 +3915,66 @@ impl RenderQueue {
             // Apply cached gyro data to each job
             let t_apply = std::time::Instant::now();
             let gyro_cache = Arc::new(gyro_cache);
-            apply_items.par_iter().enumerate().for_each(|(idx, item)| {
+            let mut auto_rotation_results: HashMap<u32, Option<i32>> = HashMap::new();
+            let mut auto_rotate_groups: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
+            for (item_idx, item) in apply_items.iter().enumerate() {
+                auto_rotate_groups
+                    .entry(item.gyro_files_idx)
+                    .or_default()
+                    .push(item_idx);
+            }
+            let mut auto_rotate_state = core::gyro_source::SenseFlowAutoRotationState::default();
+            for item_indices in auto_rotate_groups.values_mut() {
+                item_indices.sort_by(|a, b| {
+                    let a_start = apply_items[*a].gyro_start_ms.unwrap_or(f64::MIN);
+                    let b_start = apply_items[*b].gyro_start_ms.unwrap_or(f64::MIN);
+                    a_start
+                        .partial_cmp(&b_start)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                for &item_idx in item_indices.iter() {
+                    let item = &apply_items[item_idx];
+                    let requested_range =
+                        normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
+                    let Some(cached_entries) = gyro_cache.get(&item.gyro_files_idx) else {
+                        continue;
+                    };
+                    let Some(cache_entry) =
+                        select_best_cached_metadata(cached_entries, requested_range)
+                    else {
+                        continue;
+                    };
+
+                    let adjusted_range_ms = get_adjusted_match_range_ms(
+                        cache_entry.range_ms,
+                        item.gyro_start_ms,
+                        item.gyro_end_ms,
+                    );
+                    let md =
+                        clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
+                    let detected_source = md.detected_source.as_deref().unwrap_or("");
+                    if item.auto_rotate && detected_source.starts_with("SenseFlow") {
+                        ::log::info!(
+                            "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={}",
+                            item.render_options.input_filename,
+                            adjusted_range_ms,
+                            md.duration_ms,
+                            md.raw_imu.len()
+                        );
+                        let rotation =
+                            core::gyro_source::compute_auto_rotation_for_segment_with_state(
+                                &mut auto_rotate_state,
+                                &md.raw_imu,
+                                Some(&md.additional_data),
+                                &item.render_options.input_filename,
+                            );
+                        auto_rotation_results.insert(item.job_id, rotation);
+                    }
+                }
+            }
+            let auto_rotation_results = Arc::new(auto_rotation_results);
+            apply_items.par_iter_mut().enumerate().for_each(|(idx, item)| {
                 let t_item = std::time::Instant::now();
                 let requested_range = normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
                 if let Some(cached_entries) = gyro_cache.get(&item.gyro_files_idx) {
@@ -3539,25 +3990,99 @@ impl RenderQueue {
                             clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
                         let imu_count = md.raw_imu.len();
                         let quat_count = md.quaternions.len();
+                        let size = item.stab.params.read().size;
 
-                        let backup_lens_data = {
-                            let gyro = item.stab.gyro.read();
-                            let fm = gyro.file_metadata.read();
-                            (
-                                fm.lens_params.clone(),
-                                fm.lens_positions.clone(),
-                                fm.lens_profile.clone(),
-                            )
+                        if let Some(base_lens_metadata) = item.base_lens_metadata.as_ref() {
+                            base_lens_metadata.apply_missing_to_metadata(&mut md);
+                        }
+                        item.base_lens_metadata = Some(JobLensMetadataBackup::from_metadata(&md));
+                        {
+                            let mut statuses = lens_group_status.lock();
+                            anamorphic_presets::update_status_from_metadata(&mut statuses, &md);
+                        }
+
+                        let lens_index =
+                            anamorphic_presets::extract_lens_index(&md.additional_data);
+                        let group_config = lens_index
+                            .and_then(|index| lens_group_config.get(index))
+                            .cloned();
+                        let auto_focus_length_mm =
+                            anamorphic_presets::extract_video_focus_length_mm(&md);
+                        let manual_focus_length_mm = group_config
+                            .as_ref()
+                            .and_then(|cfg| cfg.focal_length_mm)
+                            .filter(|value| value.is_finite() && *value > 0.0);
+                        let manual_focus_fallback_mm = if auto_focus_length_mm.is_none() {
+                            manual_focus_length_mm
+                        } else {
+                            None
                         };
-                        if md.lens_params.is_empty() {
-                            md.lens_params = backup_lens_data.0.clone();
+
+                        if let Some(focal_length_mm) = manual_focus_fallback_mm {
+                            anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                &mut md,
+                                focal_length_mm,
+                            );
+                            ::log::info!(
+                                "[apply_match] job[{}] applied lens group fallback focal length {:.1}mm to metadata",
+                                idx,
+                                focal_length_mm
+                            );
                         }
-                        if md.lens_positions.is_empty() {
-                            md.lens_positions = backup_lens_data.1.clone();
+
+                        item.stab
+                            .apply_main_video_telemetry(&mut md, &item.gyro_path, true);
+                        let camera_id = md.camera_identifier.clone();
+
+                        let current_video_rotation = item.stab.params.read().video_rotation;
+                        let detected_source =
+                            md.detected_source.as_deref().unwrap_or("").to_string();
+                        let metadata_raw_rotation =
+                            denormalize_video_rotation_metadata(item.original_video_rotation);
+
+                        if (current_video_rotation - item.original_video_rotation).abs()
+                            >= f64::EPSILON
+                        {
+                            let current_is_vertical =
+                                current_video_rotation == 90.0 || current_video_rotation == 270.0;
+                            let original_is_vertical = item.original_video_rotation == 90.0
+                                || item.original_video_rotation == 270.0;
+                            if current_is_vertical != original_is_vertical {
+                                std::mem::swap(
+                                    &mut item.render_options.output_width,
+                                    &mut item.render_options.output_height,
+                                );
+                            }
                         }
-                        if md.lens_profile.is_none() {
-                            md.lens_profile = backup_lens_data.2.clone();
-                        }
+                        item.stab.set_video_rotation(item.original_video_rotation);
+                        item.stab.set_output_size(
+                            item.render_options.output_width,
+                            item.render_options.output_height,
+                        );
+
+                        let should_apply_auto_rotate =
+                            item.auto_rotate && detected_source.starts_with("SenseFlow");
+                        let auto_rotation = if should_apply_auto_rotate {
+                            auto_rotation_results
+                                .get(&item.job_id)
+                                .copied()
+                                .flatten()
+                        } else {
+                            None
+                        };
+
+                        let existing_lens = item.stab.lens.read().clone();
+                        let custom_lens_profile = group_config
+                            .as_ref()
+                            .filter(|cfg| cfg.anamorphic_enabled)
+                            .and_then(|cfg| {
+                                anamorphic_presets::build_lens_profile(
+                                    &md,
+                                    size,
+                                    Some(cfg),
+                                    Some(&existing_lens),
+                                )
+                            });
 
                         {
                             let params = item.stab.params.read();
@@ -3573,6 +4098,92 @@ impl RenderQueue {
                             drop(params);
                             gyro.load_from_telemetry(md);
                             gyro.file_load_options = Default::default();
+                        }
+                        *item.stab.camera_id.write() = camera_id;
+                        match item.stab.autoload_lens_from_camera_id() {
+                            Ok(true) => {
+                                ::log::info!(
+                                    "[apply_match] job[{}] autoloaded lens profile from camera id",
+                                    idx
+                                );
+                            }
+                            Ok(false) => {}
+                            Err(err) => {
+                                ::log::warn!(
+                                    "[apply_match] job[{}] autoload lens profile failed: {}",
+                                    idx,
+                                    err
+                                );
+                            }
+                        }
+
+                        if let Some(focal_length_mm) = manual_focus_fallback_mm {
+                            item.stab.set_user_focal_length(focal_length_mm);
+                            sync_readout_params_from_lens(item.stab.as_ref());
+                            ::log::info!(
+                                "[apply_match] job[{}] applied lens group fallback focal length {:.1}mm",
+                                idx,
+                                focal_length_mm
+                            );
+                        }
+
+                        if let Some(rotation) = auto_rotation {
+                            ::log::info!(
+                                "[auto_rotate compare] file='{}' detected_source='{}' metadata_raw={} metadata_normalized={} auto_rotate_result={} matches_normalized={}",
+                                item.render_options.input_filename,
+                                detected_source,
+                                metadata_raw_rotation,
+                                item.original_video_rotation,
+                                rotation,
+                                (rotation as f64 - item.original_video_rotation).abs() < f64::EPSILON
+                            );
+                            item.stab.set_video_rotation(rotation as f64);
+                            if rotation == 90 || rotation == 270 {
+                                std::mem::swap(
+                                    &mut item.render_options.output_width,
+                                    &mut item.render_options.output_height,
+                                );
+                            }
+                            item.stab.set_output_size(
+                                item.render_options.output_width,
+                                item.render_options.output_height,
+                            );
+                            ::log::info!(
+                                "[apply_match] job[{}] auto_rotate applied: {} ({}x{})",
+                                idx,
+                                rotation,
+                                item.render_options.output_width,
+                                item.render_options.output_height
+                            );
+                        } else if item.auto_rotate && detected_source.starts_with("SenseFlow") {
+                            ::log::info!(
+                                "[auto_rotate compare] file='{}' detected_source='{}' metadata_raw={} metadata_normalized={} auto_rotate_result=None matches_normalized=false",
+                                item.render_options.input_filename,
+                                detected_source,
+                                metadata_raw_rotation,
+                                item.original_video_rotation
+                            );
+                        }
+
+                        if let Some(lens_index) = lens_index {
+                            if let Some(profile) = custom_lens_profile {
+                                {
+                                    let mut lens = item.stab.lens.write();
+                                    *lens = profile;
+                                }
+                                sync_readout_params_from_lens(item.stab.as_ref());
+                                ::log::info!(
+                                    "[apply_match] job[{}] applied lens group #{} profile",
+                                    idx,
+                                    lens_index
+                                );
+                            } else {
+                                ::log::info!(
+                                    "[apply_match] job[{}] lens group #{} skipped (keeping existing lens flow)",
+                                    idx,
+                                    lens_index
+                                );
+                            }
                         }
 
                         item.stab.invalidate_smoothing();
@@ -3641,13 +4252,16 @@ impl RenderQueue {
             );
 
             let t_export = std::time::Instant::now();
-            let exported_project_data: Vec<(u32, String)> = apply_items
-                .par_iter()
-                .filter_map(|item| {
+            let job_updates: Vec<(u32, Option<String>, RenderOptions, Option<JobLensMetadataBackup>)> =
+                apply_items
+                    .into_par_iter()
+                    .map(|item| {
                     item.stab.gyro.write().file_url = item.gyro_path.clone();
+                    let additional_data =
+                        prepare_project_additional_data(&item.additional_data, &item.render_options);
                     match item.stab.export_gyroflow_data(
                         core::GyroflowProjectType::WithGyroData,
-                        &item.additional_data,
+                        &additional_data,
                         None,
                     ) {
                         Ok(data) => {
@@ -3656,7 +4270,12 @@ impl RenderQueue {
                                 item.job_id,
                                 data.len()
                             );
-                            Some((item.job_id, data))
+                            (
+                                item.job_id,
+                                Some(data),
+                                item.render_options,
+                                item.base_lens_metadata,
+                            )
                         }
                         Err(e) => {
                             ::log::warn!(
@@ -3664,7 +4283,12 @@ impl RenderQueue {
                                 item.job_id,
                                 e
                             );
-                            None
+                            (
+                                item.job_id,
+                                None,
+                                item.render_options,
+                                item.base_lens_metadata,
+                            )
                         }
                     }
                 })
@@ -3672,7 +4296,10 @@ impl RenderQueue {
             ::log::info!(
                 "[apply_match] export_gyroflow_data: {:.1}ms ({} jobs)",
                 t_export.elapsed().as_secs_f64() * 1000.0,
-                exported_project_data.len()
+                job_updates
+                    .iter()
+                    .filter(|(_, project_data, _, _)| project_data.is_some())
+                    .count()
             );
 
             ::log::info!(
@@ -3680,14 +4307,9 @@ impl RenderQueue {
                 t_bg.elapsed().as_secs_f64() * 1000.0
             );
 
-            let applied_job_ids: Vec<u32> = apply_items.iter().map(|item| item.job_id).collect();
+            let lens_group_status = lens_group_status.lock().clone();
             let t_bg_end = std::time::Instant::now();
-            on_done((
-                applied_job_ids,
-                exported_project_data,
-                cache_updates,
-                t_bg_end,
-            ));
+            on_done((job_updates, cache_updates, lens_group_status, t_bg_end));
         });
     }
 
@@ -4054,6 +4676,24 @@ const APPLY_MATCH_PARSE_CHUNK_MAX_SPAN_MS: f64 = 120_000.0;
 const APPLY_MATCH_PARSE_CHUNK_MERGE_GAP_MS: f64 = 15_000.0;
 const APPLY_MATCH_RANGE_EPSILON_MS: f64 = 0.5;
 
+fn sync_readout_params_from_lens(stab: &StabilizationManager) {
+    let (frame_readout_time, frame_readout_direction) = {
+        let lens = stab.lens.read();
+        (lens.frame_readout_time, lens.frame_readout_direction)
+    };
+
+    if let Some(frame_readout_time) = frame_readout_time {
+        let mut params = stab.params.write();
+        params.frame_readout_time = frame_readout_time.abs();
+        params.frame_readout_direction =
+            frame_readout_direction.unwrap_or(if frame_readout_time < 0.0 {
+                ReadoutDirection::BottomToTop
+            } else {
+                ReadoutDirection::TopToBottom
+            });
+    }
+}
+
 fn normalize_time_range_ms(range: Option<(f64, f64)>) -> Option<(f64, f64)> {
     range.map(|(start, end)| {
         let start = start.max(0.0);
@@ -4374,9 +5014,11 @@ fn parse_creation_date_to_millis(date_str: &str) -> Option<i64> {
     Some(naive.and_utc().timestamp_millis() + subsec_ms)
 }
 
-/// Parse gyro file metadata (creation date and IMU duration) using telemetry-parser.
+/// Parse gyro file metadata (creation date, IMU duration and detected source) using telemetry-parser.
 /// Uses header_only mode for SenseFlow files: reads only 512 bytes, computes duration from filesize.
-fn parse_gyro_metadata(url: &str) -> Result<(i64, f64), Box<dyn std::error::Error + Send + Sync>> {
+fn parse_gyro_metadata(
+    url: &str,
+) -> Result<(i64, f64, Option<String>), Box<dyn std::error::Error + Send + Sync>> {
     let mut file = filesystem::open_file(url, false, false)?;
     let filesize = file.size;
     let options = core::gyro_source::FileLoadOptions {
@@ -4412,5 +5054,105 @@ fn parse_gyro_metadata(url: &str) -> Result<(i64, f64), Box<dyn std::error::Erro
         0.0
     };
 
-    Ok((created_at, duration))
+    Ok((created_at, duration, md.detected_source))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lens_metadata_backup_restores_missing_fields_without_overwriting_real_values() {
+        let backup = JobLensMetadataBackup::from_metadata(&core::gyro_source::FileMetadata {
+            lens_params: BTreeMap::from([(
+                0,
+                core::gyro_source::LensParams {
+                    focal_length: Some(35.0),
+                    pixel_focal_length: Some(3500.0),
+                    ..Default::default()
+                },
+            )]),
+            lens_positions: BTreeMap::from([(0, 1.2)]),
+            lens_profile: Some(serde_json::json!({ "identifier": "base" })),
+            unit_pixel_focal_length: Some(100.0),
+            camera_identifier: Some(CameraIdentifier {
+                brand: "Canon".to_owned(),
+                model: "R5".to_owned(),
+                ..Default::default()
+            }),
+            detected_source: Some("Canon R5".to_owned()),
+            frame_readout_time: Some(12.5),
+            frame_readout_direction: ReadoutDirection::BottomToTop,
+            ..Default::default()
+        });
+
+        let mut md = core::gyro_source::FileMetadata {
+            lens_params: Default::default(),
+            lens_positions: Default::default(),
+            lens_profile: None,
+            unit_pixel_focal_length: None,
+            camera_identifier: Some(CameraIdentifier {
+                brand: String::new(),
+                ..Default::default()
+            }),
+            detected_source: Some("SenseFlow Mini".to_owned()),
+            frame_readout_time: None,
+            frame_readout_direction: ReadoutDirection::TopToBottom,
+            ..Default::default()
+        };
+
+        backup.apply_missing_to_metadata(&mut md);
+
+        assert_eq!(md.lens_params.len(), 1);
+        assert_eq!(md.lens_positions.len(), 1);
+        assert_eq!(md.unit_pixel_focal_length, Some(100.0));
+        assert_eq!(
+            md.camera_identifier.as_ref().map(|v| v.brand.as_str()),
+            Some("Canon")
+        );
+        assert_eq!(md.detected_source.as_deref(), Some("Canon R5"));
+        assert_eq!(md.frame_readout_time, Some(12.5));
+        assert_eq!(md.frame_readout_direction, ReadoutDirection::BottomToTop);
+    }
+
+    #[test]
+    fn lens_metadata_backup_overwrite_restores_clean_state() {
+        let backup = JobLensMetadataBackup::from_metadata(&core::gyro_source::FileMetadata {
+            lens_params: BTreeMap::from([(
+                0,
+                core::gyro_source::LensParams {
+                    focal_length: Some(24.0),
+                    ..Default::default()
+                },
+            )]),
+            detected_source: Some("Sony FX3".to_owned()),
+            frame_readout_time: Some(8.3),
+            frame_readout_direction: ReadoutDirection::LeftToRight,
+            ..Default::default()
+        });
+
+        let mut md = core::gyro_source::FileMetadata {
+            lens_params: BTreeMap::from([(
+                0,
+                core::gyro_source::LensParams {
+                    focal_length: Some(55.0),
+                    ..Default::default()
+                },
+            )]),
+            detected_source: Some("SenseFlow".to_owned()),
+            frame_readout_time: Some(99.0),
+            frame_readout_direction: ReadoutDirection::TopToBottom,
+            ..Default::default()
+        };
+
+        backup.overwrite_metadata(&mut md);
+
+        assert_eq!(
+            md.lens_params.get(&0).and_then(|v| v.focal_length),
+            Some(24.0)
+        );
+        assert_eq!(md.detected_source.as_deref(), Some("Sony FX3"));
+        assert_eq!(md.frame_readout_time, Some(8.3));
+        assert_eq!(md.frame_readout_direction, ReadoutDirection::LeftToRight);
+    }
 }

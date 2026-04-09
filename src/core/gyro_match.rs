@@ -44,7 +44,7 @@ pub enum MatchStatus {
 #[derive(Debug, Clone)]
 pub struct MatchResult {
     pub video_index: usize,
-    pub job_id: Option<u32>,  // [queue-lifecycle T4] 用于在 remove 后按 job_id 查找
+    pub job_id: Option<u32>, // [queue-lifecycle T4] 用于在 remove 后按 job_id 查找
     pub gyro_index: Option<usize>,
     pub status: MatchStatus,
     pub global_offset_ms: Option<i64>,
@@ -81,9 +81,7 @@ fn find_calibration_videos(videos: &[VideoMatchInfo]) -> Vec<usize> {
     let mut candidates: Vec<(usize, i64)> = videos
         .iter()
         .enumerate()
-        .filter(|(_, v)| {
-            v.duration_ms < 10_000.0 + v.pre_recording_ms && v.created_at_ms.is_some()
-        })
+        .filter(|(_, v)| v.duration_ms < 10_000.0 + v.pre_recording_ms && v.created_at_ms.is_some())
         .map(|(i, v)| (i, v.created_at_ms.unwrap()))
         .collect();
 
@@ -234,7 +232,8 @@ fn compute_global_offset(
             // Delay detection: when gyro recording is significantly longer than video
             let total_diff0 = g0_dur_s + pre0_s - v0_dur_s;
             let total_diff1 = g1_dur_s + pre1_s - v1_dur_s;
-            let delay = if total_diff0 > 0.8 && total_diff1 > 0.8
+            let delay = if total_diff0 > 0.8
+                && total_diff1 > 0.8
                 && (total_diff0 > 1.3 || total_diff1 > 1.3)
             {
                 500i64
@@ -466,8 +465,12 @@ fn compute_from_manual_pairs(
         let g0 = &gyros[manual_pairs[i].gyro_index];
         let g1 = &gyros[manual_pairs[i + 1].gyro_index];
 
-        let v0_created = v0.created_at_ms.ok_or(MatchError::NoCalibrationPairsFound)?;
-        let v1_created = v1.created_at_ms.ok_or(MatchError::NoCalibrationPairsFound)?;
+        let v0_created = v0
+            .created_at_ms
+            .ok_or(MatchError::NoCalibrationPairsFound)?;
+        let v1_created = v1
+            .created_at_ms
+            .ok_or(MatchError::NoCalibrationPairsFound)?;
 
         let offset0 = g0.created_at_ms - v0_created;
         let offset1 = g1.created_at_ms - v1_created;

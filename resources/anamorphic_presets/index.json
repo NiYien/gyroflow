@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "presets": [
+    {
+      "id": "sirui_xingchen_50mm_1_33x",
+      "name": "sirui astra 50mm 1.33x",
+      "file": "sirui_xingchen_50mm_1_33x.json"
+    },
+    {
+      "id": "blazar_mantis_25mm_1_33x",
+      "name": "Blazar Mantis 25mm 1.33x",
+      "file": "blazar_mantis_25mm_1_33x.json"
+    },
+    {
+      "id": "blazar_remus_45mm_1_50x",
+      "name": "Blazar Remus 45mm 1.50x",
+      "file": "blazar_remus_45mm_1_50x.json"
+    },
+    {
+      "id": "blazar_viper_35mm_1_50x",
+      "name": "Blazar Viper 35mm 1.50x",
+      "file": "blazar_viper_35mm_1_50x.json"
+    },
+    {
+      "id": "blazar_viper_75mm_1_50x",
+      "name": "Blazar Viper 75mm 1.50x",
+      "file": "blazar_viper_75mm_1_50x.json"
+    },
+    {
+      "id": "sirui_35mm_f1_8_1_33x",
+      "name": "Sirui 35mm f/1.8 Anamorphic 1.33x",
+      "file": "sirui_35mm_f1_8_1_33x.json"
+    },
+    {
+      "id": "sirui_saturn_35mm_t2_9_1_60x",
+      "name": "Sirui Saturn 35mm T2.9 1.60x",
+      "file": "sirui_saturn_35mm_t2_9_1_60x.json"
+    },
+    {
+      "id": "sirui_saturn_50mm_t2_9_1_60x",
+      "name": "Sirui Saturn 50mm T2.9 1.60x",
+      "file": "sirui_saturn_50mm_t2_9_1_60x.json"
+    },
+    {
+      "id": "laowa_nanomorph_35mm_t2_4_1_50x",
+      "name": "Laowa Nanomorph 35mm T2.4 1.50x",
+      "file": "laowa_nanomorph_35mm_t2_4_1_50x.json"
+    },
+    {
+      "id": "aivascope_58mm_1_50x_vertical",
+      "name": "Biotar 58mm + Aivascope 1.50x (Vertical)",
+      "file": "aivascope_58mm_1_50x_vertical.json"
+    }
+  ]
+}

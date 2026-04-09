@@ -15,6 +15,37 @@ Column {
     property alias smoothnessSlider: smoothnessSlider;
     property alias croppingMode: croppingMode;
     property alias lensCorrectionToggle: lensCorrectionToggle;
+    property alias autoRotateCb: autoRotateCb;
+
+    readonly property var _batchGyroFilesInfo: {
+        if (window && window.videoArea && window.videoArea.queue && window.videoArea.queue.gyroFilesInfo) {
+            return window.videoArea.queue.gyroFilesInfo;
+        }
+        return [];
+    }
+    readonly property string _detectedGyroSource: {
+        if (root._batchActive) {
+            for (const info of root._batchGyroFilesInfo) {
+                if (root.isSenseFlowSource(info.detected_source || "")) {
+                    return info.detected_source || "";
+                }
+            }
+            if (window && window.batchState && window.batchState.detectedSource) {
+                return window.batchState.detectedSource;
+            }
+        }
+        if (window && window.motionData && window.motionData.detectedFormat) {
+            return window.motionData.detectedFormat;
+        }
+        return "";
+    }
+    readonly property bool isSenseFlow: root.isSenseFlowSource(root._detectedGyroSource)
+    property int _baselineRotation: 0
+    property int _baselineOutWidth: 0
+    property int _baselineOutHeight: 0
+    property bool _autoRotateApplied: false
+    property int _autoRotationDeg: 0
+    property bool _syncingBatchAutoRotate: false
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
 
@@ -25,6 +56,79 @@ Column {
         controller.set_horizon_lock(lockAmount, roll, false, 0, false, 5.0, 500.0, 1.0, Infinity);
         controller.set_use_gravity_vectors(false);
         controller.set_horizon_lock_integration_method(1);
+    }
+
+    function isSenseFlowSource(source: string): bool {
+        return (source || "").indexOf("SenseFlow") >= 0;
+    }
+
+    function readoutDirectionToInt(direction: var): int {
+        if (typeof direction === "number") {
+            return +direction;
+        }
+        switch (direction) {
+            case "BottomToTop": return 1;
+            case "LeftToRight": return 2;
+            case "RightToLeft": return 3;
+            default: return 0;
+        }
+    }
+
+    function setDisplayedRotation(rotation: int): void {
+        if (window.vidInfo) {
+            window.vidInfo.videoRotation = rotation;
+            window.vidInfo.updateEntry("Rotation", rotation + " °");
+        }
+        controller.set_video_rotation(rotation);
+    }
+
+    function captureAutoRotateBaseline(): void {
+        _baselineRotation = window.vidInfo ? +(window.vidInfo.metadataRotation || 0) : 0;
+        _baselineOutWidth = window.videoArea.outWidth || window.exportSettings.originalWidth || window.videoArea.vid.videoWidth;
+        _baselineOutHeight = window.videoArea.outHeight || window.exportSettings.originalHeight || window.videoArea.vid.videoHeight;
+        _autoRotateApplied = false;
+    }
+
+    function applyAutoRotation(): void {
+        if (root._batchActive) return;
+
+        let outWidth = _baselineOutWidth;
+        let outHeight = _baselineOutHeight;
+        if (_autoRotationDeg === 90 || _autoRotationDeg === 270) {
+            outWidth = _baselineOutHeight;
+            outHeight = _baselineOutWidth;
+        }
+
+        root.setDisplayedRotation(_autoRotationDeg);
+        window.videoArea.outWidth = outWidth;
+        window.videoArea.outHeight = outHeight;
+        controller.set_output_size(outWidth, outHeight);
+        _autoRotateApplied = true;
+    }
+
+    function revertAutoRotation(): void {
+        if (root._batchActive) return;
+
+        root.setDisplayedRotation(_baselineRotation);
+        window.videoArea.outWidth = _baselineOutWidth;
+        window.videoArea.outHeight = _baselineOutHeight;
+        controller.set_output_size(_baselineOutWidth, _baselineOutHeight);
+        _autoRotateApplied = false;
+    }
+
+    function loadGyroflow(obj: var): void {
+        const stab = obj && obj.stabilization ? obj.stabilization : null;
+        if (!stab || typeof stab.frame_readout_time === "undefined") {
+            return;
+        }
+
+        const importedTime = Math.abs(+stab.frame_readout_time || 0);
+        const importedDirection = readoutDirectionToInt(stab.frame_readout_direction);
+
+        shutter.value = importedTime;
+        shutterCb.checked = importedTime > 0;
+        controller.frame_readout_direction = importedDirection;
+        controller.frame_readout_time = shutterCb.checked ? importedTime : 0.0;
     }
 
     // ── Smoothness ──
@@ -90,6 +194,37 @@ Column {
                 precision: 1;
                 keyframe: "LockHorizonRoll";
                 onValueChanged: Qt.callLater(root.updateHorizonLock);
+            }
+        }
+    }
+
+    CheckBox {
+        id: autoRotateCb;
+        visible: root.isSenseFlow;
+        text: qsTranslate("Stabilization", "Auto rotate");
+        checked: false;
+        onCheckedChanged: {
+            if (root._batchActive) {
+                if (root._syncingBatchAutoRotate) return;
+                if (window.batchState) {
+                    window.batchState.autoRotate = checked;
+                }
+                if (window.videoArea && window.videoArea.queue) {
+                    const jobIds = Object.keys(window.videoArea.queue.selectedJobs || {}).map(Number);
+                    if (jobIds.length > 0) {
+                        render_queue.set_batch_auto_rotate(JSON.stringify(jobIds), checked);
+                        if (render_queue.has_match_results()) {
+                            render_queue.reapply_batch_auto_rotate(JSON.stringify(jobIds));
+                        }
+                        window.videoArea.queue.matchVersion++;
+                    }
+                }
+                return;
+            }
+            if (checked) {
+                root.applyAutoRotation();
+            } else if (!checked && root._autoRotateApplied) {
+                root.revertAutoRotation();
             }
         }
     }
@@ -170,8 +305,20 @@ Column {
     // ── Sync with Full mode ──
     Connections {
         target: controller;
+        function onGyroflow_file_loaded(obj: var): void {
+            root.loadGyroflow(obj);
+        }
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
             if (is_main_video) {
+                const isSenseFlow = root.isSenseFlowSource(root._batchActive ? window.batchState.detectedSource : camera);
+                root.captureAutoRotateBaseline();
+                root._autoRotationDeg = 0;
+                if (isSenseFlow && additional_data && additional_data.auto_rotation_deg !== undefined) {
+                    root._autoRotationDeg = +additional_data.auto_rotation_deg;
+                    if (autoRotateCb.checked && !root._batchActive) {
+                        root.applyAutoRotation();
+                    }
+                }
                 if (Math.abs(+additional_data.frame_readout_time) > 0) {
                     shutter.value = Math.abs(+additional_data.frame_readout_time);
                     shutterCb.checked = true;

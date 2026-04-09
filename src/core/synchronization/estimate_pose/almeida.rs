@@ -4,30 +4,46 @@
 use super::super::OpticalFlowPair;
 use super::EstimatePoseTrait;
 
-use nalgebra as na;
 use crate::stabilization::*;
+use nalgebra as na;
 const EPS: f32 = 0.001 * std::f32::consts::PI / 180.0;
 const ALPHA: f32 = 0.5;
 
 #[derive(Default, Clone)]
 pub struct PoseAlmeida {
-    cam: Camera
+    cam: Camera,
 }
 
 impl EstimatePoseTrait for PoseAlmeida {
     fn init(&mut self, params: &ComputeParams) {
-        self.cam = Camera { compute_params: params.clone() };
+        self.cam = Camera {
+            compute_params: params.clone(),
+        };
         self.cam.compute_params.lens_correction_amount = 0.0;
     }
 
-    fn estimate_pose(&self, pairs: &OpticalFlowPair, size: (u32, u32), _params: &ComputeParams, timestamp_us: i64, _next_timestamp_us: i64) -> Option<na::Rotation3<f64>> {
+    fn estimate_pose(
+        &self,
+        pairs: &OpticalFlowPair,
+        size: (u32, u32),
+        _params: &ComputeParams,
+        timestamp_us: i64,
+        _next_timestamp_us: i64,
+    ) -> Option<na::Rotation3<f64>> {
         let (pts1, pts2) = pairs.as_ref()?;
 
         let (w, h) = (size.0 as f32, size.1 as f32);
 
-        let vectors: Vec<MotionEntry> = pts1.into_iter().zip(pts2.into_iter()).map(|(a, b)| {
-            (na::Point2::<f32>::new(a.0 / w, a.1 / h), na::Vector2::<f32>::new((b.0 - a.0) / w, (b.1 - a.1) / h))
-        }).collect();
+        let vectors: Vec<MotionEntry> = pts1
+            .into_iter()
+            .zip(pts2.into_iter())
+            .map(|(a, b)| {
+                (
+                    na::Point2::<f32>::new(a.0 / w, a.1 / h),
+                    na::Vector2::<f32>::new((b.0 - a.0) / w, (b.1 - a.1) / h),
+                )
+            })
+            .collect();
 
         let timestamp_ms = timestamp_us as f64 / 1000.0;
 
@@ -39,12 +55,13 @@ impl EstimatePoseTrait for PoseAlmeida {
 
 #[derive(Default, Clone)]
 pub struct Camera {
-    compute_params: ComputeParams
+    compute_params: ComputeParams,
 }
 
 impl Camera {
     pub fn point_angle(&self, p: na::Point2<f32>, timestamp_ms: f64) -> na::Vector2<f32> {
-        let (intrinsics, _, _, _, _, _) = FrameTransform::get_lens_data_at_timestamp(&self.compute_params, timestamp_ms, false);
+        let (intrinsics, _, _, _, _, _) =
+            FrameTransform::get_lens_data_at_timestamp(&self.compute_params, timestamp_ms, false);
 
         // Center the point.
         let p = p - na::Vector2::new(intrinsics[(0, 2)] as f32, intrinsics[(1, 2)] as f32);
@@ -55,25 +72,55 @@ impl Camera {
 
         na::matrix![tan.x.atan(); tan.y.atan()]
     }
-    fn delta(&self, coords: na::Point2<f32>, rotation: na::Matrix4<f32>, timestamp_ms: f64) -> na::Vector2<f32> {
+    fn delta(
+        &self,
+        coords: na::Point2<f32>,
+        rotation: na::Matrix4<f32>,
+        timestamp_ms: f64,
+    ) -> na::Vector2<f32> {
         let vw = self.compute_params.width as f32;
         let vh = self.compute_params.height as f32;
-        let (camera_matrix, distortion_coeffs, _, _, _, _) = FrameTransform::get_lens_data_at_timestamp(&self.compute_params, timestamp_ms, false);
+        let (camera_matrix, distortion_coeffs, _, _, _, _) =
+            FrameTransform::get_lens_data_at_timestamp(&self.compute_params, timestamp_ms, false);
 
         let rot = na::Matrix3::<f32>::from(rotation.fixed_view::<3, 3>(0, 0));
 
-        let pt = undistort_points(&[(coords[0] * vw, coords[1] * vh)], camera_matrix, &distortion_coeffs, na::convert(rot), Some(camera_matrix), None, &self.compute_params, 1.0, timestamp_ms, None, None)[0];
+        let pt = undistort_points(
+            &[(coords[0] * vw, coords[1] * vh)],
+            camera_matrix,
+            &distortion_coeffs,
+            na::convert(rot),
+            Some(camera_matrix),
+            None,
+            &self.compute_params,
+            1.0,
+            timestamp_ms,
+            None,
+            None,
+        )[0];
 
         na::Point2::new(pt.0 / vw, pt.1 / vh) - coords
     }
     fn roll(&self, coords: na::Point2<f32>, eps: f32, timestamp_ms: f64) -> na::Vector2<f32> {
-        self.delta(coords, na::Matrix4::from_euler_angles(0.0, eps, 0.0), timestamp_ms)
+        self.delta(
+            coords,
+            na::Matrix4::from_euler_angles(0.0, eps, 0.0),
+            timestamp_ms,
+        )
     }
     fn pitch(&self, coords: na::Point2<f32>, eps: f32, timestamp_ms: f64) -> na::Vector2<f32> {
-        self.delta(coords, na::Matrix4::from_euler_angles(eps, 0.0, 0.0), timestamp_ms)
+        self.delta(
+            coords,
+            na::Matrix4::from_euler_angles(eps, 0.0, 0.0),
+            timestamp_ms,
+        )
     }
     fn yaw(&self, coords: na::Point2<f32>, eps: f32, timestamp_ms: f64) -> na::Vector2<f32> {
-        self.delta(coords, na::Matrix4::from_euler_angles(0.0, 0.0, -eps), timestamp_ms)
+        self.delta(
+            coords,
+            na::Matrix4::from_euler_angles(0.0, 0.0, -eps),
+            timestamp_ms,
+        )
     }
 }
 
@@ -112,16 +159,32 @@ impl Default for AlmeidaEstimator {
 }
 
 impl AlmeidaEstimator {
-    pub fn estimate(&mut self, motion_vectors: &[MotionEntry], camera: &Camera, timestamp_ms: f64) -> na::UnitQuaternion<f32> {
+    pub fn estimate(
+        &mut self,
+        motion_vectors: &[MotionEntry],
+        camera: &Camera,
+        timestamp_ms: f64,
+    ) -> na::UnitQuaternion<f32> {
         if self.use_ransac {
-            solve_ypr_ransac(motion_vectors, camera, timestamp_ms, self.num_iters, self.inlier_angle, self.ransac_samples )
+            solve_ypr_ransac(
+                motion_vectors,
+                camera,
+                timestamp_ms,
+                self.num_iters,
+                self.inlier_angle,
+                self.ransac_samples,
+            )
         } else {
             solve_ypr_given(motion_vectors, camera, timestamp_ms)
         }
     }
 }
 
-fn solve_ypr_given(input: &[MotionEntry], camera: &Camera, timestamp_ms: f64) -> na::UnitQuaternion<f32> {
+fn solve_ypr_given(
+    input: &[MotionEntry],
+    camera: &Camera,
+    timestamp_ms: f64,
+) -> na::UnitQuaternion<f32> {
     let dot = |a: usize, b: usize| move |vecs: &[na::Vector2<f32>]| vecs[a].dot(&vecs[b]);
 
     fn dot_map<T: Fn(&[na::Vector2<f32>]) -> f32>(
@@ -157,11 +220,20 @@ fn solve_ypr_given(input: &[MotionEntry], camera: &Camera, timestamp_ms: f64) ->
             })
             .collect::<Vec<_>>();
 
-        let a = na::Matrix3::from_iterator([
-                dot(1, 1), dot(1, 2), dot(1, 3),
-                dot(2, 1), dot(2, 2), dot(2, 3),
-                dot(3, 1), dot(3, 2), dot(3, 3)
-            ].iter().map(dot_map(&motion))
+        let a = na::Matrix3::from_iterator(
+            [
+                dot(1, 1),
+                dot(1, 2),
+                dot(1, 3),
+                dot(2, 1),
+                dot(2, 2),
+                dot(2, 3),
+                dot(3, 1),
+                dot(3, 2),
+                dot(3, 3),
+            ]
+            .iter()
+            .map(dot_map(&motion)),
         );
 
         let b = na::Vector3::from_iterator(
@@ -191,7 +263,14 @@ fn solve_ypr_given(input: &[MotionEntry], camera: &Camera, timestamp_ms: f64) ->
     rotation.inverse()
 }
 
-fn solve_ypr_ransac(field: &[MotionEntry], camera: &Camera, timestamp_ms: f64, num_iters: usize, target_delta: f32, num_samples: usize) -> na::UnitQuaternion<f32> {
+fn solve_ypr_ransac(
+    field: &[MotionEntry],
+    camera: &Camera,
+    timestamp_ms: f64,
+    num_iters: usize,
+    target_delta: f32,
+    num_samples: usize,
+) -> na::UnitQuaternion<f32> {
     use rand::prelude::*;
     let mut best_inliers = vec![];
     let target_delta = target_delta.to_radians();
@@ -203,10 +282,7 @@ fn solve_ypr_ransac(field: &[MotionEntry], camera: &Camera, timestamp_ms: f64, n
 
         let fit = solve_ypr_given(&samples, camera, timestamp_ms);
 
-        let motion = field
-            .sample(rng, num_samples)
-            .copied()
-            .collect::<Vec<_>>();
+        let motion = field.sample(rng, num_samples).copied().collect::<Vec<_>>();
 
         let mat = fit.inverse().to_homogeneous();
 
