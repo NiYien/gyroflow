@@ -24,7 +24,6 @@ pub enum SqueezeDirection {
 pub struct AnamorphicPreset {
     pub id: String,
     pub name: String,
-    pub squeeze_direction: SqueezeDirection,
     pub squeeze_ratio: f64,
     pub distortion_coeffs: Vec<f64>,
     pub distortion_model: String,
@@ -85,18 +84,26 @@ struct PresetIndexEntry {
 #[serde(default)]
 struct PresetFile {
     name: String,
-    squeeze_direction: SqueezeDirection,
     squeeze_ratio: f64,
     distortion_coeffs: Vec<f64>,
     distortion_model: String,
 }
 
 const BUILTIN_INDEX_JSON: &str = include_str!("../../resources/anamorphic_presets/index.json");
+const LEGACY_AIVASCOPE_PRESET_ID: &str = "aivascope_58mm_1_50x_vertical";
+const CANONICAL_AIVASCOPE_PRESET_ID: &str = "aivascope_58mm_1_50x";
+
+fn normalize_preset_id(preset_id: &str) -> &str {
+    match preset_id.trim() {
+        LEGACY_AIVASCOPE_PRESET_ID => CANONICAL_AIVASCOPE_PRESET_ID,
+        other => other,
+    }
+}
 
 fn builtin_preset_file(name: &str) -> Option<&'static str> {
     match name {
-        "sirui_xingchen_50mm_1_33x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/sirui_xingchen_50mm_1_33x.json"
+        "sirui_xingchen_50mm_1_33x.json" | "sirui_astra_50mm_1_33x.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/sirui_astra_50mm_1_33x.json"
         )),
         "blazar_mantis_25mm_1_33x.json" => Some(include_str!(
             "../../resources/anamorphic_presets/blazar_mantis_25mm_1_33x.json"
@@ -122,8 +129,8 @@ fn builtin_preset_file(name: &str) -> Option<&'static str> {
         "laowa_nanomorph_35mm_t2_4_1_50x.json" => Some(include_str!(
             "../../resources/anamorphic_presets/laowa_nanomorph_35mm_t2_4_1_50x.json"
         )),
-        "aivascope_58mm_1_50x_vertical.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/aivascope_58mm_1_50x_vertical.json"
+        "aivascope_58mm_1_50x.json" | "aivascope_58mm_1_50x_vertical.json" => Some(include_str!(
+            "../../resources/anamorphic_presets/aivascope_58mm_1_50x.json"
         )),
         _ => None,
     }
@@ -161,6 +168,12 @@ pub fn normalize_lens_group_configs(input: &[LensGroupConfig]) -> Vec<LensGroupC
         next.lens_index = lens_index;
         next.focal_length_mm = sanitize_positive(next.focal_length_mm);
         next.squeeze_ratio = sanitize_positive(next.squeeze_ratio);
+        next.preset_id = next
+            .preset_id
+            .as_deref()
+            .map(normalize_preset_id)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         if !next.anamorphic_enabled {
             next.preset_id = None;
             next.squeeze_direction = None;
@@ -295,12 +308,16 @@ pub fn update_status_from_metadata(statuses: &mut [LensGroupStatus], metadata: &
 
 pub fn select_focal_length(
     auto_focus_length_mm: Option<f64>,
-    manual_focus_length_mm: Option<f64>,
+    config: Option<&LensGroupConfig>,
 ) -> Option<(f64, FocalLengthSource)> {
+    let manual_focus_length_mm = config.and_then(|cfg| sanitize_positive(cfg.focal_length_mm));
+    if let Some(value) = manual_focus_length_mm {
+        return Some((value, FocalLengthSource::Manual));
+    }
     if let Some(value) = sanitize_positive(auto_focus_length_mm) {
         return Some((value, FocalLengthSource::Auto));
     }
-    sanitize_positive(manual_focus_length_mm).map(|value| (value, FocalLengthSource::Manual))
+    None
 }
 
 pub fn apply_focal_length_fallback_to_metadata(metadata: &mut FileMetadata, focal_length_mm: f64) {
@@ -336,11 +353,23 @@ pub fn build_camera_matrix(
 ) -> Option<Vec<[f64; 3]>> {
     let upfl = sanitize_positive(unit_pixel_focal_length)?;
     let fx = focal_length_mm * upfl;
-    Some(vec![
-        [fx, 0.0, size.0 as f64 / 2.0],
-        [0.0, fx, size.1 as f64 / 2.0],
-        [0.0, 0.0, 1.0],
-    ])
+    build_camera_matrix_from_params(fx, fx, size.0 as f64 / 2.0, size.1 as f64 / 2.0)
+}
+
+fn build_camera_matrix_from_params(fx: f64, fy: f64, cx: f64, cy: f64) -> Option<Vec<[f64; 3]>> {
+    if !fx.is_finite() || !fy.is_finite() || fx <= 0.0 || fy <= 0.0 {
+        return None;
+    }
+    Some(vec![[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+}
+
+fn even_dimension(value: f64) -> usize {
+    let rounded = value.round().max(2.0) as usize;
+    if rounded % 2 == 0 {
+        rounded
+    } else {
+        rounded - 1
+    }
 }
 
 pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<ResolvedAnamorphic> {
@@ -348,10 +377,12 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
     if !config.anamorphic_enabled {
         return None;
     }
+    let squeeze_direction = config.squeeze_direction.unwrap_or_default();
 
     if let Some(preset_id) = config
         .preset_id
         .as_deref()
+        .map(normalize_preset_id)
         .filter(|value| !value.is_empty())
     {
         if let Some(preset) = load_presets()
@@ -359,7 +390,7 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
             .find(|preset| preset.id == preset_id)
         {
             return Some(ResolvedAnamorphic {
-                squeeze_direction: preset.squeeze_direction,
+                squeeze_direction,
                 squeeze_ratio: preset.squeeze_ratio,
                 distortion_coeffs: preset.distortion_coeffs,
                 distortion_model: Some(preset.distortion_model),
@@ -370,7 +401,7 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
 
     let squeeze_ratio = sanitize_positive(config.squeeze_ratio)?;
     Some(ResolvedAnamorphic {
-        squeeze_direction: config.squeeze_direction.unwrap_or_default(),
+        squeeze_direction,
         squeeze_ratio,
         distortion_coeffs: Vec::new(),
         distortion_model: None,
@@ -384,34 +415,64 @@ pub fn build_lens_profile(
     fallback_lens: Option<&LensProfile>,
 ) -> Option<LensProfile> {
     let auto_focus_length_mm = extract_video_focus_length_mm(metadata);
-    let manual_focus_length_mm = config.and_then(|cfg| cfg.focal_length_mm);
-    let (focal_length_mm, _) = select_focal_length(auto_focus_length_mm, manual_focus_length_mm)?;
-    let camera_matrix =
-        build_camera_matrix(focal_length_mm, metadata.unit_pixel_focal_length, size)?;
+    let (focal_length_mm, _) = select_focal_length(auto_focus_length_mm, config)?;
+    let base_focal_px =
+        sanitize_positive(metadata.unit_pixel_focal_length).map(|upfl| focal_length_mm * upfl)?;
 
     let mut profile = fallback_lens.cloned().unwrap_or_default();
     populate_profile_metadata(&mut profile, metadata, fallback_lens, size);
     profile.focal_length = Some(focal_length_mm);
-    profile.fisheye_params.camera_matrix = camera_matrix;
+    profile.input_horizontal_stretch = 1.0;
+    profile.input_vertical_stretch = 1.0;
     if fallback_lens.is_none() {
         profile.fisheye_params = CameraParams {
             RMS_error: 0.0,
-            camera_matrix: profile.fisheye_params.camera_matrix.clone(),
+            camera_matrix: Vec::new(),
             distortion_coeffs: Vec::new(),
             radial_distortion_limit: None,
         };
-        profile.input_horizontal_stretch = 1.0;
-        profile.input_vertical_stretch = 1.0;
         profile.distortion_model = None;
     }
+
+    let mut calib_dimension = Dimensions {
+        w: size.0,
+        h: size.1,
+    };
+    let mut orig_dimension = Dimensions {
+        w: size.0,
+        h: size.1,
+    };
+    let mut output_dimension = None;
+    let mut fx = base_focal_px;
+    let mut fy = base_focal_px;
+    let mut cx = size.0 as f64 / 2.0;
+    let mut cy = size.1 as f64 / 2.0;
 
     if let Some(anamorphic) = resolve_anamorphic_config(config) {
         match anamorphic.squeeze_direction {
             SqueezeDirection::Horizontal => {
                 profile.input_horizontal_stretch = anamorphic.squeeze_ratio;
+                let stretched_w = even_dimension(size.0 as f64 * anamorphic.squeeze_ratio);
+                calib_dimension.w = stretched_w;
+                orig_dimension.w = stretched_w;
+                output_dimension = Some(Dimensions {
+                    w: stretched_w,
+                    h: size.1,
+                });
+                cx = stretched_w as f64 / 2.0;
+                cy = size.1 as f64 / 2.0;
             }
             SqueezeDirection::Vertical => {
                 profile.input_vertical_stretch = anamorphic.squeeze_ratio;
+                let stretched_h = even_dimension(size.1 as f64 * anamorphic.squeeze_ratio);
+                calib_dimension.h = stretched_h;
+                orig_dimension.h = stretched_h;
+                output_dimension = Some(Dimensions {
+                    w: size.0,
+                    h: stretched_h,
+                });
+                cx = size.0 as f64 / 2.0;
+                cy = stretched_h as f64 / 2.0;
             }
         }
         if !anamorphic.distortion_coeffs.is_empty() || anamorphic.distortion_model.is_some() {
@@ -420,6 +481,10 @@ pub fn build_lens_profile(
         }
     }
 
+    profile.fisheye_params.camera_matrix = build_camera_matrix_from_params(fx, fy, cx, cy)?;
+    profile.calib_dimension = calib_dimension;
+    profile.orig_dimension = orig_dimension;
+    profile.output_dimension = output_dimension;
     profile.init();
     Some(profile)
 }
@@ -549,7 +614,13 @@ fn parse_preset_file(id: &str, fallback_name: &str, contents: &str) -> Option<An
         }
     };
 
-    if parsed.name.trim().is_empty()
+    let name = if parsed.name.trim().is_empty() {
+        fallback_name.to_owned()
+    } else {
+        parsed.name
+    };
+
+    if name.trim().is_empty()
         || parsed.squeeze_ratio <= 0.0
         || parsed.distortion_coeffs.len() != 4
         || parsed.distortion_model.trim().is_empty()
@@ -559,13 +630,8 @@ fn parse_preset_file(id: &str, fallback_name: &str, contents: &str) -> Option<An
     }
 
     Some(AnamorphicPreset {
-        id: id.to_owned(),
-        name: if parsed.name.trim().is_empty() {
-            fallback_name.to_owned()
-        } else {
-            parsed.name
-        },
-        squeeze_direction: parsed.squeeze_direction,
+        id: normalize_preset_id(id).to_owned(),
+        name,
         squeeze_ratio: parsed.squeeze_ratio,
         distortion_coeffs: parsed.distortion_coeffs,
         distortion_model: parsed.distortion_model,
@@ -703,10 +769,56 @@ mod tests {
     }
 
     #[test]
-    fn focal_length_prefers_auto_focus() {
-        let selected = select_focal_length(Some(35.0), Some(50.0)).unwrap();
+    fn focal_length_prefers_manual_when_present() {
+        let selected = select_focal_length(
+            Some(35.0),
+            Some(&LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(selected.0, 50.0);
+        assert_eq!(selected.1, FocalLengthSource::Manual);
+    }
+
+    #[test]
+    fn focal_length_uses_auto_when_no_manual_value() {
+        let selected = select_focal_length(
+            Some(35.0),
+            Some(&LensGroupConfig {
+                lens_index: 0,
+                ..Default::default()
+            }),
+        )
+        .unwrap();
         assert_eq!(selected.0, 35.0);
         assert_eq!(selected.1, FocalLengthSource::Auto);
+    }
+
+    #[test]
+    fn focal_length_falls_back_to_manual_when_auto_missing() {
+        let selected = select_focal_length(
+            None,
+            Some(&LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(28.0),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(selected.0, 28.0);
+        assert_eq!(selected.1, FocalLengthSource::Manual);
+    }
+
+    #[test]
+    fn lens_group_config_json_ignores_legacy_manual_override_field() {
+        let parsed = lens_group_configs_from_json(
+            r#"[{"lens_index":0,"focal_length_mm":35.0,"manual_override_enabled":true}]"#,
+        );
+        assert_eq!(parsed.len(), LENS_GROUP_COUNT);
+        assert_eq!(parsed[0].focal_length_mm, Some(35.0));
     }
 
     #[test]
@@ -762,10 +874,87 @@ mod tests {
             lens_index: 0,
             anamorphic_enabled: true,
             preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            squeeze_direction: Some(SqueezeDirection::Horizontal),
             ..Default::default()
         };
         let resolved = resolve_anamorphic_config(Some(&config)).unwrap();
         assert_eq!(resolved.squeeze_direction, SqueezeDirection::Horizontal);
+        assert_eq!(resolved.squeeze_ratio, 1.6);
+        assert_eq!(resolved.distortion_coeffs.len(), 4);
+        assert_eq!(resolved.distortion_model.as_deref(), Some("opencv_fisheye"));
+    }
+
+    #[test]
+    fn parses_preset_without_squeeze_direction() {
+        let preset = parse_preset_file(
+            "demo_preset",
+            "",
+            r#"{
+                "name": "Demo",
+                "squeeze_ratio": 1.5,
+                "distortion_coeffs": [0.1, 0.2, 0.3, 0.4],
+                "distortion_model": "opencv_fisheye"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.id, "demo_preset");
+        assert_eq!(preset.name, "Demo");
+        assert_eq!(preset.squeeze_ratio, 1.5);
+        assert_eq!(preset.distortion_coeffs, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(preset.distortion_model, "opencv_fisheye");
+    }
+
+    #[test]
+    fn parses_legacy_preset_with_squeeze_direction_ignored() {
+        let preset = parse_preset_file(
+            LEGACY_AIVASCOPE_PRESET_ID,
+            "",
+            r#"{
+                "name": "Legacy Demo",
+                "squeeze_direction": "vertical",
+                "squeeze_ratio": 1.5,
+                "distortion_coeffs": [0.1, 0.2, 0.3, 0.4],
+                "distortion_model": "opencv_fisheye"
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.id, CANONICAL_AIVASCOPE_PRESET_ID);
+        assert_eq!(preset.name, "Legacy Demo");
+        assert_eq!(preset.squeeze_ratio, 1.5);
+        assert_eq!(preset.distortion_coeffs, vec![0.1, 0.2, 0.3, 0.4]);
+        assert_eq!(preset.distortion_model, "opencv_fisheye");
+    }
+
+    #[test]
+    fn legacy_preset_id_migrates_to_canonical() {
+        let parsed = lens_group_configs_from_json(
+            r#"[{
+                "lens_index": 0,
+                "anamorphic_enabled": true,
+                "preset_id": "aivascope_58mm_1_50x_vertical",
+                "squeeze_direction": "vertical"
+            }]"#,
+        );
+
+        assert_eq!(
+            parsed[0].preset_id.as_deref(),
+            Some(CANONICAL_AIVASCOPE_PRESET_ID)
+        );
+    }
+
+    #[test]
+    fn preset_anamorphic_uses_configured_direction() {
+        let config = LensGroupConfig {
+            lens_index: 0,
+            anamorphic_enabled: true,
+            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            squeeze_direction: Some(SqueezeDirection::Vertical),
+            ..Default::default()
+        };
+        let resolved = resolve_anamorphic_config(Some(&config)).unwrap();
+        assert_eq!(resolved.squeeze_direction, SqueezeDirection::Vertical);
         assert_eq!(resolved.squeeze_ratio, 1.6);
         assert_eq!(resolved.distortion_coeffs.len(), 4);
         assert_eq!(resolved.distortion_model.as_deref(), Some("opencv_fisheye"));
@@ -799,19 +988,16 @@ mod tests {
         let mut metadata = FileMetadata::default();
         metadata.unit_pixel_focal_length = Some(100.0);
 
-        let fallback = LensProfile {
-            frame_readout_time: Some(12.5),
-            frame_readout_direction: Some(
-                crate::stabilization_params::ReadoutDirection::BottomToTop,
-            ),
-            distortion_model: Some("opencv_fisheye".to_owned()),
-            fisheye_params: CameraParams {
-                RMS_error: 0.42,
-                camera_matrix: vec![[2000.0, 0.0, 960.0], [0.0, 2000.0, 540.0], [0.0, 0.0, 1.0]],
-                distortion_coeffs: vec![0.1, 0.2, 0.3, 0.4],
-                radial_distortion_limit: Some(0.9),
-            },
-            ..Default::default()
+        let mut fallback = LensProfile::default();
+        fallback.frame_readout_time = Some(12.5);
+        fallback.frame_readout_direction =
+            Some(crate::stabilization_params::ReadoutDirection::BottomToTop);
+        fallback.distortion_model = Some("opencv_fisheye".to_owned());
+        fallback.fisheye_params = CameraParams {
+            RMS_error: 0.42,
+            camera_matrix: vec![[2000.0, 0.0, 960.0], [0.0, 2000.0, 540.0], [0.0, 0.0, 1.0]],
+            distortion_coeffs: vec![0.1, 0.2, 0.3, 0.4],
+            radial_distortion_limit: Some(0.9),
         };
 
         let config = LensGroupConfig {
@@ -865,6 +1051,105 @@ mod tests {
             profile.frame_readout_direction,
             Some(crate::stabilization_params::ReadoutDirection::BottomToTop)
         );
+    }
+
+    #[test]
+    fn build_lens_profile_preset_direction_only_changes_stretch_axis() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let horizontal_config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            preset_id: Some(CANONICAL_AIVASCOPE_PRESET_ID.to_owned()),
+            squeeze_direction: Some(SqueezeDirection::Horizontal),
+            ..Default::default()
+        };
+        let vertical_config = LensGroupConfig {
+            squeeze_direction: Some(SqueezeDirection::Vertical),
+            ..horizontal_config.clone()
+        };
+
+        let horizontal_profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&horizontal_config), None).unwrap();
+        let vertical_profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&vertical_config), None).unwrap();
+
+        assert_eq!(
+            horizontal_profile.fisheye_params.distortion_coeffs,
+            vertical_profile.fisheye_params.distortion_coeffs
+        );
+        assert_eq!(
+            horizontal_profile.distortion_model,
+            vertical_profile.distortion_model
+        );
+        assert_eq!(horizontal_profile.input_horizontal_stretch, 1.5);
+        assert_eq!(horizontal_profile.input_vertical_stretch, 1.0);
+        assert_eq!(vertical_profile.input_horizontal_stretch, 1.0);
+        assert_eq!(vertical_profile.input_vertical_stretch, 1.5);
+        assert_eq!(horizontal_profile.calib_dimension.w, 2880);
+        assert_eq!(horizontal_profile.calib_dimension.h, 1080);
+        assert_eq!(horizontal_profile.orig_dimension.w, 2880);
+        assert_eq!(horizontal_profile.orig_dimension.h, 1080);
+        assert_eq!(
+            horizontal_profile
+                .output_dimension
+                .as_ref()
+                .map(|dim| (dim.w, dim.h)),
+            Some((2880, 1080))
+        );
+        assert_eq!(
+            horizontal_profile.fisheye_params.camera_matrix[0],
+            [3500.0, 0.0, 1440.0]
+        );
+        assert_eq!(
+            horizontal_profile.fisheye_params.camera_matrix[1],
+            [0.0, 3500.0, 540.0]
+        );
+        assert_eq!(vertical_profile.calib_dimension.w, 1920);
+        assert_eq!(vertical_profile.calib_dimension.h, 1620);
+        assert_eq!(vertical_profile.orig_dimension.w, 1920);
+        assert_eq!(vertical_profile.orig_dimension.h, 1620);
+        assert_eq!(
+            vertical_profile
+                .output_dimension
+                .as_ref()
+                .map(|dim| (dim.w, dim.h)),
+            Some((1920, 1620))
+        );
+        assert_eq!(
+            vertical_profile.fisheye_params.camera_matrix[0],
+            [3500.0, 0.0, 960.0]
+        );
+        assert_eq!(
+            vertical_profile.fisheye_params.camera_matrix[1],
+            [0.0, 3500.0, 810.0]
+        );
+    }
+
+    #[test]
+    fn build_lens_profile_resets_stale_fallback_stretch_axis() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let mut fallback = LensProfile::default();
+        fallback.input_horizontal_stretch = 1.5;
+        fallback.input_vertical_stretch = 1.0;
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            preset_id: Some(CANONICAL_AIVASCOPE_PRESET_ID.to_owned()),
+            squeeze_direction: Some(SqueezeDirection::Vertical),
+            ..Default::default()
+        };
+
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback)).unwrap();
+
+        assert_eq!(profile.input_horizontal_stretch, 1.0);
+        assert_eq!(profile.input_vertical_stretch, 1.5);
     }
 
     #[test]

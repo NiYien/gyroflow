@@ -25,7 +25,7 @@ impl From<i32> for BackgroundMode {
         }
     }
 }
-#[derive(Default, Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ReadoutDirection {
     #[default]
     TopToBottom = 0,

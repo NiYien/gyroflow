@@ -1,6 +1,5 @@
 {
-  "name": "sirui star 50mm 1.33x",
-  "squeeze_direction": "horizontal",
+  "name": "Sirui star 50mm 1.33x",
   "squeeze_ratio": 1.33,
   "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0],
   "distortion_model": "opencv_fisheye"

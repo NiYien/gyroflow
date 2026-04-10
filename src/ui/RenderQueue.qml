@@ -978,8 +978,34 @@ Item {
                             font.pixelSize: basicTextSize;
                         }
                         BasicText {
-                            visible: (dlg.displayParams.focal_length || 0) > 0;
+                            visible: (dlg.displayParams.focal_length || 0) > 0
+                                && (dlg.displayParams.lens_group_display_mode || "auto") === "auto";
                             text: "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                    }
+                    Flow {
+                        visible: (dlg.displayParams.lens_group_display_mode || "auto") !== "auto";
+                        width: parent.width;
+                        spacing: 10 * dpiScale;
+
+                        BasicText {
+                            text: qsTr("Mode") + " <b>" + ((dlg.displayParams.lens_group_display_mode || "auto") === "local" ? qsTr("Local") : qsTr("Global")) + "</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            visible: (dlg.displayParams.lens_group_display_number || 0) > 0;
+                            text: qsTr("Lens") + " <b>L" + (dlg.displayParams.lens_group_display_number || 0) + "</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            visible: (dlg.displayParams.lens_group_display_focal_length || 0) > 0;
+                            text: qsTr("Focal") + " <b>" + (dlg.displayParams.lens_group_display_focal_length || 0).toFixed(0) + "mm</b>";
+                            font.pixelSize: basicTextSize;
+                        }
+                        BasicText {
+                            visible: (dlg.displayParams.lens_group_display_ratio || 0) > 0;
+                            text: qsTr("Anamorphic") + " <b>" + (dlg.displayParams.lens_group_display_ratio || 0).toFixed(2) + "x" + (dlg.displayParams.lens_group_display_direction ? ("-" + dlg.displayParams.lens_group_display_direction) : "") + "</b>";
                             font.pixelSize: basicTextSize;
                         }
                     }

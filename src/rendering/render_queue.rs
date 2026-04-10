@@ -63,15 +63,36 @@ pub enum JobStatus {
 struct Job {
     queue_index: usize,
     render_options: RenderOptions,
+    base_render_output_size: Option<(usize, usize)>,
     auto_rotate: bool,
     additional_data: String,
     cancel_flag: Arc<AtomicBool>,
     project_data: Option<String>,
     stab: Option<Arc<StabilizationManager>>,
     base_lens_metadata: Option<JobLensMetadataBackup>,
+    lens_group_config_override: Option<JobLensGroupOverride>,
+    lens_group_index: Option<usize>,
     // [T20] 保存 video_created_at，stab 释放后排序仍可用
     video_created_at: Option<i64>,
     original_video_rotation: f64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct JobLensGroupOverride {
+    configs: Vec<anamorphic_presets::LensGroupConfig>,
+    enabled_groups: Vec<bool>,
+}
+impl JobLensGroupOverride {
+    fn is_group_enabled(&self, lens_index: usize) -> bool {
+        self.enabled_groups
+            .get(lens_index)
+            .copied()
+            .unwrap_or(false)
+    }
+
+    fn has_enabled_groups(&self) -> bool {
+        self.enabled_groups.iter().any(|enabled| *enabled)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -361,6 +382,93 @@ fn denormalize_video_rotation_metadata(normalized_rotation: f64) -> i32 {
     (360 - normalized).rem_euclid(360)
 }
 
+fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
+    serde_json::from_str(job_ids_json).unwrap_or_default()
+}
+
+fn resolve_lens_group_focal_length(
+    auto_focus_length_mm: Option<f64>,
+    group_config: Option<&anamorphic_presets::LensGroupConfig>,
+) -> Option<(f64, anamorphic_presets::FocalLengthSource)> {
+    anamorphic_presets::select_focal_length(auto_focus_length_mm, group_config)
+}
+
+fn effective_lens_group_configs(
+    job: &Job,
+    global_configs: &[anamorphic_presets::LensGroupConfig],
+) -> Vec<anamorphic_presets::LensGroupConfig> {
+    let mut configs = anamorphic_presets::normalize_lens_group_configs(global_configs);
+    if let Some(local_override) = job.lens_group_config_override.as_ref() {
+        for lens_index in 0..anamorphic_presets::LENS_GROUP_COUNT {
+            if local_override.is_group_enabled(lens_index) {
+                if let Some(config) = local_override.configs.get(lens_index) {
+                    configs[lens_index] = config.clone();
+                }
+            }
+        }
+    }
+    configs
+}
+
+fn effective_lens_group_config_for_group<'a>(
+    job: &'a Job,
+    global_configs: &'a [anamorphic_presets::LensGroupConfig],
+    lens_index: usize,
+) -> Option<(&'a anamorphic_presets::LensGroupConfig, bool)> {
+    if let Some(local_override) = job.lens_group_config_override.as_ref() {
+        if local_override.is_group_enabled(lens_index) {
+            return local_override
+                .configs
+                .get(lens_index)
+                .map(|config| (config, true));
+        }
+    }
+    global_configs.get(lens_index).map(|config| (config, false))
+}
+
+fn metadata_snapshot_for_job(job: &Job) -> Option<core::gyro_source::FileMetadata> {
+    let stab = job.stab.as_ref()?;
+    let gyro = stab.gyro.read();
+    let md = gyro.file_metadata.read();
+    let mut snapshot = md.thin();
+    if let Some(backup) = job.base_lens_metadata.as_ref() {
+        backup.overwrite_metadata(&mut snapshot);
+    }
+    Some(snapshot)
+}
+
+fn build_job_lens_group_override(
+    requested_configs: &[anamorphic_presets::LensGroupConfig],
+    global_configs: &[anamorphic_presets::LensGroupConfig],
+    existing_override: Option<&JobLensGroupOverride>,
+) -> Option<JobLensGroupOverride> {
+    let requested_configs = anamorphic_presets::normalize_lens_group_configs(requested_configs);
+    let global_configs = anamorphic_presets::normalize_lens_group_configs(global_configs);
+    let mut enabled_groups = vec![false; anamorphic_presets::LENS_GROUP_COUNT];
+
+    for lens_index in 0..anamorphic_presets::LENS_GROUP_COUNT {
+        let keep_existing_override = existing_override
+            .map(|existing| {
+                existing.is_group_enabled(lens_index)
+                    && existing.configs.get(lens_index) == requested_configs.get(lens_index)
+            })
+            .unwrap_or(false);
+        let differs_from_global =
+            requested_configs.get(lens_index) != global_configs.get(lens_index);
+        enabled_groups[lens_index] = keep_existing_override || differs_from_global;
+    }
+
+    let override_config = JobLensGroupOverride {
+        configs: requested_configs,
+        enabled_groups,
+    };
+    if override_config.has_enabled_groups() {
+        Some(override_config)
+    } else {
+        None
+    }
+}
+
 #[derive(Default, QObject)]
 pub struct RenderQueue {
     base: qt_base_class!(trait QObject),
@@ -478,6 +586,13 @@ pub struct RenderQueue {
     apply_match_results: qt_method!(fn(&mut self)),
     reapply_batch_auto_rotate: qt_method!(fn(&mut self, job_ids_json: String)),
     reapply_lens_group_config: qt_method!(fn(&mut self)),
+    reapply_selected_lens_group_config: qt_method!(fn(&mut self, job_ids_json: String)),
+    get_selected_lens_group_status_json: qt_method!(fn(&self, job_ids_json: String) -> QString),
+    get_selected_lens_group_config_json: qt_method!(fn(&self, job_ids_json: String) -> QString),
+    set_selected_lens_group_config:
+        qt_method!(fn(&mut self, job_ids_json: String, config_json: String)),
+    clear_selected_lens_group_config:
+        qt_method!(fn(&mut self, job_ids_json: String, lens_index: usize)),
     manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
@@ -762,6 +877,12 @@ impl RenderQueue {
             let md = gyro.file_metadata.read();
             Some(JobLensMetadataBackup::from_metadata(&md))
         };
+        let base_render_output_size = (render_options.output_width, render_options.output_height);
+        let lens_group_index = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            anamorphic_presets::extract_lens_index(&md.additional_data)
+        };
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
         let original_video_rotation = stab.params.read().video_rotation;
@@ -770,12 +891,15 @@ impl RenderQueue {
             Job {
                 queue_index: 0,
                 render_options,
+                base_render_output_size: Some(base_render_output_size),
                 auto_rotate: false,
                 additional_data,
                 cancel_flag: Default::default(),
                 project_data,
                 stab: Some(stab.clone()),
                 base_lens_metadata,
+                lens_group_config_override: None,
+                lens_group_index,
                 video_created_at,
                 original_video_rotation,
             },
@@ -1173,6 +1297,45 @@ impl RenderQueue {
 
     pub fn get_job_display_params(&self, job_id: u32) -> QString {
         if let Some(job) = self.jobs.get(&job_id) {
+            let global_configs = self.stabilizer.lens_group_config.read().clone();
+            let metadata_snapshot = metadata_snapshot_for_job(job);
+            let lens_group_index = job.lens_group_index.or_else(|| {
+                metadata_snapshot
+                    .as_ref()
+                    .and_then(|md| anamorphic_presets::extract_lens_index(&md.additional_data))
+            });
+            let metadata_focal_length = metadata_snapshot
+                .as_ref()
+                .and_then(anamorphic_presets::extract_video_focus_length_mm)
+                .unwrap_or(0.0);
+            let mut lens_group_mode = "auto";
+            let mut lens_group_number = 0usize;
+            let mut lens_group_focal_length = 0.0;
+            let mut lens_group_ratio = 0.0;
+            let mut lens_group_direction = String::new();
+
+            if let Some(lens_index) = lens_group_index {
+                if let Some((config, is_local)) =
+                    effective_lens_group_config_for_group(job, &global_configs, lens_index)
+                {
+                    let has_manual_display = config.focal_length_mm.unwrap_or_default() > 0.0
+                        || config.anamorphic_enabled;
+                    if has_manual_display {
+                        lens_group_mode = if is_local { "local" } else { "global" };
+                        lens_group_number = lens_index + 1;
+                        lens_group_focal_length = config.focal_length_mm.unwrap_or_default();
+                        lens_group_ratio = config.squeeze_ratio.unwrap_or_default();
+                        lens_group_direction = match config.squeeze_direction.unwrap_or_default() {
+                            anamorphic_presets::SqueezeDirection::Horizontal => "H".to_owned(),
+                            anamorphic_presets::SqueezeDirection::Vertical => "V".to_owned(),
+                        };
+                        if lens_group_focal_length <= 0.0 {
+                            lens_group_focal_length = metadata_focal_length;
+                        }
+                    }
+                }
+            }
+
             if let Some(ref data) = job.project_data {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
                     let stab = v.get("stabilization").cloned().unwrap_or_default();
@@ -1215,6 +1378,14 @@ impl RenderQueue {
                         .and_then(|vi| vi.get("focal_length"))
                         .and_then(|f| f.as_f64())
                         .unwrap_or(0.0);
+                    let display_focal_length = if focal_length > 0.0 {
+                        focal_length
+                    } else {
+                        metadata_focal_length
+                    };
+                    if lens_group_mode != "auto" && lens_group_focal_length <= 0.0 {
+                        lens_group_focal_length = display_focal_length;
+                    }
                     let detected_source = v
                         .get("gyro_source")
                         .and_then(|gs| gs.get("detected_source"))
@@ -1226,15 +1397,214 @@ impl RenderQueue {
                         "lens_correction": lens_correction,
                         "zoom_mode": zoom_mode,
                         "framerate": framerate,
-                        "focal_length": focal_length,
+                        "focal_length": display_focal_length,
                         "detected_source": detected_source,
                         "auto_rotate": job.auto_rotate,
+                        "lens_group_display_mode": lens_group_mode,
+                        "lens_group_display_number": lens_group_number,
+                        "lens_group_display_focal_length": lens_group_focal_length,
+                        "lens_group_display_ratio": lens_group_ratio,
+                        "lens_group_display_direction": lens_group_direction,
                     });
                     return QString::from(result.to_string());
                 }
             }
+
+            let result = serde_json::json!({
+                "auto_rotate": job.auto_rotate,
+                "focal_length": metadata_focal_length,
+                "lens_group_display_mode": lens_group_mode,
+                "lens_group_display_number": lens_group_number,
+                "lens_group_display_focal_length": lens_group_focal_length,
+                "lens_group_display_ratio": lens_group_ratio,
+                "lens_group_display_direction": lens_group_direction,
+            });
+            return QString::from(result.to_string());
         }
         QString::from("{}")
+    }
+
+    fn get_selected_lens_group_status_json(&self, job_ids_json: String) -> QString {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() {
+            return QString::from("[]");
+        }
+
+        let mut statuses = anamorphic_presets::default_lens_group_statuses();
+        for job_id in job_ids {
+            if let Some(job) = self.jobs.get(&job_id) {
+                if let Some(metadata) = metadata_snapshot_for_job(job) {
+                    anamorphic_presets::update_status_from_metadata(&mut statuses, &metadata);
+                }
+            }
+        }
+        QString::from(anamorphic_presets::lens_group_status_to_json(&statuses))
+    }
+
+    fn get_selected_lens_group_config_json(&self, job_ids_json: String) -> QString {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() {
+            return QString::from("[]");
+        }
+
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let default_configs = anamorphic_presets::default_lens_group_configs();
+        let mut aggregated = Vec::with_capacity(anamorphic_presets::LENS_GROUP_COUNT);
+
+        for lens_index in 0..anamorphic_presets::LENS_GROUP_COUNT {
+            let mut effective_configs = Vec::new();
+            for job_id in &job_ids {
+                if let Some(job) = self.jobs.get(job_id) {
+                    let metadata = metadata_snapshot_for_job(job);
+                    let current_lens_index = metadata
+                        .as_ref()
+                        .and_then(|md| anamorphic_presets::extract_lens_index(&md.additional_data))
+                        .or(job.lens_group_index);
+                    if current_lens_index == Some(lens_index) {
+                        effective_configs.push(
+                            effective_lens_group_configs(job, &global_configs)[lens_index].clone(),
+                        );
+                    }
+                }
+            }
+
+            let mut config = effective_configs
+                .first()
+                .cloned()
+                .unwrap_or_else(|| default_configs[lens_index].clone());
+            config.lens_index = lens_index;
+
+            let mut mixed_focal_length = false;
+            let mut mixed_anamorphic_enabled = false;
+            let mut mixed_preset_id = false;
+            let mut mixed_squeeze_direction = false;
+            let mut mixed_squeeze_ratio = false;
+
+            for other in effective_configs.iter().skip(1) {
+                if other.focal_length_mm != config.focal_length_mm {
+                    mixed_focal_length = true;
+                }
+                if other.anamorphic_enabled != config.anamorphic_enabled {
+                    mixed_anamorphic_enabled = true;
+                }
+                if other.preset_id != config.preset_id {
+                    mixed_preset_id = true;
+                }
+                if other.squeeze_direction != config.squeeze_direction {
+                    mixed_squeeze_direction = true;
+                }
+                if other.squeeze_ratio != config.squeeze_ratio {
+                    mixed_squeeze_ratio = true;
+                }
+            }
+
+            if mixed_focal_length {
+                config.focal_length_mm = None;
+            }
+            if mixed_anamorphic_enabled {
+                config.anamorphic_enabled = false;
+            }
+            if mixed_preset_id {
+                config.preset_id = None;
+            }
+            if mixed_squeeze_direction {
+                config.squeeze_direction = None;
+            }
+            if mixed_squeeze_ratio {
+                config.squeeze_ratio = None;
+            }
+
+            let mut value = serde_json::to_value(config).unwrap_or_default();
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert(
+                    "mixed_focal_length".into(),
+                    serde_json::Value::Bool(mixed_focal_length),
+                );
+                obj.insert(
+                    "mixed_anamorphic_enabled".into(),
+                    serde_json::Value::Bool(mixed_anamorphic_enabled),
+                );
+                obj.insert(
+                    "mixed_preset_id".into(),
+                    serde_json::Value::Bool(mixed_preset_id),
+                );
+                obj.insert(
+                    "mixed_squeeze_direction".into(),
+                    serde_json::Value::Bool(mixed_squeeze_direction),
+                );
+                obj.insert(
+                    "mixed_squeeze_ratio".into(),
+                    serde_json::Value::Bool(mixed_squeeze_ratio),
+                );
+            }
+            aggregated.push(value);
+        }
+
+        QString::from(serde_json::to_string(&aggregated).unwrap_or_else(|_| "[]".to_owned()))
+    }
+
+    fn set_selected_lens_group_config(&mut self, job_ids_json: String, config_json: String) {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() {
+            return;
+        }
+
+        let requested_configs = anamorphic_presets::lens_group_configs_from_json(&config_json);
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+
+        for job_id in &job_ids {
+            if let Some(job) = self.jobs.get_mut(job_id) {
+                let existing_override = job.lens_group_config_override.clone();
+                job.lens_group_config_override = build_job_lens_group_override(
+                    &requested_configs,
+                    &global_configs,
+                    existing_override.as_ref(),
+                );
+            }
+        }
+
+        if self.has_match_results() {
+            self.reapply_selected_lens_group_config(job_ids_json);
+        } else {
+            self.match_results_changed();
+        }
+    }
+
+    fn clear_selected_lens_group_config(&mut self, job_ids_json: String, lens_index: usize) {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() || lens_index >= anamorphic_presets::LENS_GROUP_COUNT {
+            return;
+        }
+
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        for job_id in &job_ids {
+            if let Some(job) = self.jobs.get_mut(job_id) {
+                let mut requested_configs = effective_lens_group_configs(job, &global_configs);
+                if let Some(config) = requested_configs.get_mut(lens_index) {
+                    config.focal_length_mm = None;
+                }
+                let existing_override = job.lens_group_config_override.clone();
+                job.lens_group_config_override = build_job_lens_group_override(
+                    &requested_configs,
+                    &global_configs,
+                    existing_override.as_ref(),
+                );
+            }
+        }
+
+        if self.has_match_results() {
+            self.reapply_selected_lens_group_config(job_ids_json);
+        } else {
+            self.match_results_changed();
+        }
+    }
+
+    fn reapply_selected_lens_group_config(&mut self, job_ids_json: String) {
+        let job_ids: HashSet<u32> = parse_job_ids_json(&job_ids_json).into_iter().collect();
+        if job_ids.is_empty() {
+            return;
+        }
+        self.reapply_lens_group_config_filtered(Some(job_ids));
     }
 
     fn set_batch_auto_rotate(&mut self, job_ids_json: String, enabled: bool) {
@@ -3265,20 +3635,31 @@ impl RenderQueue {
     }
 
     fn reapply_lens_group_config(&mut self) {
-        let lens_group_config = self.stabilizer.lens_group_config.read().clone();
+        self.reapply_lens_group_config_filtered(None);
+    }
 
-        // Collect jobs that have a live StabilizationManager
+    fn reapply_lens_group_config_filtered(&mut self, filter_job_ids: Option<HashSet<u32>>) {
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+
         let items: Vec<(
             u32,
             Arc<StabilizationManager>,
             String,
             RenderOptions,
+            (usize, usize),
             JobLensMetadataBackup,
             String,
+            Vec<anamorphic_presets::LensGroupConfig>,
         )> = self
             .jobs
             .iter()
             .filter_map(|(job_id, job)| {
+                if let Some(filter_job_ids) = filter_job_ids.as_ref() {
+                    if !filter_job_ids.contains(job_id) {
+                        return None;
+                    }
+                }
+
                 let stab = job.stab.as_ref()?.clone();
                 let base_lens_metadata = job.base_lens_metadata.clone().or_else(|| {
                     let gyro = stab.gyro.read();
@@ -3294,8 +3675,13 @@ impl RenderQueue {
                     stab,
                     job.additional_data.clone(),
                     job.render_options.clone(),
+                    job.base_render_output_size.unwrap_or((
+                        job.render_options.output_width,
+                        job.render_options.output_height,
+                    )),
                     base_lens_metadata,
                     gyro_file_url,
+                    effective_lens_group_configs(job, &global_configs),
                 ))
             })
             .collect();
@@ -3311,19 +3697,31 @@ impl RenderQueue {
 
         let on_done = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            move |this, job_updates: Vec<(u32, Option<String>, RenderOptions)>| {
+            move |this,
+                  job_updates: Vec<(
+                u32,
+                Option<String>,
+                RenderOptions,
+                (usize, usize),
+                Option<usize>,
+            )>| {
                 let updated_count = job_updates
                     .iter()
-                    .filter(|(_, data, _)| data.is_some())
+                    .filter(|(_, data, _, _, _)| data.is_some())
                     .count();
-                for (job_id, project_data, render_options) in job_updates {
+                for (job_id, project_data, render_options, base_output_size, lens_group_index) in
+                    job_updates
+                {
                     if let Some(job) = this.jobs.get_mut(&job_id) {
                         if let Some(data) = project_data {
                             job.project_data = Some(data);
                         }
                         job.render_options = render_options;
+                        job.base_render_output_size = Some(base_output_size);
+                        job.lens_group_index = lens_group_index;
                     }
                 }
+                this.match_results_changed();
                 ::log::info!(
                     "[reapply_lens_group_config] done, updated {} jobs",
                     updated_count
@@ -3332,112 +3730,139 @@ impl RenderQueue {
         );
 
         core::run_threaded(move || {
-            let job_updates: Vec<(u32, Option<String>, RenderOptions)> = items
-                .par_iter()
-                .filter_map(
-                    |(
-                        job_id,
-                        stab,
-                        additional_data,
-                        render_options,
-                        base_lens_metadata,
-                        gyro_file_url,
-                    )| {
-                        let (lens_index, size) = {
-                            let gyro = stab.gyro.read();
-                            let md = gyro.file_metadata.read();
-                            let li = anamorphic_presets::extract_lens_index(&md.additional_data);
-                            let sz = stab.params.read().size;
-                            (li, sz)
-                        };
+            let job_updates: Vec<(u32, Option<String>, RenderOptions, (usize, usize), Option<usize>)> =
+                items
+                    .par_iter()
+                    .filter_map(
+                        |(
+                            job_id,
+                            stab,
+                            additional_data,
+                            render_options,
+                            base_output_size,
+                            base_lens_metadata,
+                            gyro_file_url,
+                            effective_configs,
+                        )| {
+                            let (lens_index, size) = {
+                                let gyro = stab.gyro.read();
+                                let md = gyro.file_metadata.read();
+                                let li = anamorphic_presets::extract_lens_index(&md.additional_data);
+                                let sz = stab.params.read().size;
+                                (li, sz)
+                            };
 
-                        let lens_index = lens_index?;
-                        let group_config = lens_group_config.get(lens_index)?.clone();
+                            let mut updated_render_options = render_options.clone();
+                            updated_render_options.output_width = base_output_size.0;
+                            updated_render_options.output_height = base_output_size.1;
 
-                        let mut base_metadata = {
-                            let gyro = stab.gyro.read();
-                            let mut md = gyro.file_metadata.write();
-                            base_lens_metadata.overwrite_metadata(&mut md);
-                            let mut snapshot = md.thin();
-                            base_lens_metadata.overwrite_metadata(&mut snapshot);
-                            snapshot
-                        };
-                        let auto_focus =
-                            anamorphic_presets::extract_video_focus_length_mm(&base_metadata);
-
-                        stab.apply_main_video_telemetry(&mut base_metadata, gyro_file_url, true);
-                        *stab.camera_id.write() = base_metadata.camera_identifier.clone();
-                        if let Err(err) = stab.autoload_lens_from_camera_id() {
-                            ::log::warn!(
-                                "[reapply_lens_group_config] job[{}] autoload lens profile failed: {}",
-                                job_id,
-                                err
-                            );
-                        }
-                        sync_readout_params_from_lens(stab.as_ref());
-
-                        let manual_focus_mm = group_config
-                            .focal_length_mm
-                            .filter(|v| v.is_finite() && *v > 0.0);
-                        let manual_fallback =
-                            if auto_focus.is_none() { manual_focus_mm } else { None };
-
-                        if let Some(focal_length_mm) = manual_fallback {
-                            anamorphic_presets::apply_focal_length_fallback_to_metadata(
-                                &mut base_metadata,
-                                focal_length_mm,
-                            );
-                            {
+                            let mut base_metadata = {
                                 let gyro = stab.gyro.read();
                                 let mut md = gyro.file_metadata.write();
-                                anamorphic_presets::apply_focal_length_fallback_to_metadata(
-                                    &mut md,
-                                    focal_length_mm,
-                                );
-                            }
-                            stab.set_user_focal_length(focal_length_mm);
-                            ::log::info!(
-                                "[reapply_lens_group_config] job[{}] applied focal length {:.1}mm",
-                                job_id,
-                                focal_length_mm
-                            );
-                        }
+                                base_lens_metadata.overwrite_metadata(&mut md);
+                                let mut snapshot = md.thin();
+                                base_lens_metadata.overwrite_metadata(&mut snapshot);
+                                snapshot
+                            };
+                            let auto_focus =
+                                anamorphic_presets::extract_video_focus_length_mm(&base_metadata);
 
-                        if group_config.anamorphic_enabled {
-                            let existing_lens = stab.lens.read().clone();
-                            let profile = anamorphic_presets::build_lens_profile(
-                                &base_metadata,
-                                size,
-                                Some(&group_config),
-                                Some(&existing_lens),
-                            );
-                            if let Some(profile) = profile {
-                                *stab.lens.write() = profile;
-                                ::log::info!(
-                                    "[reapply_lens_group_config] job[{}] applied anamorphic profile for group #{}",
+                            stab.apply_main_video_telemetry(&mut base_metadata, gyro_file_url, true);
+                            *stab.camera_id.write() = base_metadata.camera_identifier.clone();
+                            if let Err(err) = stab.autoload_lens_from_camera_id() {
+                                ::log::warn!(
+                                    "[reapply_lens_group_config] job[{}] autoload lens profile failed: {}",
                                     job_id,
-                                    lens_index
+                                    err
                                 );
                             }
-                        }
+                            sync_readout_params_from_lens(stab.as_ref());
 
-                        sync_readout_params_from_lens(stab.as_ref());
-                        stab.invalidate_smoothing();
-                        stab.invalidate_zooming();
-                        let additional_data_str =
-                            prepare_project_additional_data(additional_data, render_options);
-                        let data = stab
-                            .export_gyroflow_data(
-                                core::GyroflowProjectType::WithGyroData,
-                                &additional_data_str,
-                                None,
-                            )
-                            .ok();
+                            if let Some(lens_index) = lens_index {
+                                if let Some(group_config) = effective_configs.get(lens_index) {
+                                    let selected_focal_length =
+                                        resolve_lens_group_focal_length(auto_focus, Some(group_config));
+                                    let manual_focus_length_mm = selected_focal_length.and_then(
+                                        |(focal_length_mm, source)| {
+                                            (source == anamorphic_presets::FocalLengthSource::Manual)
+                                                .then_some(focal_length_mm)
+                                        },
+                                    );
 
-                        Some((*job_id, data, render_options.clone()))
-                    },
-                )
-                .collect();
+                                    if let Some(focal_length_mm) = manual_focus_length_mm {
+                                        anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                            &mut base_metadata,
+                                            focal_length_mm,
+                                        );
+                                        {
+                                            let gyro = stab.gyro.read();
+                                            let mut md = gyro.file_metadata.write();
+                                            anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                                &mut md,
+                                                focal_length_mm,
+                                            );
+                                        }
+                                        stab.set_user_focal_length(focal_length_mm);
+                                        ::log::info!(
+                                            "[reapply_lens_group_config] job[{}] applied manual focal length {:.1}mm",
+                                            job_id,
+                                            focal_length_mm
+                                        );
+                                    }
+
+                                    if group_config.anamorphic_enabled {
+                                        let existing_lens = stab.lens.read().clone();
+                                        let profile = anamorphic_presets::build_lens_profile(
+                                            &base_metadata,
+                                            size,
+                                            Some(group_config),
+                                            Some(&existing_lens),
+                                        );
+                                        if let Some(profile) = profile {
+                                            if let Some(output_dim) = profile.output_dimension.clone() {
+                                                updated_render_options.output_width = output_dim.w;
+                                                updated_render_options.output_height = output_dim.h;
+                                            }
+                                            *stab.lens.write() = profile;
+                                            ::log::info!(
+                                                "[reapply_lens_group_config] job[{}] applied anamorphic profile for group #{}",
+                                                job_id,
+                                                lens_index
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+
+                            stab.set_output_size(
+                                updated_render_options.output_width,
+                                updated_render_options.output_height,
+                            );
+                            sync_readout_params_from_lens(stab.as_ref());
+                            stab.invalidate_smoothing();
+                            stab.invalidate_zooming();
+                            let additional_data_str = prepare_project_additional_data(
+                                additional_data,
+                                &updated_render_options,
+                            );
+                            let data = stab
+                                .export_gyroflow_data(
+                                    core::GyroflowProjectType::WithGyroData,
+                                    &additional_data_str,
+                                    None,
+                                )
+                                .ok();
+
+                            Some((
+                                *job_id,
+                                data,
+                                updated_render_options,
+                                *base_output_size,
+                                lens_index,
+                            ))
+                        },
+                    )
+                    .collect();
 
             on_done(job_updates);
         });
@@ -3449,7 +3874,7 @@ impl RenderQueue {
             None => return,
         };
 
-        let lens_group_config = self.stabilizer.lens_group_config.read().clone();
+        let global_lens_group_config = self.stabilizer.lens_group_config.read().clone();
         // Build a mapping from parsed gyro index back to gyro_files index.
         let parsed_gyro_indices: Vec<usize> = self
             .gyro_files
@@ -3468,9 +3893,12 @@ impl RenderQueue {
             gyro_end_ms: Option<f64>,
             additional_data: String,
             render_options: RenderOptions,
+            base_render_output_size: (usize, usize),
+            lens_group_index: Option<usize>,
             auto_rotate: bool,
             original_video_rotation: f64,
             base_lens_metadata: Option<JobLensMetadataBackup>,
+            effective_lens_group_configs: Vec<anamorphic_presets::LensGroupConfig>,
             stab: Arc<StabilizationManager>,
         }
         #[derive(Clone)]
@@ -3517,9 +3945,11 @@ impl RenderQueue {
                 gyro_path,
                 additional_data,
                 render_options,
+                base_render_output_size,
                 auto_rotate,
                 original_video_rotation,
                 base_lens_metadata,
+                effective_lens_group_configs,
             ) = match self.jobs.get(&job_id) {
                 Some(job) => match (&job.stab, self.gyro_files.get(gyro_files_idx)) {
                     (Some(stab), Some(gyro_info)) => (
@@ -3527,6 +3957,10 @@ impl RenderQueue {
                         gyro_info.path.clone(),
                         job.additional_data.clone(),
                         job.render_options.clone(),
+                        job.base_render_output_size.unwrap_or((
+                            job.render_options.output_width,
+                            job.render_options.output_height,
+                        )),
                         job.auto_rotate,
                         job.original_video_rotation,
                         job.base_lens_metadata.clone().or_else(|| {
@@ -3534,6 +3968,7 @@ impl RenderQueue {
                             let md = gyro.file_metadata.read();
                             Some(JobLensMetadataBackup::from_metadata(&md))
                         }),
+                        effective_lens_group_configs(job, &global_lens_group_config),
                     ),
                     _ => continue,
                 },
@@ -3564,9 +3999,12 @@ impl RenderQueue {
                 gyro_end_ms: result.gyro_end_ms,
                 additional_data,
                 render_options,
+                base_render_output_size,
+                lens_group_index: None,
                 auto_rotate,
                 original_video_rotation,
                 base_lens_metadata,
+                effective_lens_group_configs,
                 stab,
             });
         }
@@ -3592,6 +4030,8 @@ impl RenderQueue {
                     Option<String>,
                     RenderOptions,
                     Option<JobLensMetadataBackup>,
+                    (usize, usize),
+                    Option<usize>,
                 )>,
                 Vec<(usize, Vec<CachedGyroMetadataRange>)>,
                 Vec<anamorphic_presets::LensGroupStatus>,
@@ -3632,16 +4072,26 @@ impl RenderQueue {
 
                 let applied_job_ids: Vec<u32> = job_updates
                     .iter()
-                    .map(|(job_id, _, _, _)| *job_id)
+                    .map(|(job_id, _, _, _, _, _)| *job_id)
                     .collect();
                 let t_project = std::time::Instant::now();
-                for (job_id, project_data, render_options, base_lens_metadata) in job_updates {
+                for (
+                    job_id,
+                    project_data,
+                    render_options,
+                    base_lens_metadata,
+                    base_output_size,
+                    lens_group_index,
+                ) in job_updates
+                {
                     let mut export_settings = None;
                     if let Some(job) = this.jobs.get_mut(&job_id) {
                         if let Some(data) = project_data {
                             job.project_data = Some(data);
                         }
                         job.render_options = render_options;
+                        job.base_render_output_size = Some(base_output_size);
+                        job.lens_group_index = lens_group_index;
                         if let Some(base_lens_metadata) = base_lens_metadata {
                             job.base_lens_metadata = Some(base_lens_metadata);
                         }
@@ -4003,28 +4453,30 @@ impl RenderQueue {
 
                         let lens_index =
                             anamorphic_presets::extract_lens_index(&md.additional_data);
+                        item.lens_group_index = lens_index;
                         let group_config = lens_index
-                            .and_then(|index| lens_group_config.get(index))
+                            .and_then(|index| item.effective_lens_group_configs.get(index))
                             .cloned();
                         let auto_focus_length_mm =
                             anamorphic_presets::extract_video_focus_length_mm(&md);
-                        let manual_focus_length_mm = group_config
-                            .as_ref()
-                            .and_then(|cfg| cfg.focal_length_mm)
-                            .filter(|value| value.is_finite() && *value > 0.0);
-                        let manual_focus_fallback_mm = if auto_focus_length_mm.is_none() {
-                            manual_focus_length_mm
-                        } else {
-                            None
-                        };
+                        let selected_focal_length = resolve_lens_group_focal_length(
+                            auto_focus_length_mm,
+                            group_config.as_ref(),
+                        );
+                        let manual_focus_length_mm = selected_focal_length.and_then(
+                            |(focal_length_mm, source)| {
+                                (source == anamorphic_presets::FocalLengthSource::Manual)
+                                    .then_some(focal_length_mm)
+                            },
+                        );
 
-                        if let Some(focal_length_mm) = manual_focus_fallback_mm {
+                        if let Some(focal_length_mm) = manual_focus_length_mm {
                             anamorphic_presets::apply_focal_length_fallback_to_metadata(
                                 &mut md,
                                 focal_length_mm,
                             );
                             ::log::info!(
-                                "[apply_match] job[{}] applied lens group fallback focal length {:.1}mm to metadata",
+                                "[apply_match] job[{}] applied lens group manual focal length {:.1}mm to metadata",
                                 idx,
                                 focal_length_mm
                             );
@@ -4117,11 +4569,11 @@ impl RenderQueue {
                             }
                         }
 
-                        if let Some(focal_length_mm) = manual_focus_fallback_mm {
+                        if let Some(focal_length_mm) = manual_focus_length_mm {
                             item.stab.set_user_focal_length(focal_length_mm);
                             sync_readout_params_from_lens(item.stab.as_ref());
                             ::log::info!(
-                                "[apply_match] job[{}] applied lens group fallback focal length {:.1}mm",
+                                "[apply_match] job[{}] applied lens group manual focal length {:.1}mm",
                                 idx,
                                 focal_length_mm
                             );
@@ -4165,12 +4617,28 @@ impl RenderQueue {
                             );
                         }
 
+                        item.base_render_output_size = (
+                            item.render_options.output_width,
+                            item.render_options.output_height,
+                        );
+
                         if let Some(lens_index) = lens_index {
                             if let Some(profile) = custom_lens_profile {
+                                if let Some(output_dim) = profile.output_dimension.clone() {
+                                    item.render_options.output_width = output_dim.w;
+                                    item.render_options.output_height = output_dim.h;
+                                } else {
+                                    item.render_options.output_width = item.base_render_output_size.0;
+                                    item.render_options.output_height = item.base_render_output_size.1;
+                                }
                                 {
                                     let mut lens = item.stab.lens.write();
                                     *lens = profile;
                                 }
+                                item.stab.set_output_size(
+                                    item.render_options.output_width,
+                                    item.render_options.output_height,
+                                );
                                 sync_readout_params_from_lens(item.stab.as_ref());
                                 ::log::info!(
                                     "[apply_match] job[{}] applied lens group #{} profile",
@@ -4178,12 +4646,25 @@ impl RenderQueue {
                                     lens_index
                                 );
                             } else {
+                                item.render_options.output_width = item.base_render_output_size.0;
+                                item.render_options.output_height = item.base_render_output_size.1;
+                                item.stab.set_output_size(
+                                    item.render_options.output_width,
+                                    item.render_options.output_height,
+                                );
                                 ::log::info!(
                                     "[apply_match] job[{}] lens group #{} skipped (keeping existing lens flow)",
                                     idx,
                                     lens_index
                                 );
                             }
+                        } else {
+                            item.render_options.output_width = item.base_render_output_size.0;
+                            item.render_options.output_height = item.base_render_output_size.1;
+                            item.stab.set_output_size(
+                                item.render_options.output_width,
+                                item.render_options.output_height,
+                            );
                         }
 
                         item.stab.invalidate_smoothing();
@@ -4252,7 +4733,14 @@ impl RenderQueue {
             );
 
             let t_export = std::time::Instant::now();
-            let job_updates: Vec<(u32, Option<String>, RenderOptions, Option<JobLensMetadataBackup>)> =
+            let job_updates: Vec<(
+                u32,
+                Option<String>,
+                RenderOptions,
+                Option<JobLensMetadataBackup>,
+                (usize, usize),
+                Option<usize>,
+            )> =
                 apply_items
                     .into_par_iter()
                     .map(|item| {
@@ -4275,6 +4763,8 @@ impl RenderQueue {
                                 Some(data),
                                 item.render_options,
                                 item.base_lens_metadata,
+                                item.base_render_output_size,
+                                item.lens_group_index,
                             )
                         }
                         Err(e) => {
@@ -4288,6 +4778,8 @@ impl RenderQueue {
                                 None,
                                 item.render_options,
                                 item.base_lens_metadata,
+                                item.base_render_output_size,
+                                item.lens_group_index,
                             )
                         }
                     }
@@ -4298,7 +4790,7 @@ impl RenderQueue {
                 t_export.elapsed().as_secs_f64() * 1000.0,
                 job_updates
                     .iter()
-                    .filter(|(_, project_data, _, _)| project_data.is_some())
+                    .filter(|(_, project_data, _, _, _, _)| project_data.is_some())
                     .count()
             );
 
@@ -5154,5 +5646,88 @@ mod tests {
         assert_eq!(md.detected_source.as_deref(), Some("Sony FX3"));
         assert_eq!(md.frame_readout_time, Some(8.3));
         assert_eq!(md.frame_readout_direction, ReadoutDirection::LeftToRight);
+    }
+
+    #[test]
+    fn resolve_lens_group_focal_length_prefers_manual_override() {
+        let config = anamorphic_presets::LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+
+        let selected = resolve_lens_group_focal_length(Some(35.0), Some(&config)).unwrap();
+        assert_eq!(selected.0, 50.0);
+        assert_eq!(selected.1, anamorphic_presets::FocalLengthSource::Manual);
+    }
+
+    #[test]
+    fn resolve_lens_group_focal_length_keeps_auto_when_manual_empty() {
+        let config = anamorphic_presets::LensGroupConfig {
+            lens_index: 0,
+            ..Default::default()
+        };
+
+        let selected = resolve_lens_group_focal_length(Some(35.0), Some(&config)).unwrap();
+        assert_eq!(selected.0, 35.0);
+        assert_eq!(selected.1, anamorphic_presets::FocalLengthSource::Auto);
+    }
+
+    #[test]
+    fn resolve_lens_group_focal_length_falls_back_to_manual_when_auto_missing() {
+        let config = anamorphic_presets::LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(24.0),
+            ..Default::default()
+        };
+
+        let selected = resolve_lens_group_focal_length(None, Some(&config)).unwrap();
+        assert_eq!(selected.0, 24.0);
+        assert_eq!(selected.1, anamorphic_presets::FocalLengthSource::Manual);
+    }
+
+    #[test]
+    fn build_job_lens_group_override_keeps_local_auto_detect_against_global_manual() {
+        let mut global = anamorphic_presets::default_lens_group_configs();
+        global[0].focal_length_mm = Some(35.0);
+
+        let requested = anamorphic_presets::default_lens_group_configs();
+        let local_override = build_job_lens_group_override(&requested, &global, None).unwrap();
+
+        assert!(local_override.is_group_enabled(0));
+        assert_eq!(local_override.configs[0].focal_length_mm, None);
+    }
+
+    #[test]
+    fn effective_lens_group_configs_only_override_enabled_groups() {
+        let mut global = anamorphic_presets::default_lens_group_configs();
+        global[0].focal_length_mm = Some(35.0);
+        global[1].focal_length_mm = Some(50.0);
+
+        let mut local_configs = anamorphic_presets::default_lens_group_configs();
+        local_configs[0].focal_length_mm = Some(24.0);
+
+        let job = Job {
+            queue_index: 0,
+            render_options: RenderOptions::default(),
+            base_render_output_size: None,
+            auto_rotate: false,
+            additional_data: String::new(),
+            cancel_flag: Default::default(),
+            project_data: None,
+            stab: None,
+            base_lens_metadata: None,
+            lens_group_config_override: Some(JobLensGroupOverride {
+                configs: local_configs,
+                enabled_groups: vec![true, false, false, false, false, false],
+            }),
+            lens_group_index: None,
+            video_created_at: None,
+            original_video_rotation: 0.0,
+        };
+
+        let effective = effective_lens_group_configs(&job, &global);
+        assert_eq!(effective[0].focal_length_mm, Some(24.0));
+        assert_eq!(effective[1].focal_length_mm, Some(50.0));
     }
 }

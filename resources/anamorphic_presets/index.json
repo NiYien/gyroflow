@@ -3,8 +3,8 @@
   "presets": [
     {
       "id": "sirui_xingchen_50mm_1_33x",
-      "name": "sirui astra 50mm 1.33x",
-      "file": "sirui_xingchen_50mm_1_33x.json"
+      "name": "Sirui astra 50mm 1.33x",
+      "file": "sirui_astra_50mm_1_33x.json"
     },
     {
       "id": "blazar_mantis_25mm_1_33x",
@@ -47,9 +47,9 @@
       "file": "laowa_nanomorph_35mm_t2_4_1_50x.json"
     },
     {
-      "id": "aivascope_58mm_1_50x_vertical",
-      "name": "Biotar 58mm + Aivascope 1.50x (Vertical)",
-      "file": "aivascope_58mm_1_50x_vertical.json"
+      "id": "aivascope_58mm_1_50x",
+      "name": "Biotar 58mm + Aivascope 1.50x",
+      "file": "aivascope_58mm_1_50x.json"
     }
   ]
 }
