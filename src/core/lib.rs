@@ -23,6 +23,8 @@ pub mod zooming;
 
 pub mod gpu;
 pub mod gyro_match;
+#[cfg(feature = "neuflow")]
+pub mod neuflow;
 
 pub mod stabilization_params;
 pub mod util;
@@ -1094,7 +1096,7 @@ impl StabilizationManager {
                 frame_at_timestamp(timestamp_us as f64 / 1000.0, p.get_scaled_fps()) as usize; // used only to draw features and OF
 
             if p.show_optical_flow {
-                let num_frames = if p.of_method == 2 { 1 } else { 3 };
+                let num_frames = if p.of_method == 2 || p.of_method == 3 { 1 } else { 3 };
                 if let Some(pxs) = self.get_opticalflow_pixels(timestamp_us, num_frames, size) {
                     for (x, y, a) in pxs {
                         let a = Alpha::from(a as u8);

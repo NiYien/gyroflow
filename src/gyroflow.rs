@@ -317,6 +317,10 @@ fn entry() {
         );
     }
 
+    // Pre-load NeuFlow ORT sessions in background while user interacts with UI
+    #[cfg(feature = "neuflow")]
+    std::thread::spawn(|| core::neuflow::ensure_ready());
+
     engine.exec();
 
     util::unregister_url_handlers();

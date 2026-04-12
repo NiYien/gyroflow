@@ -82,6 +82,7 @@ opencv = { version = "0.98", default-features = false, features = [ "calib3d", "
 median = "0.3"
 
 wgpu = { version = "29", features = ["spirv", "naga-ir"] }
+ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
@@ -102,6 +103,7 @@ use-opencl = ["ocl", "ocl-interop"]
 use-opencv = ["opencv"]
 bundle-lens-profiles = []
 cache-gyro-metadata = []
+neuflow = ["dep:ort"]
 
 [profile.deploy]
 inherits = "release"
@@ -117,6 +119,8 @@ jni = "0.22"
 ndk = { version = "0.9.0", features = ["media", "api-level-26"] }
 ndk-sys = { version = "0.6.0" }
 ndk-context = { version = "0.1.1" }
+
+[dev-dependencies]
 
 [build-dependencies]
 ureq = "3.3"

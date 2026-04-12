@@ -243,6 +243,9 @@ pub struct Controller {
 
     cancel_current_operation: qt_method!(fn(&mut self)),
 
+    neuflow_available: qt_property!(bool; READ get_neuflow_available NOTIFY neuflow_available_changed),
+    neuflow_available_changed: qt_signal!(),
+
     sync_in_progress: qt_property!(bool; NOTIFY sync_in_progress_changed),
     sync_in_progress_changed: qt_signal!(),
 
@@ -736,19 +739,41 @@ impl Controller {
                                         / (input_frame.width() as f64 / sw as f64))
                                         .round()
                                         as u32;
+                                    // NeuFlow (of_method=3) needs NV12 for color data;
+                                    // other methods use GRAY8.
+                                    let pix_fmt = if sync2.sync_params.of_method == 3 {
+                                        ffmpeg_next::format::Pixel::NV12
+                                    } else {
+                                        ffmpeg_next::format::Pixel::GRAY8
+                                    };
                                     match converter.scale(
                                         input_frame,
-                                        ffmpeg_next::format::Pixel::GRAY8,
+                                        pix_fmt,
                                         sw,
                                         sh,
                                     ) {
                                         Ok(small_frame) => {
-                                            let (width, height, stride, pixels) = (
-                                                small_frame.plane_width(0),
-                                                small_frame.plane_height(0),
-                                                small_frame.stride(0),
-                                                small_frame.data(0),
-                                            );
+                                            let (width, height, stride, pixels) = if sync2.sync_params.of_method == 3 {
+                                                // NV12: pass all planes (Y + UV)
+                                                let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
+                                                              + small_frame.stride(1) * small_frame.plane_height(1) as usize;
+                                                let mut all_data = Vec::with_capacity(total_len);
+                                                all_data.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
+                                                all_data.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
+                                                (
+                                                    small_frame.plane_width(0),
+                                                    small_frame.plane_height(0),
+                                                    small_frame.stride(0),
+                                                    all_data,
+                                                )
+                                            } else {
+                                                (
+                                                    small_frame.plane_width(0),
+                                                    small_frame.plane_height(0),
+                                                    small_frame.stride(0),
+                                                    small_frame.data(0).to_vec(),
+                                                )
+                                            };
 
                                             sync2.feed_frame(
                                                 timestamp_us,
@@ -756,7 +781,7 @@ impl Controller {
                                                 width,
                                                 height,
                                                 stride,
-                                                pixels,
+                                                &pixels,
                                             );
                                         }
                                         Err(e) => err2((
@@ -3465,6 +3490,13 @@ impl Controller {
                 self.keyframe_value_updated(kf.to_string(), v);
             }
         }
+    }
+
+    fn get_neuflow_available(&self) -> bool {
+        #[cfg(feature = "neuflow")]
+        { crate::core::neuflow::is_available() }
+        #[cfg(not(feature = "neuflow"))]
+        { false }
     }
 
     fn has_gravity_vectors(&self) -> bool {

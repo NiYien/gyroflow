@@ -69,7 +69,7 @@ MenuItem {
             if (o.hasOwnProperty("max_sync_points"))    maxSyncPoints.value                 = +o.max_sync_points;
             if (o.hasOwnProperty("every_nth_frame"))    everyNthFrame.value                 = +o.every_nth_frame;
             if (o.hasOwnProperty("time_per_syncpoint")) timePerSyncpoint.value              = +o.time_per_syncpoint;
-            if (o.hasOwnProperty("of_method"))          syncMethod.currentIndex             = +o.of_method;
+            if (o.hasOwnProperty("of_method"))          syncMethod.currentIndex             = syncMethod.ofMethodReverseMap[+o.of_method] || 0;
             if (o.hasOwnProperty("offset_method"))      offsetMethod.currentIndex           = +o.offset_method;
             if (o.hasOwnProperty("pose_method"))        poseMethod.currentIndex             = +o.pose_method;
             if (o.hasOwnProperty("custom_sync_pattern")) sync.customSyncTimestamps          = resolveSyncpointPattern(o.custom_sync_pattern);
@@ -103,7 +103,7 @@ MenuItem {
             "max_sync_points":    maxSyncPoints.value,
             "every_nth_frame":    everyNthFrame.value,
             "time_per_syncpoint": timePerSyncpoint.value,
-            "of_method":          syncMethod.currentIndex,
+            "of_method":          syncMethod.ofMethodMap[syncMethod.currentIndex],
             "offset_method":      offsetMethod.currentIndex,
             "pose_method":        poseMethod.currentIndex,
             "auto_sync_points":   experimentalAutoSyncPoints.checked,
@@ -352,11 +352,18 @@ MenuItem {
 
             ComboBox {
                 id: syncMethod;
-                model: ["AKAZE", "OpenCV (PyrLK)", "OpenCV (DIS)"];
+                readonly property var ofMethodMap: [3, 0, 1, 2]
+                readonly property var ofMethodReverseMap: ({0: 1, 1: 2, 2: 3, 3: 0})
+                model: [
+                    QT_TR_NOOP("NeuFlow v2") + " (" + qsTr("recommended") + ")",
+                    "AKAZE",
+                    "OpenCV (PyrLK)",
+                    "OpenCV (DIS)"
+                ];
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
-                currentIndex: 2;
-                onCurrentIndexChanged: controller.set_of_method(currentIndex);
+                currentIndex: 0;
+                onCurrentIndexChanged: controller.set_of_method(ofMethodMap[currentIndex]);
                 Component.onCompleted: currentIndexChanged();
             }
         }
@@ -370,7 +377,7 @@ MenuItem {
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
                 currentIndex: 0;
-                onCurrentIndexChanged: controller.set_of_method(syncMethod.currentIndex);
+                onCurrentIndexChanged: controller.set_of_method(syncMethod.ofMethodMap[syncMethod.currentIndex]);
             }
         }
         Label {

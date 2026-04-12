@@ -10,6 +10,10 @@ mod opencv_dis;
 pub use opencv_dis::*;
 mod opencv_pyrlk;
 pub use opencv_pyrlk::*;
+#[cfg(feature = "neuflow")]
+mod neuflow;
+#[cfg(feature = "neuflow")]
+pub use self::neuflow::*;
 
 #[enum_delegate::register]
 pub trait OpticalFlowTrait {
@@ -20,6 +24,17 @@ pub trait OpticalFlowTrait {
     fn can_cleanup(&self) -> bool;
 }
 
+#[cfg(feature = "neuflow")]
+#[enum_delegate::implement(OpticalFlowTrait)]
+#[derive(Clone)]
+pub enum OpticalFlowMethod {
+    OFAkaze(OFAkaze),
+    OFOpenCVPyrLK(OFOpenCVPyrLK),
+    OFOpenCVDis(OFOpenCVDis),
+    OFNeuFlowV2(OFNeuFlowV2),
+}
+
+#[cfg(not(feature = "neuflow"))]
 #[enum_delegate::implement(OpticalFlowTrait)]
 #[derive(Clone)]
 pub enum OpticalFlowMethod {
@@ -27,11 +42,13 @@ pub enum OpticalFlowMethod {
     OFOpenCVPyrLK(OFOpenCVPyrLK),
     OFOpenCVDis(OFOpenCVDis),
 }
+
 impl OpticalFlowMethod {
     pub fn detect_features(
         method: u32,
         timestamp_us: i64,
         img: Arc<image::GrayImage>,
+        rgb_data: Option<Arc<Vec<u8>>>,
         width: u32,
         height: u32,
     ) -> Self {
@@ -46,6 +63,13 @@ impl OpticalFlowMethod {
             2 => Self::OFOpenCVDis(OFOpenCVDis::detect_features(
                 timestamp_us,
                 img,
+                width,
+                height,
+            )),
+            #[cfg(feature = "neuflow")]
+            3 => Self::OFNeuFlowV2(OFNeuFlowV2::new(
+                timestamp_us,
+                rgb_data.unwrap_or_else(|| Arc::new(Vec::new())),
                 width,
                 height,
             )),

@@ -6,13 +6,14 @@ edition = "2024"
 build = "build.rs"
 
 [features]
-default = ["opencv", "niyien-serialport"]
+default = ["opencv", "niyien-serialport", "neuflow"]
 opencl = ["gyroflow-core/use-opencl"]
 opencv = ["gyroflow-core/use-opencv"]
 niyien-serialport = ["dep:serialport"]
+neuflow = ["gyroflow-core/neuflow"]
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
-gyroflow-core = { path = "src/core/", features = ["use-opencv", "use-opencl"] }
+gyroflow-core = { path = "src/core/", features = ["use-opencv", "use-opencl", "neuflow"] }
 system_shutdown = "4.1"
 breakpad-sys = "0.2.0"
 trash = "5.2"

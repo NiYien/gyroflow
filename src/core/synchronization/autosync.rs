@@ -34,7 +34,7 @@ pub struct AutosyncProcess {
         >,
     >,
 
-    sync_params: SyncParams,
+    pub sync_params: SyncParams,
 
     thread_pool: rayon::ThreadPool,
 }
@@ -230,6 +230,36 @@ impl AutosyncProcess {
             .collect()
     }
 
+    /// Convert NV12 pixel data to RGB for NeuFlow optical flow.
+    /// NV12 layout: Y plane (stride * height bytes), then interleaved UV plane (stride * height/2 bytes).
+    fn nv12_to_rgb(width: u32, height: u32, stride: usize, pixels: &[u8]) -> Option<Vec<u8>> {
+        let w = width as usize;
+        let h = height as usize;
+        let s = stride;
+        let uv_start = s * h;
+        if pixels.len() < uv_start + s * h / 2 {
+            return None;
+        }
+        let mut rgb = vec![0u8; w * h * 3];
+        for row in 0..h {
+            for col in 0..w {
+                let y = pixels[row * s + col] as f32;
+                let uv_row = row / 2;
+                let uv_col = (col / 2) * 2;
+                let u = pixels[uv_start + uv_row * s + uv_col] as f32 - 128.0;
+                let v = pixels[uv_start + uv_row * s + uv_col + 1] as f32 - 128.0;
+                let r = (y + 1.402 * v).clamp(0.0, 255.0) as u8;
+                let g = (y - 0.344136 * u - 0.714136 * v).clamp(0.0, 255.0) as u8;
+                let b = (y + 1.772 * u).clamp(0.0, 255.0) as u8;
+                let idx = (row * w + col) * 3;
+                rgb[idx] = r;
+                rgb[idx + 1] = g;
+                rgb[idx + 2] = b;
+            }
+        }
+        Some(rgb)
+    }
+
     pub fn feed_frame(
         &self,
         mut timestamp_us: i64,
@@ -245,6 +275,28 @@ impl AutosyncProcess {
         }
 
         let method = self.sync_params.of_method as u32;
+
+        // For NeuFlow (method=3), extract RGB data before entering the 'static closure.
+        // Try NV12→RGB first; if pixel buffer doesn't have UV data, fall back to grayscale→RGB.
+        let rgb_data: Option<Arc<Vec<u8>>> = if method == 3 {
+            if let Some(rgb) = Self::nv12_to_rgb(width, height, stride, pixels) {
+                log::debug!("NeuFlow: extracted RGB from NV12 ({width}x{height}, stride={stride})");
+                Some(Arc::new(rgb))
+            } else if let Some(ref gray_img) = img {
+                // Fallback: construct pseudo-RGB from grayscale (R=G=B=Y)
+                log::debug!("NeuFlow: NV12→RGB failed (pixels.len={}), using grayscale fallback", pixels.len());
+                let gray_bytes = gray_img.as_raw();
+                let mut rgb = Vec::with_capacity(gray_bytes.len() * 3);
+                for &g in gray_bytes.iter().take((width * height) as usize) {
+                    rgb.push(g); rgb.push(g); rgb.push(g);
+                }
+                Some(Arc::new(rgb))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let estimator = self.estimator.clone();
         let total_detected_frames = self.total_detected_frames.clone();
         let total_read_frames = self.total_read_frames.clone();
@@ -288,7 +340,7 @@ impl AutosyncProcess {
                     return;
                 }
                 if let Some(img) = img {
-                    estimator.detect_features(frame_no, timestamp_us, img, width, height, method);
+                    estimator.detect_features(frame_no, timestamp_us, img, rgb_data, width, height, method);
                     total_detected_frames.fetch_add(1, SeqCst);
 
                     if frame_no % 7 == 0 {
