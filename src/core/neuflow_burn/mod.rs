@@ -24,13 +24,41 @@ use std::sync::OnceLock;
 
 use burn::prelude::*;
 use burn::tensor::TensorData;
+use burn_store::ModuleSnapshot;
+use half::f16;
 use parking_lot::Mutex;
 
-// Backend type: Wgpu (default f32).
-// burn-onnx generated code + .bpk weights are F32.
-// CMMA requires flex32/f16 backend but burn-onnx codegen doesn't support non-F32 yet.
-// TODO: Switch to Wgpu<flex32> once burn-onnx supports non-F32 backends.
-type B = burn::backend::wgpu::Wgpu;
+// Backend type: Wgpu<f16> — all compute in FP16.
+// Enables CMMA (cooperative matrix) on Vulkan via SPV_KHR_cooperative_matrix.
+// Generated constants patched to f16 via .convert::<half::f16>().
+// .bpk weights auto-converted F32→F16 via F16LoadAdapter at load time.
+type B = burn::backend::wgpu::Wgpu<f16>;
+
+/// Adapter that converts F32 tensor snapshots to F16 at load time.
+#[derive(Clone)]
+struct F16LoadAdapter;
+
+impl burn_store::ModuleAdapter for F16LoadAdapter {
+    fn adapt(&self, snapshot: &burn_store::TensorSnapshot) -> burn_store::TensorSnapshot {
+        use burn::tensor::DType;
+        if snapshot.dtype == DType::F32 {
+            if let Ok(data) = snapshot.to_data() {
+                let converted = data.convert::<f16>();
+                return burn_store::TensorSnapshot::from_data(
+                    converted,
+                    snapshot.path_stack.clone().unwrap_or_default(),
+                    snapshot.container_stack.clone().unwrap_or_default(),
+                    snapshot.tensor_id.clone().unwrap_or_default(),
+                );
+            }
+        }
+        snapshot.clone()
+    }
+
+    fn clone_box(&self) -> Box<dyn burn_store::ModuleAdapter> {
+        Box::new(self.clone())
+    }
+}
 
 use neuflow_v2_clean::Model;
 
@@ -74,14 +102,21 @@ fn init_model() -> Result<NeuFlowModel, String> {
     let path = find_weight_file()
         .ok_or_else(|| "NeuFlow Burn model (.bpk) not found".to_string())?;
 
-    log::info!("NeuFlow Burn: loading model from {}", path.display());
+    log::info!("NeuFlow Burn: loading model from {} (F16 mode)", path.display());
 
     let device = burn::backend::wgpu::WgpuDevice::default();
 
-    let path_str = path.to_string_lossy().to_string();
-    let model = Model::<B>::from_file(&path_str, &device);
+    // Create model structure (all params uninitialized, will be filled from .bpk)
+    let mut model = Model::<B>::new(&device);
 
-    log::info!("NeuFlow Burn: model loaded on {:?}", device);
+    // Load weights with F16 adapter: F32 .bpk data → F16 tensors
+    let path_str = path.to_string_lossy().to_string();
+    let mut store = burn_store::BurnpackStore::from_file(&path_str)
+        .with_from_adapter(F16LoadAdapter);
+    model.load_from(&mut store)
+        .map_err(|e| format!("Failed to load model weights: {e}"))?;
+
+    log::info!("NeuFlow Burn: model loaded on {:?} (F16)", device);
 
     Ok(NeuFlowModel { model, device })
 }
@@ -120,7 +155,8 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
     let flow_tensor = nf.model.forward(img0_tensor, img1_tensor);
 
     // Extract flow: [1, 2, H, W] -> interleaved [H*W*2]
-    let flow_data = flow_tensor.into_data();
+    // Output tensor is F16, convert to F32 for caller compatibility
+    let flow_data = flow_tensor.into_data().convert::<f32>();
     let flow_vec: Vec<f32> = flow_data.to_vec()
         .map_err(|e| format!("Failed to extract flow data: {e:?}"))?;
 
@@ -257,4 +293,6 @@ mod tests {
         eprintln!("  Avg: {avg_ms:.1}ms, Min: {min_ms}ms, Max: {max_ms}ms");
         assert!(avg_ms < 500.0, "Average inference too slow: {avg_ms:.1}ms (target < 100ms)");
     }
+
+    // F16 conversion now handled at load time via F16LoadAdapter - no separate conversion needed
 }

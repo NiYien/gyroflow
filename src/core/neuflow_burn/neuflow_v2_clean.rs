@@ -68,7 +68,7 @@ impl<B: Backend> Submodule1<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([255f32]),
+                burn::tensor::TensorData::from([255f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -212,7 +212,7 @@ impl<B: Backend> Submodule1<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([1.4142135381698608f32]),
+                burn::tensor::TensorData::from([1.4142135381698608f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -225,7 +225,7 @@ impl<B: Backend> Submodule1<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([1f32]),
+                burn::tensor::TensorData::from([1f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -238,7 +238,7 @@ impl<B: Backend> Submodule1<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([0.5f32]),
+                burn::tensor::TensorData::from([0.5f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -586,7 +586,7 @@ impl<B: Backend> Submodule2<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([11.313708305358887f32]),
+                burn::tensor::TensorData::from([11.313708305358887f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -609,7 +609,7 @@ impl<B: Backend> Submodule2<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([2f32]),
+                burn::tensor::TensorData::from([2f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -622,7 +622,7 @@ impl<B: Backend> Submodule2<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([39f32]),
+                burn::tensor::TensorData::from([39f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -635,7 +635,7 @@ impl<B: Backend> Submodule2<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([29f32]),
+                burn::tensor::TensorData::from([29f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -1025,7 +1025,7 @@ impl<B: Backend> Submodule3<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([79f32]),
+                burn::tensor::TensorData::from([79f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -1038,7 +1038,7 @@ impl<B: Backend> Submodule3<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([59f32]),
+                burn::tensor::TensorData::from([59f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
@@ -2277,7 +2277,7 @@ impl<B: Backend> Submodule6<B> {
                 B,
                 1,
             >::from_data(
-                burn::tensor::TensorData::from([8f32]),
+                burn::tensor::TensorData::from([8f32]).convert::<half::f16>(),
                 device,
             ),
             device.clone(),
