@@ -19,7 +19,27 @@ Rectangle {
     property QtObject controller: main_controller;
 
     property bool isSimpleMode: settings.value("simpleMode", "false") == "true";
-    onIsSimpleModeChanged: settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
+    property int savedOfMethod: -1
+    onIsSimpleModeChanged: {
+        settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
+        if (isSimpleMode) {
+            // Save current OF method index and switch to NeuFlow
+            if (window.sync) {
+                savedOfMethod = window.sync.syncMethodIndex;
+                window.sync.syncMethodIndex = 0; // NeuFlow v2 (ofMethodMap[0] = 3)
+            } else {
+                // Synchronization component not loaded yet, just set directly
+                savedOfMethod = -1;
+                controller.set_of_method(3); // NeuFlow v2
+            }
+        } else {
+            // Restore previous OF method
+            if (savedOfMethod >= 0 && window.sync) {
+                window.sync.syncMethodIndex = savedOfMethod;
+                savedOfMethod = -1;
+            }
+        }
+    }
 
     property bool isLandscape: width > height;
     onIsLandscapeChanged: {
