@@ -75,15 +75,36 @@ impl burn_store::ModuleAdapter for F16LoadAdapter {
 // Channel-based inference thread
 // ---------------------------------------------------------------------------
 
+/// GPU-side sparse sampling result: flow values at selected grid points.
+pub struct SampledFlow {
+    /// Grid point coordinates (x, y) in model space (640×480).
+    pub grid_points: Vec<(usize, usize)>,
+    /// dx values at each grid point.
+    pub dx: Vec<f32>,
+    /// dy values at each grid point.
+    pub dy: Vec<f32>,
+}
+
 /// Request sent to the inference thread.
 enum InferRequest {
-    /// Run inference on a pair of preprocessed images (owned data, zero-copy).
+    /// Run inference, read back full flow tensor (for testing/benchmarks).
     Infer {
         img0: Vec<f32>,
         img1: Vec<f32>,
         h: usize,
         w: usize,
         reply: mpsc::Sender<Result<Vec<f32>, String>>,
+    },
+    /// Run inference + GPU-side sparse sampling (main production path).
+    /// Only reads back ~400 floats instead of 614,400.
+    InferAndSample {
+        img0: Vec<f32>,
+        img1: Vec<f32>,
+        h: usize,
+        w: usize,
+        grid_points: Vec<(usize, usize)>,
+        linear_indices: Vec<i32>,
+        reply: mpsc::Sender<Result<SampledFlow, String>>,
     },
     /// Warm up the model (dummy inference to trigger autotune caching).
     Warmup {
@@ -169,6 +190,74 @@ fn extract_flow(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32
 // Inference loop with double-buffering prefetch
 // ---------------------------------------------------------------------------
 
+/// Process an InferAndSample request: forward + GPU select + small readback.
+fn process_infer_and_sample(
+    model: &Model<B>,
+    device: &burn::backend::wgpu::WgpuDevice,
+    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
+    grid_points: Vec<(usize, usize)>,
+    linear_indices: Vec<i32>,
+    reply: mpsc::Sender<Result<SampledFlow, String>>,
+    rx: &mpsc::Receiver<InferRequest>,
+    seq: u64,
+) -> Option<InferRequest> {
+    let t0 = Instant::now();
+
+    // 1. Upload tensors + GPU forward
+    let (img0_t, img1_t) = prepare_tensors(img0, img1, h, w, device);
+    let t1 = Instant::now();
+
+    let flow_tensor = model.forward(img0_t, img1_t); // [1, 2, H, W]
+    let t2 = Instant::now();
+
+    // 2. GPU reshape + select (no full readback!)
+    let num_pts = linear_indices.len();
+    let plane = h * w;
+
+    let indices_tensor = Tensor::<B, 1, burn::tensor::Int>::from_data(
+        TensorData::new(linear_indices, [num_pts]),
+        device,
+    );
+
+    // [1, 2, H, W] → [2, H*W]
+    let flow_flat = flow_tensor.reshape([2, plane]);
+    // select dim=1 with ~200 indices → [2, num_pts]
+    let sampled = flow_flat.select(1, indices_tensor);
+    let t3 = Instant::now();
+
+    // 3. Readback small tensor (~400 floats vs 614,400)
+    let sampled_data = sampled.into_data().convert::<f32>();
+    let sampled_vec: Vec<f32> = sampled_data.to_vec().unwrap_or_default();
+    let t4 = Instant::now();
+
+    // 4. Prefetch next request
+    let prefetched = rx.try_recv().ok();
+
+    // 5. Build result
+    let result = if sampled_vec.len() == num_pts * 2 {
+        Ok(SampledFlow {
+            grid_points,
+            dx: sampled_vec[..num_pts].to_vec(),
+            dy: sampled_vec[num_pts..].to_vec(),
+        })
+    } else {
+        Err(format!("Sampled flow size mismatch: expected {}, got {}", num_pts * 2, sampled_vec.len()))
+    };
+
+    let _ = reply.send(result);
+
+    let tensor_ms = (t1 - t0).as_secs_f64() * 1000.0;
+    let forward_ms = (t2 - t1).as_secs_f64() * 1000.0;
+    let select_ms = (t3 - t2).as_secs_f64() * 1000.0;
+    let readback_ms = (t4 - t3).as_secs_f64() * 1000.0;
+    let total_ms = (t4 - t0).as_secs_f64() * 1000.0;
+    log::debug!(
+        "[NeuFlow perf] #{seq} SAMPLE tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms select={select_ms:.1}ms readback={readback_ms:.1}ms total={total_ms:.1}ms pts={num_pts}"
+    );
+
+    prefetched
+}
+
 /// Process a single infer request with full timing instrumentation.
 /// Returns the result and optional prefetched next request.
 fn process_infer_request(
@@ -235,6 +324,13 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 seq += 1;
                 pending = process_infer_request(
                     &model, &device, img0, img1, h, w, reply, &rx, seq,
+                );
+            }
+            InferRequest::InferAndSample { img0, img1, h, w, grid_points, linear_indices, reply } => {
+                seq += 1;
+                pending = process_infer_and_sample(
+                    &model, &device, img0, img1, h, w,
+                    grid_points, linear_indices, reply, &rx, seq,
                 );
             }
             InferRequest::Warmup { reply } => {
@@ -377,6 +473,64 @@ fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Resu
     log::debug!("[NeuFlow perf] channel_roundtrip={roundtrip_ms:.1}ms");
 
     result
+}
+
+/// Run inference + GPU-side sparse sampling. Main production path.
+///
+/// Instead of reading back the full flow tensor (614K floats), this performs
+/// a GPU `select()` to extract flow values only at the specified grid points,
+/// then reads back just ~400 floats. ~1500x less data transfer.
+///
+/// grid_points: (x, y) coordinates in model space
+/// linear_indices: corresponding y*w+x values as i32
+pub fn infer_and_sample(
+    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
+    grid_points: Vec<(usize, usize)>,
+    linear_indices: Vec<i32>,
+) -> Result<SampledFlow, String> {
+    let expected = 3 * h * w;
+    if img0.len() != expected || img1.len() != expected {
+        return Err(format!(
+            "Input size mismatch: expected {expected}, got img0={}, img1={}",
+            img0.len(), img1.len()
+        ));
+    }
+    if grid_points.is_empty() {
+        return Err("No grid points provided".to_string());
+    }
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let handle = INFERENCE_HANDLE
+            .get_or_init(|| spawn_inference_thread())
+            .as_ref()
+            .map_err(|e| e.clone())?;
+
+        let (reply_tx, reply_rx) = mpsc::channel();
+        let t_send = Instant::now();
+
+        handle.sender.send(InferRequest::InferAndSample {
+            img0, img1, h, w, grid_points, linear_indices,
+            reply: reply_tx,
+        }).map_err(|_| "Inference thread channel closed".to_string())?;
+
+        let result = reply_rx.recv()
+            .map_err(|_| "Inference thread reply channel closed".to_string())?;
+
+        let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
+        log::debug!("[NeuFlow perf] sample_channel_roundtrip={roundtrip_ms:.1}ms");
+
+        result
+    }));
+
+    match result {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = if let Some(s) = e.downcast_ref::<String>() { s.clone() }
+                else if let Some(s) = e.downcast_ref::<&str>() { s.to_string() }
+                else { "Unknown panic".to_string() };
+            Err(format!("NeuFlow Burn panicked: {msg}"))
+        }
+    }
 }
 
 /// Pre-initialize the model and warm up the GPU.
@@ -626,6 +780,75 @@ mod tests {
             assert!(flow.iter().all(|v| v.is_finite()), "Non-finite on run {i}");
         }
         eprintln!("Fusion test: 5 consecutive inferences completed without panic");
+    }
+
+    /// GPU sparse sampling correctness + performance test.
+    #[test]
+    #[ignore]
+    fn test_gpu_sparse_sample() {
+        let h = 480usize;
+        let w = 640usize;
+        let size = 3 * h * w;
+
+        ensure_ready();
+        // Warmup
+        for _ in 0..5 {
+            let img = vec![128.0f32; size];
+            let _ = infer(img.clone(), img, h, w);
+        }
+
+        let img0 = vec![128.0f32; size];
+        let img1 = vec![100.0f32; size];
+
+        // Generate grid points (simulating compute_sample_grid)
+        let step = (w / 15).max(4);
+        let mut grid_points = Vec::new();
+        let mut linear_indices = Vec::new();
+        for x in (0..w).step_by(step) {
+            for y in (0..h).step_by(step) {
+                grid_points.push((x, y));
+                linear_indices.push((y * w + x) as i32);
+            }
+        }
+        let num_pts = grid_points.len();
+        eprintln!("GPU sparse sample test: {num_pts} grid points");
+
+        // Run infer_and_sample
+        let start = Instant::now();
+        let sampled = infer_and_sample(
+            img0.clone(), img1.clone(), h, w,
+            grid_points.clone(), linear_indices.clone(),
+        ).expect("infer_and_sample failed");
+        let sample_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+        // Run full infer for comparison
+        let start2 = Instant::now();
+        let full_flow = infer(img0, img1, h, w).expect("infer failed");
+        let full_ms = start2.elapsed().as_secs_f64() * 1000.0;
+
+        // Verify correctness: sampled values should match full flow at grid points
+        assert_eq!(sampled.dx.len(), num_pts);
+        assert_eq!(sampled.dy.len(), num_pts);
+        let plane = h * w;
+        for (i, &(x, y)) in sampled.grid_points.iter().enumerate() {
+            let idx = y * w + x;
+            let expected_dx = full_flow[idx];
+            let expected_dy = full_flow[plane + idx];
+            let actual_dx = sampled.dx[i];
+            let actual_dy = sampled.dy[i];
+            assert!(
+                (actual_dx - expected_dx).abs() < 0.1,
+                "dx mismatch at ({x},{y}): expected {expected_dx}, got {actual_dx}"
+            );
+            assert!(
+                (actual_dy - expected_dy).abs() < 0.1,
+                "dy mismatch at ({x},{y}): expected {expected_dy}, got {actual_dy}"
+            );
+        }
+
+        eprintln!("GPU sparse sample: {sample_ms:.1}ms vs full readback: {full_ms:.1}ms (speedup: {:.1}x)",
+            full_ms / sample_ms);
+        eprintln!("All {num_pts} points match between GPU select and full readback");
     }
 
     /// Throughput burst test: 4 threads × 5 inferences, measures aggregate throughput.
