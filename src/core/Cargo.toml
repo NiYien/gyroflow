@@ -84,7 +84,6 @@ median = "0.3"
 wgpu = { version = "29", features = ["spirv", "naga-ir"] }
 
 # Burn framework for NeuFlow v2 inference (replaces ORT)
-burn = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
 burn-store = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
@@ -92,6 +91,10 @@ objc2 = "0.6"
 objc2-metal = "0.3"
 objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
+burn = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+burn = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
@@ -122,6 +125,8 @@ jni = "0.22"
 ndk = { version = "0.9.0", features = ["media", "api-level-26"] }
 ndk-sys = { version = "0.6.0" }
 ndk-context = { version = "0.1.1" }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [dev-dependencies]
 
