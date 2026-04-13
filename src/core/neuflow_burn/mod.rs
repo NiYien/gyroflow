@@ -13,9 +13,14 @@
 //! - wgpu command queue is never submitted concurrently
 //! - autotune cache is bound to the correct thread-local context
 //!
-//! Model I/O (same as ORT version):
+//! Optimizations:
+//! - Zero-copy: `infer()` takes owned `Vec<f32>`, moved directly into TensorData
+//! - Double-buffer: inference loop prefetches next request's tensors during readback
+//! - CHW direct output: no interleave step, caller reads planar layout
+//!
+//! Model I/O:
 //! - Input: img0 [1, 3, 480, 640] float32, img1 [1, 3, 480, 640] float32 (0-255 range)
-//! - Output: flow [1, 2, 480, 640] float32 (dense optical flow)
+//! - Output: flow [2, 480, 640] float32 CHW layout (dx plane, dy plane)
 
 #[allow(
     clippy::let_and_return,
@@ -28,6 +33,7 @@ mod neuflow_v2_clean;
 
 use std::path::PathBuf;
 use std::sync::{OnceLock, mpsc};
+use std::time::Instant;
 
 use burn::prelude::*;
 use burn::tensor::TensorData;
@@ -37,9 +43,6 @@ use half::f16;
 use neuflow_v2_clean::Model;
 
 // Backend type: Wgpu<f16> — all compute in FP16.
-// Enables CMMA (cooperative matrix) on Vulkan via SPV_KHR_cooperative_matrix.
-// Generated constants patched to f16 via .convert::<half::f16>().
-// .bpk weights auto-converted F32→F16 via F16LoadAdapter at load time.
 type B = burn::backend::wgpu::Wgpu<f16>;
 
 /// Adapter that converts F32 tensor snapshots to F16 at load time.
@@ -74,22 +77,19 @@ impl burn_store::ModuleAdapter for F16LoadAdapter {
 
 /// Request sent to the inference thread.
 enum InferRequest {
-    /// Run inference on a pair of preprocessed images.
+    /// Run inference on a pair of preprocessed images (owned data, zero-copy).
     Infer {
         img0: Vec<f32>,
         img1: Vec<f32>,
         h: usize,
         w: usize,
-        reply: std::sync::mpsc::Sender<Result<Vec<f32>, String>>,
+        reply: mpsc::Sender<Result<Vec<f32>, String>>,
     },
     /// Warm up the model (dummy inference to trigger autotune caching).
     Warmup {
-        reply: std::sync::mpsc::Sender<Result<(), String>>,
+        reply: mpsc::Sender<Result<(), String>>,
     },
 }
-
-// InferRequest contains Sender which is Send, and Vec<f32> is Send.
-// The Burn model and device live only on the inference thread.
 
 /// Handle to the inference thread, holding the sender end of the channel.
 struct InferenceHandle {
@@ -101,15 +101,11 @@ static INFERENCE_HANDLE: OnceLock<Result<InferenceHandle, String>> = OnceLock::n
 /// Spawn the inference thread: loads model, then loops on channel receiving requests.
 fn spawn_inference_thread() -> Result<InferenceHandle, String> {
     let (tx, rx) = mpsc::channel::<InferRequest>();
-
-    // Use a oneshot to propagate init errors back to the caller.
     let (init_tx, init_rx) = mpsc::channel::<Result<(), String>>();
 
     std::thread::Builder::new()
         .name("neuflow-infer".to_string())
         .spawn(move || {
-            // Set autotune level before any Burn/CubeCL operation on this thread.
-            // Level 0 (minimal) tries fewest strategies → least VRAM for benchmarks.
             unsafe { std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0"); }
 
             let model_result = init_model();
@@ -125,7 +121,6 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
         })
         .map_err(|e| format!("Failed to spawn inference thread: {e}"))?;
 
-    // Wait for initialization to complete.
     let init_result = init_rx.recv()
         .map_err(|_| "Inference thread init channel closed unexpectedly".to_string())?;
     init_result?;
@@ -133,14 +128,114 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
     Ok(InferenceHandle { sender: tx })
 }
 
-/// The main loop running on the inference thread.
-/// Owns the Model and WgpuDevice — all Burn operations happen here.
+// ---------------------------------------------------------------------------
+// Inference helpers (run on inference thread only)
+// ---------------------------------------------------------------------------
+
+/// Create GPU tensors from owned f32 data. Zero-copy into TensorData.
+fn prepare_tensors(
+    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
+    device: &burn::backend::wgpu::WgpuDevice,
+) -> (Tensor<B, 4>, Tensor<B, 4>) {
+    let shape = [1usize, 3, h, w];
+    let img0_data = TensorData::new(img0, shape);
+    let img1_data = TensorData::new(img1, shape);
+    let img0_tensor = Tensor::<B, 4>::from_data(img0_data, device);
+    let img1_tensor = Tensor::<B, 4>::from_data(img1_data, device);
+    (img0_tensor, img1_tensor)
+}
+
+/// Extract flow from GPU tensor → CHW Vec<f32>. No interleave.
+fn extract_flow(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
+    let flow_data = flow_tensor.into_data().convert::<f32>();
+    let flow_vec: Vec<f32> = flow_data.to_vec()
+        .map_err(|e| format!("Failed to extract flow data: {e:?}"))?;
+
+    let plane = h * w;
+    if flow_vec.len() != 2 * plane {
+        return Err(format!(
+            "Unexpected flow size: expected {}, got {}",
+            2 * plane,
+            flow_vec.len()
+        ));
+    }
+
+    // Return CHW layout directly: [dx_plane..., dy_plane...]
+    // Caller (sample_from_dense_flow) reads planar format.
+    Ok(flow_vec)
+}
+
+// ---------------------------------------------------------------------------
+// Inference loop with double-buffering prefetch
+// ---------------------------------------------------------------------------
+
+/// Process a single infer request with full timing instrumentation.
+/// Returns the result and optional prefetched next request.
+fn process_infer_request(
+    model: &Model<B>,
+    device: &burn::backend::wgpu::WgpuDevice,
+    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
+    reply: mpsc::Sender<Result<Vec<f32>, String>>,
+    rx: &mpsc::Receiver<InferRequest>,
+    seq: u64,
+) -> Option<InferRequest> {
+    let t0 = Instant::now();
+
+    // Stage 1: Create GPU tensors (zero-copy TensorData + upload)
+    let (img0_tensor, img1_tensor) = prepare_tensors(img0, img1, h, w, device);
+    let t1 = Instant::now();
+
+    // Stage 2: GPU forward pass
+    let flow_tensor = model.forward(img0_tensor, img1_tensor);
+    let t2 = Instant::now();
+
+    // Stage 3: GPU readback + F16→F32 conversion
+    let result = extract_flow(flow_tensor, h, w);
+    let t3 = Instant::now();
+
+    // Stage 4: Prefetch next request while we do CPU work (send reply)
+    let prefetched = rx.try_recv().ok();
+
+    // Send reply
+    let _ = reply.send(result);
+    let t4 = Instant::now();
+
+    let tensor_ms = (t1 - t0).as_secs_f64() * 1000.0;
+    let forward_ms = (t2 - t1).as_secs_f64() * 1000.0;
+    let readback_ms = (t3 - t2).as_secs_f64() * 1000.0;
+    let reply_ms = (t4 - t3).as_secs_f64() * 1000.0;
+    let total_ms = (t4 - t0).as_secs_f64() * 1000.0;
+
+    log::debug!(
+        "[NeuFlow perf] #{seq} tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms readback={readback_ms:.1}ms reply={reply_ms:.1}ms total={total_ms:.1}ms prefetched={}",
+        prefetched.is_some()
+    );
+
+    prefetched
+}
+
+/// The main loop running on the inference thread with double-buffering.
 fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: mpsc::Receiver<InferRequest>) {
-    for request in rx {
+    let mut seq = 0u64;
+    let mut pending: Option<InferRequest> = None;
+
+    loop {
+        // Get next request: either prefetched or from channel
+        let request = if let Some(req) = pending.take() {
+            req
+        } else {
+            match rx.recv() {
+                Ok(req) => req,
+                Err(_) => break,
+            }
+        };
+
         match request {
             InferRequest::Infer { img0, img1, h, w, reply } => {
-                let result = run_inference(&model, &device, &img0, &img1, h, w);
-                let _ = reply.send(result);
+                seq += 1;
+                pending = process_infer_request(
+                    &model, &device, img0, img1, h, w, reply, &rx, seq,
+                );
             }
             InferRequest::Warmup { reply } => {
                 let result = run_warmup(&model, &device);
@@ -151,62 +246,14 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
     log::info!("NeuFlow Burn: inference thread exiting (channel closed)");
 }
 
-/// Execute a single inference on the inference thread.
-fn run_inference(model: &Model<B>, device: &burn::backend::wgpu::WgpuDevice, img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>, String> {
-    // Create input tensors [1, 3, H, W]
-    let shape = [1usize, 3, h, w];
-    let img0_data = TensorData::new(img0.to_vec(), shape);
-    let img1_data = TensorData::new(img1.to_vec(), shape);
-
-    let img0_tensor = Tensor::<B, 4>::from_data(img0_data, device);
-    let img1_tensor = Tensor::<B, 4>::from_data(img1_data, device);
-
-    // Run inference
-    let flow_tensor = model.forward(img0_tensor, img1_tensor);
-
-    // Extract flow: [1, 2, H, W] -> interleaved [H*W*2]
-    // Output tensor is F16, convert to F32 for caller compatibility
-    let flow_data = flow_tensor.into_data().convert::<f32>();
-    let flow_vec: Vec<f32> = flow_data.to_vec()
-        .map_err(|e| format!("Failed to extract flow data: {e:?}"))?;
-
-    let plane = h * w;
-
-    if flow_vec.len() != 2 * plane {
-        return Err(format!(
-            "Unexpected flow size: expected {}, got {}",
-            2 * plane,
-            flow_vec.len()
-        ));
-    }
-
-    // CHW [2, H, W] → interleaved HW2 [dx0,dy0,dx1,dy1,...]
-    let mut flow = vec![0.0f32; plane * 2];
-    let (dx_plane, dy_plane) = (&flow_vec[..plane], &flow_vec[plane..2 * plane]);
-    for i in 0..plane {
-        flow[i * 2] = dx_plane[i];
-        flow[i * 2 + 1] = dy_plane[i];
-    }
-
-    Ok(flow)
-}
-
 /// Run a dummy inference to trigger autotune caching on the inference thread.
 fn run_warmup(model: &Model<B>, device: &burn::backend::wgpu::WgpuDevice) -> Result<(), String> {
     let h = 480usize;
     let w = 640usize;
     let dummy = vec![128.0f32; 3 * h * w];
-    let shape = [1usize, 3, h, w];
 
-    let img0_data = TensorData::new(dummy.clone(), shape);
-    let img1_data = TensorData::new(dummy, shape);
-
-    let img0_tensor = Tensor::<B, 4>::from_data(img0_data, device);
-    let img1_tensor = Tensor::<B, 4>::from_data(img1_data, device);
-
-    // This triggers autotune strategy search + caching to disk
+    let (img0_tensor, img1_tensor) = prepare_tensors(dummy.clone(), dummy, h, w, device);
     let _flow = model.forward(img0_tensor, img1_tensor);
-    // Force sync to ensure autotune completes
     let _data = _flow.into_data();
 
     log::info!("NeuFlow Burn: warmup inference complete (autotune cached)");
@@ -217,8 +264,6 @@ fn run_warmup(model: &Model<B>, device: &burn::backend::wgpu::WgpuDevice) -> Res
 // Model initialization (called on the inference thread)
 // ---------------------------------------------------------------------------
 
-/// Initialize the Burn model with Wgpu (Vulkan/Metal) backend.
-/// Called once on the inference thread.
 fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
     let path = find_weight_file()
         .ok_or_else(|| "NeuFlow Burn model (.bpk) not found".to_string())?;
@@ -226,11 +271,8 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
     log::info!("NeuFlow Burn: loading model from {} (F16 mode)", path.display());
 
     let device = burn::backend::wgpu::WgpuDevice::default();
-
-    // Create model structure (all params uninitialized, will be filled from .bpk)
     let mut model = Model::<B>::new(&device);
 
-    // Load weights with F16 adapter: F32 .bpk data → F16 tensors
     let path_str = path.to_string_lossy().to_string();
     let mut store = burn_store::BurnpackStore::from_file(&path_str)
         .with_from_adapter(F16LoadAdapter);
@@ -238,7 +280,6 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
         .map_err(|e| format!("Failed to load model weights: {e}"))?;
 
     log::info!("NeuFlow Burn: model loaded on {:?} (F16)", device);
-
     Ok((model, device))
 }
 
@@ -258,7 +299,6 @@ pub fn find_weight_file() -> Option<PathBuf> {
         "neuflow_v2_clean.bpk".into(),
     ];
 
-    // Also try relative to the executable
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(dir.join("resources/neuflow_v2_clean.bpk"));
@@ -276,13 +316,12 @@ pub fn is_available() -> bool {
 
 /// Run NeuFlow inference on a pair of preprocessed images.
 ///
-/// img0, img1: CHW float32 `[3 * H * W]` in 0-255 range, where H=480, W=640.
-/// Returns interleaved flow `[H*W*2]`: `[dx0,dy0,dx1,dy1,...]`.
+/// img0, img1: owned CHW float32 `[3 * H * W]` in 0-255 range, where H=480, W=640.
+/// Returns CHW flow `[2 * H * W]`: `[dx_plane..., dy_plane...]`.
 ///
 /// Thread-safe: sends request to the dedicated inference thread via channel.
-/// Multiple callers (rayon threads) can call this concurrently; requests are
-/// serialized on the inference thread.
-pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>, String> {
+/// Zero-copy: owned Vecs are moved directly into TensorData without cloning.
+pub fn infer(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Result<Vec<f32>, String> {
     let expected = 3 * h * w;
     if img0.len() != expected || img1.len() != expected {
         return Err(format!(
@@ -292,7 +331,6 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
         ));
     }
 
-    // Catch panics from channel operations
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         infer_via_channel(img0, img1, h, w)
     }));
@@ -313,7 +351,7 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
 }
 
 /// Send an inference request to the dedicated thread and wait for the result.
-fn infer_via_channel(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>, String> {
+fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Result<Vec<f32>, String> {
     let handle = INFERENCE_HANDLE
         .get_or_init(|| spawn_inference_thread())
         .as_ref()
@@ -321,36 +359,37 @@ fn infer_via_channel(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<V
 
     let (reply_tx, reply_rx) = mpsc::channel();
 
+    let t_send = Instant::now();
+
+    // Zero-copy: move owned Vecs directly into the request
     handle.sender.send(InferRequest::Infer {
-        img0: img0.to_vec(),
-        img1: img1.to_vec(),
+        img0,
+        img1,
         h,
         w,
         reply: reply_tx,
     }).map_err(|_| "Inference thread channel closed".to_string())?;
 
-    reply_rx.recv()
-        .map_err(|_| "Inference thread reply channel closed (thread may have panicked)".to_string())?
+    let result = reply_rx.recv()
+        .map_err(|_| "Inference thread reply channel closed (thread may have panicked)".to_string())?;
+
+    let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
+    log::debug!("[NeuFlow perf] channel_roundtrip={roundtrip_ms:.1}ms");
+
+    result
 }
 
 /// Pre-initialize the model and warm up the GPU.
-/// Call from a background thread at app startup to hide init latency.
-///
-/// Spawns the inference thread if not already running, then sends a warmup
-/// request that executes a dummy inference to trigger autotune caching.
-/// The autotune runs on the inference thread (correct thread-local context)
-/// while VRAM is still free (before the rendering pipeline starts).
 pub fn ensure_ready() {
     if !is_available() {
         log::info!("NeuFlow Burn: model not found, skipping pre-init");
         return;
     }
 
-    let start = std::time::Instant::now();
+    let start = Instant::now();
     let handle = INFERENCE_HANDLE.get_or_init(|| spawn_inference_thread());
     match handle {
         Ok(h) => {
-            // Send warmup request to the inference thread
             let (reply_tx, reply_rx) = mpsc::channel();
             if h.sender.send(InferRequest::Warmup { reply: reply_tx }).is_ok() {
                 match reply_rx.recv() {
@@ -383,37 +422,35 @@ mod tests {
     #[test]
     fn test_infer_input_validation() {
         let bad = vec![0.0f32; 10];
-        let result = infer(&bad, &bad, 480, 640);
+        let result = infer(bad.clone(), bad, 480, 640);
         assert!(result.is_err());
     }
 
     /// End-to-end inference performance test.
     /// Verifies ≤40ms average inference latency on GPU (warmup excluded).
     #[test]
-    #[ignore] // Run with: cargo test --features neuflow --release -- --ignored test_e2e_inference_perf
+    #[ignore]
     fn test_e2e_inference_perf() {
         let h = 480usize;
         let w = 640usize;
         let size = 3 * h * w;
 
-        let img0 = vec![128.0f32; size];
-        let img1 = vec![100.0f32; size];
-
-        // Warmup (triggers autotune + JIT compilation + GPU stabilization)
         ensure_ready();
-        for _ in 0..5 {
-            let _ = infer(&img0, &img1, h, w).expect("Warmup inference failed");
+        for _ in 0..10 {
+            let img0 = vec![128.0f32; size];
+            let img1 = vec![100.0f32; size];
+            let _ = infer(img0, img1, h, w).expect("Warmup inference failed");
         }
 
-        // Benchmark 10 runs (steady state)
         let mut times = Vec::new();
         for _ in 0..10 {
-            let start = std::time::Instant::now();
-            let flow = infer(&img0, &img1, h, w).expect("Inference failed");
+            let img0 = vec![128.0f32; size];
+            let img1 = vec![100.0f32; size];
+            let start = Instant::now();
+            let flow = infer(img0, img1, h, w).expect("Inference failed");
             let elapsed = start.elapsed();
             times.push(elapsed);
 
-            // Verify output shape and finiteness
             assert_eq!(flow.len(), h * w * 2, "Flow size mismatch");
             assert!(flow.iter().all(|v| v.is_finite()), "Non-finite flow values");
         }
@@ -428,33 +465,26 @@ mod tests {
             eprintln!("  Run {}: {:.1}ms", i + 1, t.as_secs_f64() * 1000.0);
         }
 
-        assert!(
-            avg_ms <= 40.0,
-            "Average inference too slow: {avg_ms:.1}ms (target ≤ 40ms)"
-        );
+        assert!(avg_ms <= 40.0, "Average inference too slow: {avg_ms:.1}ms (target ≤ 40ms)");
     }
 
-    /// End-to-end pipeline test: RGB frame → preprocess_frame → infer → sample_from_dense_flow.
-    /// Verifies the full chain produces valid point correspondences.
+    /// End-to-end pipeline test: RGB frame → preprocess → infer (CHW) → sample.
     #[test]
-    #[ignore] // Run with: cargo test --features neuflow --release -- --ignored test_e2e_pipeline
+    #[ignore]
     fn test_e2e_pipeline() {
         let w = 640u32;
         let h = 480u32;
 
-        // Create a synthetic RGB frame with texture (checkerboard pattern)
         let mut rgb0 = vec![0u8; (w * h * 3) as usize];
         let mut rgb1 = vec![0u8; (w * h * 3) as usize];
         for y in 0..h {
             for x in 0..w {
                 let idx = ((y * w + x) * 3) as usize;
-                // Checkerboard pattern for texture
                 let block = ((x / 32) + (y / 32)) % 2 == 0;
                 let val = if block { 200u8 } else { 50u8 };
                 rgb0[idx] = val;
                 rgb0[idx + 1] = val;
                 rgb0[idx + 2] = val;
-                // Slightly shifted for rgb1 (simulate small motion)
                 let x2 = (x + 2).min(w - 1);
                 let idx2 = ((y * w + x2) * 3) as usize;
                 rgb1[idx] = rgb0[idx2.min(rgb0.len() - 3)];
@@ -463,8 +493,6 @@ mod tests {
             }
         }
 
-        // Preprocess (reuse the function from optical_flow::neuflow)
-        // Since preprocess_frame is not public from here, replicate the logic inline
         let target_h = 480usize;
         let target_w = 640usize;
         let scale = (target_w as f32 / w as f32).min(target_h as f32 / h as f32);
@@ -475,9 +503,8 @@ mod tests {
         let inv_scale = 1.0 / scale;
         let plane = target_h * target_w;
 
-        let preprocess = |rgb: &[u8]| -> (Vec<f32>, Vec<u8>) {
+        let preprocess = |rgb: &[u8]| -> Vec<f32> {
             let mut chw = vec![0.0f32; 3 * plane];
-            let mut gray = vec![0u8; plane];
             for out_y in pad_top..(pad_top + new_h) {
                 let src_yf = (out_y - pad_top) as f32 * inv_scale;
                 let sy0 = (src_yf as usize).min(h as usize - 1);
@@ -504,35 +531,32 @@ mod tests {
                             + rgb[i11 + c] as f32 * w11;
                         chw[c * plane + out_idx] = v;
                     }
-                    gray[out_idx] = chw[out_idx] as u8;
                 }
             }
-            (chw, gray)
+            chw
         };
 
-        let (img0, gray0) = preprocess(&rgb0);
-        let (img1, _) = preprocess(&rgb1);
+        let img0 = preprocess(&rgb0);
+        let img1 = preprocess(&rgb1);
 
-        // Warmup
         ensure_ready();
 
-        // Infer
-        let flow = infer(&img0, &img1, target_h, target_w)
+        let flow = infer(img0, img1, target_h, target_w)
             .expect("Inference failed in pipeline test");
 
-        // Verify flow shape
+        // CHW layout: flow[0..plane] = dx, flow[plane..2*plane] = dy
         assert_eq!(flow.len(), target_h * target_w * 2, "Flow output size mismatch");
         assert!(flow.iter().all(|v| v.is_finite()), "Non-finite flow values in pipeline");
 
-        // Sample sparse points (inline version of sample_from_dense_flow)
+        // Sample sparse points using CHW layout
         let step = (target_w / 15).max(4);
         let mut from_pts = Vec::new();
         let mut to_pts = Vec::new();
         for x in (0..target_w).step_by(step) {
             for y in (0..target_h).step_by(step) {
-                let idx = (y * target_w + x) * 2;
+                let idx = y * target_w + x;
                 let dx = flow[idx];
-                let dy = flow[idx + 1];
+                let dy = flow[plane + idx];
                 if !dx.is_finite() || !dy.is_finite() { continue; }
                 let to_x = x as f32 + dx;
                 let to_y = y as f32 + dy;
@@ -545,41 +569,32 @@ mod tests {
 
         eprintln!("Pipeline test: {} point correspondences from {}x{} flow",
             from_pts.len(), target_w, target_h);
-        assert!(
-            from_pts.len() >= 10,
-            "Too few point correspondences: {} (expected >= 10)",
-            from_pts.len()
-        );
+        assert!(from_pts.len() >= 10, "Too few point correspondences: {}", from_pts.len());
     }
 
     /// Thread safety test: multiple threads call infer() concurrently.
-    /// Verifies no panics occur (requests are serialized on the inference thread).
     #[test]
-    #[ignore] // Run with: cargo test --features neuflow --release -- --ignored test_inference_thread_safety
+    #[ignore]
     fn test_inference_thread_safety() {
         let h = 480usize;
         let w = 640usize;
         let size = 3 * h * w;
 
-        // Warmup
         ensure_ready();
         let img = vec![128.0f32; size];
-        let _ = infer(&img, &img, h, w);
+        let _ = infer(img.clone(), img, h, w);
 
-        // Spawn 4 threads each doing 3 inferences
         let threads: Vec<_> = (0..4).map(|tid| {
             std::thread::spawn(move || {
-                let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
-                let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
                 for i in 0..3 {
-                    match infer(&img0, &img1, h, w) {
+                    let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
+                    let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
+                    match infer(img0, img1, h, w) {
                         Ok(flow) => {
                             assert_eq!(flow.len(), h * w * 2);
                             assert!(flow.iter().all(|v| v.is_finite()));
                         }
-                        Err(e) => {
-                            panic!("Thread {tid} run {i} failed: {e}");
-                        }
+                        Err(e) => panic!("Thread {tid} run {i} failed: {e}"),
                     }
                 }
             })
@@ -591,10 +606,9 @@ mod tests {
         eprintln!("Thread safety test: 4 threads × 3 inferences completed without panic");
     }
 
-    /// Verify that fusion is enabled and inference doesn't panic.
-    /// With the dedicated inference thread, fusion stream safety is guaranteed.
+    /// Verify fusion enabled + no panics under dedicated thread.
     #[test]
-    #[ignore] // Run with: cargo test --features neuflow --release -- --ignored test_fusion_no_panic
+    #[ignore]
     fn test_fusion_no_panic() {
         let h = 480usize;
         let w = 640usize;
@@ -602,16 +616,52 @@ mod tests {
 
         ensure_ready();
 
-        // Run 5 consecutive inferences — fusion stream accumulates operations
         for i in 0..5 {
             let img0 = vec![80.0f32 + i as f32 * 20.0; size];
             let img1 = vec![90.0f32 + i as f32 * 20.0; size];
-            let result = infer(&img0, &img1, h, w);
+            let result = infer(img0, img1, h, w);
             assert!(result.is_ok(), "Fusion panic on run {i}: {:?}", result.err());
             let flow = result.unwrap();
             assert_eq!(flow.len(), h * w * 2);
             assert!(flow.iter().all(|v| v.is_finite()), "Non-finite on run {i}");
         }
         eprintln!("Fusion test: 5 consecutive inferences completed without panic");
+    }
+
+    /// Throughput burst test: 4 threads × 5 inferences, measures aggregate throughput.
+    #[test]
+    #[ignore]
+    fn test_throughput_burst() {
+        let h = 480usize;
+        let w = 640usize;
+        let size = 3 * h * w;
+
+        ensure_ready();
+        // Extra warmup
+        for _ in 0..3 {
+            let img = vec![128.0f32; size];
+            let _ = infer(img.clone(), img, h, w);
+        }
+
+        let start = Instant::now();
+        let threads: Vec<_> = (0..4).map(|tid| {
+            std::thread::spawn(move || {
+                for _ in 0..5 {
+                    let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
+                    let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
+                    infer(img0, img1, h, w).expect("Burst inference failed");
+                }
+            })
+        }).collect();
+
+        for t in threads {
+            t.join().expect("Burst thread panicked");
+        }
+        let total = start.elapsed();
+        let throughput = 20.0 / total.as_secs_f64();
+
+        eprintln!("Burst throughput: {throughput:.1} infer/sec, total: {total:?} for 20 inferences");
+        // 20 × ~31ms = 620ms theoretical min. Allow 80% margin.
+        assert!(total.as_millis() <= 1100, "Burst too slow: {total:?} (target ≤ 1100ms)");
     }
 }

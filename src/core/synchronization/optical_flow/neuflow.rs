@@ -83,13 +83,16 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 return fallback_to_lk(self, next);
             }
 
+            let t_start = std::time::Instant::now();
+
             match neuflow_inference(
                 &self.rgb_frame, self.width, self.height,
                 &next.rgb_frame, next.width, next.height,
             ) {
                 Ok((flow_data, gray_data)) => {
+                    let t_infer = std::time::Instant::now();
+
                     // Letterbox parameters (must match preprocess_frame)
-                    // Must match preprocess_frame target dimensions
                     let model_w = 640.0f32;
                     let model_h = 480.0f32;
                     let scale = (model_w / self.width as f32).min(model_h / self.height as f32);
@@ -98,8 +101,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                     let pad_left = (model_w - new_w) / 2.0;
                     let pad_top = (model_h - new_h) / 2.0;
 
-                    // Sample from the non-padded region only
+                    // Sample from the non-padded region only (CHW layout)
                     let result = sample_from_dense_flow(&flow_data, &gray_data, model_w as u32, model_h as u32);
+                    let t_sample = std::time::Instant::now();
+
                     if let Some((ref from_pts, ref to_pts)) = result {
                         // Remove padding offset and scale back to original resolution
                         let from_scaled: Vec<(f32, f32)> = from_pts.iter()
@@ -112,10 +117,16 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                             .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
                             .collect();
 
+                        let t_scale = std::time::Instant::now();
+
+                        let infer_ms = (t_infer - t_start).as_secs_f64() * 1000.0;
+                        let sample_ms = (t_sample - t_infer).as_secs_f64() * 1000.0;
+                        let scale_ms = (t_scale - t_sample).as_secs_f64() * 1000.0;
+                        let total_ms = (t_scale - t_start).as_secs_f64() * 1000.0;
+                        log::debug!("[NeuFlow perf] of_to: inference={infer_ms:.1}ms sample={sample_ms:.1}ms scale={scale_ms:.1}ms total={total_ms:.1}ms pts={}", from_scaled.len());
+
                         if from_scaled.len() >= 10 {
-                            // Store sampled points for UI display
                             unsafe { *self.features.get() = from_scaled.clone(); }
-                            // Cache result for re-use by cache_optical_flow()
                             self.matched_points.write().insert(
                                 next.timestamp_us,
                                 (from_scaled.clone(), to_scaled.clone()),
@@ -151,20 +162,26 @@ fn neuflow_inference(
     rgb0: &[u8], w0: u32, h0: u32,
     rgb1: &[u8], w1: u32, h1: u32,
 ) -> Result<(Vec<f32>, Vec<u8>), String> {
+    let t0 = std::time::Instant::now();
+
     let (img0, gray0, proc_h, proc_w) = preprocess_frame(rgb0, w0, h0)?;
     let (img1, _, _, _) = preprocess_frame(rgb1, w1, h1)?;
 
-    let start = std::time::Instant::now();
+    let t1 = std::time::Instant::now();
 
-    // Run inference via ONNX Runtime (session is cached internally)
-    let flow = crate::neuflow::infer(&img0, &img1, proc_h, proc_w)?;
+    // Run inference via Burn (zero-copy: owned Vecs moved into channel)
+    let flow = crate::neuflow::infer(img0, img1, proc_h, proc_w)?;
 
-    let elapsed = start.elapsed();
-    if elapsed.as_secs() > 60 {
-        return Err(format!("NeuFlow ORT inference timeout: {elapsed:?}"));
+    let t2 = std::time::Instant::now();
+    let preprocess_ms = (t1 - t0).as_secs_f64() * 1000.0;
+    let infer_ms = (t2 - t1).as_secs_f64() * 1000.0;
+    let total_ms = (t2 - t0).as_secs_f64() * 1000.0;
+
+    if (t2 - t1).as_secs() > 60 {
+        return Err(format!("NeuFlow inference timeout: {infer_ms:.0}ms"));
     }
 
-    log::debug!("NeuFlow ORT inference: {}x{} in {:?}", proc_w, proc_h, elapsed);
+    log::debug!("[NeuFlow perf] preprocess={preprocess_ms:.1}ms infer={infer_ms:.1}ms total={total_ms:.1}ms ({}x{})", proc_w, proc_h);
     Ok((flow, gray0))
 }
 
@@ -237,21 +254,23 @@ fn preprocess_frame(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<f32>, Ve
 /// Sample sparse point correspondences from a dense optical flow field
 /// using texture-aware dense sampling for RANSAC-based pose estimation.
 ///
+/// flow_data is in CHW layout: [dx_plane (H*W), dy_plane (H*W)].
+///
 /// Algorithm:
-/// 1. Dense grid sample (~1000+ candidates at w/40 step)
-/// 2. Skip low-texture regions (patch variance < 2.0)
+/// 1. Dense grid sample (~1000+ candidates at w/15 step)
+/// 2. Skip low-texture regions (patch variance < 3.0)
 /// 3. Skip invalid flow (non-finite values, out-of-bounds destinations)
 /// 4. Return (from_pts, to_pts) where to = from + flow
 /// 5. RANSAC in estimate_pose handles foreground/background separation
 fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u32) -> OpticalFlowPair {
     let w = width as usize;
     let h = height as usize;
+    let plane = w * h;
 
-    if flow_data.len() < w * h * 2 || gray.len() < w * h {
+    if flow_data.len() < plane * 2 || gray.len() < plane {
         return None;
     }
 
-    // Grid step and texture window matching DIS (opencv_dis.rs)
     let step = (w / 15).max(4);
     let window_size = ((w as f32 * 0.02).round() as usize).max(10);
     let texture_threshold = 3.0;
@@ -266,9 +285,10 @@ fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u3
                 continue;
             }
 
-            let idx = (y * w + x) * 2;
+            // CHW layout: dx at flow_data[idx], dy at flow_data[plane + idx]
+            let idx = y * w + x;
             let dx = flow_data[idx];
-            let dy = flow_data[idx + 1];
+            let dy = flow_data[plane + idx];
 
             if !dx.is_finite() || !dy.is_finite() {
                 continue;
@@ -449,14 +469,15 @@ mod tests {
     fn test_sample_from_dense_flow_uniform() {
         let w = 32u32;
         let h = 32u32;
-        // Uniform flow: dx=1.0, dy=0.5 everywhere
-        let mut flow = vec![0.0f32; (w * h * 2) as usize];
-        for i in 0..(w * h) as usize {
-            flow[i * 2] = 1.0;
-            flow[i * 2 + 1] = 0.5;
+        let n = (w * h) as usize;
+        // Uniform flow in CHW layout: dx_plane then dy_plane
+        let mut flow = vec![0.0f32; n * 2];
+        for i in 0..n {
+            flow[i] = 1.0;       // dx plane
+            flow[n + i] = 0.5;   // dy plane
         }
         // Textured gray: alternating pattern to ensure variance > 3.0
-        let gray: Vec<u8> = (0..(w * h) as usize).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+        let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
         let result = sample_from_dense_flow(&flow, &gray, w, h);
         assert!(result.is_some());
         let (from_pts, to_pts) = result.unwrap();
@@ -488,22 +509,20 @@ mod tests {
 
     #[test]
     fn test_sample_uniform_flow() {
-        // Constant flow [10, 5] everywhere — interleaved layout
+        // Constant flow [10, 5] everywhere — CHW layout
         let w = 100u32;
         let h = 80u32;
         let n = (w * h) as usize;
         let mut flow_data = vec![0.0f32; 2 * n];
         for i in 0..n {
-            flow_data[i * 2]     = 10.0; // dx
-            flow_data[i * 2 + 1] = 5.0;  // dy
+            flow_data[i] = 10.0;       // dx plane
+            flow_data[n + i] = 5.0;    // dy plane
         }
-        // Textured gray: alternating pattern to ensure variance > 3.0
         let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
         let result = sample_from_dense_flow(&flow_data, &gray, w, h);
         assert!(result.is_some(), "uniform flow should produce valid result");
         let (from_pts, to_pts) = result.unwrap();
         assert!(!from_pts.is_empty());
-        // Every sampled point should have dx≈10, dy≈5
         for (f, t) in from_pts.iter().zip(to_pts.iter()) {
             let dx = t.0 - f.0;
             let dy = t.1 - f.1;
@@ -518,12 +537,12 @@ mod tests {
         let w = 100u32;
         let h = 80u32;
         let n = (w * h) as usize;
+        // CHW layout: dx=1.0, dy=1.0
         let mut flow_data = vec![0.0f32; 2 * n];
         for i in 0..n {
-            flow_data[i * 2]     = 1.0;
-            flow_data[i * 2 + 1] = 1.0;
+            flow_data[i] = 1.0;       // dx plane
+            flow_data[n + i] = 1.0;   // dy plane
         }
-        // Uniform gray: all same value → variance = 0
         let gray = vec![128u8; n];
         let result = sample_from_dense_flow(&flow_data, &gray, w, h);
         assert!(result.is_none(), "uniform gray should produce no points (low texture)");
@@ -559,5 +578,42 @@ mod tests {
             matches!(method, OpticalFlowMethod::OFNeuFlowV2(_)),
             "method=3 should produce OFNeuFlowV2"
         );
+    }
+
+    #[cfg(feature = "neuflow")]
+    #[test]
+    fn test_preprocess_frame_perf() {
+        let rgb = vec![128u8; 1920 * 1080 * 3];
+        let start = std::time::Instant::now();
+        let iterations = 100;
+        for _ in 0..iterations {
+            let _ = preprocess_frame(&rgb, 1920, 1080).unwrap();
+        }
+        let avg_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
+        eprintln!("preprocess_frame 1920x1080→480x640 avg: {avg_ms:.2}ms ({iterations} runs)");
+        assert!(avg_ms <= 10.0, "preprocess too slow: {avg_ms:.2}ms (target ≤ 10ms)");
+    }
+
+    #[test]
+    fn test_sample_from_dense_flow_perf() {
+        let w = 640u32;
+        let h = 480u32;
+        let n = (w * h) as usize;
+        // CHW layout
+        let mut flow_data = vec![0.0f32; 2 * n];
+        for i in 0..n {
+            flow_data[i] = 2.0;
+            flow_data[n + i] = 1.0;
+        }
+        let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+
+        let start = std::time::Instant::now();
+        let iterations = 1000;
+        for _ in 0..iterations {
+            let _ = sample_from_dense_flow(&flow_data, &gray, w, h);
+        }
+        let avg_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
+        eprintln!("sample_from_dense_flow 640x480 avg: {avg_ms:.3}ms ({iterations} runs)");
+        assert!(avg_ms <= 1.0, "sample too slow: {avg_ms:.3}ms (target ≤ 1.0ms)");
     }
 }
