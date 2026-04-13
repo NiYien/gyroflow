@@ -168,28 +168,7 @@ fn prepare_tensors(
 }
 
 /// Extract flow from GPU tensor → CHW Vec<f32>. No interleave.
-/// Synchronous version — used by warmup only.
-fn extract_flow(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
-    let flow_data = flow_tensor.into_data().convert::<f32>();
-    let flow_vec: Vec<f32> = flow_data.to_vec()
-        .map_err(|e| format!("Failed to extract flow data: {e:?}"))?;
-
-    let plane = h * w;
-    if flow_vec.len() != 2 * plane {
-        return Err(format!(
-            "Unexpected flow size: expected {}, got {}",
-            2 * plane,
-            flow_vec.len()
-        ));
-    }
-
-    // Return CHW layout directly: [dx_plane..., dy_plane...]
-    // Caller (sample_from_dense_flow) reads planar format.
-    Ok(flow_vec)
-}
-
-/// Extract flow from GPU tensor → CHW Vec<f32>. No interleave.
-/// Async version: readback overlaps with next frame's GPU work via into_data_async().
+/// Async version: uses into_data_async() for non-blocking GPU readback.
 async fn extract_flow_async(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
     let flow_data = flow_tensor.into_data_async().await
         .map_err(|e| format!("Async readback failed: {e:?}"))?
@@ -210,61 +189,38 @@ async fn extract_flow_async(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Re
 }
 
 // ---------------------------------------------------------------------------
-// Inference loop with double-buffering prefetch
+// Pipelined inference with concurrent GPU readback + CPU forward
 // ---------------------------------------------------------------------------
+//
+// Key insight: burn-fusion's model.forward() is LAZY — it builds a fusion
+// graph on the CPU but submits NO GPU commands. All GPU work triggers when
+// into_data_async() is called (which flushes the graph). So simply deferring
+// the tensor doesn't help — we must explicitly START the readback (via poll)
+// to trigger the GPU flush, then do CPU work while the GPU computes.
+//
+// Pipeline (using poll_fn for concurrent polling):
+//
+//   1. poll readback(N-1)  → triggers GPU flush, GPU starts computing N-1
+//   2. prepare + forward(N) → CPU builds fusion graph while GPU runs N-1
+//   3. await readback(N-1)  → GPU should be done, ~0ms wait
+//   4. Store N's tensor for deferred readback
+//
+// This overlaps GPU compute with CPU graph-building, reducing effective
+// per-frame time from forward+readback (~27ms) to max(forward, readback) (~14ms).
 
-/// Process an InferAndSample request: forward + GPU select + async readback.
-/// Async version: uses into_data_async() so GPU readback can overlap with other work.
-async fn process_infer_and_sample_async(
-    model: &Model<B>,
-    device: &burn::backend::wgpu::WgpuDevice,
-    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
-    grid_points: Vec<(usize, usize)>,
-    linear_indices: Vec<i32>,
-    reply: mpsc::Sender<Result<SampledFlow, String>>,
-    rx: &mpsc::Receiver<InferRequest>,
-    seq: u64,
-) -> Option<InferRequest> {
-    let t0 = Instant::now();
+/// Readback a flow tensor synchronously (full readback path).
+fn readback_flow_sync(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
+    pollster::block_on(extract_flow_async(flow_tensor, h, w))
+}
 
-    // 1. Upload tensors + GPU forward
-    let (img0_t, img1_t) = prepare_tensors(img0, img1, h, w, device);
-    let t1 = Instant::now();
-
-    let flow_tensor = model.forward(img0_t, img1_t); // [1, 2, H, W]
-    let t2 = Instant::now();
-
-    // 2. GPU reshape + select (no full readback!)
-    let num_pts = linear_indices.len();
-    let plane = h * w;
-
-    let indices_tensor = Tensor::<B, 1, burn::tensor::Int>::from_data(
-        TensorData::new(linear_indices, [num_pts]),
-        device,
-    );
-
-    // [1, 2, H, W] → [2, H*W]
-    let flow_flat = flow_tensor.reshape([2, plane]);
-    // select dim=1 with ~200 indices → [2, num_pts]
-    let sampled = flow_flat.select(1, indices_tensor);
-    let t3 = Instant::now();
-
-    // 3. Async readback small tensor (~400 floats vs 614,400)
-    let sampled_data = match sampled.into_data_async().await {
-        Ok(data) => data.convert::<f32>(),
-        Err(e) => {
-            let _ = reply.send(Err(format!("Async readback failed: {e:?}")));
-            return rx.try_recv().ok();
-        }
-    };
-    let sampled_vec: Vec<f32> = sampled_data.to_vec().unwrap_or_default();
-    let t4 = Instant::now();
-
-    // 4. Prefetch next request
-    let prefetched = rx.try_recv().ok();
-
-    // 5. Build result
-    let result = if sampled_vec.len() == num_pts * 2 {
+/// Readback a sampled tensor synchronously (sparse sampling path).
+fn readback_sampled_sync(sampled: Tensor<B, 2>, num_pts: usize, grid_points: Vec<(usize, usize)>) -> Result<SampledFlow, String> {
+    let sampled_data = pollster::block_on(sampled.into_data_async())
+        .map_err(|e| format!("Readback failed: {e:?}"))?
+        .convert::<f32>();
+    let sampled_vec: Vec<f32> = sampled_data.to_vec()
+        .map_err(|e| format!("Failed to extract sampled data: {e:?}"))?;
+    if sampled_vec.len() == num_pts * 2 {
         Ok(SampledFlow {
             grid_points,
             dx: sampled_vec[..num_pts].to_vec(),
@@ -272,77 +228,70 @@ async fn process_infer_and_sample_async(
         })
     } else {
         Err(format!("Sampled flow size mismatch: expected {}, got {}", num_pts * 2, sampled_vec.len()))
-    };
-
-    let _ = reply.send(result);
-
-    let tensor_ms = (t1 - t0).as_secs_f64() * 1000.0;
-    let forward_ms = (t2 - t1).as_secs_f64() * 1000.0;
-    let select_ms = (t3 - t2).as_secs_f64() * 1000.0;
-    let readback_ms = (t4 - t3).as_secs_f64() * 1000.0;
-    let total_ms = (t4 - t0).as_secs_f64() * 1000.0;
-    log::debug!(
-        "[NeuFlow perf] #{seq} SAMPLE tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms select={select_ms:.1}ms readback={readback_ms:.1}ms total={total_ms:.1}ms pts={num_pts}"
-    );
-
-    prefetched
+    }
 }
 
-/// Process a single infer request with full timing instrumentation.
-/// Async version: uses extract_flow_async() so GPU readback can overlap with other work.
-/// Returns the result and optional prefetched next request.
-async fn process_infer_request_async(
-    model: &Model<B>,
-    device: &burn::backend::wgpu::WgpuDevice,
-    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
-    reply: mpsc::Sender<Result<Vec<f32>, String>>,
-    rx: &mpsc::Receiver<InferRequest>,
-    seq: u64,
-) -> Option<InferRequest> {
-    let t0 = Instant::now();
+/// Overlap prev frame's GPU readback with current frame's CPU forward pass.
+///
+/// Uses poll_fn to drive both concurrently within a single pollster::block_on:
+/// 1st poll: kicks off readback (GPU flush) + runs sync forward (CPU)
+/// subsequent polls: waits for readback completion
+fn overlap_readback_with_forward<R, F>(
+    readback_future: F,
+    sync_work: impl FnOnce(),
+) -> R
+where
+    F: std::future::Future<Output = R>,
+{
+    use std::task::Poll;
 
-    // Stage 1: Create GPU tensors (zero-copy TensorData + upload)
-    let (img0_tensor, img1_tensor) = prepare_tensors(img0, img1, h, w, device);
-    let t1 = Instant::now();
+    pollster::block_on(async {
+        let mut readback = core::pin::pin!(readback_future);
+        let mut sync_work = Some(sync_work);
 
-    // Stage 2: GPU forward pass
-    let flow_tensor = model.forward(img0_tensor, img1_tensor);
-    let t2 = Instant::now();
-
-    // Stage 3: Async GPU readback + F16→F32 conversion
-    let result = extract_flow_async(flow_tensor, h, w).await;
-    let t3 = Instant::now();
-
-    // Stage 4: Prefetch next request while we do CPU work (send reply)
-    let prefetched = rx.try_recv().ok();
-
-    // Send reply
-    let _ = reply.send(result);
-    let t4 = Instant::now();
-
-    let tensor_ms = (t1 - t0).as_secs_f64() * 1000.0;
-    let forward_ms = (t2 - t1).as_secs_f64() * 1000.0;
-    let readback_ms = (t3 - t2).as_secs_f64() * 1000.0;
-    let reply_ms = (t4 - t3).as_secs_f64() * 1000.0;
-    let total_ms = (t4 - t0).as_secs_f64() * 1000.0;
-
-    log::debug!(
-        "[NeuFlow perf] #{seq} tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms readback={readback_ms:.1}ms reply={reply_ms:.1}ms total={total_ms:.1}ms prefetched={}",
-        prefetched.is_some()
-    );
-
-    prefetched
+        core::future::poll_fn(|cx| {
+            // 1. Poll readback — first poll triggers GPU flush + command submission
+            if let Poll::Ready(val) = readback.as_mut().poll(cx) {
+                return Poll::Ready(val);
+            }
+            // 2. Run sync work once — CPU builds next frame's fusion graph
+            //    while GPU computes prev frame in the background
+            if let Some(f) = sync_work.take() {
+                f();
+            }
+            // 3. Poll readback again — GPU may have finished during sync work
+            readback.as_mut().poll(cx)
+        }).await
+    })
 }
 
-/// The main loop running on the inference thread with double-buffering.
-/// Uses pollster::block_on() to drive async readback operations, allowing
-/// into_data_async() to overlap GPU readback with other GPU work.
+/// Pending readback from the previous frame.
+enum PendingReadback {
+    Infer {
+        flow_tensor: Tensor<B, 4>,
+        h: usize,
+        w: usize,
+        reply: mpsc::Sender<Result<Vec<f32>, String>>,
+        seq: u64,
+        t0: Instant,
+    },
+    Sample {
+        sampled_tensor: Tensor<B, 2>,
+        num_pts: usize,
+        grid_points: Vec<(usize, usize)>,
+        reply: mpsc::Sender<Result<SampledFlow, String>>,
+        seq: u64,
+        t0: Instant,
+    },
+}
+
+/// The main inference loop with pipelined GPU readback.
 fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: mpsc::Receiver<InferRequest>) {
     let mut seq = 0u64;
     let mut pending: Option<InferRequest> = None;
+    let mut deferred: Option<PendingReadback> = None;
 
     loop {
-        // Get next request: either prefetched or from channel
         let request = if let Some(req) = pending.take() {
             req
         } else {
@@ -355,21 +304,202 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
         match request {
             InferRequest::Infer { img0, img1, h, w, reply } => {
                 seq += 1;
-                pending = pollster::block_on(process_infer_request_async(
-                    &model, &device, img0, img1, h, w, reply, &rx, seq,
-                ));
+                let t0 = Instant::now();
+                let mut t_tensor = t0;
+                let mut t_fwd = t0;
+                let mut flow_tensor: Option<Tensor<B, 4>> = None;
+
+                // Overlap: readback(prev) + forward(curr) concurrently
+                if let Some(prev) = deferred.take() {
+                    let t_pipe = Instant::now();
+                    match prev {
+                        PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq, t0: prev_t0 } => {
+                            let prev_result = overlap_readback_with_forward(
+                                extract_flow_async(prev_ft, ph, pw),
+                                || {
+                                    let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
+                                    t_tensor = Instant::now();
+                                    flow_tensor = Some(model.forward(t0_t, t1_t));
+                                    t_fwd = Instant::now();
+                                },
+                            );
+                            let t_done = Instant::now();
+                            let _ = prev_reply.send(prev_result);
+                            let pipe_ms = (t_done - t_pipe).as_secs_f64() * 1000.0;
+                            let fwd_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
+                            log::debug!(
+                                "[NeuFlow perf] #{prev_seq} PIPE readback+forward={pipe_ms:.1}ms (fwd={fwd_ms:.1}ms overlapped)"
+                            );
+                        }
+                        PendingReadback::Sample { sampled_tensor: prev_st, num_pts: pn, grid_points: pg, reply: prev_reply, seq: prev_seq, .. } => {
+                            let prev_result = overlap_readback_with_forward(
+                                prev_st.into_data_async(),
+                                || {
+                                    let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
+                                    t_tensor = Instant::now();
+                                    flow_tensor = Some(model.forward(t0_t, t1_t));
+                                    t_fwd = Instant::now();
+                                },
+                            );
+                            let t_done = Instant::now();
+                            let result = match prev_result {
+                                Ok(data) => {
+                                    let sv: Vec<f32> = data.convert::<f32>().to_vec().unwrap_or_default();
+                                    if sv.len() == pn * 2 {
+                                        Ok(SampledFlow { grid_points: pg, dx: sv[..pn].to_vec(), dy: sv[pn..].to_vec() })
+                                    } else {
+                                        Err(format!("Sampled flow size mismatch"))
+                                    }
+                                }
+                                Err(e) => Err(format!("Readback failed: {e:?}")),
+                            };
+                            let _ = prev_reply.send(result);
+                            let pipe_ms = (t_done - t_pipe).as_secs_f64() * 1000.0;
+                            log::debug!("[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+forward={pipe_ms:.1}ms");
+                        }
+                    }
+                } else {
+                    // No prev — just forward
+                    let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
+                    t_tensor = Instant::now();
+                    flow_tensor = Some(model.forward(t0_t, t1_t));
+                    t_fwd = Instant::now();
+                }
+
+                let flow_tensor = flow_tensor.unwrap();
+
+                // Prefetch next request
+                pending = rx.try_recv().ok();
+
+                if pending.is_some() {
+                    deferred = Some(PendingReadback::Infer {
+                        flow_tensor, h, w, reply, seq, t0,
+                    });
+                } else {
+                    // Queue empty — readback immediately
+                    let t_rb = Instant::now();
+                    let result = readback_flow_sync(flow_tensor, h, w);
+                    let rb_ms = (Instant::now() - t_rb).as_secs_f64() * 1000.0;
+                    let _ = reply.send(result);
+                    log::debug!("[NeuFlow perf] #{seq} IMMEDIATE readback={rb_ms:.1}ms");
+                }
+
+                let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
+                let forward_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
+                log::debug!(
+                    "[NeuFlow perf] #{seq} tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms deferred={} prefetched={}",
+                    deferred.is_some(), pending.is_some()
+                );
             }
             InferRequest::InferAndSample { img0, img1, h, w, grid_points, linear_indices, reply } => {
                 seq += 1;
-                pending = pollster::block_on(process_infer_and_sample_async(
-                    &model, &device, img0, img1, h, w,
-                    grid_points, linear_indices, reply, &rx, seq,
-                ));
+                let t0 = Instant::now();
+                let mut t_tensor = t0;
+                let mut t_fwd = t0;
+                let mut t_select = t0;
+                let mut sampled_out: Option<Tensor<B, 2>> = None;
+                let num_pts = linear_indices.len();
+
+                // Overlap: readback(prev) + forward+select(curr)
+                if let Some(prev) = deferred.take() {
+                    let t_pipe = Instant::now();
+                    let do_forward_select = || {
+                        let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
+                        t_tensor = Instant::now();
+                        let ft = model.forward(t0_t, t1_t);
+                        t_fwd = Instant::now();
+                        let plane = h * w;
+                        let idx_t = Tensor::<B, 1, burn::tensor::Int>::from_data(
+                            TensorData::new(linear_indices, [num_pts]), &device,
+                        );
+                        let sampled = ft.reshape([2, plane]).select(1, idx_t);
+                        t_select = Instant::now();
+                        sampled_out = Some(sampled);
+                    };
+                    match prev {
+                        PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq, .. } => {
+                            let prev_result = overlap_readback_with_forward(
+                                extract_flow_async(prev_ft, ph, pw), do_forward_select,
+                            );
+                            let _ = prev_reply.send(prev_result);
+                            log::debug!("[NeuFlow perf] #{prev_seq} PIPE readback+fwd_select={:.1}ms", (Instant::now() - t_pipe).as_secs_f64() * 1000.0);
+                        }
+                        PendingReadback::Sample { sampled_tensor: prev_st, num_pts: pn, grid_points: pg, reply: prev_reply, seq: prev_seq, .. } => {
+                            let prev_result = overlap_readback_with_forward(prev_st.into_data_async(), do_forward_select);
+                            let result = match prev_result {
+                                Ok(data) => {
+                                    let sv: Vec<f32> = data.convert::<f32>().to_vec().unwrap_or_default();
+                                    if sv.len() == pn * 2 { Ok(SampledFlow { grid_points: pg, dx: sv[..pn].to_vec(), dy: sv[pn..].to_vec() }) }
+                                    else { Err("Sampled flow size mismatch".into()) }
+                                }
+                                Err(e) => Err(format!("Readback failed: {e:?}")),
+                            };
+                            let _ = prev_reply.send(result);
+                            log::debug!("[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+fwd_select={:.1}ms", (Instant::now() - t_pipe).as_secs_f64() * 1000.0);
+                        }
+                    }
+                } else {
+                    let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
+                    t_tensor = Instant::now();
+                    let ft = model.forward(t0_t, t1_t);
+                    t_fwd = Instant::now();
+                    let plane = h * w;
+                    let idx_t = Tensor::<B, 1, burn::tensor::Int>::from_data(
+                        TensorData::new(linear_indices, [num_pts]), &device,
+                    );
+                    let sampled = ft.reshape([2, plane]).select(1, idx_t);
+                    t_select = Instant::now();
+                    sampled_out = Some(sampled);
+                }
+
+                let sampled = sampled_out.unwrap();
+                pending = rx.try_recv().ok();
+
+                if pending.is_some() {
+                    deferred = Some(PendingReadback::Sample {
+                        sampled_tensor: sampled, num_pts, grid_points, reply, seq, t0,
+                    });
+                } else {
+                    let t_rb = Instant::now();
+                    let result = readback_sampled_sync(sampled, num_pts, grid_points);
+                    let rb_ms = (Instant::now() - t_rb).as_secs_f64() * 1000.0;
+                    let _ = reply.send(result);
+                    log::debug!("[NeuFlow perf] #{seq} SAMPLE IMMEDIATE readback={rb_ms:.1}ms pts={num_pts}");
+                }
+
+                let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
+                let forward_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
+                let select_ms = (t_select - t_fwd).as_secs_f64() * 1000.0;
+                log::debug!(
+                    "[NeuFlow perf] #{seq} SAMPLE tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms select={select_ms:.1}ms deferred={} prefetched={}",
+                    deferred.is_some(), pending.is_some()
+                );
             }
             InferRequest::Warmup { reply } => {
-                // Warmup stays synchronous for simplicity
+                if let Some(prev) = deferred.take() {
+                    match prev {
+                        PendingReadback::Infer { flow_tensor, h, w, reply: prev_reply, .. } => {
+                            let _ = prev_reply.send(readback_flow_sync(flow_tensor, h, w));
+                        }
+                        PendingReadback::Sample { sampled_tensor, num_pts, grid_points, reply: prev_reply, .. } => {
+                            let _ = prev_reply.send(readback_sampled_sync(sampled_tensor, num_pts, grid_points));
+                        }
+                    }
+                }
                 let result = run_warmup(&model, &device);
                 let _ = reply.send(result);
+            }
+        }
+    }
+
+    // Drain last deferred readback
+    if let Some(prev) = deferred.take() {
+        match prev {
+            PendingReadback::Infer { flow_tensor, h, w, reply, .. } => {
+                let _ = reply.send(readback_flow_sync(flow_tensor, h, w));
+            }
+            PendingReadback::Sample { sampled_tensor, num_pts, grid_points, reply, .. } => {
+                let _ = reply.send(readback_sampled_sync(sampled_tensor, num_pts, grid_points));
             }
         }
     }

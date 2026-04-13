@@ -609,7 +609,6 @@ dependencies = [
  "burn-cuda",
  "burn-dispatch",
  "burn-flex",
- "burn-ir",
  "burn-ndarray",
  "burn-nn",
  "burn-optim",
@@ -702,7 +701,6 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
- "burn-fusion",
  "cubecl",
 ]
 
@@ -747,7 +745,6 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
- "burn-fusion",
  "cubecl",
 ]
 
@@ -871,7 +868,6 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
- "burn-fusion",
  "cubecl",
 ]
 
@@ -956,7 +952,6 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
- "burn-fusion",
  "cubecl",
 ]
 
@@ -1922,6 +1917,7 @@ dependencies = [
  "cfg_aliases",
  "cubecl-common",
  "cubecl-core",
+ "cubecl-cpp",
  "cubecl-ir",
  "cubecl-runtime",
  "cubecl-spirv",
