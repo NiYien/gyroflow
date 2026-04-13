@@ -16,6 +16,7 @@
 //! Optimizations:
 //! - Zero-copy: `infer()` takes owned `Vec<f32>`, moved directly into TensorData
 //! - Double-buffer: inference loop prefetches next request's tensors during readback
+//! - Async readback: `into_data_async()` allows GPU readback to overlap with next frame's work
 //! - CHW direct output: no interleave step, caller reads planar layout
 //!
 //! Model I/O:
@@ -167,6 +168,7 @@ fn prepare_tensors(
 }
 
 /// Extract flow from GPU tensor → CHW Vec<f32>. No interleave.
+/// Synchronous version — used by warmup only.
 fn extract_flow(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
     let flow_data = flow_tensor.into_data().convert::<f32>();
     let flow_vec: Vec<f32> = flow_data.to_vec()
@@ -186,12 +188,34 @@ fn extract_flow(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32
     Ok(flow_vec)
 }
 
+/// Extract flow from GPU tensor → CHW Vec<f32>. No interleave.
+/// Async version: readback overlaps with next frame's GPU work via into_data_async().
+async fn extract_flow_async(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
+    let flow_data = flow_tensor.into_data_async().await
+        .map_err(|e| format!("Async readback failed: {e:?}"))?
+        .convert::<f32>();
+    let flow_vec: Vec<f32> = flow_data.to_vec()
+        .map_err(|e| format!("Failed to extract flow data: {e:?}"))?;
+
+    let plane = h * w;
+    if flow_vec.len() != 2 * plane {
+        return Err(format!(
+            "Unexpected flow size: expected {}, got {}",
+            2 * plane,
+            flow_vec.len()
+        ));
+    }
+
+    Ok(flow_vec)
+}
+
 // ---------------------------------------------------------------------------
 // Inference loop with double-buffering prefetch
 // ---------------------------------------------------------------------------
 
-/// Process an InferAndSample request: forward + GPU select + small readback.
-fn process_infer_and_sample(
+/// Process an InferAndSample request: forward + GPU select + async readback.
+/// Async version: uses into_data_async() so GPU readback can overlap with other work.
+async fn process_infer_and_sample_async(
     model: &Model<B>,
     device: &burn::backend::wgpu::WgpuDevice,
     img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
@@ -225,8 +249,14 @@ fn process_infer_and_sample(
     let sampled = flow_flat.select(1, indices_tensor);
     let t3 = Instant::now();
 
-    // 3. Readback small tensor (~400 floats vs 614,400)
-    let sampled_data = sampled.into_data().convert::<f32>();
+    // 3. Async readback small tensor (~400 floats vs 614,400)
+    let sampled_data = match sampled.into_data_async().await {
+        Ok(data) => data.convert::<f32>(),
+        Err(e) => {
+            let _ = reply.send(Err(format!("Async readback failed: {e:?}")));
+            return rx.try_recv().ok();
+        }
+    };
     let sampled_vec: Vec<f32> = sampled_data.to_vec().unwrap_or_default();
     let t4 = Instant::now();
 
@@ -259,8 +289,9 @@ fn process_infer_and_sample(
 }
 
 /// Process a single infer request with full timing instrumentation.
+/// Async version: uses extract_flow_async() so GPU readback can overlap with other work.
 /// Returns the result and optional prefetched next request.
-fn process_infer_request(
+async fn process_infer_request_async(
     model: &Model<B>,
     device: &burn::backend::wgpu::WgpuDevice,
     img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
@@ -278,8 +309,8 @@ fn process_infer_request(
     let flow_tensor = model.forward(img0_tensor, img1_tensor);
     let t2 = Instant::now();
 
-    // Stage 3: GPU readback + F16→F32 conversion
-    let result = extract_flow(flow_tensor, h, w);
+    // Stage 3: Async GPU readback + F16→F32 conversion
+    let result = extract_flow_async(flow_tensor, h, w).await;
     let t3 = Instant::now();
 
     // Stage 4: Prefetch next request while we do CPU work (send reply)
@@ -304,6 +335,8 @@ fn process_infer_request(
 }
 
 /// The main loop running on the inference thread with double-buffering.
+/// Uses pollster::block_on() to drive async readback operations, allowing
+/// into_data_async() to overlap GPU readback with other GPU work.
 fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: mpsc::Receiver<InferRequest>) {
     let mut seq = 0u64;
     let mut pending: Option<InferRequest> = None;
@@ -322,18 +355,19 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
         match request {
             InferRequest::Infer { img0, img1, h, w, reply } => {
                 seq += 1;
-                pending = process_infer_request(
+                pending = pollster::block_on(process_infer_request_async(
                     &model, &device, img0, img1, h, w, reply, &rx, seq,
-                );
+                ));
             }
             InferRequest::InferAndSample { img0, img1, h, w, grid_points, linear_indices, reply } => {
                 seq += 1;
-                pending = process_infer_and_sample(
+                pending = pollster::block_on(process_infer_and_sample_async(
                     &model, &device, img0, img1, h, w,
                     grid_points, linear_indices, reply, &rx, seq,
-                );
+                ));
             }
             InferRequest::Warmup { reply } => {
+                // Warmup stays synchronous for simplicity
                 let result = run_warmup(&model, &device);
                 let _ = reply.send(result);
             }
