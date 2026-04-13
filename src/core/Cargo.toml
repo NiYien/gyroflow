@@ -82,7 +82,10 @@ opencv = { version = "0.98", default-features = false, features = [ "calib3d", "
 median = "0.3"
 
 wgpu = { version = "29", features = ["spirv", "naga-ir"] }
-ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
+
+# Burn framework for NeuFlow v2 inference (replaces ORT)
+burn = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "wgpu", "fusion", "autotune"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
@@ -103,7 +106,7 @@ use-opencl = ["ocl", "ocl-interop"]
 use-opencv = ["opencv"]
 bundle-lens-profiles = []
 cache-gyro-metadata = []
-neuflow = ["dep:ort"]
+neuflow = ["dep:burn", "dep:burn-store"]
 
 [profile.deploy]
 inherits = "release"

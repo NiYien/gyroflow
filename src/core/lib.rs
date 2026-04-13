@@ -24,7 +24,9 @@ pub mod zooming;
 pub mod gpu;
 pub mod gyro_match;
 #[cfg(feature = "neuflow")]
-pub mod neuflow;
+pub mod neuflow_burn;
+#[cfg(feature = "neuflow")]
+pub use neuflow_burn as neuflow;
 
 pub mod stabilization_params;
 pub mod util;
