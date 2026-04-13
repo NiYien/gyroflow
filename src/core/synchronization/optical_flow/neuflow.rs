@@ -89,7 +89,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 &self.rgb_frame, self.width, self.height,
                 &next.rgb_frame, next.width, next.height,
             ) {
-                Ok(sampled) => {
+                Ok((flow_data, gray_data)) => {
                     let t_infer = std::time::Instant::now();
 
                     // Letterbox parameters (must match preprocess_frame)
@@ -101,81 +101,42 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                     let pad_left = (model_w - new_w) / 2.0;
                     let pad_top = (model_h - new_h) / 2.0;
 
-                    // Build from_pts/to_pts from GPU-sampled flow values
-                    let mut from_pts = Vec::new();
-                    let mut to_pts = Vec::new();
-                    for i in 0..sampled.grid_points.len() {
-                        let (x, y) = sampled.grid_points[i];
-                        let dx = sampled.dx[i];
-                        let dy = sampled.dy[i];
-                        if dx.is_finite() && dy.is_finite() {
-                            let to_x = x as f32 + dx;
-                            let to_y = y as f32 + dy;
-                            if to_x >= 0.0 && to_x < model_w && to_y >= 0.0 && to_y < model_h {
-                                from_pts.push((x as f32, y as f32));
-                                to_pts.push((to_x, to_y));
-                            }
+                    // Sample from the non-padded region only (CHW layout)
+                    let result = sample_from_dense_flow(&flow_data, &gray_data, model_w as u32, model_h as u32);
+                    let t_sample = std::time::Instant::now();
+
+                    if let Some((ref from_pts, ref to_pts)) = result {
+                        // Remove padding offset and scale back to original resolution
+                        let from_scaled: Vec<(f32, f32)> = from_pts.iter()
+                            .filter(|(x, y)| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                            .map(|(x, y)| ((x - pad_left) / scale, (y - pad_top) / scale))
+                            .collect();
+                        let to_scaled: Vec<(f32, f32)> = to_pts.iter()
+                            .zip(from_pts.iter())
+                            .filter(|(_, (x, y))| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                            .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
+                            .collect();
+
+                        let t_scale = std::time::Instant::now();
+
+                        let infer_ms = (t_infer - t_start).as_secs_f64() * 1000.0;
+                        let sample_ms = (t_sample - t_infer).as_secs_f64() * 1000.0;
+                        let scale_ms = (t_scale - t_sample).as_secs_f64() * 1000.0;
+                        let total_ms = (t_scale - t_start).as_secs_f64() * 1000.0;
+                        log::debug!("[NeuFlow perf] of_to: inference={infer_ms:.1}ms sample={sample_ms:.1}ms scale={scale_ms:.1}ms total={total_ms:.1}ms pts={}", from_scaled.len());
+
+                        if from_scaled.len() >= 10 {
+                            unsafe { *self.features.get() = from_scaled.clone(); }
+                            self.matched_points.write().insert(
+                                next.timestamp_us,
+                                (from_scaled.clone(), to_scaled.clone()),
+                            );
+                            self.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            next.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            return Some((from_scaled, to_scaled));
                         }
                     }
-
-                    if from_pts.len() < 10 {
-                        log::warn!("NeuFlow: too few valid points ({}), falling back to LK", from_pts.len());
-                        return fallback_to_lk(self, next);
-                    }
-
-                    // Median-consistency filter
-                    let mut dxs: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.0 - f.0).collect();
-                    let mut dys: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.1 - f.1).collect();
-                    dxs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                    dys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                    let median_dx = dxs[dxs.len() / 2];
-                    let median_dy = dys[dys.len() / 2];
-                    let max_dev = 2.0f32;
-
-                    let mut filtered_from = Vec::new();
-                    let mut filtered_to = Vec::new();
-                    for (f, t) in from_pts.iter().zip(to_pts.iter()) {
-                        let dx = t.0 - f.0;
-                        let dy = t.1 - f.1;
-                        if (dx - median_dx).abs() <= max_dev && (dy - median_dy).abs() <= max_dev {
-                            filtered_from.push(*f);
-                            filtered_to.push(*t);
-                        }
-                    }
-
-                    if filtered_from.len() < 10 {
-                        log::warn!("NeuFlow: too few points after median filter ({}), falling back to LK", filtered_from.len());
-                        return fallback_to_lk(self, next);
-                    }
-
-                    // Remove padding offset and scale back to original resolution
-                    let from_scaled: Vec<(f32, f32)> = filtered_from.iter()
-                        .filter(|(x, y)| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
-                        .map(|(x, y)| ((x - pad_left) / scale, (y - pad_top) / scale))
-                        .collect();
-                    let to_scaled: Vec<(f32, f32)> = filtered_to.iter()
-                        .zip(filtered_from.iter())
-                        .filter(|(_, (x, y))| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
-                        .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
-                        .collect();
-
-                    let t_post = std::time::Instant::now();
-                    let infer_ms = (t_infer - t_start).as_secs_f64() * 1000.0;
-                    let post_ms = (t_post - t_infer).as_secs_f64() * 1000.0;
-                    let total_ms = (t_post - t_start).as_secs_f64() * 1000.0;
-                    log::debug!("[NeuFlow perf] of_to: inference={infer_ms:.1}ms postprocess={post_ms:.1}ms total={total_ms:.1}ms pts={}", from_scaled.len());
-
-                    if from_scaled.len() >= 10 {
-                        unsafe { *self.features.get() = from_scaled.clone(); }
-                        self.matched_points.write().insert(
-                            next.timestamp_us,
-                            (from_scaled.clone(), to_scaled.clone()),
-                        );
-                        self.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        next.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                        return Some((from_scaled, to_scaled));
-                    }
-                    log::warn!("NeuFlow: too few points after scaling, falling back to LK");
+                    log::warn!("NeuFlow: too few points, falling back to LK");
                     return fallback_to_lk(self, next);
                 }
                 Err(e) => {
@@ -197,33 +158,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
 }
 
 #[cfg(feature = "neuflow")]
-use crate::neuflow::SampledFlow;
-
-/// Compute valid grid points for sparse sampling (texture variance filtered).
-/// Only needs gray data — can run in parallel with GPU forward.
-#[cfg(feature = "neuflow")]
-fn compute_sample_grid(gray: &[u8], w: usize, h: usize) -> (Vec<(usize, usize)>, Vec<i32>) {
-    let step = (w / 15).max(4);
-    let window_size = ((w as f32 * 0.02).round() as usize).max(10);
-    let mut grid_points = Vec::new();
-    let mut linear_indices = Vec::new();
-
-    for x in (0..w).step_by(step) {
-        for y in (0..h).step_by(step) {
-            if texture_variance(gray, x, y, w, h, window_size) >= 3.0 {
-                grid_points.push((x, y));
-                linear_indices.push((y * w + x) as i32);
-            }
-        }
-    }
-    (grid_points, linear_indices)
-}
-
-#[cfg(feature = "neuflow")]
 fn neuflow_inference(
     rgb0: &[u8], w0: u32, h0: u32,
     rgb1: &[u8], w1: u32, h1: u32,
-) -> Result<SampledFlow, String> {
+) -> Result<(Vec<f32>, Vec<u8>), String> {
     let t0 = std::time::Instant::now();
 
     let (img0, gray0, proc_h, proc_w) = preprocess_frame(rgb0, w0, h0)?;
@@ -231,31 +169,20 @@ fn neuflow_inference(
 
     let t1 = std::time::Instant::now();
 
-    // Compute sample grid on CPU (only needs gray, independent of GPU)
-    let (grid_points, linear_indices) = compute_sample_grid(&gray0, proc_w, proc_h);
+    // Run inference via Burn (zero-copy: owned Vecs moved into channel)
+    let flow = crate::neuflow::infer(img0, img1, proc_h, proc_w)?;
 
     let t2 = std::time::Instant::now();
+    let preprocess_ms = (t1 - t0).as_secs_f64() * 1000.0;
+    let infer_ms = (t2 - t1).as_secs_f64() * 1000.0;
+    let total_ms = (t2 - t0).as_secs_f64() * 1000.0;
 
-    if grid_points.is_empty() {
-        return Err("No valid grid points (low texture)".to_string());
+    if (t2 - t1).as_secs() > 60 {
+        return Err(format!("NeuFlow inference timeout: {infer_ms:.0}ms"));
     }
 
-    // GPU inference + GPU-side sparse select (no full flow readback!)
-    let sampled = crate::neuflow::infer_and_sample(
-        img0, img1, proc_h, proc_w, grid_points, linear_indices,
-    )?;
-
-    let t3 = std::time::Instant::now();
-    let preprocess_ms = (t1 - t0).as_secs_f64() * 1000.0;
-    let grid_ms = (t2 - t1).as_secs_f64() * 1000.0;
-    let infer_ms = (t3 - t2).as_secs_f64() * 1000.0;
-    let total_ms = (t3 - t0).as_secs_f64() * 1000.0;
-
-    log::debug!(
-        "[NeuFlow perf] preprocess={preprocess_ms:.1}ms grid={grid_ms:.1}ms infer_sample={infer_ms:.1}ms total={total_ms:.1}ms ({}x{}, {} pts)",
-        proc_w, proc_h, sampled.grid_points.len()
-    );
-    Ok(sampled)
+    log::debug!("[NeuFlow perf] preprocess={preprocess_ms:.1}ms infer={infer_ms:.1}ms total={total_ms:.1}ms ({}x{})", proc_w, proc_h);
+    Ok((flow, gray0))
 }
 
 #[cfg(feature = "neuflow")]
