@@ -3,7 +3,9 @@
 
 #![allow(unused_variables, dead_code)]
 use super::super::OpticalFlowPair;
-use super::{OFOpenCVPyrLK, OpticalFlowMethod, OpticalFlowTrait};
+#[cfg(feature = "use-opencv")]
+use super::OFOpenCVDis;
+use super::{OpticalFlowMethod, OpticalFlowTrait};
 
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
@@ -80,7 +82,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
             }
 
             if self.rgb_frame.is_empty() || next.rgb_frame.is_empty() {
-                return fallback_to_lk(self, next);
+                return fallback_to_dis(self, next);
             }
 
             let t_start = std::time::Instant::now();
@@ -136,12 +138,12 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                             return Some((from_scaled, to_scaled));
                         }
                     }
-                    log::warn!("NeuFlow: too few points, falling back to LK");
-                    return fallback_to_lk(self, next);
+                    log::warn!("NeuFlow: too few points, falling back to DIS");
+                    return fallback_to_dis(self, next);
                 }
                 Err(e) => {
-                    log::warn!("NeuFlow inference failed: {e}, falling back to LK");
-                    return fallback_to_lk(self, next);
+                    log::warn!("NeuFlow inference failed: {e}, falling back to DIS");
+                    return fallback_to_dis(self, next);
                 }
             }
         }
@@ -361,8 +363,9 @@ fn texture_variance(gray: &[u8], x: usize, y: usize, w: usize, h: usize, patch: 
     sum_sq / count - mean * mean
 }
 
-/// Fallback: convert RGB frames to grayscale and use OpenCV PyrLK for optical flow.
-fn fallback_to_lk(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> OpticalFlowPair {
+/// Fallback: convert RGB frames to grayscale and use OpenCV DIS for dense optical flow.
+#[cfg(feature = "use-opencv")]
+fn fallback_to_dis(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> OpticalFlowPair {
     if self_frame.rgb_frame.is_empty() || next_frame.rgb_frame.is_empty() {
         log::warn!("NeuFlow fallback: one or both RGB frames are empty");
         return None;
@@ -374,20 +377,20 @@ fn fallback_to_lk(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> Optical
     let gray1 = rgb_to_gray(&self_frame.rgb_frame, self_frame.width, self_frame.height);
     let gray2 = rgb_to_gray(&next_frame.rgb_frame, next_frame.width, next_frame.height);
 
-    let lk1 = OFOpenCVPyrLK::detect_features(
+    let dis1 = OFOpenCVDis::detect_features(
         self_frame.timestamp_us,
         Arc::new(gray1),
         self_frame.width,
         self_frame.height,
     );
-    let lk2 = OFOpenCVPyrLK::detect_features(
+    let dis2 = OFOpenCVDis::detect_features(
         next_frame.timestamp_us,
         Arc::new(gray2),
         next_frame.width,
         next_frame.height,
     );
 
-    let result = lk1.optical_flow_to(&OpticalFlowMethod::OFOpenCVPyrLK(lk2));
+    let result = dis1.optical_flow_to(&OpticalFlowMethod::OFOpenCVDis(dis2));
 
     if result.is_some() {
         self_frame.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -395,6 +398,12 @@ fn fallback_to_lk(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> Optical
     }
 
     result
+}
+
+#[cfg(not(feature = "use-opencv"))]
+fn fallback_to_dis(_self_frame: &OFNeuFlowV2, _next_frame: &OFNeuFlowV2) -> OpticalFlowPair {
+    log::warn!("NeuFlow fallback: OpenCV DIS not available (use-opencv feature disabled)");
+    None
 }
 
 /// Convert an RGB buffer to a grayscale image using standard luminance coefficients.
