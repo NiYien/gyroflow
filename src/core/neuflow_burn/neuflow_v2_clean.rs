@@ -202,7 +202,7 @@ impl<B: Backend> Submodule1<B> {
         );
         let linear4 = LinearConfig::new(192, 192).with_bias(true).init(device);
         let layernormalization1 = LayerNormConfig::new(192)
-            .with_epsilon(0.000009999999747378752f64)
+            .with_epsilon(0.0001f64)
             .with_bias(true)
             .init(device);
         let linear5 = LinearConfig::new(384, 384).with_bias(false).init(device);
@@ -247,7 +247,7 @@ impl<B: Backend> Submodule1<B> {
         );
         let linear6 = LinearConfig::new(384, 192).with_bias(false).init(device);
         let layernormalization2 = LayerNormConfig::new(192)
-            .with_epsilon(0.000009999999747378752f64)
+            .with_epsilon(0.0001f64)
             .with_bias(true)
             .init(device);
         let linear7 = LinearConfig::new(192, 192).with_bias(true).init(device);
@@ -255,13 +255,13 @@ impl<B: Backend> Submodule1<B> {
         let linear9 = LinearConfig::new(192, 192).with_bias(true).init(device);
         let linear10 = LinearConfig::new(192, 192).with_bias(true).init(device);
         let layernormalization3 = LayerNormConfig::new(192)
-            .with_epsilon(0.000009999999747378752f64)
+            .with_epsilon(0.0001f64)
             .with_bias(true)
             .init(device);
         let linear11 = LinearConfig::new(384, 384).with_bias(false).init(device);
         let linear12 = LinearConfig::new(384, 192).with_bias(false).init(device);
         let layernormalization4 = LayerNormConfig::new(192)
-            .with_epsilon(0.000009999999747378752f64)
+            .with_epsilon(0.0001f64)
             .with_bias(true)
             .init(device);
         Self {
@@ -547,7 +547,7 @@ impl<B: Backend> Submodule2<B> {
     #[allow(unused_variables)]
     pub fn new(device: &B::Device) -> Self {
         let batchnormalization1 = BatchNormConfig::new(192)
-            .with_epsilon(0.000009999999747378752f64)
+            .with_epsilon(0.0001f64)
             .with_momentum(0.8999999761581421f64)
             .init(device);
         let constant140: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
