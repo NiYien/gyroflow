@@ -1608,6 +1608,7 @@ dependencies = [
  "cfg_aliases",
  "cubecl-common",
  "cubecl-core",
+ "cubecl-cpp",
  "cubecl-ir",
  "cubecl-runtime",
  "cubecl-spirv",
@@ -2922,6 +2923,7 @@ dependencies = [
  "ndk",
  "ndk-context",
  "ndk-sys",
+ "neuflow-trace-shared",
  "num",
  "objc2",
  "objc2-core-foundation",
@@ -2941,6 +2943,7 @@ dependencies = [
  "sample-consensus",
  "serde",
  "serde_json",
+ "sha2",
  "simple-easing",
  "space",
  "stabilize_spirv",
@@ -3987,6 +3990,10 @@ checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
 ]
+
+[[package]]
+name = "neuflow-trace-shared"
+version = "0.1.0"
 
 [[package]]
 name = "nodrop"

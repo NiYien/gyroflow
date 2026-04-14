@@ -609,6 +609,7 @@ dependencies = [
  "burn-cuda",
  "burn-dispatch",
  "burn-flex",
+ "burn-ir",
  "burn-ndarray",
  "burn-nn",
  "burn-optim",
@@ -701,6 +702,7 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -726,7 +728,6 @@ dependencies = [
 [[package]]
 name = "burn-cubecl-fusion"
 version = "0.21.0-pre.3"
-source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782c68d242a6510#c33867c60a99958aafd4d05df782c68d242a6510"
 dependencies = [
  "burn-backend",
  "burn-fusion",
@@ -735,6 +736,7 @@ dependencies = [
  "cubecl",
  "cubek",
  "derive-new",
+ "neuflow-trace-shared",
  "serde",
 ]
 
@@ -745,6 +747,7 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -793,7 +796,6 @@ dependencies = [
 [[package]]
 name = "burn-fusion"
 version = "0.21.0-pre.3"
-source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782c68d242a6510#c33867c60a99958aafd4d05df782c68d242a6510"
 dependencies = [
  "burn-backend",
  "burn-ir",
@@ -801,6 +803,7 @@ dependencies = [
  "derive-new",
  "hashbrown 0.16.1",
  "log",
+ "neuflow-trace-shared",
  "serde",
  "smallvec",
  "spin",
@@ -868,6 +871,7 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -952,6 +956,7 @@ source = "git+https://github.com/tracel-ai/burn?rev=c33867c60a99958aafd4d05df782
 dependencies = [
  "burn-backend",
  "burn-cubecl",
+ "burn-fusion",
  "cubecl",
 ]
 
@@ -1616,8 +1621,6 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26305086841b64e39843de5d6d62cfd61437aaf31d94d6b4adcdbf0bf54375a1"
 dependencies = [
  "backtrace",
  "bytemuck",
@@ -1636,6 +1639,7 @@ dependencies = [
  "half",
  "hashbrown 0.16.1",
  "log",
+ "neuflow-trace-shared",
  "num-traits 0.2.19",
  "oneshot",
  "parking_lot",
@@ -1842,8 +1846,6 @@ dependencies = [
 [[package]]
 name = "cubecl-runtime"
 version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "934a5bd50210166a5a395c65fb9c38b865d79e81d203c5e3161b5f4e613a2335"
 dependencies = [
  "async-channel",
  "bytemuck",
@@ -1859,6 +1861,7 @@ dependencies = [
  "hashbrown 0.16.1",
  "log",
  "md5",
+ "neuflow-trace-shared",
  "serde",
  "serde_json",
  "spin",
@@ -1907,8 +1910,6 @@ dependencies = [
 [[package]]
 name = "cubecl-wgpu"
 version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b883057d3ab663303d91bb32f4038700253f7d21ffda8f1f0785bb61eccaa4ee"
 dependencies = [
  "ash",
  "async-channel",
@@ -1926,6 +1927,7 @@ dependencies = [
  "half",
  "hashbrown 0.16.1",
  "log",
+ "neuflow-trace-shared",
  "sanitize-filename",
  "tracel-ash",
  "tracing",
@@ -3434,6 +3436,7 @@ dependencies = [
  "ndk",
  "ndk-context",
  "ndk-sys",
+ "neuflow-trace-shared",
  "num",
  "objc2",
  "objc2-core-foundation",
@@ -3453,6 +3456,7 @@ dependencies = [
  "sample-consensus",
  "serde",
  "serde_json",
+ "sha2",
  "simple-easing",
  "space",
  "stabilize_spirv",
@@ -4662,6 +4666,10 @@ checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys 0.3.1",
 ]
+
+[[package]]
+name = "neuflow-trace-shared"
+version = "0.1.0"
 
 [[package]]
 name = "nodrop"

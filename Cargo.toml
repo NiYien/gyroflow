@@ -81,6 +81,13 @@ keep-awake = { git = "https://github.com/AdrianEddy/keep-awake-rs.git", rev = "4
 [patch.crates-io]
 qmetaobject = { git = "https://github.com/AdrianEddy/qmetaobject-rs.git", rev = "ff1e23d" }
 qttypes     = { git = "https://github.com/AdrianEddy/qmetaobject-rs.git", rev = "ff1e23d" }
+cubecl-common = { path = "vendor/neuflow-trace/cubecl-common" }
+cubecl-runtime = { path = "vendor/neuflow-trace/cubecl-runtime" }
+cubecl-wgpu = { path = "vendor/neuflow-trace/cubecl-wgpu" }
+
+[patch."https://github.com/tracel-ai/burn"]
+burn-fusion = { path = "vendor/neuflow-trace/burn-fusion" }
+burn-cubecl-fusion = { path = "vendor/neuflow-trace/burn-cubecl-fusion" }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"

@@ -20,8 +20,9 @@
 //! - CHW direct output: no interleave step, caller reads planar layout
 //!
 //! Model I/O:
-//! - Input: img0 [1, 3, 480, 640] float32, img1 [1, 3, 480, 640] float32 (0-255 range)
-//! - Output: flow [2, 480, 640] float32 CHW layout (dx plane, dy plane)
+//! - Input: img0 [1, 3, H, W] float32, img1 [1, 3, H, W] float32
+//! - Current fixed export baseline is H=480, W=640 (already landscape 640x480)
+//! - Output: flow [2, H, W] float32 CHW layout (dx plane, dy plane)
 
 #[allow(
     clippy::let_and_return,
@@ -30,9 +31,10 @@
     unused_variables,
     dead_code
 )]
-mod neuflow_v2_clean;
+#[path = "generated_mixed/neuflow_v2_mixed_fp16.rs"]
+mod neuflow_v2_generated_fp16;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, mpsc};
 use std::time::Instant;
 
@@ -40,36 +42,17 @@ use burn::prelude::*;
 use burn::tensor::TensorData;
 use burn_store::ModuleSnapshot;
 use half::f16;
+use neuflow_trace_shared::{self as neuflow_trace, DurationMetric, TracePhase};
 
-use neuflow_v2_clean::Model;
+use neuflow_v2_generated_fp16::Model;
 
 // Backend type: Wgpu<f16> — all compute in FP16.
 type B = burn::backend::wgpu::Wgpu<f16>;
 
-/// Adapter that converts F32 tensor snapshots to F16 at load time.
-#[derive(Clone)]
-struct F16LoadAdapter;
-
-impl burn_store::ModuleAdapter for F16LoadAdapter {
-    fn adapt(&self, snapshot: &burn_store::TensorSnapshot) -> burn_store::TensorSnapshot {
-        use burn::tensor::DType;
-        if snapshot.dtype == DType::F32 {
-            if let Ok(data) = snapshot.to_data() {
-                let converted = data.convert::<f16>();
-                return burn_store::TensorSnapshot::from_data(
-                    converted,
-                    snapshot.path_stack.clone().unwrap_or_default(),
-                    snapshot.container_stack.clone().unwrap_or_default(),
-                    snapshot.tensor_id.clone().unwrap_or_default(),
-                );
-            }
-        }
-        snapshot.clone()
-    }
-
-    fn clone_box(&self) -> Box<dyn burn_store::ModuleAdapter> {
-        Box::new(self.clone())
-    }
+fn is_optimized_weight_file(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.contains("optimized"))
 }
 
 // ---------------------------------------------------------------------------
@@ -90,6 +73,7 @@ pub struct SampledFlow {
 enum InferRequest {
     /// Run inference, read back full flow tensor (for testing/benchmarks).
     Infer {
+        seq: u64,
         img0: Vec<f32>,
         img1: Vec<f32>,
         h: usize,
@@ -99,6 +83,7 @@ enum InferRequest {
     /// Run inference + GPU-side sparse sampling (main production path).
     /// Only reads back ~400 floats instead of 614,400.
     InferAndSample {
+        seq: u64,
         img0: Vec<f32>,
         img1: Vec<f32>,
         h: usize,
@@ -119,6 +104,7 @@ struct InferenceHandle {
 }
 
 static INFERENCE_HANDLE: OnceLock<Result<InferenceHandle, String>> = OnceLock::new();
+static QUEUE_DEPTH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Spawn the inference thread: loads model, then loops on channel receiving requests.
 fn spawn_inference_thread() -> Result<InferenceHandle, String> {
@@ -128,7 +114,9 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
     std::thread::Builder::new()
         .name("neuflow-infer".to_string())
         .spawn(move || {
-            unsafe { std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0"); }
+            if std::env::var_os("CUBECL_AUTOTUNE_LEVEL").is_none() {
+                unsafe { std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0"); }
+            }
 
             let model_result = init_model();
             match model_result {
@@ -237,7 +225,9 @@ fn readback_sampled_sync(sampled: Tensor<B, 2>, num_pts: usize, grid_points: Vec
 /// 1st poll: kicks off readback (GPU flush) + runs sync forward (CPU)
 /// subsequent polls: waits for readback completion
 fn overlap_readback_with_forward<R, F>(
+    readback_seq: u64,
     readback_future: F,
+    sync_seq: u64,
     sync_work: impl FnOnce(),
 ) -> R
 where
@@ -248,18 +238,30 @@ where
     pollster::block_on(async {
         let mut readback = core::pin::pin!(readback_future);
         let mut sync_work = Some(sync_work);
+        let mut readback_ready: Option<R> = None;
 
         core::future::poll_fn(|cx| {
             // 1. Poll readback — first poll triggers GPU flush + command submission
-            if let Poll::Ready(val) = readback.as_mut().poll(cx) {
-                return Poll::Ready(val);
+            if readback_ready.is_none() {
+                let polled = {
+                    let _trace_guard = neuflow_trace::enter(Some(readback_seq), TracePhase::Readback);
+                    readback.as_mut().poll(cx)
+                };
+                if let Poll::Ready(val) = polled {
+                    readback_ready = Some(val);
+                }
             }
             // 2. Run sync work once — CPU builds next frame's fusion graph
             //    while GPU computes prev frame in the background
             if let Some(f) = sync_work.take() {
+                let _trace_guard = neuflow_trace::enter(Some(sync_seq), TracePhase::Forward);
                 f();
             }
+            if let Some(val) = readback_ready.take() {
+                return Poll::Ready(val);
+            }
             // 3. Poll readback again — GPU may have finished during sync work
+            let _trace_guard = neuflow_trace::enter(Some(readback_seq), TracePhase::Readback);
             readback.as_mut().poll(cx)
         }).await
     })
@@ -273,7 +275,6 @@ enum PendingReadback {
         w: usize,
         reply: mpsc::Sender<Result<Vec<f32>, String>>,
         seq: u64,
-        t0: Instant,
     },
     Sample {
         sampled_tensor: Tensor<B, 2>,
@@ -281,13 +282,11 @@ enum PendingReadback {
         grid_points: Vec<(usize, usize)>,
         reply: mpsc::Sender<Result<SampledFlow, String>>,
         seq: u64,
-        t0: Instant,
     },
 }
 
 /// The main inference loop with pipelined GPU readback.
 fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: mpsc::Receiver<InferRequest>) {
-    let mut seq = 0u64;
     let mut pending: Option<InferRequest> = None;
     let mut deferred: Option<PendingReadback> = None;
 
@@ -300,10 +299,10 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 Err(_) => break,
             }
         };
+        QUEUE_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         match request {
-            InferRequest::Infer { img0, img1, h, w, reply } => {
-                seq += 1;
+            InferRequest::Infer { seq, img0, img1, h, w, reply } => {
                 let t0 = Instant::now();
                 let mut t_tensor = t0;
                 let mut t_fwd = t0;
@@ -313,12 +312,18 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 if let Some(prev) = deferred.take() {
                     let t_pipe = Instant::now();
                     match prev {
-                        PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq, t0: prev_t0 } => {
+                        PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq } => {
+                            neuflow_trace::note_overlap(prev_seq, seq);
                             let prev_result = overlap_readback_with_forward(
+                                prev_seq,
                                 extract_flow_async(prev_ft, ph, pw),
+                                seq,
                                 || {
+                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                                     let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                                     t_tensor = Instant::now();
+                                    drop(_trace_guard);
+                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
                                     flow_tensor = Some(model.forward(t0_t, t1_t));
                                     t_fwd = Instant::now();
                                 },
@@ -332,11 +337,17 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                             );
                         }
                         PendingReadback::Sample { sampled_tensor: prev_st, num_pts: pn, grid_points: pg, reply: prev_reply, seq: prev_seq, .. } => {
+                            neuflow_trace::note_overlap(prev_seq, seq);
                             let prev_result = overlap_readback_with_forward(
+                                prev_seq,
                                 prev_st.into_data_async(),
+                                seq,
                                 || {
+                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                                     let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                                     t_tensor = Instant::now();
+                                    drop(_trace_guard);
+                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
                                     flow_tensor = Some(model.forward(t0_t, t1_t));
                                     t_fwd = Instant::now();
                                 },
@@ -360,8 +371,11 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                     }
                 } else {
                     // No prev — just forward
+                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                     let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                     t_tensor = Instant::now();
+                    drop(_trace_guard);
+                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
                     flow_tensor = Some(model.forward(t0_t, t1_t));
                     t_fwd = Instant::now();
                 }
@@ -373,26 +387,28 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
 
                 if pending.is_some() {
                     deferred = Some(PendingReadback::Infer {
-                        flow_tensor, h, w, reply, seq, t0,
+                        flow_tensor, h, w, reply, seq,
                     });
                 } else {
                     // Queue empty — readback immediately
                     let t_rb = Instant::now();
+                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Readback);
                     let result = readback_flow_sync(flow_tensor, h, w);
-                    let rb_ms = (Instant::now() - t_rb).as_secs_f64() * 1000.0;
+                    let rb_ms = t_rb.elapsed().as_secs_f64() * 1000.0;
                     let _ = reply.send(result);
                     log::debug!("[NeuFlow perf] #{seq} IMMEDIATE readback={rb_ms:.1}ms");
                 }
 
                 let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
                 let forward_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
+                neuflow_trace::record_duration(seq, DurationMetric::TensorUpload, t_tensor - t0);
+                neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
                 log::debug!(
                     "[NeuFlow perf] #{seq} tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms deferred={} prefetched={}",
                     deferred.is_some(), pending.is_some()
                 );
             }
-            InferRequest::InferAndSample { img0, img1, h, w, grid_points, linear_indices, reply } => {
-                seq += 1;
+            InferRequest::InferAndSample { seq, img0, img1, h, w, grid_points, linear_indices, reply } => {
                 let t0 = Instant::now();
                 let mut t_tensor = t0;
                 let mut t_fwd = t0;
@@ -404,10 +420,14 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 if let Some(prev) = deferred.take() {
                     let t_pipe = Instant::now();
                     let do_forward_select = || {
+                        let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                         let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                         t_tensor = Instant::now();
+                        drop(_trace_guard);
+                        let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
                         let ft = model.forward(t0_t, t1_t);
                         t_fwd = Instant::now();
+                        drop(_trace_guard);
                         let plane = h * w;
                         let idx_t = Tensor::<B, 1, burn::tensor::Int>::from_data(
                             TensorData::new(linear_indices, [num_pts]), &device,
@@ -418,14 +438,16 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                     };
                     match prev {
                         PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq, .. } => {
+                            neuflow_trace::note_overlap(prev_seq, seq);
                             let prev_result = overlap_readback_with_forward(
-                                extract_flow_async(prev_ft, ph, pw), do_forward_select,
+                                prev_seq, extract_flow_async(prev_ft, ph, pw), seq, do_forward_select,
                             );
                             let _ = prev_reply.send(prev_result);
                             log::debug!("[NeuFlow perf] #{prev_seq} PIPE readback+fwd_select={:.1}ms", (Instant::now() - t_pipe).as_secs_f64() * 1000.0);
                         }
                         PendingReadback::Sample { sampled_tensor: prev_st, num_pts: pn, grid_points: pg, reply: prev_reply, seq: prev_seq, .. } => {
-                            let prev_result = overlap_readback_with_forward(prev_st.into_data_async(), do_forward_select);
+                            neuflow_trace::note_overlap(prev_seq, seq);
+                            let prev_result = overlap_readback_with_forward(prev_seq, prev_st.into_data_async(), seq, do_forward_select);
                             let result = match prev_result {
                                 Ok(data) => {
                                     let sv: Vec<f32> = data.convert::<f32>().to_vec().unwrap_or_default();
@@ -439,10 +461,14 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                         }
                     }
                 } else {
+                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                     let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                     t_tensor = Instant::now();
+                    drop(_trace_guard);
+                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
                     let ft = model.forward(t0_t, t1_t);
                     t_fwd = Instant::now();
+                    drop(_trace_guard);
                     let plane = h * w;
                     let idx_t = Tensor::<B, 1, burn::tensor::Int>::from_data(
                         TensorData::new(linear_indices, [num_pts]), &device,
@@ -457,12 +483,13 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
 
                 if pending.is_some() {
                     deferred = Some(PendingReadback::Sample {
-                        sampled_tensor: sampled, num_pts, grid_points, reply, seq, t0,
+                        sampled_tensor: sampled, num_pts, grid_points, reply, seq,
                     });
                 } else {
                     let t_rb = Instant::now();
+                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Readback);
                     let result = readback_sampled_sync(sampled, num_pts, grid_points);
-                    let rb_ms = (Instant::now() - t_rb).as_secs_f64() * 1000.0;
+                    let rb_ms = t_rb.elapsed().as_secs_f64() * 1000.0;
                     let _ = reply.send(result);
                     log::debug!("[NeuFlow perf] #{seq} SAMPLE IMMEDIATE readback={rb_ms:.1}ms pts={num_pts}");
                 }
@@ -470,6 +497,8 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
                 let forward_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
                 let select_ms = (t_select - t_fwd).as_secs_f64() * 1000.0;
+                neuflow_trace::record_duration(seq, DurationMetric::TensorUpload, t_tensor - t0);
+                neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
                 log::debug!(
                     "[NeuFlow perf] #{seq} SAMPLE tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms select={select_ms:.1}ms deferred={} prefetched={}",
                     deferred.is_some(), pending.is_some()
@@ -528,19 +557,81 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
     let path = find_weight_file()
         .ok_or_else(|| "NeuFlow Burn model (.bpk) not found".to_string())?;
 
-    log::info!("NeuFlow Burn: loading model from {} (F16 mode)", path.display());
+    let optimized = is_optimized_weight_file(&path);
+    let weight_variant = if optimized { "optimized" } else { "unoptimized" };
+    log::info!(
+        "NeuFlow Burn: loading generated_mixed model from {} (weight_variant={weight_variant})",
+        path.display()
+    );
 
     let device = burn::backend::wgpu::WgpuDevice::default();
     let mut model = Model::<B>::new(&device);
 
     let path_str = path.to_string_lossy().to_string();
-    let mut store = burn_store::BurnpackStore::from_file(&path_str)
-        .with_from_adapter(F16LoadAdapter);
+    let mut store = burn_store::BurnpackStore::from_file(&path_str);
     model.load_from(&mut store)
         .map_err(|e| format!("Failed to load model weights: {e}"))?;
 
-    log::info!("NeuFlow Burn: model loaded on {:?} (F16)", device);
+    log::info!(
+        "NeuFlow Burn: generated_mixed model loaded on {:?} (weight_variant={weight_variant})",
+        device
+    );
     Ok((model, device))
+}
+
+fn format_ms(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "None".to_string())
+}
+
+fn log_trace_summary(seq: u64, kind: &str) {
+    if !neuflow_trace::enabled() {
+        return;
+    }
+
+    let stats = neuflow_trace::take_frame(seq).unwrap_or_default();
+    let current_seq = stats.overlap_current_seq.unwrap_or(seq);
+    let summary = format!(
+        "[NeuFlow perf] owner_seq={seq} current_seq={current_seq} kind={kind} tensor_upload_ms={:.3} forward_total_ms={:.3} forward_client_submit_ms={:.3} forward_client_backpressure_ms={:.3} forward_server_register_ms={:.3} forward_policy_update_ms={:.3} forward_plan_find_ms={:.3} forward_plan_hit_count={} forward_plan_miss_count={} forward_plan_add_count={} readback_total_ms={:.3} readback_drain_ms={:.3} readback_flush_submit_ms={:.3} readback_gpu_profile_ms={} readback_copy_to_staging_ms={:.3} readback_map_wait_ms={:.3} channel_roundtrip_ms={:.3}",
+        stats.tensor_upload_ms,
+        stats.forward_total_ms,
+        stats.forward_client_submit_ms,
+        stats.forward_client_backpressure_ms,
+        stats.forward_server_register_ms,
+        stats.forward_policy_update_ms,
+        stats.forward_plan_find_ms,
+        stats.forward_plan_hit_count,
+        stats.forward_plan_miss_count,
+        stats.forward_plan_add_count,
+        stats.readback_total_ms,
+        stats.readback_drain_ms,
+        stats.readback_flush_submit_ms,
+        format_ms(stats.readback_gpu_profile_ms),
+        stats.readback_copy_to_staging_ms,
+        stats.readback_map_wait_ms,
+        stats.channel_roundtrip_ms,
+    );
+    log::debug!("{summary}");
+    if std::env::var_os("NEUFLOW_TRACE_STDERR").is_some() {
+        eprintln!("{summary}");
+    }
+
+    if neuflow_trace::verbose() {
+        let summary_v2 = format!(
+            "[NeuFlow perf][v2] owner_seq={seq} current_seq={current_seq} kind={kind} forward_client_output_alloc_ms={:.3} forward_client_enqueue_ms={:.3} forward_runner_task_ms={:.3} forward_register_call_count={} forward_action_defer_count={} readback_get_mapped_range_ms={:.3}",
+            stats.forward_client_output_alloc_ms,
+            stats.forward_client_enqueue_ms,
+            stats.forward_runner_task_ms,
+            stats.forward_register_call_count,
+            stats.forward_action_defer_count,
+            stats.readback_get_mapped_range_ms,
+        );
+        log::debug!("{summary_v2}");
+        if std::env::var_os("NEUFLOW_TRACE_STDERR").is_some() {
+            eprintln!("{summary_v2}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -550,19 +641,32 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
 /// Find the NeuFlow v2 weight file (.bpk format).
 pub fn find_weight_file() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = vec![
-        "resources/neuflow_v2_clean.bpk".into(),
-        "../resources/neuflow_v2_clean.bpk".into(),
-        "../../resources/neuflow_v2_clean.bpk".into(),
-        "src/core/neuflow_burn/neuflow_v2_clean.bpk".into(),
-        "../src/core/neuflow_burn/neuflow_v2_clean.bpk".into(),
-        "neuflow_burn/neuflow_v2_clean.bpk".into(),
-        "neuflow_v2_clean.bpk".into(),
+        "src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
+        "../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
+        "../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
+        "neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
+        "generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
+        "src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
+        "../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
+        "../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
+        "neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
+        "generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
     ];
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("resources/neuflow_v2_clean.bpk"));
-            candidates.push(dir.join("neuflow_v2_clean.bpk"));
+            candidates.push(dir.join("generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(dir.join("../generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(dir.join("../../generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(dir.join("src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(dir.join("../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(dir.join("../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(dir.join("generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(dir.join("../generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(dir.join("../../generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(dir.join("src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(dir.join("../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(dir.join("../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
         }
     }
 
@@ -618,11 +722,13 @@ fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Resu
         .map_err(|e| e.clone())?;
 
     let (reply_tx, reply_rx) = mpsc::channel();
+    let seq = neuflow_trace::next_seq();
 
     let t_send = Instant::now();
 
     // Zero-copy: move owned Vecs directly into the request
     handle.sender.send(InferRequest::Infer {
+        seq,
         img0,
         img1,
         h,
@@ -633,8 +739,13 @@ fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Resu
     let result = reply_rx.recv()
         .map_err(|_| "Inference thread reply channel closed (thread may have panicked)".to_string())?;
 
-    let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
-    log::debug!("[NeuFlow perf] channel_roundtrip={roundtrip_ms:.1}ms");
+    if neuflow_trace::enabled() {
+        neuflow_trace::record_duration(seq, DurationMetric::ChannelRoundtrip, t_send.elapsed());
+        log_trace_summary(seq, "full");
+    } else {
+        let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
+        log::debug!("[NeuFlow perf] channel_roundtrip={roundtrip_ms:.1}ms");
+    }
 
     result
 }
@@ -670,9 +781,14 @@ pub fn infer_and_sample(
             .map_err(|e| e.clone())?;
 
         let (reply_tx, reply_rx) = mpsc::channel();
+        let seq = neuflow_trace::next_seq();
         let t_send = Instant::now();
 
+        let depth = QUEUE_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        log::debug!("[NeuFlow perf] queue_depth_at_send={}", depth + 1);
+
         handle.sender.send(InferRequest::InferAndSample {
+            seq,
             img0, img1, h, w, grid_points, linear_indices,
             reply: reply_tx,
         }).map_err(|_| "Inference thread channel closed".to_string())?;
@@ -680,8 +796,13 @@ pub fn infer_and_sample(
         let result = reply_rx.recv()
             .map_err(|_| "Inference thread reply channel closed".to_string())?;
 
-        let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
-        log::debug!("[NeuFlow perf] sample_channel_roundtrip={roundtrip_ms:.1}ms");
+        if neuflow_trace::enabled() {
+            neuflow_trace::record_duration(seq, DurationMetric::ChannelRoundtrip, t_send.elapsed());
+            log_trace_summary(seq, "sample");
+        } else {
+            let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
+            log::debug!("[NeuFlow perf] sample_channel_roundtrip={roundtrip_ms:.1}ms");
+        }
 
         result
     }));

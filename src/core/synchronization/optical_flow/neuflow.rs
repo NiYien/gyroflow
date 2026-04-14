@@ -91,7 +91,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 &self.rgb_frame, self.width, self.height,
                 &next.rgb_frame, next.width, next.height,
             ) {
-                Ok((flow_data, gray_data)) => {
+                Ok((sampled_flow, gray_data)) => {
                     let t_infer = std::time::Instant::now();
 
                     // Letterbox parameters (must match preprocess_frame)
@@ -103,8 +103,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                     let pad_left = (model_w - new_w) / 2.0;
                     let pad_top = (model_h - new_h) / 2.0;
 
-                    // Sample from the non-padded region only (CHW layout)
-                    let result = sample_from_dense_flow(&flow_data, &gray_data, model_w as u32, model_h as u32);
+                    let result = filter_sampled_flow(sampled_flow, gray_data.as_slice(), model_w as u32, model_h as u32);
                     let t_sample = std::time::Instant::now();
 
                     if let Some((ref from_pts, ref to_pts)) = result {
@@ -154,6 +153,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
         self.used.load(std::sync::atomic::Ordering::SeqCst) == 2
     }
 
+    fn has_data(&self) -> bool {
+        !self.rgb_frame.is_empty()
+    }
+
     fn cleanup(&mut self) {
         self.rgb_frame = Arc::new(Vec::new());
     }
@@ -163,7 +166,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
 fn neuflow_inference(
     rgb0: &[u8], w0: u32, h0: u32,
     rgb1: &[u8], w1: u32, h1: u32,
-) -> Result<(Vec<f32>, Vec<u8>), String> {
+) -> Result<(crate::neuflow::SampledFlow, Vec<u8>), String> {
     let t0 = std::time::Instant::now();
 
     let (img0, gray0, proc_h, proc_w) = preprocess_frame(rgb0, w0, h0)?;
@@ -171,20 +174,34 @@ fn neuflow_inference(
 
     let t1 = std::time::Instant::now();
 
-    // Run inference via Burn (zero-copy: owned Vecs moved into channel)
-    let flow = crate::neuflow::infer(img0, img1, proc_h, proc_w)?;
+    let t_grid_start = std::time::Instant::now();
+    let (grid_points, linear_indices) = build_sample_grid(&gray0, proc_w, proc_h);
+    let t_grid_done = std::time::Instant::now();
+
+    if grid_points.is_empty() {
+        return Err("NeuFlow sample grid is empty".to_string());
+    }
+
+    // Run sparse inference via Burn (zero-copy: owned Vecs moved into channel)
+    let sampled = crate::neuflow::infer_and_sample(img0, img1, proc_h, proc_w, grid_points, linear_indices)?;
 
     let t2 = std::time::Instant::now();
     let preprocess_ms = (t1 - t0).as_secs_f64() * 1000.0;
-    let infer_ms = (t2 - t1).as_secs_f64() * 1000.0;
+    let grid_ms = (t_grid_done - t1).as_secs_f64() * 1000.0;
+    let infer_ms = (t2 - t_grid_done).as_secs_f64() * 1000.0;
     let total_ms = (t2 - t0).as_secs_f64() * 1000.0;
 
     if (t2 - t1).as_secs() > 60 {
         return Err(format!("NeuFlow inference timeout: {infer_ms:.0}ms"));
     }
 
-    log::debug!("[NeuFlow perf] preprocess={preprocess_ms:.1}ms infer={infer_ms:.1}ms total={total_ms:.1}ms ({}x{})", proc_w, proc_h);
-    Ok((flow, gray0))
+    log::debug!(
+        "[NeuFlow perf] preprocess={preprocess_ms:.1}ms grid={grid_ms:.1}ms infer_sample={infer_ms:.1}ms total={total_ms:.1}ms ({}x{}) points={}",
+        proc_w,
+        proc_h,
+        sampled.grid_points.len()
+    );
+    Ok((sampled, gray0))
 }
 
 #[cfg(feature = "neuflow")]
@@ -253,56 +270,60 @@ fn preprocess_frame(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<f32>, Ve
     Ok((chw, gray, target_h, target_w))
 }
 
-/// Sample sparse point correspondences from a dense optical flow field
-/// using texture-aware dense sampling for RANSAC-based pose estimation.
-///
-/// flow_data is in CHW layout: [dx_plane (H*W), dy_plane (H*W)].
-///
-/// Algorithm:
-/// 1. Dense grid sample (~1000+ candidates at w/15 step)
-/// 2. Skip low-texture regions (patch variance < 3.0)
-/// 3. Skip invalid flow (non-finite values, out-of-bounds destinations)
-/// 4. Return (from_pts, to_pts) where to = from + flow
-/// 5. RANSAC in estimate_pose handles foreground/background separation
-fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u32) -> OpticalFlowPair {
+/// Build a texture-aware sampling grid in model space.
+fn build_sample_grid(gray: &[u8], width: usize, height: usize) -> (Vec<(usize, usize)>, Vec<i32>) {
+    let step = (width / 15).max(4);
+    let window_size = ((width as f32 * 0.02).round() as usize).max(10);
+    let texture_threshold = 3.0;
+
+    let mut grid_points = Vec::new();
+    let mut linear_indices = Vec::new();
+
+    for x in (0..width).step_by(step) {
+        for y in (0..height).step_by(step) {
+            let variance = texture_variance(gray, x, y, width, height, window_size);
+            if variance < texture_threshold {
+                continue;
+            }
+            grid_points.push((x, y));
+            linear_indices.push((y * width + x) as i32);
+        }
+    }
+
+    (grid_points, linear_indices)
+}
+
+/// Filter sparse sampled flow results and produce matched point pairs.
+fn filter_sampled_flow(sampled: crate::neuflow::SampledFlow, gray: &[u8], width: u32, height: u32) -> OpticalFlowPair {
     let w = width as usize;
     let h = height as usize;
     let plane = w * h;
 
-    if flow_data.len() < plane * 2 || gray.len() < plane {
+    if gray.len() < plane {
         return None;
     }
-
-    let step = (w / 15).max(4);
-    let window_size = ((w as f32 * 0.02).round() as usize).max(10);
-    let texture_threshold = 3.0;
 
     let mut from_pts = Vec::new();
     let mut to_pts = Vec::new();
 
-    for x in (0..w).step_by(step) {
-        for y in (0..h).step_by(step) {
-            let variance = texture_variance(gray, x, y, w, h, window_size);
-            if variance < texture_threshold {
-                continue;
-            }
+    if sampled.grid_points.len() != sampled.dx.len() || sampled.grid_points.len() != sampled.dy.len() {
+        return None;
+    }
 
-            // CHW layout: dx at flow_data[idx], dy at flow_data[plane + idx]
-            let idx = y * w + x;
-            let dx = flow_data[idx];
-            let dy = flow_data[plane + idx];
+    for (i, &(x, y)) in sampled.grid_points.iter().enumerate() {
+        let dx = sampled.dx[i];
+        let dy = sampled.dy[i];
 
-            if !dx.is_finite() || !dy.is_finite() {
-                continue;
-            }
+        if !dx.is_finite() || !dy.is_finite() {
+            continue;
+        }
 
-            let to_x = x as f32 + dx;
-            let to_y = y as f32 + dy;
+        let to_x = x as f32 + dx;
+        let to_y = y as f32 + dy;
 
-            if to_x >= 0.0 && to_x < w as f32 && to_y >= 0.0 && to_y < h as f32 {
-                from_pts.push((x as f32, y as f32));
-                to_pts.push((to_x, to_y));
-            }
+        if to_x >= 0.0 && to_x < w as f32 && to_y >= 0.0 && to_y < h as f32 {
+            from_pts.push((x as f32, y as f32));
+            to_pts.push((to_x, to_y));
         }
     }
 
@@ -470,26 +491,33 @@ mod tests {
 
     #[test]
     fn test_sample_from_dense_flow_empty() {
-        let result = sample_from_dense_flow(&[], &[], 10, 10);
-        assert!(result.is_none());
-    }
+    let result = filter_sampled_flow(
+        crate::neuflow::SampledFlow { grid_points: vec![], dx: vec![], dy: vec![] },
+        &[],
+        10,
+        10,
+    );
+    assert!(result.is_none());
+}
 
     #[test]
     fn test_sample_from_dense_flow_uniform() {
         let w = 32u32;
         let h = 32u32;
-        let n = (w * h) as usize;
-        // Uniform flow in CHW layout: dx_plane then dy_plane
-        let mut flow = vec![0.0f32; n * 2];
-        for i in 0..n {
-            flow[i] = 1.0;       // dx plane
-            flow[n + i] = 0.5;   // dy plane
-        }
-        // Textured gray: alternating pattern to ensure variance > 3.0
-        let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
-        let result = sample_from_dense_flow(&flow, &gray, w, h);
-        assert!(result.is_some());
-        let (from_pts, to_pts) = result.unwrap();
+    let n = (w * h) as usize;
+    // Textured gray: alternating pattern to ensure variance > 3.0
+    let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+    let (grid_points, _) = build_sample_grid(&gray, w as usize, h as usize);
+    let dx = vec![1.0f32; grid_points.len()];
+    let dy = vec![0.5f32; grid_points.len()];
+    let result = filter_sampled_flow(
+        crate::neuflow::SampledFlow { grid_points, dx, dy },
+        &gray,
+        w,
+        h,
+    );
+    assert!(result.is_some());
+    let (from_pts, to_pts) = result.unwrap();
         assert!(!from_pts.is_empty());
         // Verify to = from + flow
         for (f, t) in from_pts.iter().zip(to_pts.iter()) {
@@ -545,17 +573,18 @@ mod tests {
         // Uniform gray (no texture) should produce no points
         let w = 100u32;
         let h = 80u32;
-        let n = (w * h) as usize;
-        // CHW layout: dx=1.0, dy=1.0
-        let mut flow_data = vec![0.0f32; 2 * n];
-        for i in 0..n {
-            flow_data[i] = 1.0;       // dx plane
-            flow_data[n + i] = 1.0;   // dy plane
-        }
-        let gray = vec![128u8; n];
-        let result = sample_from_dense_flow(&flow_data, &gray, w, h);
-        assert!(result.is_none(), "uniform gray should produce no points (low texture)");
-    }
+    let n = (w * h) as usize;
+    let gray = vec![128u8; n];
+    let (grid_points, _) = build_sample_grid(&gray, w as usize, h as usize);
+    assert!(grid_points.is_empty(), "uniform gray should not produce sample points");
+    let result = filter_sampled_flow(
+        crate::neuflow::SampledFlow { grid_points, dx: vec![], dy: vec![] },
+        &gray,
+        w,
+        h,
+    );
+    assert!(result.is_none(), "uniform gray should produce no points (low texture)");
+}
 
     #[test]
     fn test_rgb_to_gray() {
@@ -609,20 +638,27 @@ mod tests {
         let h = 480u32;
         let n = (w * h) as usize;
         // CHW layout
-        let mut flow_data = vec![0.0f32; 2 * n];
-        for i in 0..n {
-            flow_data[i] = 2.0;
-            flow_data[n + i] = 1.0;
-        }
-        let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+    let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+    let (grid_points, _) = build_sample_grid(&gray, w as usize, h as usize);
+    let dx = vec![2.0f32; grid_points.len()];
+    let dy = vec![1.0f32; grid_points.len()];
 
-        let start = std::time::Instant::now();
-        let iterations = 1000;
-        for _ in 0..iterations {
-            let _ = sample_from_dense_flow(&flow_data, &gray, w, h);
-        }
-        let avg_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
-        eprintln!("sample_from_dense_flow 640x480 avg: {avg_ms:.3}ms ({iterations} runs)");
-        assert!(avg_ms <= 1.0, "sample too slow: {avg_ms:.3}ms (target ≤ 1.0ms)");
+    let start = std::time::Instant::now();
+    let iterations = 1000;
+    for _ in 0..iterations {
+        let _ = filter_sampled_flow(
+            crate::neuflow::SampledFlow {
+                grid_points: grid_points.clone(),
+                dx: dx.clone(),
+                dy: dy.clone(),
+            },
+            &gray,
+            w,
+            h,
+        );
     }
+    let avg_ms = start.elapsed().as_secs_f64() * 1000.0 / iterations as f64;
+    eprintln!("filter_sampled_flow 640x480 avg: {avg_ms:.3}ms ({iterations} runs)");
+    assert!(avg_ms <= 1.0, "sample too slow: {avg_ms:.3}ms (target ≤ 1.0ms)");
+}
 }
