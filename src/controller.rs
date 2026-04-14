@@ -9,15 +9,14 @@ use qmetaobject::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 
 use qml_video_rs::video_item::MDKVideoItem;
 
 use crate::core;
-use crate::core::StabilizationManager;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
 use crate::core::filesystem;
@@ -25,6 +24,7 @@ use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
 use crate::core::synchronization::AutosyncProcess;
+use crate::core::StabilizationManager;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::niyien_device::{DeviceCommand, DeviceEvent, DeviceManager};
 use crate::qt_gpu::qrhi_undistort;
@@ -287,7 +287,8 @@ pub struct Controller {
     project_file_url_changed: qt_signal!(),
 
     check_updates: qt_method!(fn(&self)),
-    updates_available: qt_signal!(version: QString, changelog: QString),
+    fetch_available_versions: qt_method!(fn(&self) -> QString),
+    updates_available: qt_signal!(version: QString, changelog: QString, download_url: QString),
     sync_device_time: qt_method!(fn(&mut self, tz_offset_minutes: i32)),
     check_firmware_update: qt_method!(fn(&mut self)),
     start_firmware_update: qt_method!(fn(&mut self)),
@@ -2380,60 +2381,71 @@ impl Controller {
     fn check_updates(&self) {
         let update = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            |this, (version, changelog): (String, String)| {
-                this.updates_available(QString::from(version), QString::from(changelog))
+            |this, (version, changelog, download_url): (String, String, String)| {
+                this.updates_available(
+                    QString::from(version),
+                    QString::from(changelog),
+                    QString::from(download_url),
+                )
             },
         );
-        core::run_threaded(move || {
-            if let Ok(Ok(body)) =
-                ureq::get("https://api.github.com/repos/gyroflow/gyroflow/releases")
-                    .call()
-                    .map(|x| x.into_body().read_to_string())
-            {
-                if let Ok(v) = serde_json::from_str(&body) as serde_json::Result<serde_json::Value>
-                {
-                    if let Some(v) = v.as_array() {
-                        for itm in v {
-                            if let Some(obj) = itm.as_object() {
-                                let name = obj.get("name").and_then(|x| x.as_str());
-                                let body = obj.get("body").and_then(|x| x.as_str());
-                                let is_prerelease = obj
-                                    .get("prerelease")
-                                    .and_then(|x| x.as_bool())
-                                    .unwrap_or_default();
-                                if is_prerelease {
-                                    continue;
-                                }
-
-                                if let Some(name) = name {
-                                    ::log::info!(
-                                        "Latest version: {}, current version: {}",
-                                        name,
-                                        util::get_version()
-                                    );
-
-                                    if let Ok(latest_version) =
-                                        semver::Version::parse(name.trim_start_matches('v'))
-                                    {
-                                        if let Ok(this_version) =
-                                            semver::Version::parse(env!("CARGO_PKG_VERSION"))
-                                        {
-                                            if latest_version > this_version {
-                                                update((
-                                                    name.to_owned(),
-                                                    body.unwrap_or_default().to_owned(),
-                                                ));
-                                            }
-                                        }
-                                    }
-                                    break;
-                                }
+        core::run_threaded(move || match crate::distribution::fetch_manifest(false) {
+            Ok(manifest) => {
+                match crate::distribution::sync_data_packages(&manifest) {
+                    Ok(results) => {
+                        for result in results {
+                            if result.updated {
+                                ::log::info!("Updated distribution package {}", result.package);
                             }
                         }
                     }
+                    Err(err) => {
+                        ::log::warn!("Distribution data sync failed: {}", err);
+                    }
+                }
+
+                if crate::distribution::has_app_update(&manifest) {
+                    ::log::info!(
+                        "Latest NiYien version: {}, current version: {}",
+                        manifest.app.version,
+                        util::get_version()
+                    );
+                    update((
+                        manifest.app.version,
+                        manifest.app.changelog,
+                        manifest.app.url,
+                    ));
                 }
             }
+            Err(err) => {
+                ::log::warn!("Manifest check failed: {}", err);
+                crate::distribution::report_download_event(
+                    "manifest_fetch",
+                    "manifest",
+                    "",
+                    gyroflow_core::distribution::manifest_api(),
+                    "fail",
+                    0,
+                    0,
+                    &err,
+                );
+            }
         });
+    }
+
+    fn fetch_available_versions(&self) -> QString {
+        let payload = match crate::distribution::fetch_manual_versions(true) {
+            Ok(versions) => serde_json::json!({
+                "versions": versions
+            }),
+            Err(err) => serde_json::json!({
+                "versions": [],
+                "error": err
+            }),
+        };
+        QString::from(
+            serde_json::to_string(&payload).unwrap_or_else(|_| "{\"versions\":[]}".to_owned()),
+        )
     }
 
     fn sync_device_time(&mut self, tz_offset_minutes: i32) {
@@ -3550,18 +3562,38 @@ impl Controller {
         } else {
             filesystem::get_filename(&url)
         };
+        let started = std::time::Instant::now();
+        let telemetry_once = Arc::new(AtomicBool::new(false));
+        let telemetry_once2 = telemetry_once.clone();
         let progress = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this, (percent, sdk_name, error_string): (f64, &'static str, String)| {
+                let error_for_ui = QString::from(error_string.clone());
                 this.external_sdk_progress(
                     percent,
                     QString::from(sdk_name),
-                    QString::from(error_string),
+                    error_for_ui,
                     QString::from(url.clone()),
                 );
+                if percent >= 1.0 && !telemetry_once2.swap(true, SeqCst) {
+                    crate::distribution::report_download_event(
+                        "sdk_download_result",
+                        sdk_name,
+                        "",
+                        &url,
+                        if error_string.is_empty() {
+                            "success"
+                        } else {
+                            "fail"
+                        },
+                        started.elapsed().as_millis(),
+                        0,
+                        &error_string,
+                    );
+                }
             },
         );
-        let sdkbase = gyroflow_core::settings::get_str("sdkBase", "");
+        let sdkbase = crate::distribution::download_source_base();
         crate::external_sdk::install(&filename, &sdkbase, progress);
     }
 
@@ -3955,7 +3987,8 @@ impl Controller {
                         },
                     );
                     core::run_threaded(move || {
-                        let plugins_base = gyroflow_core::settings::get_str("pluginsBase", "");
+                        let started = std::time::Instant::now();
+                        let plugins_base = crate::distribution::plugin_source_base();
                         let result = match command.as_ref() {
                             "install" => crate::nle_plugins::install(&typ, plugins_base),
                             "latest_version" => {
@@ -3970,8 +4003,36 @@ impl Controller {
                             )),
                         };
                         match result {
-                            Ok(r) => signal(r),
-                            Err(e) => signal(format!("An error occured: {e:?}")),
+                            Ok(r) => {
+                                if command == "install" {
+                                    crate::distribution::report_download_event(
+                                        "plugin_download_result",
+                                        &typ,
+                                        "",
+                                        "plugins",
+                                        "success",
+                                        started.elapsed().as_millis(),
+                                        0,
+                                        "",
+                                    );
+                                }
+                                signal(r)
+                            }
+                            Err(e) => {
+                                if command == "install" {
+                                    crate::distribution::report_download_event(
+                                        "plugin_download_result",
+                                        &typ,
+                                        "",
+                                        "plugins",
+                                        "fail",
+                                        started.elapsed().as_millis(),
+                                        0,
+                                        &e.to_string(),
+                                    );
+                                }
+                                signal(format!("An error occured: {e:?}"))
+                            }
                         }
                     });
                     Ok(String::new())

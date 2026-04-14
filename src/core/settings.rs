@@ -6,8 +6,8 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{
-    Arc,
     atomic::{AtomicUsize, Ordering::SeqCst},
+    Arc,
 };
 
 pub fn data_dir() -> PathBuf {
@@ -23,11 +23,12 @@ pub fn data_dir() -> PathBuf {
             }
         }
 
+        let brand = &crate::distribution::config().brand;
         let mut path = app_dirs2::get_app_dir(
             AppDataType::UserData,
             &AppInfo {
-                name: "Gyroflow",
-                author: "Gyroflow",
+                name: &brand.application_name,
+                author: &brand.organization_name,
             },
             "",
         )
@@ -52,7 +53,7 @@ pub fn data_dir() -> PathBuf {
                     path = PathBuf::from(s);
                     path.push("AppData");
                     path.push("Local");
-                    path.push("Gyroflow");
+                    path.push(&brand.application_name);
                     windows::Win32::System::Com::CoTaskMemFree(Some(raw_path.as_ptr() as *mut _));
                 }
             }
@@ -84,11 +85,12 @@ pub fn data_dir() -> PathBuf {
                     path = PathBuf::from(pw_dir);
                     path.push("Library");
                     path.push("Application Support");
-                    path.push("Gyroflow");
+                    path.push(&brand.application_name);
                 }
                 _ => {}
             }
         }
+        migrate_from_legacy_dir(&path);
         let _ = std::fs::create_dir_all(&path);
         if let Err(e) = std::fs::create_dir_all(&path.join("lens_profiles")) {
             ::log::error!(
@@ -99,6 +101,112 @@ pub fn data_dir() -> PathBuf {
         path
     })
     .clone()
+}
+
+fn migrate_from_legacy_dir(new_path: &PathBuf) {
+    let old_path = legacy_data_dir();
+    if old_path == *new_path || !old_path.exists() {
+        return;
+    }
+    let new_settings = new_path.join("settings.json");
+    if new_settings.exists() {
+        return;
+    }
+
+    let _ = std::fs::create_dir_all(new_path);
+    let old_settings = old_path.join("settings.json");
+    if old_settings.exists() {
+        let _ = std::fs::copy(&old_settings, &new_settings);
+    }
+
+    let old_lens_profiles = old_path.join("lens_profiles");
+    let new_lens_profiles = new_path.join("lens_profiles");
+    if old_lens_profiles.exists() && !new_lens_profiles.exists() {
+        let _ = copy_dir_all(&old_lens_profiles, &new_lens_profiles);
+    }
+}
+
+fn legacy_data_dir() -> PathBuf {
+    let mut path = app_dirs2::get_app_dir(
+        AppDataType::UserData,
+        &AppInfo {
+            name: "Gyroflow",
+            author: "Gyroflow",
+        },
+        "",
+    )
+    .unwrap();
+    if path.file_name().unwrap() == path.parent().unwrap().file_name().unwrap() {
+        path = path.parent().unwrap().to_path_buf();
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use std::os::windows::ffi::OsStringExt;
+        use windows::Win32::UI::Shell::*;
+        let mut len = 0;
+        let _ = windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName(&mut len, None);
+        if len > 0 {
+            if let Ok(raw_path) =
+                SHGetKnownFolderPath(&FOLDERID_Profile, KNOWN_FOLDER_FLAG::default(), None)
+            {
+                let s = std::ffi::OsString::from_wide(raw_path.as_wide());
+                path = PathBuf::from(s);
+                path.push("AppData");
+                path.push("Local");
+                path.push("Gyroflow");
+                windows::Win32::System::Com::CoTaskMemFree(Some(raw_path.as_ptr() as *mut _));
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    unsafe {
+        use std::ffi::{CStr, OsString};
+        use std::mem::MaybeUninit;
+        use std::os::unix::ffi::OsStringExt;
+        let init_size = match libc::sysconf(libc::_SC_GETPW_R_SIZE_MAX) {
+            -1 => 1024,
+            n => n as usize,
+        };
+        let mut buf = Vec::with_capacity(init_size);
+        let mut pwd: MaybeUninit<libc::passwd> = MaybeUninit::uninit();
+        let mut pwdp = std::ptr::null_mut();
+        match libc::getpwuid_r(
+            libc::geteuid(),
+            pwd.as_mut_ptr(),
+            buf.as_mut_ptr(),
+            buf.capacity(),
+            &mut pwdp,
+        ) {
+            0 if !pwdp.is_null() => {
+                let pwd = pwd.assume_init();
+                let bytes = CStr::from_ptr(pwd.pw_dir).to_bytes().to_vec();
+                let pw_dir = OsString::from_vec(bytes);
+                path = PathBuf::from(pw_dir);
+                path.push("Library");
+                path.push("Application Support");
+                path.push("Gyroflow");
+            }
+            _ => {}
+        }
+    }
+    path
+}
+
+fn copy_dir_all(src: &PathBuf, dst: &PathBuf) -> std::io::Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let target = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_all(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn get_all() -> HashMap<String, serde_json::Value> {

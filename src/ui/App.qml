@@ -21,6 +21,20 @@ Rectangle {
     property bool isSimpleMode: settings.value("simpleMode", "false") == "true";
     onIsSimpleModeChanged: settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
 
+    function _isSenseFlow(s) { return (s || "").indexOf("SenseFlow") >= 0; }
+    property bool isNiYienDevice: {
+        if (controller.device_connected) return true;
+        if (_isSenseFlow(videoArea.detectedCamera)) return true;
+        if (window.motionData && _isSenseFlow(window.motionData.detectedFormat)) return true;
+        if (window.batchState && _isSenseFlow(window.batchState.detectedSource)) return true;
+        if (window.videoArea && window.videoArea.queue && window.videoArea.queue.gyroFilesInfo) {
+            for (const info of window.videoArea.queue.gyroFilesInfo) {
+                if (_isSenseFlow(info.detected_source)) return true;
+            }
+        }
+        return false;
+    }
+
     property bool isLandscape: width > height;
     onIsLandscapeChanged: {
         if (isLandscape) {
@@ -938,6 +952,19 @@ Rectangle {
                 Hr { visible: simpleDevice.active; }
 
                 ItemLoader {
+                    id: simpleMounting;
+                    active: window.isNiYienDevice;
+                    width: parent.width;
+                    opacity: batchState.active ? 0.4 : 1.0;
+                    sourceComponent: Component {
+                        Menu.MountingPresetSelector {
+                            innerItem.enabled: controller.gyro_loaded && !batchState.active;
+                        }
+                    }
+                }
+                Hr { visible: simpleMounting.active; }
+
+                ItemLoader {
                     id: lensGroupConfig;
                     active: window.lensGroupPanelActive;
                     width: parent.width;
@@ -1182,8 +1209,10 @@ Rectangle {
         function onRequest_recompute(): void {
             Qt.callLater(controller.recompute_threaded);
         }
-        function openUpdatePage(): void {
-            if (Qt.platform.os == "android") {
+        function openUpdatePage(url: string): void {
+            if (url && url.length > 0) {
+                Qt.openUrlExternally(url);
+            } else if (Qt.platform.os == "android") {
                 Qt.openUrlExternally("https://play.google.com/store/apps/details?id=xyz.gyroflow");
             } else if (Qt.platform.os == "ios") {
                 Qt.openUrlExternally("https://apps.apple.com/us/app/gyroflow/id6447994244");
@@ -1196,9 +1225,9 @@ Rectangle {
                 Qt.openUrlExternally("https://github.com/gyroflow/gyroflow/releases");
             }
         }
-        function onUpdates_available(version: string, changelog: string): void {
+        function onUpdates_available(version: string, changelog: string, download_url: string): void {
             const heading = "<p align=\"center\">" + qsTr("There's a newer version available: %1.").arg("<b>" + version + "</b>") + "</p>\n\n";
-            const el = messageBox(Modal.Info, heading + changelog, [ { text: qsTr("Download"),accent: true, clicked: () => openUpdatePage() },{ text: qsTr("Close") }], undefined, Text.MarkdownText);
+            const el = messageBox(Modal.Info, heading + changelog, [ { text: qsTr("Download"),accent: true, clicked: () => openUpdatePage(download_url) },{ text: qsTr("Close") }], undefined, Text.MarkdownText);
             el.t.horizontalAlignment = Text.AlignLeft;
         }
         function onRequest_location(url: string, type: string): void {

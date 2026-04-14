@@ -26,10 +26,10 @@ pub fn get_path(typ: &str) -> &'static str {
 #[cfg(target_os = "windows")]
 fn query_file_version(path: &str) -> Option<String> {
     use windows::{
+        core::HSTRING,
         Win32::Storage::FileSystem::{
             GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
         },
-        core::HSTRING,
     };
     unsafe {
         let hpath = HSTRING::from(path);
@@ -198,11 +198,20 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
 }
 
 pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
-    let mut nightly_base = "https://nightly.link/gyroflow/gyroflow-plugins/workflows/release/main/";
-    if !plugins_base.is_empty() {
-        nightly_base = &plugins_base;
-    }
-    let release_base = "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download/";
+    let normalized_custom_base = plugins_base.trim().trim_end_matches('/').to_owned();
+    let custom_base = (!normalized_custom_base.is_empty()).then_some(normalized_custom_base);
+    let nightly_base = custom_base
+        .as_ref()
+        .map(|s| format!("{s}/"))
+        .unwrap_or_else(|| {
+            "https://nightly.link/gyroflow/gyroflow-plugins/workflows/release/main/".to_owned()
+        });
+    let release_base = custom_base
+        .as_ref()
+        .map(|s| format!("{s}/"))
+        .unwrap_or_else(|| {
+            "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download/".to_owned()
+        });
     let (download_url, extract_path) = match typ {
         "openfx" => {
             if cfg!(target_os = "windows") {
@@ -347,6 +356,9 @@ pub fn is_nle_installed(typ: &str) -> bool {
 }
 
 pub fn latest_version() -> Option<String> {
+    if !gyroflow_core::settings::get_str("pluginsBase", "").is_empty() {
+        return Some("manifest".to_owned());
+    }
     if is_nightly() {
         let body = ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/actions/runs")
             .call()

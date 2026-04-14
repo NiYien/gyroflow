@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" fill="none">
+  <defs>
+    <radialGradient id="lens-grad" cx="45%" cy="42%">
+      <stop offset="0%" stop-color="#555"/>
+      <stop offset="60%" stop-color="#1e2024"/>
+      <stop offset="100%" stop-color="#111"/>
+    </radialGradient>
+    <linearGradient id="display-grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1a1a3a"/>
+      <stop offset="100%" stop-color="#2a2040"/>
+    </linearGradient>
+  </defs>
+  <polygon points="100.0,82.5 250.0,82.5 250.0,187.5 100.0,187.5" fill="#44484e" stroke="#5a5e64" stroke-width="1.2"/>
+  <polygon points="250.0,82.5 295.0,108.5 295.0,213.5 250.0,187.5" fill="#35383d" stroke="#5a5e64" stroke-width="1.2"/>
+  <polygon points="100.0,187.5 250.0,187.5 295.0,213.5 145.0,213.5" fill="#35383d" stroke="#5a5e64" stroke-width="1.2"/>
+  <circle cx="175.0" cy="133.0" r="28" fill="#2a2d32" stroke="#5a5e64" stroke-width="1"/>
+  <circle cx="175.0" cy="133.0" r="22" fill="#3a3e44" stroke="#2a2d32" stroke-width="1.5"/>
+  <circle cx="175.0" cy="133.0" r="15" fill="url(#lens-grad)"/>
+  <circle cx="175.0" cy="133.0" r="8" fill="#0a0a0a" opacity="0.8"/>
+
+  <!-- NiYien A1 device -->
+  <polygon points="229.8,195.3 247.8,205.7 165.2,205.7 147.2,195.3" fill="#9a9da2" stroke="#777" stroke-width="1.5" stroke-linejoin="round"/>
+  <polygon points="224.9,196.1 240.2,204.9 170.1,204.9 154.8,196.1" fill="#2a2a2e" stroke="#444" stroke-width="0.5"/>
+  <polygon points="229.8,200.5 236.1,204.1 171.6,204.1 165.2,200.5" fill="url(#display-grad)" stroke="#333" stroke-width="0.5" opacity="0.9"/>
+  <circle cx="211.8" cy="196.9" r="3" fill="#444" stroke="#555" stroke-width="0.5"/>
+  <circle cx="191.2" cy="196.9" r="3" fill="#444" stroke="#555" stroke-width="0.5"/>
+  <circle cx="170.6" cy="196.9" r="3" fill="#444" stroke="#555" stroke-width="0.5"/>
+  <circle cx="238.2" cy="203.6" r="2.5" fill="#4ADE80"/>
+  <circle cx="238.2" cy="203.6" r="5" fill="#4ADE80" opacity="0.2"/>
+  <text x="175" y="210" text-anchor="middle" font-family="sans-serif" font-size="11" fill="rgba(255,255,255,0.35)">&#x25B8; Front (Lens)</text>
+</svg>

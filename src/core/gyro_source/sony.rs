@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>, Vladimir Pinchuk
 
-use super::{CameraStabData, FileMetadata, splines};
+use super::{splines, CameraStabData, FileMetadata};
 use argmin::{
     core::{CostFunction, Error, Executor},
     solver::neldermead::NelderMead,
@@ -478,13 +478,13 @@ pub fn stab_calc_splines(
         .into_par_iter()
         .filter_map(|frame| {
             let crop_area = *is_temp.per_frame_crop.get(frame)?; // (x, y, w, h)
-            // let crop_scale = (crop_area.2 as f64 / is_temp.sensor_size.0 as f64, crop_area.3 as f64 / is_temp.sensor_size.1 as f64);
+                                                                 // let crop_scale = (crop_area.2 as f64 / is_temp.sensor_size.0 as f64, crop_area.3 as f64 / is_temp.sensor_size.1 as f64);
             let exposuretime = is_temp.per_frame_exposure.get(frame)?;
             let first_timestamp = is_temp.first_frame_ts.get(frame)?;
             let top_offset = first_timestamp - exposuretime / 2.0;
             let bot_offset = top_offset + readout_time;
             let entry_rate = is_temp.sensor_size.1 as f64 / readout_time; // 2166
-            // dbg!(frame_interval, readout_time, first_timestamp, exposuretime, entry_rate);
+                                                                          // dbg!(frame_interval, readout_time, first_timestamp, exposuretime, entry_rate);
 
             let (top_index, time) = is_temp.search_top_idx2(frame, top_offset)?;
             let n_entries =

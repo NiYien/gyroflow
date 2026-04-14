@@ -9,9 +9,6 @@ use std::{
 
 use serde_json::Value;
 
-pub const UPDATE_JSON_URL: &str = "https://www.niyien.com/Update/update.json";
-pub const FIRMWARE_BASE_URL: &str = "https://www.niyien.com/Update/firmware/A1/";
-
 pub type Result<T> = std::result::Result<T, UpdateError>;
 
 #[derive(Debug)]
@@ -54,12 +51,17 @@ pub struct FirmwareUpdateInfo {
 }
 
 pub fn check_update(current_version: &str) -> Result<Option<FirmwareUpdateInfo>> {
-    let body = ureq::get(UPDATE_JSON_URL)
-        .call()
-        .map_err(|err| UpdateError::Http(err.to_string()))?
-        .into_body()
-        .read_to_string()
-        .map_err(|err| UpdateError::Http(err.to_string()))?;
+    let body = ureq::get(
+        gyroflow_core::distribution::config()
+            .endpoints
+            .firmware_manifest
+            .as_str(),
+    )
+    .call()
+    .map_err(|err| UpdateError::Http(err.to_string()))?
+    .into_body()
+    .read_to_string()
+    .map_err(|err| UpdateError::Http(err.to_string()))?;
 
     check_update_from_body(current_version, &body)
 }
@@ -162,8 +164,13 @@ fn firmware_cache_dir() -> Result<PathBuf> {
 }
 
 fn firmware_download_url(filename: &str) -> Result<url::Url> {
-    let base = url::Url::parse(FIRMWARE_BASE_URL)
-        .map_err(|err| UpdateError::Http(format!("invalid firmware base url: {err}")))?;
+    let base = url::Url::parse(
+        gyroflow_core::distribution::config()
+            .endpoints
+            .firmware_base
+            .as_str(),
+    )
+    .map_err(|err| UpdateError::Http(format!("invalid firmware base url: {err}")))?;
     base.join(filename)
         .map_err(|err| UpdateError::Http(format!("invalid firmware filename `{filename}`: {err}")))
 }

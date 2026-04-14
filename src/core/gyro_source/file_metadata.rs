@@ -5,7 +5,7 @@ use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use super::{TimeIMU, TimeQuat, TimeVec, splines};
+use super::{splines, TimeIMU, TimeQuat, TimeVec};
 use crate::camera_identifier::CameraIdentifier;
 use crate::stabilization_params::ReadoutDirection;
 

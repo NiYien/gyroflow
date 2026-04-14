@@ -12,6 +12,7 @@ use std::cell::RefCell;
 pub use gyroflow_core as core;
 mod cli;
 pub mod controller;
+pub mod distribution;
 pub mod external_sdk;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod niyien_device;
@@ -76,14 +77,18 @@ fn entry() {
     util::set_android_context();
     log_panics::init();
 
-    cpp!(unsafe [] {
-        qApp->setOrganizationName("Gyroflow");
-        qApp->setOrganizationDomain("gyroflow.xyz");
-        qApp->setApplicationName("Gyroflow");
+    let brand = gyroflow_core::distribution::config().brand.clone();
+    let organization_name = QString::from(brand.organization_name.as_str());
+    let organization_domain = QString::from(brand.organization_domain.as_str());
+    let application_name = QString::from(brand.display_name.as_str());
+    cpp!(unsafe [organization_name as "QString", organization_domain as "QString", application_name as "QString"] {
+        qApp->setOrganizationName(organization_name);
+        qApp->setOrganizationDomain(organization_domain);
+        qApp->setApplicationName(application_name);
 
         QMessageLogger("", 0, "main").debug(QLoggingCategory("gyroflow")) << "Qt version:" << qVersion();
     });
-    ::log::debug!("Gyroflow {}", util::get_version());
+    ::log::debug!("{} {}", brand.display_name, util::get_version());
 
     let mut open_file = String::new();
     let mut open_preset = String::new();

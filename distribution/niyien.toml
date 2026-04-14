@@ -1,0 +1,30 @@
+[brand]
+display_name = "gyroflow(niyien)"
+artifact_prefix = "gyroflow-niyien"
+organization_name = "NiYien"
+application_name = "GyroflowNiYien"
+organization_domain = "niyien.com"
+
+[release]
+github_owner = "NiYien"
+github_repo = "gyroflow"
+
+[endpoints]
+manifest_api = "https://www.niyien.com/api/manifest"
+telemetry_api = "https://www.niyien.com/api/telemetry"
+firmware_manifest = "https://www.niyien.com/Update/update.json"
+firmware_base = "https://www.niyien.com/Update/firmware/A1/"
+
+[data.lens]
+source_dir = "distribution/data/lens"
+asset_name = "gyroflow-niyien-lens.cbor.gz"
+install_dir = "lens"
+
+[sources.global]
+base = "https://github.com/NiYien/gyroflow/releases/download"
+
+[sources.cn]
+base = "https://download.niyien.com/releases"
+
+[routing]
+cn_countries = ["CN"]

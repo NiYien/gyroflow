@@ -1,0 +1,13 @@
+{
+  "vercel_token": "",
+  "vercel_project_id_or_name": "",
+  "vercel_team_id": "",
+  "github_token": "",
+  "github_owner": "NiYien",
+  "github_repo": "gyroflow",
+  "telemetry_base_url": "https://www.niyien.com",
+  "telemetry_stats_token": "",
+  "telemetry_rebuild_token": "",
+  "deploy_hook_url": "",
+  "distribution_config_path": "distribution/niyien.toml"
+}

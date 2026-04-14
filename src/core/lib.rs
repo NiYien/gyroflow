@@ -5,6 +5,7 @@ pub mod anamorphic_presets;
 #[cfg(feature = "opencv")]
 pub mod calibration;
 pub mod camera_identifier;
+pub mod distribution;
 pub mod gyro_source;
 pub mod imu_integration;
 pub mod keyframes;
