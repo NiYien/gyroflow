@@ -241,12 +241,19 @@ mod app {
         }
     }
 
-    fn maybe_convert_half(entry: &mut TensorEntry, convert_half: bool) {
+    fn maybe_convert_half(entry: &mut TensorEntry, convert_half: bool, keep_constants_f32: bool) {
         if !convert_half {
             return;
         }
         if !matches!(entry.dtype, DType::F32 | DType::Flex32) {
             return;
+        }
+        // When --keep-constants-f32, skip conversion for constant tensors and layernorm params
+        if keep_constants_f32 {
+            let name_lower = entry.name.to_lowercase();
+            if name_lower.contains("constant") || name_lower.contains("layernorm") {
+                return;
+            }
         }
 
         let data = TensorData::from_bytes_vec(
@@ -256,6 +263,26 @@ mod app {
         )
         .convert_dtype(DType::F16);
         entry.dtype = DType::F16;
+        entry.bytes = data.bytes.to_vec();
+    }
+
+    /// Promote F16 constant/layernorm tensors to F32 (upcast).
+    /// This allows the GPU to use them in F32 computation paths.
+    fn maybe_promote_constants(entry: &mut TensorEntry) {
+        if entry.dtype != DType::F16 {
+            return;
+        }
+        let name_lower = entry.name.to_lowercase();
+        if !name_lower.contains("constant") && !name_lower.contains("layernorm") {
+            return;
+        }
+        let data = TensorData::from_bytes_vec(
+            std::mem::take(&mut entry.bytes),
+            entry.shape.clone(),
+            entry.dtype,
+        )
+        .convert_dtype(DType::F32);
+        entry.dtype = DType::F32;
         entry.bytes = data.bytes.to_vec();
     }
 
@@ -350,15 +377,27 @@ mod app {
         Ok(())
     }
 
-    fn optimize(input: &Path, output: &Path, convert_half: bool, dedupe: bool) -> Result<(), String> {
+    fn optimize(input: &Path, output: &Path, convert_half: bool, dedupe: bool, keep_constants_f32: bool) -> Result<(), String> {
         let entries = read_entries(input)?;
         let mut optimized = entries.clone();
         let mut converted = 0usize;
+        let mut kept_f32 = 0usize;
+        let mut promoted = 0usize;
         for entry in &mut optimized {
+            if keep_constants_f32 {
+                let before = entry.dtype;
+                maybe_promote_constants(entry);
+                if before != entry.dtype {
+                    promoted += 1;
+                    continue; // already promoted, skip half conversion
+                }
+            }
             let before = entry.dtype;
-            maybe_convert_half(entry, convert_half);
+            maybe_convert_half(entry, convert_half, keep_constants_f32);
             if before != entry.dtype {
                 converted += 1;
+            } else if keep_constants_f32 && matches!(before, DType::F32 | DType::Flex32) {
+                kept_f32 += 1;
             }
         }
 
@@ -385,6 +424,8 @@ mod app {
         println!("input={}", input.display());
         println!("output={}", output.display());
         println!("converted_f32_to_f16={converted}");
+        println!("promoted_f16_to_f32={promoted}");
+        println!("kept_f32_constants={kept_f32}");
         println!("dedupe_enabled={dedupe}");
         println!("input_size_bytes={input_size}");
         println!("output_size_bytes={output_size}");
@@ -406,7 +447,7 @@ mod app {
     fn print_usage() {
         eprintln!("Usage:");
         eprintln!("  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- analyze [input]");
-        eprintln!("  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- optimize [input] [output] [--no-half] [--no-dedupe]");
+        eprintln!("  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- optimize [input] [output] [--no-half] [--no-dedupe] [--keep-constants-f32]");
     }
 
     pub fn main() {
@@ -443,8 +484,9 @@ mod app {
                     .unwrap_or_else(|| default_output_path(&input));
                 let convert_half = !args.iter().any(|arg| arg == "--no-half");
                 let dedupe = !args.iter().any(|arg| arg == "--no-dedupe");
+                let keep_constants_f32 = args.iter().any(|arg| arg == "--keep-constants-f32");
 
-                if let Err(err) = optimize(&input, &output, convert_half, dedupe) {
+                if let Err(err) = optimize(&input, &output, convert_half, dedupe, keep_constants_f32) {
                     eprintln!("{err}");
                     std::process::exit(1);
                 }

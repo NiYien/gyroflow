@@ -422,7 +422,11 @@ impl<B: Backend> Submodule1<B> {
         let mul2_out1 = transpose2_out1
             .mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let matmul4_out1 = mul1_out1.matmul(mul2_out1);
-        let softmax1_out1 = burn::tensor::activation::softmax(matmul4_out1, 2);
+        let softmax1_out1 = {
+            let dtype = matmul4_out1.dtype();
+            burn::tensor::activation::softmax(matmul4_out1.cast(burn::tensor::DType::F32), 2)
+                .cast(dtype)
+        };
         let matmul5_out1 = softmax1_out1.matmul(linear3_out1);
         let linear4_out1 = self.linear4.forward(matmul5_out1);
         let layernormalization1_out1 = {
@@ -471,7 +475,11 @@ impl<B: Backend> Submodule1<B> {
         let mul6_out1 = transpose3_out1
             .mul((constant109_out1).unsqueeze_dims(&[0isize, 1isize]));
         let matmul12_out1 = mul5_out1.matmul(mul6_out1);
-        let softmax2_out1 = burn::tensor::activation::softmax(matmul12_out1, 2);
+        let softmax2_out1 = {
+            let dtype = matmul12_out1.dtype();
+            burn::tensor::activation::softmax(matmul12_out1.cast(burn::tensor::DType::F32), 2)
+                .cast(dtype)
+        };
         let matmul13_out1 = softmax2_out1.matmul(linear9_out1);
         let linear10_out1 = self.linear10.forward(matmul13_out1);
         let layernormalization3_out1 = {
@@ -819,7 +827,11 @@ impl<B: Backend> Submodule2<B> {
         let mul10_out1 = reshape4_out1
             .mul((constant140_out1).unsqueeze_dims(&[0isize, 1isize]));
         let matmul17_out1 = mul9_out1.matmul(mul10_out1);
-        let softmax3_out1 = burn::tensor::activation::softmax(matmul17_out1, 2);
+        let softmax3_out1 = {
+            let dtype = matmul17_out1.dtype();
+            burn::tensor::activation::softmax(matmul17_out1.cast(burn::tensor::DType::F32), 2)
+                .cast(dtype)
+        };
         let constant86_out1 = self.constant86.val();
         let matmul18_out1 = softmax3_out1.matmul(constant86_out1);
         let reshape5_out1 = matmul18_out1.reshape([1, 30, 40, 2]);
@@ -857,15 +869,19 @@ impl<B: Backend> Submodule2<B> {
         let sub3_out1 = div7_out1
             .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat9_out1 = burn::tensor::Tensor::cat([sub2_out1, sub3_out1].into(), 3);
-        let gridsample1_out1 = div5_out1
-            .grid_sample_2d(
-                concat9_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample1_out1 = {
+            let dtype = div5_out1.dtype();
+            div5_out1.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat9_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape10_out1 = gridsample1_out1.reshape([1, 30, 40, -1]);
         let transpose9_out1 = reshape10_out1.permute([0, 3, 1, 2]);
         let constant93_out1 = self.constant93.val();
@@ -919,10 +935,18 @@ impl<B: Backend> Submodule2<B> {
         let conv2d20_out1 = self.conv2d20.forward(leakyrelu19_out1);
         let slice9_out1 = conv2d20_out1.slice(s![.., 0..2, .., ..]);
         let add7_out1 = sub1_out1.add(slice9_out1);
-        let resize1_out1 = self.resize1.forward(add7_out1);
+        let resize1_out1 = {
+            let dtype = add7_out1.dtype();
+            self.resize1.forward(add7_out1.cast(burn::tensor::DType::F32))
+                .cast(dtype)
+        };
         let mul13_out1 = resize1_out1
             .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let resize2_out1 = self.resize2.forward(split1_out2);
+        let resize2_out1 = {
+            let dtype = split1_out2.dtype();
+            self.resize2.forward(split1_out2.cast(burn::tensor::DType::F32))
+                .cast(dtype)
+        };
         let concat11_out1 = burn::tensor::Tensor::cat(
             [split2_out2, resize2_out1].into(),
             1,
@@ -947,7 +971,11 @@ impl<B: Backend> Submodule2<B> {
         let reshape13_out1 = matmul20_out1.reshape([4800, 1, 60, 80]);
         let div9_out1 = reshape13_out1
             .div((constant88_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let resize3_out1 = self.resize3.forward(relu1_out1);
+        let resize3_out1 = {
+            let dtype = relu1_out1.dtype();
+            self.resize3.forward(relu1_out1.cast(burn::tensor::DType::F32))
+                .cast(dtype)
+        };
         let concat12_out1 = burn::tensor::Tensor::cat(
             [relu2_out1, resize3_out1].into(),
             1,
@@ -1207,16 +1235,20 @@ impl<B: Backend> Submodule3<B> {
         let sub5_out1 = div12_out1
             .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat13_out1 = burn::tensor::Tensor::cat([sub4_out1, sub5_out1].into(), 3);
-        let gridsample2_out1 = div9_out1
-            .clone()
-            .grid_sample_2d(
-                concat13_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample2_out1 = {
+            let data = div9_out1.clone();
+            let dtype = data.dtype();
+            data.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat13_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape15_out1 = gridsample2_out1.reshape([1, 60, 80, -1]);
         let transpose12_out1 = reshape15_out1.permute([0, 3, 1, 2]);
         let constant99_out1 = self.constant99.val();
@@ -1295,15 +1327,19 @@ impl<B: Backend> Submodule3<B> {
         let sub7_out1 = div14_out1
             .sub((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat15_out1 = burn::tensor::Tensor::cat([sub6_out1, sub7_out1].into(), 3);
-        let gridsample3_out1 = div9_out1
-            .grid_sample_2d(
-                concat15_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample3_out1 = {
+            let dtype = div9_out1.dtype();
+            div9_out1.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat15_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape17_out1 = gridsample3_out1.reshape([1, 60, 80, -1]);
         let transpose14_out1 = reshape17_out1.permute([0, 3, 1, 2]);
         let concat16_out1 = burn::tensor::Tensor::cat(
@@ -1538,16 +1574,20 @@ impl<B: Backend> Submodule4<B> {
         let sub9_out1 = div16_out1
             .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat17_out1 = burn::tensor::Tensor::cat([sub8_out1, sub9_out1].into(), 3);
-        let gridsample4_out1 = div9_out1
-            .clone()
-            .grid_sample_2d(
-                concat17_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample4_out1 = {
+            let data = div9_out1.clone();
+            let dtype = data.dtype();
+            data.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat17_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape19_out1 = gridsample4_out1.reshape([1, 60, 80, -1]);
         let transpose16_out1 = reshape19_out1.permute([0, 3, 1, 2]);
         let concat18_out1 = burn::tensor::Tensor::cat(
@@ -1627,15 +1667,19 @@ impl<B: Backend> Submodule4<B> {
             [sub10_out1, sub11_out1].into(),
             3,
         );
-        let gridsample5_out1 = div9_out1
-            .grid_sample_2d(
-                concat19_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample5_out1 = {
+            let dtype = div9_out1.dtype();
+            div9_out1.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat19_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape21_out1 = gridsample5_out1.reshape([1, 60, 80, -1]);
         let transpose18_out1 = reshape21_out1.permute([0, 3, 1, 2]);
         let concat20_out1 = burn::tensor::Tensor::cat(
@@ -1891,16 +1935,20 @@ impl<B: Backend> Submodule5<B> {
             [sub12_out1, sub13_out1].into(),
             3,
         );
-        let gridsample6_out1 = div9_out1
-            .clone()
-            .grid_sample_2d(
-                concat21_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample6_out1 = {
+            let data = div9_out1.clone();
+            let dtype = data.dtype();
+            data.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat21_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape23_out1 = gridsample6_out1.reshape([1, 60, 80, -1]);
         let transpose20_out1 = reshape23_out1.permute([0, 3, 1, 2]);
         let concat22_out1 = burn::tensor::Tensor::cat(
@@ -1980,15 +2028,19 @@ impl<B: Backend> Submodule5<B> {
             [sub14_out1, sub15_out1].into(),
             3,
         );
-        let gridsample7_out1 = div9_out1
-            .grid_sample_2d(
-                concat23_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample7_out1 = {
+            let dtype = div9_out1.dtype();
+            div9_out1.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat23_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape25_out1 = gridsample7_out1.reshape([1, 60, 80, -1]);
         let transpose22_out1 = reshape25_out1.permute([0, 3, 1, 2]);
         let concat24_out1 = burn::tensor::Tensor::cat(
@@ -2403,16 +2455,20 @@ impl<B: Backend> Submodule6<B> {
             [sub16_out1, sub17_out1].into(),
             3,
         );
-        let gridsample8_out1 = div9_out1
-            .clone()
-            .grid_sample_2d(
-                concat25_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample8_out1 = {
+            let data = div9_out1.clone();
+            let dtype = data.dtype();
+            data.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat25_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape27_out1 = gridsample8_out1.reshape([1, 60, 80, -1]);
         let transpose24_out1 = reshape27_out1.permute([0, 3, 1, 2]);
         let concat26_out1 = burn::tensor::Tensor::cat(
@@ -2492,15 +2548,19 @@ impl<B: Backend> Submodule6<B> {
             [sub18_out1, sub19_out1].into(),
             3,
         );
-        let gridsample9_out1 = div9_out1
-            .grid_sample_2d(
-                concat27_out1,
-                burn::tensor::ops::GridSampleOptions::new(
-                        burn::tensor::ops::InterpolateMode::Bilinear,
-                    )
-                    .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
-                    .with_align_corners(true),
-            );
+        let gridsample9_out1 = {
+            let dtype = div9_out1.dtype();
+            div9_out1.cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat27_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
+                            burn::tensor::ops::InterpolateMode::Bilinear,
+                        )
+                        .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
+                        .with_align_corners(true),
+                )
+                .cast(dtype)
+        };
         let reshape29_out1 = gridsample9_out1.reshape([1, 60, 80, -1]);
         let transpose26_out1 = reshape29_out1.permute([0, 3, 1, 2]);
         let concat28_out1 = burn::tensor::Tensor::cat(
@@ -2572,7 +2632,11 @@ impl<B: Backend> Submodule6<B> {
         let relu4_out1 = burn::tensor::activation::relu(conv2d92_out1);
         let conv2d93_out1 = self.conv2d93.forward(relu4_out1);
         let reshape30_out1 = conv2d93_out1.reshape([1, 1, 9, 8, 8, 60, 80]);
-        let softmax4_out1 = burn::tensor::activation::softmax(reshape30_out1, 2);
+        let softmax4_out1 = {
+            let dtype = reshape30_out1.dtype();
+            burn::tensor::activation::softmax(reshape30_out1.cast(burn::tensor::DType::F32), 2)
+                .cast(dtype)
+        };
         let pad1_out1 = add33_out1
             .pad(
                 [(0usize, 0usize), (0usize, 0usize), (1usize, 1usize), (1usize, 1usize)],
@@ -2586,7 +2650,10 @@ impl<B: Backend> Submodule6<B> {
         let reshape31_out1 = transpose27_out1.reshape([1, 2, 9, 1, 1, 60, 80]);
         let mul34_out1 = softmax4_out1.mul(reshape31_out1);
         let reducesum1_out1 = {
-            mul34_out1.sum_dim(2usize).squeeze_dims::<6usize>(&[2])
+            let dtype = mul34_out1.dtype();
+            mul34_out1.cast(burn::tensor::DType::F32)
+                .sum_dim(2usize).squeeze_dims::<6usize>(&[2])
+                .cast(dtype)
         };
         let transpose28_out1 = reducesum1_out1.permute([0, 1, 4, 2, 5, 3]);
         let reshape32_out1 = transpose28_out1.reshape([1, 2, 480, 640]);
