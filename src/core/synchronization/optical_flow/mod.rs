@@ -22,7 +22,9 @@ pub trait OpticalFlowTrait {
     fn optical_flow_to(&self, to: &OpticalFlowMethod) -> OpticalFlowPair;
     fn cleanup(&mut self);
     fn can_cleanup(&self) -> bool;
-    fn has_data(&self) -> bool { true }
+    fn has_data(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(feature = "neuflow")]
@@ -70,7 +72,9 @@ impl OpticalFlowMethod {
             #[cfg(feature = "neuflow")]
             3 => {
                 if rgb_data.is_none() {
-                    log::warn!("NeuFlow detect_features: rgb_data is None for ts={timestamp_us} ({width}x{height}) - frame will be unprocessable");
+                    log::warn!(
+                        "NeuFlow detect_features: rgb_data is None for ts={timestamp_us} ({width}x{height}) - frame will be unprocessable"
+                    );
                 }
                 Self::OFNeuFlowV2(OFNeuFlowV2::new(
                     timestamp_us,
@@ -78,7 +82,7 @@ impl OpticalFlowMethod {
                     width,
                     height,
                 ))
-            },
+            }
             _ => {
                 log::error!("Unknown OF method {method}",);
                 Self::OFAkaze(OFAkaze::detect_features(timestamp_us, img, width, height))

@@ -284,11 +284,16 @@ impl AutosyncProcess {
                 Some(Arc::new(rgb))
             } else if let Some(ref gray_img) = img {
                 // Fallback: construct pseudo-RGB from grayscale (R=G=B=Y)
-                log::debug!("NeuFlow: NV12→RGB failed (pixels.len={}), using grayscale fallback", pixels.len());
+                log::debug!(
+                    "NeuFlow: NV12→RGB failed (pixels.len={}), using grayscale fallback",
+                    pixels.len()
+                );
                 let gray_bytes = gray_img.as_raw();
                 let mut rgb = Vec::with_capacity(gray_bytes.len() * 3);
                 for &g in gray_bytes.iter().take((width * height) as usize) {
-                    rgb.push(g); rgb.push(g); rgb.push(g);
+                    rgb.push(g);
+                    rgb.push(g);
+                    rgb.push(g);
                 }
                 Some(Arc::new(rgb))
             } else {
@@ -340,14 +345,31 @@ impl AutosyncProcess {
                     return;
                 }
                 if let Some(img) = img {
-                    estimator.detect_features(frame_no, timestamp_us, img, rgb_data, width, height, method);
+                    estimator.detect_features(
+                        frame_no,
+                        timestamp_us,
+                        img,
+                        rgb_data,
+                        width,
+                        height,
+                        method,
+                    );
                     total_detected_frames.fetch_add(1, SeqCst);
 
                     if frame_no % 7 == 0 {
+                        let drain_cb = |done: usize, total: usize| {
+                            if let Some(cb) = &progress_cb {
+                                let d = total_detected_frames.load(SeqCst);
+                                let t = total_read_frames.load(SeqCst).max(frame_count);
+                                let frac = done as f64 / total.max(1) as f64;
+                                cb(0.10 + frac * 0.50, d, t);
+                            }
+                        };
                         estimator.process_detected_frames(
                             org_fps,
                             scaled_fps,
                             &compute_params.read(),
+                            Some(&drain_cb),
                         );
                         estimator.recalculate_gyro_data(org_fps, false);
                     }
@@ -355,7 +377,7 @@ impl AutosyncProcess {
                     if let Some(cb) = &progress_cb {
                         let d = total_detected_frames.load(SeqCst);
                         let t = total_read_frames.load(SeqCst).max(frame_count);
-                        cb((d as f64 / t.max(1) as f64) * 0.58, d, t);
+                        cb((d as f64 / t.max(1) as f64) * 0.10, d, t);
                     }
                 } else {
                     log::warn!("Failed to get image {:?}", img);
@@ -378,11 +400,22 @@ impl AutosyncProcess {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let t_final = std::time::Instant::now();
-        log::info!("[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames");
+        log::info!(
+            "[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames"
+        );
+        let drain_cb = |done: usize, total: usize| {
+            if let Some(cb) = &progress_cb {
+                let d = self.total_detected_frames.load(SeqCst);
+                let t = self.total_read_frames.load(SeqCst);
+                let frac = done as f64 / total.max(1) as f64;
+                cb(0.10 + frac * 0.50, d, t);
+            }
+        };
         self.estimator.process_detected_frames(
             self.org_fps,
             self.scaled_fps,
             &self.compute_params.read(),
+            Some(&drain_cb),
         );
         log::info!(
             "[NeuFlow timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",
@@ -441,7 +474,7 @@ impl AutosyncProcess {
         if let Some(cb) = &progress_cb {
             let d = self.total_detected_frames.load(SeqCst);
             let t = self.total_read_frames.load(SeqCst);
-            cb(0.6, d, t);
+            cb(0.60, d, t);
         }
 
         let check_negative =

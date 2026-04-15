@@ -1950,7 +1950,8 @@ mod tests {
     #[test]
     fn debug_auto_rotation_from_bin_file() {
         // 测试1: 用分段 BIN 文件（每个文件独立处理）
-        let test_dir = "D:/Gyroflow_NiYien/Test_function/AutoRotate/2026-04-09/Temp/2026-04-09_11-38-31_mix";
+        let test_dir =
+            "D:/Gyroflow_NiYien/Test_function/AutoRotate/2026-04-09/Temp/2026-04-09_11-38-31_mix";
         let test_path = std::path::Path::new(test_dir);
         if !test_path.exists() {
             eprintln!("Test dir not found, skipping");
@@ -1965,15 +1966,28 @@ mod tests {
             let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let options = telemetry_parser::InputOptions::default();
             let input = telemetry_parser::Input::from_stream_with_options(
-                &mut stream, filesize, file_path, |_| {}, cancel, options
-            ).unwrap();
-            let raw_imu = telemetry_parser::util::normalized_imu_interpolated(&input, Some("XYZ".into())).unwrap();
+                &mut stream,
+                filesize,
+                file_path,
+                |_| {},
+                cancel,
+                options,
+            )
+            .unwrap();
+            let raw_imu =
+                telemetry_parser::util::normalized_imu_interpolated(&input, Some("XYZ".into()))
+                    .unwrap();
             let mut additional_data = serde_json::Value::Object(serde_json::Map::new());
             if let Some(ref samples) = input.samples {
                 for info in samples {
                     if let Some(ref tag_map) = info.tag_map {
-                        if let Some(map) = tag_map.get(&telemetry_parser::tags_impl::GroupId::Default) {
-                            if let Some(v) = map.get(&telemetry_parser::tags_impl::TagId::Metadata).map(|t| &t.value) {
+                        if let Some(map) =
+                            tag_map.get(&telemetry_parser::tags_impl::GroupId::Default)
+                        {
+                            if let Some(v) = map
+                                .get(&telemetry_parser::tags_impl::TagId::Metadata)
+                                .map(|t| &t.value)
+                            {
                                 if let telemetry_parser::tags_impl::TagValue::Json(v) = v {
                                     crate::util::merge_json(&mut additional_data, v.get());
                                 }
@@ -1987,26 +2001,40 @@ mod tests {
 
         // 测试1: 分段文件
         eprintln!("\n=== Test 1: Individual split BIN files ===");
-        let mut files: Vec<_> = std::fs::read_dir(test_dir).unwrap()
-            .filter_map(|e| e.ok()).map(|e| e.path())
-            .filter(|p| p.extension().map_or(false, |e| e == "bin")).collect();
+        let mut files: Vec<_> = std::fs::read_dir(test_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| p.extension().map_or(false, |e| e == "bin"))
+            .collect();
         files.sort();
         let mut state = SenseFlowAutoRotationState::default();
         for (i, file_path) in files.iter().enumerate() {
             let fname = file_path.file_name().unwrap().to_string_lossy().to_string();
             let (raw_imu, additional_data) = load_bin(file_path);
             let result = compute_auto_rotation_for_segment_with_state(
-                &mut state, &raw_imu, Some(&additional_data), &fname,
+                &mut state,
+                &raw_imu,
+                Some(&additional_data),
+                &fname,
             );
             let exp = expected.get(i).copied().unwrap_or(-1);
             let got = result.unwrap_or(-1);
             let status = if got == exp { "OK" } else { "FAIL" };
-            eprintln!("[split] {}: expected={} got={} (imu_len={})", fname, exp, got, raw_imu.len());
+            eprintln!(
+                "[split] {}: expected={} got={} (imu_len={})",
+                fname,
+                exp,
+                got,
+                raw_imu.len()
+            );
         }
 
         // 测试2: 原始 MIX 文件，按时间范围切片（模拟 batch auto match）
         eprintln!("\n=== Test 2: Original MIX file with time-range slicing ===");
-        let mix_path = std::path::Path::new("D:/Gyroflow_NiYien/Test_function/AutoRotate/2026-04-09/2026-04-09_11-38-31_mix.bin");
+        let mix_path = std::path::Path::new(
+            "D:/Gyroflow_NiYien/Test_function/AutoRotate/2026-04-09/2026-04-09_11-38-31_mix.bin",
+        );
         if !mix_path.exists() {
             eprintln!("MIX file not found");
             return;
@@ -2014,7 +2042,8 @@ mod tests {
 
         // 读取第一个 split 文件的 first sample，然后在 MIX 的 raw_imu 中找到匹配时间
         let (mix_imu, mix_additional) = load_bin(mix_path);
-        eprintln!("MIX file: total_imu={} first_ts={:.1} last_ts={:.1}",
+        eprintln!(
+            "MIX file: total_imu={} first_ts={:.1} last_ts={:.1}",
             mix_imu.len(),
             mix_imu.first().map(|s| s.timestamp_ms).unwrap_or(0.0),
             mix_imu.last().map(|s| s.timestamp_ms).unwrap_or(0.0),
@@ -2025,14 +2054,19 @@ mod tests {
         for (i, file_path) in files.iter().enumerate() {
             let fname = file_path.file_name().unwrap().to_string_lossy().to_string();
             let (seg_imu, _) = load_bin(file_path);
-            if seg_imu.is_empty() { continue; }
+            if seg_imu.is_empty() {
+                continue;
+            }
 
             // 用 first sample 的 gyro/accl 值在 MIX 中查找匹配位置
             let first_seg = &seg_imu[0];
             let mut found_idx = None;
             for (j, mix_s) in mix_imu.iter().enumerate() {
                 if let (Some(sg), Some(mg)) = (first_seg.gyro, mix_s.gyro) {
-                    if (sg[0] - mg[0]).abs() < 1e-6 && (sg[1] - mg[1]).abs() < 1e-6 && (sg[2] - mg[2]).abs() < 1e-6 {
+                    if (sg[0] - mg[0]).abs() < 1e-6
+                        && (sg[1] - mg[1]).abs() < 1e-6
+                        && (sg[2] - mg[2]).abs() < 1e-6
+                    {
                         found_idx = Some(j);
                         break;
                     }
@@ -2045,22 +2079,36 @@ mod tests {
             };
 
             let start_ms = mix_imu[idx].timestamp_ms;
-            let end_ms = mix_imu.last().map(|s| s.timestamp_ms).unwrap_or(start_ms + 100000.0);
+            let end_ms = mix_imu
+                .last()
+                .map(|s| s.timestamp_ms)
+                .unwrap_or(start_ms + 100000.0);
 
             // 模拟 clone_metadata_for_job 的时间切片
-            let sliced: Vec<TimeIMU> = mix_imu.iter()
+            let sliced: Vec<TimeIMU> = mix_imu
+                .iter()
                 .filter(|s| s.timestamp_ms >= start_ms && s.timestamp_ms <= end_ms)
                 .cloned()
                 .collect();
 
             let result = compute_auto_rotation_for_segment_with_state(
-                &mut state2, &sliced, Some(&mix_additional), &fname,
+                &mut state2,
+                &sliced,
+                Some(&mix_additional),
+                &fname,
             );
             let exp = expected.get(i).copied().unwrap_or(-1);
             let got = result.unwrap_or(-1);
             let status = if got == exp { "OK" } else { "FAIL" };
-            eprintln!("[mix] {}: expected={} got={} (mix_idx={} start_ms={:.1} sliced_len={})",
-                fname, exp, got, idx, start_ms, sliced.len());
+            eprintln!(
+                "[mix] {}: expected={} got={} (mix_idx={} start_ms={:.1} sliced_len={})",
+                fname,
+                exp,
+                got,
+                idx,
+                start_ms,
+                sliced.len()
+            );
         }
     }
 

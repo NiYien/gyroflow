@@ -232,7 +232,12 @@ fn populate_lens_metadata_fields(
         lens.calibrated_by = "NiYien".to_string();
     }
     let sanitized_readout_time = md.frame_readout_time.filter(|v| v.is_finite());
-    if lens.frame_readout_time.map(|v| v.is_finite()).unwrap_or(false) == false {
+    if lens
+        .frame_readout_time
+        .map(|v| v.is_finite())
+        .unwrap_or(false)
+        == false
+    {
         lens.frame_readout_time = sanitized_readout_time;
     }
     if lens.frame_readout_direction.is_none() && sanitized_readout_time.is_some() {
@@ -271,7 +276,8 @@ impl StabilizationManager {
             let p = self.params.read();
             p.size
         };
-        let can_build_synthetic = !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
+        let can_build_synthetic =
+            !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
         let mut should_build_synthetic = false;
 
         if let Some(ref lens) = md.lens_profile {
@@ -1098,7 +1104,11 @@ impl StabilizationManager {
                 frame_at_timestamp(timestamp_us as f64 / 1000.0, p.get_scaled_fps()) as usize; // used only to draw features and OF
 
             if p.show_optical_flow {
-                let num_frames = if p.of_method == 2 || p.of_method == 3 { 1 } else { 3 };
+                let num_frames = if p.of_method == 2 || p.of_method == 3 {
+                    1
+                } else {
+                    3
+                };
                 if let Some(pxs) = self.get_opticalflow_pixels(timestamp_us, num_frames, size) {
                     for (x, y, a) in pxs {
                         let a = Alpha::from(a as u8);

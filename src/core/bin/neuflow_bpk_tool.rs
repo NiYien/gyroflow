@@ -65,10 +65,13 @@ mod app {
     }
 
     fn read_burnpack_metadata(input: &Path) -> Result<BurnpackMetadata, String> {
-        let bytes = fs::read(input)
-            .map_err(|e| format!("Failed to read {}: {e}", input.display()))?;
+        let bytes =
+            fs::read(input).map_err(|e| format!("Failed to read {}: {e}", input.display()))?;
         if bytes.len() < HEADER_SIZE {
-            return Err(format!("{} is too small to be a Burnpack file", input.display()));
+            return Err(format!(
+                "{} is too small to be a Burnpack file",
+                input.display()
+            ));
         }
         let metadata_size = LittleEndian::read_u32(&bytes[6..10]) as usize;
         let metadata_start = HEADER_SIZE;
@@ -171,7 +174,11 @@ mod app {
             }
 
             groups
-                .entry((dtype.to_string(), entry.shape.clone(), hash_bytes(&entry.bytes)))
+                .entry((
+                    dtype.to_string(),
+                    entry.shape.clone(),
+                    hash_bytes(&entry.bytes),
+                ))
                 .or_default()
                 .push(entry);
         }
@@ -193,7 +200,10 @@ mod app {
                 wasted,
                 dtype,
                 shape,
-                members.into_iter().map(|entry| entry.name.clone()).collect(),
+                members
+                    .into_iter()
+                    .map(|entry| entry.name.clone())
+                    .collect(),
             ));
         }
 
@@ -294,7 +304,8 @@ mod app {
     ) -> Result<(), String> {
         let mut descriptors = BTreeMap::new();
         let mut unique_blobs: Vec<(u64, Vec<u8>)> = Vec::new();
-        let mut shared_offsets: BTreeMap<(String, Vec<usize>, String), (u64, u64)> = BTreeMap::new();
+        let mut shared_offsets: BTreeMap<(String, Vec<usize>, String), (u64, u64)> =
+            BTreeMap::new();
         let mut current_offset = 0u64;
 
         for entry in entries {
@@ -377,7 +388,13 @@ mod app {
         Ok(())
     }
 
-    fn optimize(input: &Path, output: &Path, convert_half: bool, dedupe: bool, keep_constants_f32: bool) -> Result<(), String> {
+    fn optimize(
+        input: &Path,
+        output: &Path,
+        convert_half: bool,
+        dedupe: bool,
+        keep_constants_f32: bool,
+    ) -> Result<(), String> {
         let entries = read_entries(input)?;
         let mut optimized = entries.clone();
         let mut converted = 0usize;
@@ -446,8 +463,12 @@ mod app {
 
     fn print_usage() {
         eprintln!("Usage:");
-        eprintln!("  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- analyze [input]");
-        eprintln!("  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- optimize [input] [output] [--no-half] [--no-dedupe] [--keep-constants-f32]");
+        eprintln!(
+            "  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- analyze [input]"
+        );
+        eprintln!(
+            "  cargo run --manifest-path src/core/Cargo.toml --features neuflow --bin neuflow_bpk_tool -- optimize [input] [output] [--no-half] [--no-dedupe] [--keep-constants-f32]"
+        );
     }
 
     pub fn main() {
@@ -459,16 +480,18 @@ mod app {
 
         match args[1].as_str() {
             "analyze" => {
-                let input = args.get(2).map(PathBuf::from).unwrap_or_else(default_input_path);
-                match read_entries(&input)
-                    .and_then(|entries| {
-                        let size = fs::metadata(&input)
-                            .map_err(|e| format!("Failed to stat {}: {e}", input.display()))?
-                            .len();
-                        let metadata = read_burnpack_metadata(&input)?;
-                        analyze_entries(&entries, &metadata, size);
-                        Ok(())
-                    }) {
+                let input = args
+                    .get(2)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_input_path);
+                match read_entries(&input).and_then(|entries| {
+                    let size = fs::metadata(&input)
+                        .map_err(|e| format!("Failed to stat {}: {e}", input.display()))?
+                        .len();
+                    let metadata = read_burnpack_metadata(&input)?;
+                    analyze_entries(&entries, &metadata, size);
+                    Ok(())
+                }) {
                     Ok(()) => {}
                     Err(err) => {
                         eprintln!("{err}");
@@ -477,7 +500,10 @@ mod app {
                 }
             }
             "optimize" => {
-                let input = args.get(2).map(PathBuf::from).unwrap_or_else(default_input_path);
+                let input = args
+                    .get(2)
+                    .map(PathBuf::from)
+                    .unwrap_or_else(default_input_path);
                 let output = args
                     .get(3)
                     .map(PathBuf::from)
@@ -486,7 +512,9 @@ mod app {
                 let dedupe = !args.iter().any(|arg| arg == "--no-dedupe");
                 let keep_constants_f32 = args.iter().any(|arg| arg == "--keep-constants-f32");
 
-                if let Err(err) = optimize(&input, &output, convert_half, dedupe, keep_constants_f32) {
+                if let Err(err) =
+                    optimize(&input, &output, convert_half, dedupe, keep_constants_f32)
+                {
                     eprintln!("{err}");
                     std::process::exit(1);
                 }

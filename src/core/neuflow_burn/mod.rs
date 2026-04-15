@@ -21,7 +21,7 @@
 //!
 //! Model I/O:
 //! - Input: img0 [1, 3, H, W] float32, img1 [1, 3, H, W] float32
-//! - Current fixed export baseline is H=480, W=640 (already landscape 640x480)
+//! - Current fixed export baseline is H=432, W=768 (landscape 768x432, 16:9)
 //! - Output: flow [2, H, W] float32 CHW layout (dx plane, dy plane)
 
 #[allow(
@@ -49,6 +49,8 @@ use neuflow_v2_generated_fp16::Model;
 // Backend type: Wgpu<f16> — all compute in FP16.
 type B = burn::backend::wgpu::Wgpu<f16>;
 
+
+
 fn is_optimized_weight_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -61,7 +63,7 @@ fn is_optimized_weight_file(path: &Path) -> bool {
 
 /// GPU-side sparse sampling result: flow values at selected grid points.
 pub struct SampledFlow {
-    /// Grid point coordinates (x, y) in model space (640×480).
+    /// Grid point coordinates (x, y) in model space (768×432).
     pub grid_points: Vec<(usize, usize)>,
     /// dx values at each grid point.
     pub dx: Vec<f32>,
@@ -115,12 +117,19 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
         .name("neuflow-infer".to_string())
         .spawn(move || {
             if std::env::var_os("CUBECL_AUTOTUNE_LEVEL").is_none() {
-                unsafe { std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0"); }
+                unsafe {
+                    std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0");
+                }
             }
 
             let model_result = init_model();
             match model_result {
                 Ok((model, device)) => {
+                    // Run warmup (autotune) before accepting inference requests,
+                    // so it happens during app startup in the background.
+                    if let Err(e) = run_warmup(&model, &device) {
+                        log::error!("NeuFlow Burn: warmup failed during init: {e}");
+                    }
                     let _ = init_tx.send(Ok(()));
                     inference_loop(model, device, rx);
                 }
@@ -131,7 +140,8 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
         })
         .map_err(|e| format!("Failed to spawn inference thread: {e}"))?;
 
-    let init_result = init_rx.recv()
+    let init_result = init_rx
+        .recv()
         .map_err(|_| "Inference thread init channel closed unexpectedly".to_string())?;
     init_result?;
 
@@ -144,7 +154,10 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
 
 /// Create GPU tensors from owned f32 data. Zero-copy into TensorData.
 fn prepare_tensors(
-    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
+    img0: Vec<f32>,
+    img1: Vec<f32>,
+    h: usize,
+    w: usize,
     device: &burn::backend::wgpu::WgpuDevice,
 ) -> (Tensor<B, 4>, Tensor<B, 4>) {
     let shape = [1usize, 3, h, w];
@@ -157,11 +170,18 @@ fn prepare_tensors(
 
 /// Extract flow from GPU tensor → CHW Vec<f32>. No interleave.
 /// Async version: uses into_data_async() for non-blocking GPU readback.
-async fn extract_flow_async(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<Vec<f32>, String> {
-    let flow_data = flow_tensor.into_data_async().await
+async fn extract_flow_async(
+    flow_tensor: Tensor<B, 4>,
+    h: usize,
+    w: usize,
+) -> Result<Vec<f32>, String> {
+    let flow_data = flow_tensor
+        .into_data_async()
+        .await
         .map_err(|e| format!("Async readback failed: {e:?}"))?
         .convert::<f32>();
-    let flow_vec: Vec<f32> = flow_data.to_vec()
+    let flow_vec: Vec<f32> = flow_data
+        .to_vec()
         .map_err(|e| format!("Failed to extract flow data: {e:?}"))?;
 
     let plane = h * w;
@@ -202,11 +222,16 @@ fn readback_flow_sync(flow_tensor: Tensor<B, 4>, h: usize, w: usize) -> Result<V
 }
 
 /// Readback a sampled tensor synchronously (sparse sampling path).
-fn readback_sampled_sync(sampled: Tensor<B, 2>, num_pts: usize, grid_points: Vec<(usize, usize)>) -> Result<SampledFlow, String> {
+fn readback_sampled_sync(
+    sampled: Tensor<B, 2>,
+    num_pts: usize,
+    grid_points: Vec<(usize, usize)>,
+) -> Result<SampledFlow, String> {
     let sampled_data = pollster::block_on(sampled.into_data_async())
         .map_err(|e| format!("Readback failed: {e:?}"))?
         .convert::<f32>();
-    let sampled_vec: Vec<f32> = sampled_data.to_vec()
+    let sampled_vec: Vec<f32> = sampled_data
+        .to_vec()
         .map_err(|e| format!("Failed to extract sampled data: {e:?}"))?;
     if sampled_vec.len() == num_pts * 2 {
         Ok(SampledFlow {
@@ -215,7 +240,11 @@ fn readback_sampled_sync(sampled: Tensor<B, 2>, num_pts: usize, grid_points: Vec
             dy: sampled_vec[num_pts..].to_vec(),
         })
     } else {
-        Err(format!("Sampled flow size mismatch: expected {}, got {}", num_pts * 2, sampled_vec.len()))
+        Err(format!(
+            "Sampled flow size mismatch: expected {}, got {}",
+            num_pts * 2,
+            sampled_vec.len()
+        ))
     }
 }
 
@@ -244,7 +273,8 @@ where
             // 1. Poll readback — first poll triggers GPU flush + command submission
             if readback_ready.is_none() {
                 let polled = {
-                    let _trace_guard = neuflow_trace::enter(Some(readback_seq), TracePhase::Readback);
+                    let _trace_guard =
+                        neuflow_trace::enter(Some(readback_seq), TracePhase::Readback);
                     readback.as_mut().poll(cx)
                 };
                 if let Poll::Ready(val) = polled {
@@ -263,7 +293,8 @@ where
             // 3. Poll readback again — GPU may have finished during sync work
             let _trace_guard = neuflow_trace::enter(Some(readback_seq), TracePhase::Readback);
             readback.as_mut().poll(cx)
-        }).await
+        })
+        .await
     })
 }
 
@@ -286,7 +317,11 @@ enum PendingReadback {
 }
 
 /// The main inference loop with pipelined GPU readback.
-fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: mpsc::Receiver<InferRequest>) {
+fn inference_loop(
+    model: Model<B>,
+    device: burn::backend::wgpu::WgpuDevice,
+    rx: mpsc::Receiver<InferRequest>,
+) {
     let mut pending: Option<InferRequest> = None;
     let mut deferred: Option<PendingReadback> = None;
 
@@ -302,7 +337,14 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
         QUEUE_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         match request {
-            InferRequest::Infer { seq, img0, img1, h, w, reply } => {
+            InferRequest::Infer {
+                seq,
+                img0,
+                img1,
+                h,
+                w,
+                reply,
+            } => {
                 let t0 = Instant::now();
                 let mut t_tensor = t0;
                 let mut t_fwd = t0;
@@ -312,18 +354,26 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 if let Some(prev) = deferred.take() {
                     let t_pipe = Instant::now();
                     match prev {
-                        PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq } => {
+                        PendingReadback::Infer {
+                            flow_tensor: prev_ft,
+                            h: ph,
+                            w: pw,
+                            reply: prev_reply,
+                            seq: prev_seq,
+                        } => {
                             neuflow_trace::note_overlap(prev_seq, seq);
                             let prev_result = overlap_readback_with_forward(
                                 prev_seq,
                                 extract_flow_async(prev_ft, ph, pw),
                                 seq,
                                 || {
-                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
+                                    let _trace_guard =
+                                        neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                                     let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                                     t_tensor = Instant::now();
                                     drop(_trace_guard);
-                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
+                                    let _trace_guard =
+                                        neuflow_trace::enter(Some(seq), TracePhase::Forward);
                                     flow_tensor = Some(model.forward(t0_t, t1_t));
                                     t_fwd = Instant::now();
                                 },
@@ -336,18 +386,27 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                                 "[NeuFlow perf] #{prev_seq} PIPE readback+forward={pipe_ms:.1}ms (fwd={fwd_ms:.1}ms overlapped)"
                             );
                         }
-                        PendingReadback::Sample { sampled_tensor: prev_st, num_pts: pn, grid_points: pg, reply: prev_reply, seq: prev_seq, .. } => {
+                        PendingReadback::Sample {
+                            sampled_tensor: prev_st,
+                            num_pts: pn,
+                            grid_points: pg,
+                            reply: prev_reply,
+                            seq: prev_seq,
+                            ..
+                        } => {
                             neuflow_trace::note_overlap(prev_seq, seq);
                             let prev_result = overlap_readback_with_forward(
                                 prev_seq,
                                 prev_st.into_data_async(),
                                 seq,
                                 || {
-                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
+                                    let _trace_guard =
+                                        neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                                     let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                                     t_tensor = Instant::now();
                                     drop(_trace_guard);
-                                    let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Forward);
+                                    let _trace_guard =
+                                        neuflow_trace::enter(Some(seq), TracePhase::Forward);
                                     flow_tensor = Some(model.forward(t0_t, t1_t));
                                     t_fwd = Instant::now();
                                 },
@@ -355,9 +414,14 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                             let t_done = Instant::now();
                             let result = match prev_result {
                                 Ok(data) => {
-                                    let sv: Vec<f32> = data.convert::<f32>().to_vec().unwrap_or_default();
+                                    let sv: Vec<f32> =
+                                        data.convert::<f32>().to_vec().unwrap_or_default();
                                     if sv.len() == pn * 2 {
-                                        Ok(SampledFlow { grid_points: pg, dx: sv[..pn].to_vec(), dy: sv[pn..].to_vec() })
+                                        Ok(SampledFlow {
+                                            grid_points: pg,
+                                            dx: sv[..pn].to_vec(),
+                                            dy: sv[pn..].to_vec(),
+                                        })
                                     } else {
                                         Err(format!("Sampled flow size mismatch"))
                                     }
@@ -366,7 +430,9 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                             };
                             let _ = prev_reply.send(result);
                             let pipe_ms = (t_done - t_pipe).as_secs_f64() * 1000.0;
-                            log::debug!("[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+forward={pipe_ms:.1}ms");
+                            log::debug!(
+                                "[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+forward={pipe_ms:.1}ms"
+                            );
                         }
                     }
                 } else {
@@ -387,7 +453,11 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
 
                 if pending.is_some() {
                     deferred = Some(PendingReadback::Infer {
-                        flow_tensor, h, w, reply, seq,
+                        flow_tensor,
+                        h,
+                        w,
+                        reply,
+                        seq,
                     });
                 } else {
                     // Queue empty — readback immediately
@@ -405,10 +475,20 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
                 log::debug!(
                     "[NeuFlow perf] #{seq} tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms deferred={} prefetched={}",
-                    deferred.is_some(), pending.is_some()
+                    deferred.is_some(),
+                    pending.is_some()
                 );
             }
-            InferRequest::InferAndSample { seq, img0, img1, h, w, grid_points, linear_indices, reply } => {
+            InferRequest::InferAndSample {
+                seq,
+                img0,
+                img1,
+                h,
+                w,
+                grid_points,
+                linear_indices,
+                reply,
+            } => {
                 let t0 = Instant::now();
                 let mut t_tensor = t0;
                 let mut t_fwd = t0;
@@ -420,7 +500,8 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 if let Some(prev) = deferred.take() {
                     let t_pipe = Instant::now();
                     let do_forward_select = || {
-                        let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
+                        let _trace_guard =
+                            neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
                         let (t0_t, t1_t) = prepare_tensors(img0, img1, h, w, &device);
                         t_tensor = Instant::now();
                         drop(_trace_guard);
@@ -430,34 +511,71 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                         drop(_trace_guard);
                         let plane = h * w;
                         let idx_t = Tensor::<B, 1, burn::tensor::Int>::from_data(
-                            TensorData::new(linear_indices, [num_pts]), &device,
+                            TensorData::new(linear_indices, [num_pts]),
+                            &device,
                         );
                         let sampled = ft.reshape([2, plane]).select(1, idx_t);
                         t_select = Instant::now();
                         sampled_out = Some(sampled);
                     };
                     match prev {
-                        PendingReadback::Infer { flow_tensor: prev_ft, h: ph, w: pw, reply: prev_reply, seq: prev_seq, .. } => {
+                        PendingReadback::Infer {
+                            flow_tensor: prev_ft,
+                            h: ph,
+                            w: pw,
+                            reply: prev_reply,
+                            seq: prev_seq,
+                            ..
+                        } => {
                             neuflow_trace::note_overlap(prev_seq, seq);
                             let prev_result = overlap_readback_with_forward(
-                                prev_seq, extract_flow_async(prev_ft, ph, pw), seq, do_forward_select,
+                                prev_seq,
+                                extract_flow_async(prev_ft, ph, pw),
+                                seq,
+                                do_forward_select,
                             );
                             let _ = prev_reply.send(prev_result);
-                            log::debug!("[NeuFlow perf] #{prev_seq} PIPE readback+fwd_select={:.1}ms", (Instant::now() - t_pipe).as_secs_f64() * 1000.0);
+                            log::debug!(
+                                "[NeuFlow perf] #{prev_seq} PIPE readback+fwd_select={:.1}ms",
+                                (Instant::now() - t_pipe).as_secs_f64() * 1000.0
+                            );
                         }
-                        PendingReadback::Sample { sampled_tensor: prev_st, num_pts: pn, grid_points: pg, reply: prev_reply, seq: prev_seq, .. } => {
+                        PendingReadback::Sample {
+                            sampled_tensor: prev_st,
+                            num_pts: pn,
+                            grid_points: pg,
+                            reply: prev_reply,
+                            seq: prev_seq,
+                            ..
+                        } => {
                             neuflow_trace::note_overlap(prev_seq, seq);
-                            let prev_result = overlap_readback_with_forward(prev_seq, prev_st.into_data_async(), seq, do_forward_select);
+                            let prev_result = overlap_readback_with_forward(
+                                prev_seq,
+                                prev_st.into_data_async(),
+                                seq,
+                                do_forward_select,
+                            );
                             let result = match prev_result {
                                 Ok(data) => {
-                                    let sv: Vec<f32> = data.convert::<f32>().to_vec().unwrap_or_default();
-                                    if sv.len() == pn * 2 { Ok(SampledFlow { grid_points: pg, dx: sv[..pn].to_vec(), dy: sv[pn..].to_vec() }) }
-                                    else { Err("Sampled flow size mismatch".into()) }
+                                    let sv: Vec<f32> =
+                                        data.convert::<f32>().to_vec().unwrap_or_default();
+                                    if sv.len() == pn * 2 {
+                                        Ok(SampledFlow {
+                                            grid_points: pg,
+                                            dx: sv[..pn].to_vec(),
+                                            dy: sv[pn..].to_vec(),
+                                        })
+                                    } else {
+                                        Err("Sampled flow size mismatch".into())
+                                    }
                                 }
                                 Err(e) => Err(format!("Readback failed: {e:?}")),
                             };
                             let _ = prev_reply.send(result);
-                            log::debug!("[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+fwd_select={:.1}ms", (Instant::now() - t_pipe).as_secs_f64() * 1000.0);
+                            log::debug!(
+                                "[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+fwd_select={:.1}ms",
+                                (Instant::now() - t_pipe).as_secs_f64() * 1000.0
+                            );
                         }
                     }
                 } else {
@@ -471,7 +589,8 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                     drop(_trace_guard);
                     let plane = h * w;
                     let idx_t = Tensor::<B, 1, burn::tensor::Int>::from_data(
-                        TensorData::new(linear_indices, [num_pts]), &device,
+                        TensorData::new(linear_indices, [num_pts]),
+                        &device,
                     );
                     let sampled = ft.reshape([2, plane]).select(1, idx_t);
                     t_select = Instant::now();
@@ -483,7 +602,11 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
 
                 if pending.is_some() {
                     deferred = Some(PendingReadback::Sample {
-                        sampled_tensor: sampled, num_pts, grid_points, reply, seq,
+                        sampled_tensor: sampled,
+                        num_pts,
+                        grid_points,
+                        reply,
+                        seq,
                     });
                 } else {
                     let t_rb = Instant::now();
@@ -491,7 +614,9 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                     let result = readback_sampled_sync(sampled, num_pts, grid_points);
                     let rb_ms = t_rb.elapsed().as_secs_f64() * 1000.0;
                     let _ = reply.send(result);
-                    log::debug!("[NeuFlow perf] #{seq} SAMPLE IMMEDIATE readback={rb_ms:.1}ms pts={num_pts}");
+                    log::debug!(
+                        "[NeuFlow perf] #{seq} SAMPLE IMMEDIATE readback={rb_ms:.1}ms pts={num_pts}"
+                    );
                 }
 
                 let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
@@ -501,17 +626,34 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
                 neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
                 log::debug!(
                     "[NeuFlow perf] #{seq} SAMPLE tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms select={select_ms:.1}ms deferred={} prefetched={}",
-                    deferred.is_some(), pending.is_some()
+                    deferred.is_some(),
+                    pending.is_some()
                 );
             }
             InferRequest::Warmup { reply } => {
                 if let Some(prev) = deferred.take() {
                     match prev {
-                        PendingReadback::Infer { flow_tensor, h, w, reply: prev_reply, .. } => {
+                        PendingReadback::Infer {
+                            flow_tensor,
+                            h,
+                            w,
+                            reply: prev_reply,
+                            ..
+                        } => {
                             let _ = prev_reply.send(readback_flow_sync(flow_tensor, h, w));
                         }
-                        PendingReadback::Sample { sampled_tensor, num_pts, grid_points, reply: prev_reply, .. } => {
-                            let _ = prev_reply.send(readback_sampled_sync(sampled_tensor, num_pts, grid_points));
+                        PendingReadback::Sample {
+                            sampled_tensor,
+                            num_pts,
+                            grid_points,
+                            reply: prev_reply,
+                            ..
+                        } => {
+                            let _ = prev_reply.send(readback_sampled_sync(
+                                sampled_tensor,
+                                num_pts,
+                                grid_points,
+                            ));
                         }
                     }
                 }
@@ -524,10 +666,22 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
     // Drain last deferred readback
     if let Some(prev) = deferred.take() {
         match prev {
-            PendingReadback::Infer { flow_tensor, h, w, reply, .. } => {
+            PendingReadback::Infer {
+                flow_tensor,
+                h,
+                w,
+                reply,
+                ..
+            } => {
                 let _ = reply.send(readback_flow_sync(flow_tensor, h, w));
             }
-            PendingReadback::Sample { sampled_tensor, num_pts, grid_points, reply, .. } => {
+            PendingReadback::Sample {
+                sampled_tensor,
+                num_pts,
+                grid_points,
+                reply,
+                ..
+            } => {
                 let _ = reply.send(readback_sampled_sync(sampled_tensor, num_pts, grid_points));
             }
         }
@@ -537,8 +691,8 @@ fn inference_loop(model: Model<B>, device: burn::backend::wgpu::WgpuDevice, rx: 
 
 /// Run a dummy inference to trigger autotune caching on the inference thread.
 fn run_warmup(model: &Model<B>, device: &burn::backend::wgpu::WgpuDevice) -> Result<(), String> {
-    let h = 480usize;
-    let w = 640usize;
+    let h = 432usize;
+    let w = 768usize;
     let dummy = vec![128.0f32; 3 * h * w];
 
     let (img0_tensor, img1_tensor) = prepare_tensors(dummy.clone(), dummy, h, w, device);
@@ -554,11 +708,15 @@ fn run_warmup(model: &Model<B>, device: &burn::backend::wgpu::WgpuDevice) -> Res
 // ---------------------------------------------------------------------------
 
 fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
-    let path = find_weight_file()
-        .ok_or_else(|| "NeuFlow Burn model (.bpk) not found".to_string())?;
+    let path =
+        find_weight_file().ok_or_else(|| "NeuFlow Burn model (.bpk) not found".to_string())?;
 
     let optimized = is_optimized_weight_file(&path);
-    let weight_variant = if optimized { "optimized" } else { "unoptimized" };
+    let weight_variant = if optimized {
+        "optimized"
+    } else {
+        "unoptimized"
+    };
     log::info!(
         "NeuFlow Burn: loading generated_mixed model from {} (weight_variant={weight_variant})",
         path.display()
@@ -569,7 +727,8 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
 
     let path_str = path.to_string_lossy().to_string();
     let mut store = burn_store::BurnpackStore::from_file(&path_str);
-    model.load_from(&mut store)
+    model
+        .load_from(&mut store)
         .map_err(|e| format!("Failed to load model weights: {e}"))?;
 
     log::info!(
@@ -658,15 +817,28 @@ pub fn find_weight_file() -> Option<PathBuf> {
             candidates.push(dir.join("generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
             candidates.push(dir.join("../generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
             candidates.push(dir.join("../../generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
-            candidates.push(dir.join("src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
-            candidates.push(dir.join("../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
-            candidates.push(dir.join("../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
+            candidates.push(
+                dir.join(
+                    "src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk",
+                ),
+            );
+            candidates.push(dir.join(
+                "../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk",
+            ));
+            candidates.push(dir.join(
+                "../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk",
+            ));
             candidates.push(dir.join("generated_mixed/neuflow_v2_mixed_fp16.bpk"));
             candidates.push(dir.join("../generated_mixed/neuflow_v2_mixed_fp16.bpk"));
             candidates.push(dir.join("../../generated_mixed/neuflow_v2_mixed_fp16.bpk"));
-            candidates.push(dir.join("src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
-            candidates.push(dir.join("../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
-            candidates.push(dir.join("../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates
+                .push(dir.join("src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(
+                dir.join("../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"),
+            );
+            candidates.push(
+                dir.join("../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"),
+            );
         }
     }
 
@@ -680,7 +852,7 @@ pub fn is_available() -> bool {
 
 /// Run NeuFlow inference on a pair of preprocessed images.
 ///
-/// img0, img1: owned CHW float32 `[3 * H * W]` in 0-255 range, where H=480, W=640.
+/// img0, img1: owned CHW float32 `[3 * H * W]` in 0-255 range, where H=432, W=768.
 /// Returns CHW flow `[2 * H * W]`: `[dx_plane..., dy_plane...]`.
 ///
 /// Thread-safe: sends request to the dedicated inference thread via channel.
@@ -715,7 +887,12 @@ pub fn infer(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Result<Vec<f
 }
 
 /// Send an inference request to the dedicated thread and wait for the result.
-fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Result<Vec<f32>, String> {
+fn infer_via_channel(
+    img0: Vec<f32>,
+    img1: Vec<f32>,
+    h: usize,
+    w: usize,
+) -> Result<Vec<f32>, String> {
     let handle = INFERENCE_HANDLE
         .get_or_init(|| spawn_inference_thread())
         .as_ref()
@@ -727,17 +904,21 @@ fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Resu
     let t_send = Instant::now();
 
     // Zero-copy: move owned Vecs directly into the request
-    handle.sender.send(InferRequest::Infer {
-        seq,
-        img0,
-        img1,
-        h,
-        w,
-        reply: reply_tx,
-    }).map_err(|_| "Inference thread channel closed".to_string())?;
+    handle
+        .sender
+        .send(InferRequest::Infer {
+            seq,
+            img0,
+            img1,
+            h,
+            w,
+            reply: reply_tx,
+        })
+        .map_err(|_| "Inference thread channel closed".to_string())?;
 
-    let result = reply_rx.recv()
-        .map_err(|_| "Inference thread reply channel closed (thread may have panicked)".to_string())?;
+    let result = reply_rx.recv().map_err(|_| {
+        "Inference thread reply channel closed (thread may have panicked)".to_string()
+    })?;
 
     if neuflow_trace::enabled() {
         neuflow_trace::record_duration(seq, DurationMetric::ChannelRoundtrip, t_send.elapsed());
@@ -759,7 +940,10 @@ fn infer_via_channel(img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize) -> Resu
 /// grid_points: (x, y) coordinates in model space
 /// linear_indices: corresponding y*w+x values as i32
 pub fn infer_and_sample(
-    img0: Vec<f32>, img1: Vec<f32>, h: usize, w: usize,
+    img0: Vec<f32>,
+    img1: Vec<f32>,
+    h: usize,
+    w: usize,
     grid_points: Vec<(usize, usize)>,
     linear_indices: Vec<i32>,
 ) -> Result<SampledFlow, String> {
@@ -767,7 +951,8 @@ pub fn infer_and_sample(
     if img0.len() != expected || img1.len() != expected {
         return Err(format!(
             "Input size mismatch: expected {expected}, got img0={}, img1={}",
-            img0.len(), img1.len()
+            img0.len(),
+            img1.len()
         ));
     }
     if grid_points.is_empty() {
@@ -787,13 +972,22 @@ pub fn infer_and_sample(
         let depth = QUEUE_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         log::debug!("[NeuFlow perf] queue_depth_at_send={}", depth + 1);
 
-        handle.sender.send(InferRequest::InferAndSample {
-            seq,
-            img0, img1, h, w, grid_points, linear_indices,
-            reply: reply_tx,
-        }).map_err(|_| "Inference thread channel closed".to_string())?;
+        handle
+            .sender
+            .send(InferRequest::InferAndSample {
+                seq,
+                img0,
+                img1,
+                h,
+                w,
+                grid_points,
+                linear_indices,
+                reply: reply_tx,
+            })
+            .map_err(|_| "Inference thread channel closed".to_string())?;
 
-        let result = reply_rx.recv()
+        let result = reply_rx
+            .recv()
             .map_err(|_| "Inference thread reply channel closed".to_string())?;
 
         if neuflow_trace::enabled() {
@@ -810,15 +1004,22 @@ pub fn infer_and_sample(
     match result {
         Ok(r) => r,
         Err(e) => {
-            let msg = if let Some(s) = e.downcast_ref::<String>() { s.clone() }
-                else if let Some(s) = e.downcast_ref::<&str>() { s.to_string() }
-                else { "Unknown panic".to_string() };
+            let msg = if let Some(s) = e.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = e.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                "Unknown panic".to_string()
+            };
             Err(format!("NeuFlow Burn panicked: {msg}"))
         }
     }
 }
 
 /// Pre-initialize the model and warm up the GPU.
+///
+/// Called at app startup from a background thread. Blocks until model loading
+/// and autotune warmup are complete. Subsequent calls are no-ops (OnceLock).
 pub fn ensure_ready() {
     if !is_available() {
         log::info!("NeuFlow Burn: model not found, skipping pre-init");
@@ -828,18 +1029,10 @@ pub fn ensure_ready() {
     let start = Instant::now();
     let handle = INFERENCE_HANDLE.get_or_init(|| spawn_inference_thread());
     match handle {
-        Ok(h) => {
-            let (reply_tx, reply_rx) = mpsc::channel();
-            if h.sender.send(InferRequest::Warmup { reply: reply_tx }).is_ok() {
-                match reply_rx.recv() {
-                    Ok(Ok(())) => log::info!("NeuFlow Burn: pre-init + warmup complete in {:?}", start.elapsed()),
-                    Ok(Err(e)) => log::error!("NeuFlow Burn: warmup failed: {e}"),
-                    Err(_) => log::error!("NeuFlow Burn: warmup reply channel closed"),
-                }
-            } else {
-                log::error!("NeuFlow Burn: failed to send warmup request");
-            }
-        }
+        Ok(_) => log::info!(
+            "NeuFlow Burn: pre-init + warmup complete in {:?}",
+            start.elapsed()
+        ),
         Err(e) => log::error!("NeuFlow Burn: pre-init failed: {e}"),
     }
 }
@@ -861,7 +1054,7 @@ mod tests {
     #[test]
     fn test_infer_input_validation() {
         let bad = vec![0.0f32; 10];
-        let result = infer(bad.clone(), bad, 480, 640);
+        let result = infer(bad.clone(), bad, 432, 768);
         assert!(result.is_err());
     }
 
@@ -870,8 +1063,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_e2e_inference_perf() {
-        let h = 480usize;
-        let w = 640usize;
+        let h = 544usize;
+        let w = 960usize;
         let size = 3 * h * w;
 
         ensure_ready();
@@ -894,9 +1087,16 @@ mod tests {
             assert!(flow.iter().all(|v| v.is_finite()), "Non-finite flow values");
         }
 
-        let avg_ms = times.iter().map(|t| t.as_secs_f64() * 1000.0).sum::<f64>() / times.len() as f64;
-        let min_ms = times.iter().map(|t| t.as_secs_f64() * 1000.0).fold(f64::INFINITY, f64::min);
-        let max_ms = times.iter().map(|t| t.as_secs_f64() * 1000.0).fold(0.0f64, f64::max);
+        let avg_ms =
+            times.iter().map(|t| t.as_secs_f64() * 1000.0).sum::<f64>() / times.len() as f64;
+        let min_ms = times
+            .iter()
+            .map(|t| t.as_secs_f64() * 1000.0)
+            .fold(f64::INFINITY, f64::min);
+        let max_ms = times
+            .iter()
+            .map(|t| t.as_secs_f64() * 1000.0)
+            .fold(0.0f64, f64::max);
 
         eprintln!("NeuFlow Burn inference perf (10 runs after warmup):");
         eprintln!("  Avg: {avg_ms:.1}ms, Min: {min_ms:.1}ms, Max: {max_ms:.1}ms");
@@ -904,15 +1104,18 @@ mod tests {
             eprintln!("  Run {}: {:.1}ms", i + 1, t.as_secs_f64() * 1000.0);
         }
 
-        assert!(avg_ms <= 40.0, "Average inference too slow: {avg_ms:.1}ms (target ≤ 40ms)");
+        assert!(
+            avg_ms <= 40.0,
+            "Average inference too slow: {avg_ms:.1}ms (target ≤ 40ms)"
+        );
     }
 
     /// End-to-end pipeline test: RGB frame → preprocess → infer (CHW) → sample.
     #[test]
     #[ignore]
     fn test_e2e_pipeline() {
-        let w = 640u32;
-        let h = 480u32;
+        let w = 768u32;
+        let h = 432u32;
 
         let mut rgb0 = vec![0u8; (w * h * 3) as usize];
         let mut rgb1 = vec![0u8; (w * h * 3) as usize];
@@ -932,8 +1135,8 @@ mod tests {
             }
         }
 
-        let target_h = 480usize;
-        let target_w = 640usize;
+        let target_h = 432usize;
+        let target_w = 768usize;
         let scale = (target_w as f32 / w as f32).min(target_h as f32 / h as f32);
         let new_w = (w as f32 * scale) as usize;
         let new_h = (h as f32 * scale) as usize;
@@ -980,12 +1183,19 @@ mod tests {
 
         ensure_ready();
 
-        let flow = infer(img0, img1, target_h, target_w)
-            .expect("Inference failed in pipeline test");
+        let flow =
+            infer(img0, img1, target_h, target_w).expect("Inference failed in pipeline test");
 
         // CHW layout: flow[0..plane] = dx, flow[plane..2*plane] = dy
-        assert_eq!(flow.len(), target_h * target_w * 2, "Flow output size mismatch");
-        assert!(flow.iter().all(|v| v.is_finite()), "Non-finite flow values in pipeline");
+        assert_eq!(
+            flow.len(),
+            target_h * target_w * 2,
+            "Flow output size mismatch"
+        );
+        assert!(
+            flow.iter().all(|v| v.is_finite()),
+            "Non-finite flow values in pipeline"
+        );
 
         // Sample sparse points using CHW layout
         let step = (target_w / 15).max(4);
@@ -996,7 +1206,9 @@ mod tests {
                 let idx = y * target_w + x;
                 let dx = flow[idx];
                 let dy = flow[plane + idx];
-                if !dx.is_finite() || !dy.is_finite() { continue; }
+                if !dx.is_finite() || !dy.is_finite() {
+                    continue;
+                }
                 let to_x = x as f32 + dx;
                 let to_y = y as f32 + dy;
                 if to_x >= 0.0 && to_x < target_w as f32 && to_y >= 0.0 && to_y < target_h as f32 {
@@ -1006,41 +1218,52 @@ mod tests {
             }
         }
 
-        eprintln!("Pipeline test: {} point correspondences from {}x{} flow",
-            from_pts.len(), target_w, target_h);
-        assert!(from_pts.len() >= 10, "Too few point correspondences: {}", from_pts.len());
+        eprintln!(
+            "Pipeline test: {} point correspondences from {}x{} flow",
+            from_pts.len(),
+            target_w,
+            target_h
+        );
+        assert!(
+            from_pts.len() >= 10,
+            "Too few point correspondences: {}",
+            from_pts.len()
+        );
     }
 
     /// Thread safety test: multiple threads call infer() concurrently.
     #[test]
     #[ignore]
     fn test_inference_thread_safety() {
-        let h = 480usize;
-        let w = 640usize;
+        let h = 544usize;
+        let w = 960usize;
         let size = 3 * h * w;
 
         ensure_ready();
         let img = vec![128.0f32; size];
         let _ = infer(img.clone(), img, h, w);
 
-        let threads: Vec<_> = (0..4).map(|tid| {
-            std::thread::spawn(move || {
-                for i in 0..3 {
-                    let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
-                    let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
-                    match infer(img0, img1, h, w) {
-                        Ok(flow) => {
-                            assert_eq!(flow.len(), h * w * 2);
-                            assert!(flow.iter().all(|v| v.is_finite()));
+        let threads: Vec<_> = (0..4)
+            .map(|tid| {
+                std::thread::spawn(move || {
+                    for i in 0..3 {
+                        let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
+                        let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
+                        match infer(img0, img1, h, w) {
+                            Ok(flow) => {
+                                assert_eq!(flow.len(), h * w * 2);
+                                assert!(flow.iter().all(|v| v.is_finite()));
+                            }
+                            Err(e) => panic!("Thread {tid} run {i} failed: {e}"),
                         }
-                        Err(e) => panic!("Thread {tid} run {i} failed: {e}"),
                     }
-                }
+                })
             })
-        }).collect();
+            .collect();
 
         for t in threads {
-            t.join().expect("Thread panicked during concurrent inference test");
+            t.join()
+                .expect("Thread panicked during concurrent inference test");
         }
         eprintln!("Thread safety test: 4 threads × 3 inferences completed without panic");
     }
@@ -1049,8 +1272,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_fusion_no_panic() {
-        let h = 480usize;
-        let w = 640usize;
+        let h = 544usize;
+        let w = 960usize;
         let size = 3 * h * w;
 
         ensure_ready();
@@ -1059,7 +1282,11 @@ mod tests {
             let img0 = vec![80.0f32 + i as f32 * 20.0; size];
             let img1 = vec![90.0f32 + i as f32 * 20.0; size];
             let result = infer(img0, img1, h, w);
-            assert!(result.is_ok(), "Fusion panic on run {i}: {:?}", result.err());
+            assert!(
+                result.is_ok(),
+                "Fusion panic on run {i}: {:?}",
+                result.err()
+            );
             let flow = result.unwrap();
             assert_eq!(flow.len(), h * w * 2);
             assert!(flow.iter().all(|v| v.is_finite()), "Non-finite on run {i}");
@@ -1071,8 +1298,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_gpu_sparse_sample() {
-        let h = 480usize;
-        let w = 640usize;
+        let h = 544usize;
+        let w = 960usize;
         let size = 3 * h * w;
 
         ensure_ready();
@@ -1101,9 +1328,14 @@ mod tests {
         // Run infer_and_sample
         let start = Instant::now();
         let sampled = infer_and_sample(
-            img0.clone(), img1.clone(), h, w,
-            grid_points.clone(), linear_indices.clone(),
-        ).expect("infer_and_sample failed");
+            img0.clone(),
+            img1.clone(),
+            h,
+            w,
+            grid_points.clone(),
+            linear_indices.clone(),
+        )
+        .expect("infer_and_sample failed");
         let sample_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         // Run full infer for comparison
@@ -1131,8 +1363,10 @@ mod tests {
             );
         }
 
-        eprintln!("GPU sparse sample: {sample_ms:.1}ms vs full readback: {full_ms:.1}ms (speedup: {:.1}x)",
-            full_ms / sample_ms);
+        eprintln!(
+            "GPU sparse sample: {sample_ms:.1}ms vs full readback: {full_ms:.1}ms (speedup: {:.1}x)",
+            full_ms / sample_ms
+        );
         eprintln!("All {num_pts} points match between GPU select and full readback");
     }
 
@@ -1140,8 +1374,8 @@ mod tests {
     #[test]
     #[ignore]
     fn test_throughput_burst() {
-        let h = 480usize;
-        let w = 640usize;
+        let h = 544usize;
+        let w = 960usize;
         let size = 3 * h * w;
 
         ensure_ready();
@@ -1152,15 +1386,17 @@ mod tests {
         }
 
         let start = Instant::now();
-        let threads: Vec<_> = (0..4).map(|tid| {
-            std::thread::spawn(move || {
-                for _ in 0..5 {
-                    let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
-                    let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
-                    infer(img0, img1, h, w).expect("Burst inference failed");
-                }
+        let threads: Vec<_> = (0..4)
+            .map(|tid| {
+                std::thread::spawn(move || {
+                    for _ in 0..5 {
+                        let img0 = vec![100.0f32 + tid as f32 * 10.0; size];
+                        let img1 = vec![120.0f32 + tid as f32 * 10.0; size];
+                        infer(img0, img1, h, w).expect("Burst inference failed");
+                    }
+                })
             })
-        }).collect();
+            .collect();
 
         for t in threads {
             t.join().expect("Burst thread panicked");
@@ -1168,8 +1404,13 @@ mod tests {
         let total = start.elapsed();
         let throughput = 20.0 / total.as_secs_f64();
 
-        eprintln!("Burst throughput: {throughput:.1} infer/sec, total: {total:?} for 20 inferences");
+        eprintln!(
+            "Burst throughput: {throughput:.1} infer/sec, total: {total:?} for 20 inferences"
+        );
         // 20 × ~31ms = 620ms theoretical min. Allow 80% margin.
-        assert!(total.as_millis() <= 1100, "Burst too slow: {total:?} (target ≤ 1100ms)");
+        assert!(
+            total.as_millis() <= 1100,
+            "Burst too slow: {total:?} (target ≤ 1100ms)"
+        );
     }
 }

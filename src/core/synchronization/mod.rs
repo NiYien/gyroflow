@@ -153,7 +153,13 @@ impl PoseEstimator {
             .collect()
     }
 
-    pub fn process_detected_frames(&self, fps: f64, scaled_fps: f64, params: &ComputeParams) {
+    pub fn process_detected_frames(
+        &self,
+        fps: f64,
+        scaled_fps: f64,
+        params: &ComputeParams,
+        drain_progress_cb: Option<&(dyn Fn(usize, usize) + Sync)>,
+    ) {
         let every_nth_frame = self.every_nth_frame.load(SeqCst) as f64;
         let mut frames_to_process = Vec::new();
         {
@@ -176,11 +182,9 @@ impl PoseEstimator {
         let use_serial_neuflow = {
             let l = results.read();
             frames_to_process.iter().any(|(ts, next_ts)| {
-                l.get(ts)
-                    .zip(l.get(next_ts))
-                    .is_some_and(|(curr, next)| {
-                        is_neuflow_method(&curr.of_method) || is_neuflow_method(&next.of_method)
-                    })
+                l.get(ts).zip(l.get(next_ts)).is_some_and(|(curr, next)| {
+                    is_neuflow_method(&curr.of_method) || is_neuflow_method(&next.of_method)
+                })
             })
         };
 
@@ -244,7 +248,11 @@ impl PoseEstimator {
         };
 
         if use_serial_neuflow {
-            if self.neuflow_processing.compare_exchange(false, true, SeqCst, SeqCst).is_err() {
+            if self
+                .neuflow_processing
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_err()
+            {
                 log::debug!(
                     "Synchronization: skipping {} NeuFlow pairs (another thread is processing)",
                     frames_to_process.len()
@@ -258,13 +266,22 @@ impl PoseEstimator {
             loop {
                 let pairs: Vec<(i64, i64)> = {
                     let l = self.sync_results.read();
-                    l.iter().filter_map(|(k, v)| {
-                        if v.rotation.is_none() && v.frame_size.0 > 0 && v.of_method.has_data() {
-                            l.range(k..).find(|(_, next)| {
-                                v.frame_no + 1 == next.frame_no && next.frame_size.0 > 0 && next.of_method.has_data()
-                            }).map(|(next_k, _)| (*k, *next_k))
-                        } else { None }
-                    }).collect()
+                    l.iter()
+                        .filter_map(|(k, v)| {
+                            if v.rotation.is_none() && v.frame_size.0 > 0 && v.of_method.has_data()
+                            {
+                                l.range(k..)
+                                    .find(|(_, next)| {
+                                        v.frame_no + 1 == next.frame_no
+                                            && next.frame_size.0 > 0
+                                            && next.of_method.has_data()
+                                    })
+                                    .map(|(next_k, _)| (*k, *next_k))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
                 };
                 if pairs.is_empty() {
                     log::info!(
@@ -280,9 +297,18 @@ impl PoseEstimator {
                 drain_iter += 1;
                 log::info!(
                     "[NeuFlow drain] iter={drain_iter} pairs={} elapsed={:.1}ms",
-                    pairs.len(), drain_t0.elapsed().as_secs_f64() * 1000.0
+                    pairs.len(),
+                    drain_t0.elapsed().as_secs_f64() * 1000.0
                 );
-                pairs.par_iter().for_each(&process_pair_no_cleanup);
+                let total_frames = self.sync_results.read().len();
+                let pairs_done = std::sync::atomic::AtomicUsize::new(0);
+                pairs.par_iter().for_each(|pair| {
+                    process_pair_no_cleanup(pair);
+                    let completed = done_before + pairs_done.fetch_add(1, SeqCst) + 1;
+                    if let Some(cb) = drain_progress_cb {
+                        cb(completed, total_frames);
+                    }
+                });
                 // Don't cleanup inside drain loop — frames may be needed by next iteration's new pairs.
                 // Cleanup happens once after the drain loop exits.
                 let done_after = {
@@ -292,7 +318,8 @@ impl PoseEstimator {
                 if done_after == done_before {
                     log::info!(
                         "[NeuFlow drain] exit: iter={drain_iter} elapsed={:.1}ms (no rotations set, {} stuck pairs)",
-                        drain_t0.elapsed().as_secs_f64() * 1000.0, pairs.len()
+                        drain_t0.elapsed().as_secs_f64() * 1000.0,
+                        pairs.len()
                     );
                     break;
                 }
