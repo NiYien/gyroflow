@@ -246,10 +246,10 @@ impl AutosyncProcess {
 
         let method = self.sync_params.of_method as u32;
 
-        // For NeuFlow (method=3), pass raw NV12 data directly.
+        // For NeuFlow (method=3 or 4), pass raw NV12 data directly.
         // The fused preprocess_frame_nv12 in neuflow.rs does NV12→CHW conversion
         // during resize, avoiding an intermediate full-frame RGB allocation.
-        let frame_data: Option<Arc<Vec<u8>>> = if method == 3 {
+        let frame_data: Option<Arc<Vec<u8>>> = if method == 3 || method == 4 {
             let uv_start = stride * height as usize;
             let total_len = uv_start + stride * (height as usize / 2);
             if pixels.len() >= total_len {

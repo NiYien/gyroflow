@@ -740,9 +740,9 @@ impl Controller {
                                         / (input_frame.width() as f64 / sw as f64))
                                         .round()
                                         as u32;
-                                    // NeuFlow (of_method=3) needs NV12 for color data;
+                                    // NeuFlow (of_method=3 or 4) needs NV12 for color data;
                                     // other methods use GRAY8.
-                                    let pix_fmt = if sync2.sync_params.of_method == 3 {
+                                    let pix_fmt = if sync2.sync_params.of_method == 3 || sync2.sync_params.of_method == 4 {
                                         ffmpeg_next::format::Pixel::NV12
                                     } else {
                                         ffmpeg_next::format::Pixel::GRAY8
@@ -754,7 +754,7 @@ impl Controller {
                                         sh,
                                     ) {
                                         Ok(small_frame) => {
-                                            let (width, height, stride, pixels) = if sync2.sync_params.of_method == 3 {
+                                            let (width, height, stride, pixels) = if sync2.sync_params.of_method == 3 || sync2.sync_params.of_method == 4 {
                                                 // NV12: pass all planes (Y + UV)
                                                 let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
                                                               + small_frame.stride(1) * small_frame.plane_height(1) as usize;
@@ -3505,9 +3505,11 @@ impl Controller {
     }
 
     fn get_neuflow_available(&self) -> bool {
-        #[cfg(feature = "neuflow")]
-        { crate::core::neuflow::is_available() }
-        #[cfg(not(feature = "neuflow"))]
+        #[cfg(feature = "neuflow-ort")]
+        { return crate::core::neuflow::is_available(); }
+        #[cfg(feature = "neuflow-burn")]
+        { return crate::core::neuflow_burn::is_available(); }
+        #[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
         { false }
     }
 

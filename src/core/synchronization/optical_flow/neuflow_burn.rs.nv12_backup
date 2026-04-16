@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright © 2024 NiYien
+
+//! Burn/Vulkan backend for NeuFlow v2 optical flow inference.
+
+/// Run NeuFlow inference via Burn framework (Vulkan/Metal) on preprocessed CHW tensors.
+///
+/// Returns interleaved HW2 flow: [dx0, dy0, dx1, dy1, ...].
+pub(super) fn run_inference_burn(
+    img0: Vec<f32>, img1: Vec<f32>, proc_h: usize, proc_w: usize,
+) -> Result<Vec<f32>, String> {
+    let start = std::time::Instant::now();
+
+    // Burn infer() takes owned Vec<f32> and returns CHW planar [dx_plane..., dy_plane...]
+    let flow_chw = crate::neuflow_burn::infer(img0, img1, proc_h, proc_w)?;
+
+    let elapsed = start.elapsed();
+    if elapsed.as_secs() > 60 {
+        return Err(format!("NeuFlow Burn inference timeout: {elapsed:?}"));
+    }
+
+    log::debug!("NeuFlow Burn inference: {}x{} in {:?}", proc_w, proc_h, elapsed);
+
+    // Convert CHW planar [dx_plane..., dy_plane...] to interleaved HW2 [dx0,dy0,dx1,dy1,...]
+    let plane = proc_h * proc_w;
+    if flow_chw.len() != 2 * plane {
+        return Err(format!("Burn flow size mismatch: expected {}, got {}", 2 * plane, flow_chw.len()));
+    }
+    let mut flow_hw2 = vec![0.0f32; plane * 2];
+    let (dx_plane, dy_plane) = (&flow_chw[..plane], &flow_chw[plane..]);
+    for i in 0..plane {
+        flow_hw2[i * 2] = dx_plane[i];
+        flow_hw2[i * 2 + 1] = dy_plane[i];
+    }
+
+    Ok(flow_hw2)
+}

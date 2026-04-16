@@ -35,7 +35,6 @@ MenuItem {
         function propChanged() { settings.propChanged(sett); }
     }
 
-    property alias syncMethodIndex: syncMethod.currentIndex;
     property alias timePerSyncpoint: timePerSyncpoint;
     property alias everyNthFrame: everyNthFrame;
     property alias poseMethod: poseMethod;
@@ -353,10 +352,11 @@ MenuItem {
 
             ComboBox {
                 id: syncMethod;
-                readonly property var ofMethodMap: [3, 0, 1, 2]
-                readonly property var ofMethodReverseMap: ({0: 1, 1: 2, 2: 3, 3: 0})
+                readonly property var ofMethodMap: [3, 4, 0, 1, 2]
+                readonly property var ofMethodReverseMap: ({0: 2, 1: 3, 2: 4, 3: 0, 4: 1})
                 model: [
-                    QT_TR_NOOP("NeuFlow v2") + " (" + qsTr("recommended") + ")",
+                    QT_TR_NOOP("NeuFlow v2 CUDA"),
+                    QT_TR_NOOP("NeuFlow v2 Burn"),
                     "AKAZE",
                     "OpenCV (PyrLK)",
                     "OpenCV (DIS)"

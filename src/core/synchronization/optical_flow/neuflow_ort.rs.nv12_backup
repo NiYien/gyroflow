@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright © 2024 NiYien
+
+//! ORT/CUDA backend for NeuFlow v2 optical flow inference.
+
+/// Run NeuFlow inference via ONNX Runtime (CUDA) on preprocessed CHW tensors.
+///
+/// Returns interleaved HW2 flow: [dx0, dy0, dx1, dy1, ...].
+pub(super) fn run_inference_ort(
+    img0: &[f32], img1: &[f32], proc_h: usize, proc_w: usize,
+) -> Result<Vec<f32>, String> {
+    let start = std::time::Instant::now();
+
+    // ORT infer() takes &[f32] and returns interleaved HW2
+    let flow = crate::neuflow::infer(img0, img1, proc_h, proc_w)?;
+
+    let elapsed = start.elapsed();
+    if elapsed.as_secs() > 60 {
+        return Err(format!("NeuFlow ORT inference timeout: {elapsed:?}"));
+    }
+
+    log::debug!("NeuFlow ORT inference: {}x{} in {:?}", proc_w, proc_h, elapsed);
+    Ok(flow)
+}

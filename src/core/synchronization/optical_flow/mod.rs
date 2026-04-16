@@ -10,10 +10,14 @@ mod opencv_dis;
 pub use opencv_dis::*;
 mod opencv_pyrlk;
 pub use opencv_pyrlk::*;
-#[cfg(feature = "neuflow")]
+#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
 mod neuflow;
-#[cfg(feature = "neuflow")]
+#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
 pub use self::neuflow::*;
+#[cfg(feature = "neuflow-ort")]
+mod neuflow_ort;
+#[cfg(feature = "neuflow-burn")]
+mod neuflow_burn;
 
 #[enum_delegate::register]
 pub trait OpticalFlowTrait {
@@ -24,7 +28,7 @@ pub trait OpticalFlowTrait {
     fn can_cleanup(&self) -> bool;
 }
 
-#[cfg(feature = "neuflow")]
+#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
 #[enum_delegate::implement(OpticalFlowTrait)]
 #[derive(Clone)]
 pub enum OpticalFlowMethod {
@@ -34,7 +38,7 @@ pub enum OpticalFlowMethod {
     OFNeuFlowV2(OFNeuFlowV2),
 }
 
-#[cfg(not(feature = "neuflow"))]
+#[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
 #[enum_delegate::implement(OpticalFlowTrait)]
 #[derive(Clone)]
 pub enum OpticalFlowMethod {
@@ -67,13 +71,23 @@ impl OpticalFlowMethod {
                 width,
                 height,
             )),
-            #[cfg(feature = "neuflow")]
+            #[cfg(feature = "neuflow-ort")]
             3 => Self::OFNeuFlowV2(OFNeuFlowV2::new(
+                timestamp_us,
+                frame_data.clone().unwrap_or_else(|| Arc::new(Vec::new())),
+                width,
+                height,
+                stride,
+                3,
+            )),
+            #[cfg(feature = "neuflow-burn")]
+            4 => Self::OFNeuFlowV2(OFNeuFlowV2::new(
                 timestamp_us,
                 frame_data.unwrap_or_else(|| Arc::new(Vec::new())),
                 width,
                 height,
                 stride,
+                4,
             )),
             _ => {
                 log::error!("Unknown OF method {method}",);

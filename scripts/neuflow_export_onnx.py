@@ -1,289 +1,170 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Export NeuFlow v2 PyTorch model to ONNX with an inference-oriented graph.
-
-This exporter keeps the current dual-input interface used by gyroflow:
-
-    img0: [1, 3, H, W] float/half in 0-255 range
-    img1: [1, 3, H, W] float/half in 0-255 range
-
-Internally it aligns closer to ibaiGorordo's inference fork:
-
-- BatchNorm is fused into ConvBlock before export
-- iteration counts are explicit export parameters
-- optional FP16 export uses `init_bhwd(..., amp=True)`
-- ONNX simplification is enabled by default
-- constant folding is configurable (disabled by default to avoid baking
-  large runtime buffers into the graph unless requested)
+"""Export NeuFlow v2 PyTorch model to ONNX with dual-input interface.
 
 Usage:
     git clone https://github.com/neufieldrobotics/NeuFlow_v2
     cd NeuFlow_v2
     python /path/to/neuflow_export_onnx.py --checkpoint neuflow_mixed.pth --output neuflow_v2.onnx
+
+    # Export 432x768, iter5, mixed FP16 for ORT CUDA:
+    python /path/to/neuflow_export_onnx.py --checkpoint neuflow_mixed.pth \
+        --output neuflow_v2_mixed_432x768.onnx --height 432 --width 768 --iters 5 --fp16
+
+The exported model accepts:
+    img0: [1, 3, H, W] float32, 0-255
+    img1: [1, 3, H, W] float32, 0-255
+    (H, W must be multiples of 16)
+
+Output:
+    flow: [1, 2, H, W] float32 (pixel displacement)
 """
 
 import argparse
-import os
 import sys
-
+import os
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
-def format_size_mb(path: str) -> str:
-    return f"{os.path.getsize(path) / 1024 / 1024:.2f} MB"
+class NeuFlowWrapper(nn.Module):
+    """Wraps NeuFlow v2 to accept dual inputs (0-255 range).
 
-
-def fuse_conv_and_bn(conv: torch.nn.Conv2d, bn: torch.nn.BatchNorm2d) -> torch.nn.Conv2d:
-    """Fuse an inference BatchNorm2d into the preceding Conv2d."""
-    fused = (
-        torch.nn.Conv2d(
-            conv.in_channels,
-            conv.out_channels,
-            kernel_size=conv.kernel_size,
-            stride=conv.stride,
-            padding=conv.padding,
-            dilation=conv.dilation,
-            groups=conv.groups,
-            bias=True,
-        )
-        .requires_grad_(False)
-        .to(conv.weight.device)
-    )
-
-    weight = conv.weight.detach().float().view(conv.out_channels, -1)
-    conv_bias = (
-        torch.zeros(conv.weight.shape[0], device=conv.weight.device, dtype=torch.float32)
-        if conv.bias is None
-        else conv.bias.detach().float()
-    )
-    gamma = bn.weight.detach().float()
-    beta = bn.bias.detach().float()
-    mean = bn.running_mean.detach().float()
-    var = bn.running_var.detach().float()
-    inv_std = gamma / torch.sqrt(var + bn.eps)
-    weight_bn = torch.diag(inv_std)
-
-    fused.weight.copy_(torch.mm(weight_bn, weight).view(fused.weight.shape))
-    fused.bias.copy_(torch.mm(weight_bn, conv_bias.reshape(-1, 1)).reshape(-1) + (beta - gamma * mean / torch.sqrt(var + bn.eps)))
-    return fused
-
-
-def fuse_model_conv_and_bn(model) -> None:
-    """Apply Conv+BN fusion to official NeuFlow ConvBlock modules."""
-    from NeuFlow.backbone_v7 import ConvBlock
-
-    fused = 0
-    for module in model.modules():
-        if type(module) is ConvBlock and hasattr(module, "norm1") and hasattr(module, "norm2"):
-            module.conv1 = fuse_conv_and_bn(module.conv1, module.norm1)
-            module.conv2 = fuse_conv_and_bn(module.conv2, module.norm2)
-            delattr(module, "norm1")
-            delattr(module, "norm2")
-            module.forward = module.forward_fuse
-            fused += 2
-
-    print(f"  Fused {fused} Conv+BatchNorm pair(s)")
-
-
-class NeuFlowExportWrapper(nn.Module):
-    """Inference-only NeuFlow forward used for export.
-
-    This mirrors ibaiGorordo's simplified inference fork while keeping the
-    original PyTorch checkpoint and module definitions.
+    NeuFlow.forward() already divides by 255 internally, so we do NOT
+    re-normalize here.
     """
 
-    def __init__(self, model, iters_s16: int, iters_s8: int):
+    def __init__(self, model, iters_s16=1, iters_s8=8):
         super().__init__()
         self.model = model
         self.iters_s16 = iters_s16
         self.iters_s8 = iters_s8
-        from NeuFlow import config
-        self.config = config
 
     def forward(self, img0: torch.Tensor, img1: torch.Tensor) -> torch.Tensor:
-        # Keep the current 0-255 external interface, but move normalization out of
-        # the official model's internal forward so the exported graph is based on
-        # the inference path rather than the training-oriented wrapper.
-        img0 = img0 / 255.0
-        img1 = img1 / 255.0
-
-        flow_list = []
-
-        features_s16, features_s8 = self.model.backbone(torch.cat([img0, img1], dim=0))
-        features_s16 = self.model.cross_attn_s16(features_s16)
-
-        features_s16, context_s16 = self.model.split_features(
-            features_s16,
-            self.config.context_dim_s16,
-            self.config.feature_dim_s16,
-        )
-        features_s8, context_s8 = self.model.split_features(
-            features_s8,
-            self.config.context_dim_s8,
-            self.config.feature_dim_s8,
-        )
-
-        feature0_s16, feature1_s16 = features_s16.chunk(chunks=2, dim=0)
-        flow0 = self.model.matching_s16.global_correlation_softmax(feature0_s16, feature1_s16)
-
-        corr_pyr_s16 = self.model.corr_block_s16.init_corr_pyr(feature0_s16, feature1_s16)
-        iter_context_s16 = self.model.init_iter_context_s16
-        for _ in range(self.iters_s16):
-            corrs = self.model.corr_block_s16(corr_pyr_s16, flow0)
-            iter_context_s16, delta_flow = self.model.refine_s16(corrs, context_s16, iter_context_s16, flow0)
-            flow0 = flow0 + delta_flow
-
-        flow0 = F.interpolate(flow0, scale_factor=2, mode="nearest") * 2
-        features_s16 = F.interpolate(features_s16, scale_factor=2, mode="nearest")
-        features_s8 = self.model.merge_s8(torch.cat([features_s8, features_s16], dim=1))
-
-        feature0_s8, feature1_s8 = features_s8.chunk(chunks=2, dim=0)
-        corr_pyr_s8 = self.model.corr_block_s8.init_corr_pyr(feature0_s8, feature1_s8)
-
-        context_s16 = F.interpolate(context_s16, scale_factor=2, mode="nearest")
-        context_s8 = self.model.context_merge_s8(torch.cat([context_s8, context_s16], dim=1))
-
-        iter_context_s8 = self.model.init_iter_context_s8
-        for _ in range(self.iters_s8):
-            corrs = self.model.corr_block_s8(corr_pyr_s8, flow0)
-            iter_context_s8, delta_flow = self.model.refine_s8(corrs, context_s8, iter_context_s8, flow0)
-            flow0 = flow0 + delta_flow
-
-        feature0_s1 = self.model.conv_s8(img0)
-        up_flow0 = self.model.upsample_s8(feature0_s1, flow0) * 8
-        flow_list.append(up_flow0)
-
-        return flow_list[-1]
+        # NeuFlow.forward does img /= 255. internally
+        results = self.model(img0, img1, iters_s16=self.iters_s16, iters_s8=self.iters_s8)
+        if isinstance(results, (list, tuple)):
+            return results[-1]
+        return results
 
 
-def simplify_onnx(path: str) -> None:
-    try:
-        import onnx
-        import onnxsim
-    except ImportError:
-        print("Skipping ONNX simplification: install onnx and onnxsim to enable it.")
-        return
+def convert_to_fp16(input_path, output_path):
+    """Convert FP32 ONNX model to mixed FP16 for ORT CUDA.
 
-    before = format_size_mb(path)
-    model = onnx.load(path)
-    simplified, ok = onnxsim.simplify(model)
-    if not ok:
-        raise RuntimeError("onnxsim returned ok=False")
-    onnx.save(simplified, path)
-    after = format_size_mb(path)
-    print(f"Simplified ONNX: {before} -> {after}")
+    Blocks ops with type constraints (LayerNormalization) from FP16 conversion
+    to avoid ORT's "Type parameter bound to different types" error.
+    """
+    import onnx
+    from onnxconverter_common import float16
 
+    print(f"Converting to mixed FP16: {input_path} -> {output_path}")
+    model = onnx.load(input_path)
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Export NeuFlow v2 to ONNX")
-    parser.add_argument("--checkpoint", required=True, help="Path to the NeuFlow .pth checkpoint")
-    parser.add_argument("--output", default="neuflow_v2.onnx", help="Output ONNX path")
-    parser.add_argument("--height", type=int, default=480, help="Input height H (default: 480)")
-    parser.add_argument("--width", type=int, default=640, help="Input width W (default: 640)")
-    parser.add_argument("--iters-s16", type=int, default=1, help="Number of s16 refinement iterations")
-    parser.add_argument("--iters-s8", type=int, default=8, help="Number of s8 refinement iterations")
-    parser.add_argument("--half", action="store_true", help="Export the model graph in FP16 where possible")
-    parser.add_argument("--constant-folding", action="store_true", help="Enable ONNX constant folding during export")
-    parser.add_argument("--no-simplify", action="store_true", help="Skip ONNX simplification")
-    parser.add_argument("--no-fuse-bn", action="store_true", help="Skip Conv+BatchNorm fusion before export")
-    parser.add_argument("--opset", type=int, default=17, help="ONNX opset version (default: 17)")
-    return parser.parse_args()
+    # Block ops that have type parameter constraints incompatible with mixed types.
+    # LayerNormalization requires all inputs to share the same type parameter T.
+    model_fp16 = float16.convert_float_to_float16(
+        model,
+        keep_io_types=True,         # Keep inputs/outputs as FP32
+        op_block_list=["LayerNormalization"],  # Block problematic ops
+    )
+
+    onnx.save(model_fp16, output_path)
+    print(f"FP16 conversion done: {os.path.getsize(output_path) / 1024 / 1024:.1f} MB")
 
 
 def main():
-    args = parse_args()
+    parser = argparse.ArgumentParser(description="Export NeuFlow v2 to ONNX")
+    parser.add_argument("--checkpoint", required=True, help="Path to .pth checkpoint")
+    parser.add_argument("--output", default="neuflow_v2.onnx", help="Output ONNX path")
+    parser.add_argument("--height", type=int, default=480)
+    parser.add_argument("--width", type=int, default=640)
+    parser.add_argument("--iters", type=int, default=None,
+                        help="Override refine iterations (e.g. 5). Default: model default (s16=1, s8=8)")
+    parser.add_argument("--iters-s16", type=int, default=1, help="s16 refine iterations (default: 1)")
+    parser.add_argument("--iters-s8", type=int, default=8, help="s8 refine iterations (default: 8)")
+    parser.add_argument("--fp16", action="store_true",
+                        help="Convert to mixed FP16 for ORT CUDA (blocks LayerNorm)")
+    parser.add_argument("--simplify", action="store_true")
+    args = parser.parse_args()
 
-    if args.height % 16 != 0 or args.width % 16 != 0:
-        raise ValueError("Height and width must be multiples of 16")
+    assert args.height % 16 == 0, f"Height must be multiple of 16"
+    assert args.width % 16 == 0, f"Width must be multiple of 16"
 
+    # --iters N is shorthand for --iters-s16 1 --iters-s8 N
+    iters_s16 = args.iters_s16
+    iters_s8 = args.iters if args.iters is not None else args.iters_s8
+
+    # Import NeuFlow from the cloned repo
     try:
         from NeuFlow.neuflow import NeuFlow
     except ImportError:
-        print("ERROR: Run this from the NeuFlow_v2 repo root.", file=sys.stderr)
-        print("  git clone https://github.com/neufieldrobotics/NeuFlow_v2", file=sys.stderr)
-        print("  cd NeuFlow_v2", file=sys.stderr)
+        print("ERROR: Run from NeuFlow_v2 repo root directory.")
+        print("  git clone https://github.com/neufieldrobotics/NeuFlow_v2")
+        print("  cd NeuFlow_v2")
+        print(f"  python {sys.argv[0]} --checkpoint neuflow_mixed.pth --output neuflow_v2.onnx")
         sys.exit(1)
 
-    print(f"Loading checkpoint: {args.checkpoint}")
-    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
-    state = checkpoint.get("model", checkpoint.get("state_dict", checkpoint))
-
+    print(f"Loading: {args.checkpoint}")
     model = NeuFlow()
-    model.load_state_dict(state, strict=True)
+    ckpt = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
+    state = ckpt.get("model", ckpt.get("state_dict", ckpt))
+    model.load_state_dict(state)
     model.eval()
 
-    if not args.no_fuse_bn:
-        print("Applying Conv+BatchNorm fusion...")
-        fuse_model_conv_and_bn(model)
-    else:
-        print("Skipping Conv+BatchNorm fusion")
+    # NeuFlow requires init_bhwd() to create positional encodings and
+    # coordinate grids used by backbone, matching, corr_block, and refine.
+    print(f"Initializing model for {args.height}x{args.width} (iters_s16={iters_s16}, iters_s8={iters_s8})...")
+    model.init_bhwd(1, args.height, args.width, device="cpu", amp=False)
 
-    if args.half:
-        print("Switching export model to mixed FP16 (keeping LayerNorm in FP32)")
-        # Convert all parameters to FP16 first
-        model.half()
-        # Restore LayerNorm parameters to FP32 to preserve precision
-        restored = []
-        for name, module in model.named_modules():
-            if isinstance(module, torch.nn.LayerNorm):
-                for pname, param in module.named_parameters():
-                    param.data = param.data.float()
-                    restored.append(f"{name}.{pname}")
-                for bname, buf in module.named_buffers():
-                    buf.data = buf.data.float()
-                    restored.append(f"{name}.{bname}")
-        if restored:
-            print(f"  Restored {len(restored)} LayerNorm params to FP32: {restored}")
+    wrapper = NeuFlowWrapper(model, iters_s16=iters_s16, iters_s8=iters_s8)
+    wrapper.eval()
 
-    print(
-        f"Initializing export buffers with H={args.height}, W={args.width}, "
-        f"iters_s16={args.iters_s16}, iters_s8={args.iters_s8}, half={args.half}"
+    img0 = torch.randn(1, 3, args.height, args.width)
+    img1 = torch.randn(1, 3, args.height, args.width)
+
+    # NOTE: dynamic_axes disabled for NeuFlow because positional encodings
+    # are baked to fixed spatial dims at init_bhwd() time.  Re-export at
+    # different resolution if needed.
+    dynamic_axes = None
+
+    # Export FP32 first (FP16 conversion is a post-processing step)
+    fp32_path = args.output if not args.fp16 else args.output.replace(".onnx", "_fp32_tmp.onnx")
+
+    print(f"Exporting: {fp32_path} ({args.height}x{args.width})")
+    # Use legacy TorchScript-based exporter (dynamo=False) because NeuFlow
+    # uses runtime-created buffers (pos_s16, grid, delta, radius_emb) that
+    # are set via init_bhwd() and stored as plain attributes, which the new
+    # dynamo exporter cannot trace.
+    torch.onnx.export(
+        wrapper, (img0, img1), fp32_path,
+        opset_version=17,
+        input_names=["img0", "img1"],
+        output_names=["flow"],
+        dynamic_axes=dynamic_axes,
+        do_constant_folding=True,
+        dynamo=False,
     )
-    model.init_bhwd(1, args.height, args.width, device="cpu", amp=args.half)
+    print(f"Exported FP32: {fp32_path} ({os.path.getsize(fp32_path) / 1024 / 1024:.1f} MB)")
 
-    wrapper = NeuFlowExportWrapper(
-        model=model,
-        iters_s16=args.iters_s16,
-        iters_s8=args.iters_s8,
-    ).eval()
+    if args.simplify:
+        try:
+            import onnx, onnxsim
+            print("Simplifying...")
+            m = onnx.load(fp32_path)
+            m2, ok = onnxsim.simplify(m)
+            if ok:
+                onnx.save(m2, fp32_path)
+                print("Simplified OK")
+        except ImportError:
+            print("onnxsim not installed, skipping")
 
-    dtype = torch.float16 if args.half else torch.float32
-    img0 = torch.randn(1, 3, args.height, args.width, dtype=dtype)
-    img1 = torch.randn(1, 3, args.height, args.width, dtype=dtype)
+    if args.fp16:
+        convert_to_fp16(fp32_path, args.output)
+        os.remove(fp32_path)
+        print(f"Removed intermediate FP32: {fp32_path}")
 
-    print(
-        f"Exporting ONNX to {args.output} "
-        f"(H={args.height}, W={args.width}, opset={args.opset}, constant_folding={args.constant_folding})"
-    )
-    with torch.no_grad():
-        torch.onnx.export(
-            wrapper,
-            (img0, img1),
-            args.output,
-            verbose=False,
-            opset_version=args.opset,
-            input_names=["img0", "img1"],
-            output_names=["flow"],
-            do_constant_folding=args.constant_folding,
-            dynamic_axes=None,
-            dynamo=False,
-        )
-
-    print(f"Export complete: {args.output} ({format_size_mb(args.output)})")
-
-    if not args.no_simplify:
-        simplify_onnx(args.output)
-    else:
-        print("Skipping ONNX simplification")
-
-    print(
-        "Export summary:"
-        f" H={args.height}, W={args.width}, half={args.half},"
-        f" iters_s16={args.iters_s16}, iters_s8={args.iters_s8},"
-        f" constant_folding={args.constant_folding}"
-    )
+    final_path = args.output
+    print(f"Final: {final_path} ({os.path.getsize(final_path) / 1024 / 1024:.1f} MB)")
 
 
 if __name__ == "__main__":

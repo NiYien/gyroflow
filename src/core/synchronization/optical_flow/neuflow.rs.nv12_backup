@@ -1,0 +1,616 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// Copyright © 2024 NiYien
+
+#![allow(unused_variables, dead_code)]
+use super::super::OpticalFlowPair;
+#[cfg(feature = "use-opencv")]
+use super::OFOpenCVDis;
+use super::{OpticalFlowMethod, OpticalFlowTrait};
+
+use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::AtomicU32;
+
+#[cfg(feature = "neuflow-ort")]
+use super::neuflow_ort;
+#[cfg(feature = "neuflow-burn")]
+use super::neuflow_burn;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NeuFlowBackend {
+    OrtCuda,    // method=3
+    BurnVulkan, // method=4
+}
+
+/// Cached result of `preprocess_frame_nv12`. Stored per-frame to avoid
+/// redundant preprocessing when the same frame appears in consecutive pairs
+/// (e.g., frame B is preprocessed once for both A→B and B→C).
+pub(super) struct PreprocessedFrame {
+    pub chw: Vec<f32>,   // 3 × MODEL_H × MODEL_W
+    pub gray: Vec<u8>,   // MODEL_H × MODEL_W
+    pub proc_h: usize,
+    pub proc_w: usize,
+}
+
+pub struct OFNeuFlowV2 {
+    timestamp_us: i64,
+    /// Raw NV12 frame data (Y plane + interleaved UV plane).
+    pub(crate) nv12_frame: Arc<Vec<u8>>,
+    width: u32,
+    height: u32,
+    stride: usize,
+    backend: NeuFlowBackend,
+    /// Lazily computed preprocessed CHW tensor. Thread-safe: `get_or_init`
+    /// ensures only one thread computes; subsequent calls return the cached value.
+    cached_preprocessed: Arc<OnceLock<Result<PreprocessedFrame, String>>>,
+    /// Sampled feature points from the most recent NeuFlow inference.
+    features: Arc<std::cell::UnsafeCell<Vec<(f32, f32)>>>,
+    /// Cache of optical flow results, keyed by target timestamp.
+    matched_points: Arc<parking_lot::RwLock<std::collections::BTreeMap<i64, (Vec<(f32, f32)>, Vec<(f32, f32)>)>>>,
+    used: Arc<AtomicU32>,
+}
+
+// Safety: UnsafeCell<Vec<(f32, f32)>> is only mutated during sync processing (optical_flow_to)
+// and only read after processing is complete (features()). No concurrent read+write.
+unsafe impl Send for OFNeuFlowV2 {}
+unsafe impl Sync for OFNeuFlowV2 {}
+
+impl Clone for OFNeuFlowV2 {
+    fn clone(&self) -> Self {
+        Self {
+            timestamp_us: self.timestamp_us,
+            nv12_frame: self.nv12_frame.clone(),
+            width: self.width,
+            height: self.height,
+            stride: self.stride,
+            backend: self.backend,
+            cached_preprocessed: self.cached_preprocessed.clone(),
+            features: self.features.clone(),
+            matched_points: self.matched_points.clone(),
+            used: self.used.clone(),
+        }
+    }
+}
+
+impl OFNeuFlowV2 {
+    pub fn new(
+        timestamp_us: i64,
+        nv12_frame: Arc<Vec<u8>>,
+        width: u32,
+        height: u32,
+        stride: usize,
+        backend: NeuFlowBackend,
+    ) -> Self {
+        Self {
+            timestamp_us,
+            nv12_frame,
+            width,
+            height,
+            stride,
+            backend,
+            cached_preprocessed: Arc::new(OnceLock::new()),
+            features: Arc::new(std::cell::UnsafeCell::new(Vec::new())),
+            matched_points: Default::default(),
+            used: Default::default(),
+        }
+    }
+
+    /// Return the cached preprocessed frame, or compute it on first call.
+    /// Thread-safe: concurrent callers block until the first computation completes.
+    pub(super) fn get_or_preprocess(&self) -> Result<&PreprocessedFrame, String> {
+        self.cached_preprocessed
+            .get_or_init(|| {
+                preprocess_frame_nv12(&self.nv12_frame, self.width, self.height, self.stride)
+                    .map(|(chw, gray, proc_h, proc_w)| PreprocessedFrame { chw, gray, proc_h, proc_w })
+            })
+            .as_ref()
+            .map_err(|e| e.clone())
+    }
+}
+
+impl OpticalFlowTrait for OFNeuFlowV2 {
+    fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    fn features(&self) -> &Vec<(f32, f32)> {
+        unsafe { &*self.features.get() }
+    }
+
+    fn optical_flow_to(&self, _to: &OpticalFlowMethod) -> OpticalFlowPair {
+        if let OpticalFlowMethod::OFNeuFlowV2(next) = _to {
+            if let Some(cached) = self.matched_points.read().get(&next.timestamp_us) {
+                return Some(cached.clone());
+            }
+
+            if self.nv12_frame.is_empty() || next.nv12_frame.is_empty() {
+                return fallback_to_dis(self, next);
+            }
+
+            // Preprocess with caching — each frame is preprocessed at most once,
+            // even when it appears in consecutive pairs (A→B, B→C).
+            let pre0 = match self.get_or_preprocess() {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("NeuFlow preprocess self failed: {e}, falling back to DIS");
+                    return fallback_to_dis(self, next);
+                }
+            };
+            let pre1 = match next.get_or_preprocess() {
+                Ok(p) => p,
+                Err(e) => {
+                    log::warn!("NeuFlow preprocess next failed: {e}, falling back to DIS");
+                    return fallback_to_dis(self, next);
+                }
+            };
+
+            // Run backend-specific inference on preprocessed CHW tensors
+            let inference_result = match self.backend {
+                #[cfg(feature = "neuflow-ort")]
+                NeuFlowBackend::OrtCuda => neuflow_ort::run_inference_ort(
+                    &pre0.chw, &pre1.chw, pre0.proc_h, pre0.proc_w,
+                ),
+                #[cfg(feature = "neuflow-burn")]
+                NeuFlowBackend::BurnVulkan => neuflow_burn::run_inference_burn(
+                    pre0.chw.clone(), pre1.chw.clone(), pre0.proc_h, pre0.proc_w,
+                ),
+                #[allow(unreachable_patterns)]
+                _ => Err("NeuFlow backend not compiled in".to_string()),
+            };
+
+            match inference_result {
+                Ok(flow_data) => {
+                    let model_w = MODEL_W as f32;
+                    let model_h = MODEL_H as f32;
+                    let scale = (model_w / self.width as f32).min(model_h / self.height as f32);
+                    let new_w = self.width as f32 * scale;
+                    let new_h = self.height as f32 * scale;
+                    let pad_left = (model_w - new_w) / 2.0;
+                    let pad_top = (model_h - new_h) / 2.0;
+
+                    let result = sample_from_dense_flow(&flow_data, &pre0.gray, MODEL_W as u32, MODEL_H as u32);
+                    if let Some((ref from_pts, ref to_pts)) = result {
+                        let from_scaled: Vec<(f32, f32)> = from_pts.iter()
+                            .filter(|(x, y)| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                            .map(|(x, y)| ((x - pad_left) / scale, (y - pad_top) / scale))
+                            .collect();
+                        let to_scaled: Vec<(f32, f32)> = to_pts.iter()
+                            .zip(from_pts.iter())
+                            .filter(|(_, (x, y))| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                            .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
+                            .collect();
+
+                        if from_scaled.len() >= 10 {
+                            unsafe { *self.features.get() = from_scaled.clone(); }
+                            self.matched_points.write().insert(
+                                next.timestamp_us,
+                                (from_scaled.clone(), to_scaled.clone()),
+                            );
+                            self.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            next.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            return Some((from_scaled, to_scaled));
+                        }
+                    }
+                    log::warn!("NeuFlow: too few points, falling back to DIS");
+                    return fallback_to_dis(self, next);
+                }
+                Err(e) => {
+                    log::warn!("NeuFlow inference failed: {e}, falling back to DIS");
+                    return fallback_to_dis(self, next);
+                }
+            }
+        }
+        None
+    }
+
+    fn can_cleanup(&self) -> bool {
+        self.used.load(std::sync::atomic::Ordering::SeqCst) == 2
+    }
+
+    fn cleanup(&mut self) {
+        self.nv12_frame = Arc::new(Vec::new());
+        // cached_preprocessed will be dropped with the struct when replaced
+    }
+
+    fn has_data(&self) -> bool {
+        !self.nv12_frame.is_empty()
+    }
+}
+
+// ── Model constants ────────────────────────────────────────────────
+
+pub(super) const MODEL_H: usize = 432;
+pub(super) const MODEL_W: usize = 768;
+
+// ── Shared preprocessing (rayon-parallel) ──────────────────────────
+
+/// Fused NV12→CHW preprocessing with rayon row-level parallelism.
+///
+/// Reads NV12 data directly and produces model-ready CHW float32 tensor
+/// + grayscale in a single pass. Bilinear on Y, nearest-neighbor on UV.
+/// Output: (chw [3×MODEL_H×MODEL_W], gray [MODEL_H×MODEL_W], proc_h, proc_w)
+pub(super) fn preprocess_frame_nv12(
+    nv12: &[u8], width: u32, height: u32, stride: usize,
+) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
+    use rayon::prelude::*;
+
+    let w = width as usize;
+    let h = height as usize;
+    let s = stride;
+    let uv_start = s * h;
+
+    if nv12.len() < uv_start + s * (h / 2) {
+        return Err(format!("NV12 buffer too small: {} < {}", nv12.len(), uv_start + s * (h / 2)));
+    }
+
+    let target_h = MODEL_H;
+    let target_w = MODEL_W;
+
+    let scale = (target_w as f32 / w as f32).min(target_h as f32 / h as f32);
+    let new_w = (w as f32 * scale) as usize;
+    let new_h = (h as f32 * scale) as usize;
+
+    let pad_top = (target_h - new_h) / 2;
+    let pad_left = (target_w - new_w) / 2;
+
+    let inv_scale = 1.0 / scale;
+    let plane = target_h * target_w;
+    let max_uv_x = if w > 0 { w / 2 - 1 } else { 0 };
+    let max_uv_y = if h > 0 { h / 2 - 1 } else { 0 };
+
+    // Process rows in parallel, each row produces its pixel data independently.
+    // (out_y, Vec<(r, g, b, gray)>) — rows are non-overlapping so safe to scatter.
+    let row_data: Vec<(usize, Vec<[f32; 4]>)> = (pad_top..(pad_top + new_h))
+        .into_par_iter()
+        .map(|out_y| {
+            let src_yf = (out_y - pad_top) as f32 * inv_scale;
+            let sy0 = (src_yf as usize).min(h - 1);
+            let sy1 = (sy0 + 1).min(h - 1);
+            let fy = src_yf - sy0 as f32;
+            let uv_y = ((src_yf * 0.5) as usize).min(max_uv_y);
+
+            let mut pixels = Vec::with_capacity(new_w);
+            for out_x in pad_left..(pad_left + new_w) {
+                let src_xf = (out_x - pad_left) as f32 * inv_scale;
+                let sx0 = (src_xf as usize).min(w - 1);
+                let sx1 = (sx0 + 1).min(w - 1);
+                let fx = src_xf - sx0 as f32;
+
+                let w00 = (1.0 - fx) * (1.0 - fy);
+                let w10 = fx * (1.0 - fy);
+                let w01 = (1.0 - fx) * fy;
+                let w11 = fx * fy;
+
+                let y_val = nv12[sy0 * s + sx0] as f32 * w00
+                          + nv12[sy0 * s + sx1] as f32 * w10
+                          + nv12[sy1 * s + sx0] as f32 * w01
+                          + nv12[sy1 * s + sx1] as f32 * w11;
+
+                let uv_x = ((src_xf * 0.5) as usize).min(max_uv_x);
+                let uv_offset = uv_start + uv_y * s + uv_x * 2;
+                let u_val = nv12[uv_offset] as f32 - 128.0;
+                let v_val = nv12[uv_offset + 1] as f32 - 128.0;
+
+                let r = (y_val + 1.402 * v_val).clamp(0.0, 255.0);
+                let g = (y_val - 0.344136 * u_val - 0.714136 * v_val).clamp(0.0, 255.0);
+                let b = (y_val + 1.772 * u_val).clamp(0.0, 255.0);
+
+                pixels.push([r, g, b, r]); // 4th element = gray (R channel)
+            }
+            (out_y, pixels)
+        })
+        .collect();
+
+    // Scatter parallel results into CHW planar + gray buffers (sequential, cache-friendly)
+    let mut chw = vec![0.0f32; 3 * plane];
+    let mut gray = vec![0u8; plane];
+
+    for (out_y, pixels) in &row_data {
+        for (i, px) in pixels.iter().enumerate() {
+            let out_idx = out_y * target_w + pad_left + i;
+            chw[out_idx] = px[0];           // R plane
+            chw[plane + out_idx] = px[1];    // G plane
+            chw[2 * plane + out_idx] = px[2]; // B plane
+            gray[out_idx] = px[3] as u8;
+        }
+    }
+
+    Ok((chw, gray, target_h, target_w))
+}
+
+// ── Sampling from dense flow ───────────────────────────────────────
+
+/// Sample sparse point correspondences from a dense optical flow field.
+/// Expects interleaved HW2 flow: [dx0, dy0, dx1, dy1, ...]
+fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u32) -> OpticalFlowPair {
+    let w = width as usize;
+    let h = height as usize;
+
+    if flow_data.len() < w * h * 2 || gray.len() < w * h {
+        return None;
+    }
+
+    let step = (w / 15).max(4);
+    let window_size = ((w as f32 * 0.02).round() as usize).max(10);
+    let texture_threshold = 3.0;
+
+    let mut from_pts = Vec::new();
+    let mut to_pts = Vec::new();
+
+    for x in (0..w).step_by(step) {
+        for y in (0..h).step_by(step) {
+            let variance = texture_variance(gray, x, y, w, h, window_size);
+            if variance < texture_threshold {
+                continue;
+            }
+
+            let idx = (y * w + x) * 2;
+            let dx = flow_data[idx];
+            let dy = flow_data[idx + 1];
+
+            if !dx.is_finite() || !dy.is_finite() {
+                continue;
+            }
+
+            let to_x = x as f32 + dx;
+            let to_y = y as f32 + dy;
+
+            if to_x >= 0.0 && to_x < w as f32 && to_y >= 0.0 && to_y < h as f32 {
+                from_pts.push((x as f32, y as f32));
+                to_pts.push((to_x, to_y));
+            }
+        }
+    }
+
+    if from_pts.len() < 10 {
+        return None;
+    }
+
+    // Median-consistency filter
+    let mut dxs: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.0 - f.0).collect();
+    let mut dys: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.1 - f.1).collect();
+    dxs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    dys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median_dx = dxs[dxs.len() / 2];
+    let median_dy = dys[dys.len() / 2];
+
+    let max_dev = 2.0f32;
+    let mut filtered_from = Vec::new();
+    let mut filtered_to = Vec::new();
+    for (f, t) in from_pts.iter().zip(to_pts.iter()) {
+        let dx = t.0 - f.0;
+        let dy = t.1 - f.1;
+        if (dx - median_dx).abs() <= max_dev && (dy - median_dy).abs() <= max_dev {
+            filtered_from.push(*f);
+            filtered_to.push(*t);
+        }
+    }
+
+    if filtered_from.len() >= 10 {
+        Some((filtered_from, filtered_to))
+    } else {
+        None
+    }
+}
+
+fn texture_variance(gray: &[u8], x: usize, y: usize, w: usize, h: usize, patch: usize) -> f32 {
+    let half = patch / 2;
+    let x0 = x.saturating_sub(half);
+    let y0 = y.saturating_sub(half);
+    let x1 = (x + half + 1).min(w);
+    let y1 = (y + half + 1).min(h);
+
+    let mut sum = 0.0f32;
+    let mut sum_sq = 0.0f32;
+    let mut count = 0.0f32;
+    for py in y0..y1 {
+        for px in x0..x1 {
+            let v = gray[py * w + px] as f32;
+            sum += v;
+            sum_sq += v * v;
+            count += 1.0;
+        }
+    }
+    if count == 0.0 { return 0.0; }
+    let mean = sum / count;
+    sum_sq / count - mean * mean
+}
+
+// ── Fallback ───────────────────────────────────────────────────────
+
+#[cfg(feature = "use-opencv")]
+fn fallback_to_dis(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> OpticalFlowPair {
+    if self_frame.nv12_frame.is_empty() || next_frame.nv12_frame.is_empty() {
+        log::warn!("NeuFlow fallback: one or both NV12 frames are empty");
+        return None;
+    }
+    if self_frame.width == 0 || self_frame.height == 0 {
+        return None;
+    }
+
+    let gray1 = nv12_to_gray(&self_frame.nv12_frame, self_frame.width, self_frame.height, self_frame.stride);
+    let gray2 = nv12_to_gray(&next_frame.nv12_frame, next_frame.width, next_frame.height, next_frame.stride);
+
+    let dis1 = OFOpenCVDis::detect_features(self_frame.timestamp_us, Arc::new(gray1), self_frame.width, self_frame.height);
+    let dis2 = OFOpenCVDis::detect_features(next_frame.timestamp_us, Arc::new(gray2), next_frame.width, next_frame.height);
+
+    let result = dis1.optical_flow_to(&OpticalFlowMethod::OFOpenCVDis(dis2));
+
+    if result.is_some() {
+        self_frame.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        next_frame.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    result
+}
+
+#[cfg(not(feature = "use-opencv"))]
+fn fallback_to_dis(_self_frame: &OFNeuFlowV2, _next_frame: &OFNeuFlowV2) -> OpticalFlowPair {
+    log::warn!("NeuFlow fallback: OpenCV DIS not available (use-opencv feature disabled)");
+    None
+}
+
+fn nv12_to_gray(nv12: &[u8], width: u32, height: u32, stride: usize) -> image::GrayImage {
+    let w = width as usize;
+    let h = height as usize;
+    if nv12.len() < stride * h {
+        log::warn!("NeuFlow nv12_to_gray: buffer too small (expected {}, got {})", stride * h, nv12.len());
+        return image::GrayImage::new(width, height);
+    }
+    let mut gray = image::GrayImage::new(width, height);
+    for y in 0..h {
+        let src_row = &nv12[y * stride..y * stride + w];
+        let dst_row = &mut gray.as_mut()[(y * w)..((y + 1) * w)];
+        dst_row.copy_from_slice(src_row);
+    }
+    gray
+}
+
+// ── Tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+fn rgb_to_gray(rgb: &[u8], width: u32, height: u32) -> image::GrayImage {
+    let expected_len = (width * height * 3) as usize;
+    if rgb.len() < expected_len {
+        return image::GrayImage::new(width, height);
+    }
+    let mut gray = image::GrayImage::new(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            let idx = ((y * width + x) * 3) as usize;
+            let r = rgb[idx] as f32;
+            let g = rgb[idx + 1] as f32;
+            let b = rgb[idx + 2] as f32;
+            let luma = (0.299 * r + 0.587 * g + 0.114 * b) as u8;
+            gray.put_pixel(x, y, image::Luma([luma]));
+        }
+    }
+    gray
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sample_from_dense_flow_empty() {
+        let result = sample_from_dense_flow(&[], &[], 10, 10);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_sample_from_dense_flow_uniform() {
+        let w = 32u32;
+        let h = 32u32;
+        let mut flow = vec![0.0f32; (w * h * 2) as usize];
+        for i in 0..(w * h) as usize {
+            flow[i * 2] = 1.0;
+            flow[i * 2 + 1] = 0.5;
+        }
+        let gray: Vec<u8> = (0..(w * h) as usize).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+        let result = sample_from_dense_flow(&flow, &gray, w, h);
+        assert!(result.is_some());
+        let (from_pts, to_pts) = result.unwrap();
+        assert!(!from_pts.is_empty());
+        for (f, t) in from_pts.iter().zip(to_pts.iter()) {
+            assert!((t.0 - f.0 - 1.0).abs() < 1e-5);
+            assert!((t.1 - f.1 - 0.5).abs() < 1e-5);
+        }
+    }
+
+    #[test]
+    fn test_ofneuflowv2_new() {
+        let stride = 100;
+        let frame = Arc::new(vec![0u8; stride * 100 + stride * 50]);
+        let nf = OFNeuFlowV2::new(12345, frame, 100, 100, stride, NeuFlowBackend::OrtCuda);
+        assert_eq!(nf.size(), (100, 100));
+        assert!(nf.features().is_empty());
+        assert!(!nf.can_cleanup());
+        assert_eq!(nf.backend, NeuFlowBackend::OrtCuda);
+    }
+
+    #[test]
+    fn test_ofneuflowv2_cleanup() {
+        let stride = 10;
+        let frame = Arc::new(vec![128u8; stride * 10 + stride * 5]);
+        let mut nf = OFNeuFlowV2::new(0, frame, 10, 10, stride, NeuFlowBackend::BurnVulkan);
+        assert!(!nf.nv12_frame.is_empty());
+        assert!(nf.has_data());
+        nf.cleanup();
+        assert!(nf.nv12_frame.is_empty());
+        assert!(!nf.has_data());
+    }
+
+    #[test]
+    fn test_sample_uniform_flow() {
+        let w = 100u32;
+        let h = 80u32;
+        let n = (w * h) as usize;
+        let mut flow_data = vec![0.0f32; 2 * n];
+        for i in 0..n {
+            flow_data[i * 2] = 10.0;
+            flow_data[i * 2 + 1] = 5.0;
+        }
+        let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+        let result = sample_from_dense_flow(&flow_data, &gray, w, h);
+        assert!(result.is_some());
+        let (from_pts, to_pts) = result.unwrap();
+        for (f, t) in from_pts.iter().zip(to_pts.iter()) {
+            assert!((t.0 - f.0 - 10.0).abs() < 1e-3);
+            assert!((t.1 - f.1 - 5.0).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn test_sample_low_texture_rejection() {
+        let w = 100u32;
+        let h = 80u32;
+        let n = (w * h) as usize;
+        let mut flow_data = vec![0.0f32; 2 * n];
+        for i in 0..n {
+            flow_data[i * 2] = 1.0;
+            flow_data[i * 2 + 1] = 1.0;
+        }
+        let gray = vec![128u8; n];
+        let result = sample_from_dense_flow(&flow_data, &gray, w, h);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_preprocess_cache_hit() {
+        // Build a minimal valid NV12 buffer (4×4, stride=4)
+        let w = 4u32;
+        let h = 4u32;
+        let stride = 4usize;
+        let y_plane = vec![128u8; stride * h as usize];
+        let uv_plane = vec![128u8; stride * (h as usize / 2)];
+        let nv12: Vec<u8> = [y_plane, uv_plane].concat();
+        let frame = Arc::new(nv12);
+
+        let nf = OFNeuFlowV2::new(0, frame, w, h, stride, NeuFlowBackend::OrtCuda);
+
+        // First call computes
+        let r1 = nf.get_or_preprocess();
+        assert!(r1.is_ok());
+        let p1_ptr = r1.unwrap() as *const PreprocessedFrame;
+
+        // Second call returns same cached instance
+        let r2 = nf.get_or_preprocess();
+        assert!(r2.is_ok());
+        let p2_ptr = r2.unwrap() as *const PreprocessedFrame;
+
+        assert_eq!(p1_ptr, p2_ptr, "second call should return cached instance");
+    }
+
+    #[test]
+    fn test_rgb_to_gray() {
+        let rgb = vec![255, 0, 0, 0, 255, 0, 0, 0, 255];
+        let gray = rgb_to_gray(&rgb, 3, 1);
+        let r_gray = gray.get_pixel(0, 0).0[0];
+        let g_gray = gray.get_pixel(1, 0).0[0];
+        let b_gray = gray.get_pixel(2, 0).0[0];
+        assert!((r_gray as i32 - 76).abs() <= 1);
+        assert!((g_gray as i32 - 149).abs() <= 1);
+        assert!((b_gray as i32 - 29).abs() <= 1);
+    }
+}

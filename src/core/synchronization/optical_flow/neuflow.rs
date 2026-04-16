@@ -16,6 +16,8 @@ pub struct OFNeuFlowV2 {
     width: u32,
     height: u32,
     stride: usize,
+    /// Backend selector: 3 = ORT/CUDA, 4 = Burn/Vulkan
+    backend: u32,
     /// Sampled feature points from the most recent NeuFlow inference.
     features: Arc<std::cell::UnsafeCell<Vec<(f32, f32)>>>,
     /// Cache of optical flow results, keyed by target timestamp.
@@ -38,6 +40,7 @@ impl Clone for OFNeuFlowV2 {
             width: self.width,
             height: self.height,
             stride: self.stride,
+            backend: self.backend,
             features: self.features.clone(),
             matched_points: self.matched_points.clone(),
             used: self.used.clone(),
@@ -52,6 +55,7 @@ impl OFNeuFlowV2 {
         width: u32,
         height: u32,
         stride: usize,
+        backend: u32,
     ) -> Self {
         Self {
             timestamp_us,
@@ -59,6 +63,7 @@ impl OFNeuFlowV2 {
             width,
             height,
             stride,
+            backend,
             features: Arc::new(std::cell::UnsafeCell::new(Vec::new())),
             matched_points: Default::default(),
             used: Default::default(),
@@ -77,7 +82,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
     }
 
     fn optical_flow_to(&self, _to: &OpticalFlowMethod) -> OpticalFlowPair {
-        #[cfg(feature = "neuflow")]
+        #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
         if let OpticalFlowMethod::OFNeuFlowV2(next) = _to {
             // Return cached result if available (needed because cache_optical_flow
             // calls this again after process_detected_frames has cleaned up frames)
@@ -89,56 +94,84 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 return fallback_to_dis(self, next);
             }
 
-            match neuflow_inference(
-                &self.nv12_frame, self.width, self.height, self.stride,
-                &next.nv12_frame, next.width, next.height, next.stride,
-            ) {
-                Ok((flow_data, gray_data)) => {
-                    // Letterbox parameters (must match preprocess_frame)
-                    // Must match preprocess_frame target dimensions
-                    let model_w = 640.0f32;
-                    let model_h = 480.0f32;
-                    let scale = (model_w / self.width as f32).min(model_h / self.height as f32);
-                    let new_w = self.width as f32 * scale;
-                    let new_h = self.height as f32 * scale;
-                    let pad_left = (model_w - new_w) / 2.0;
-                    let pad_top = (model_h - new_h) / 2.0;
+            let model_w = 768.0f32;
+            let model_h = 432.0f32;
+            let scale = (model_w / self.width as f32).min(model_h / self.height as f32);
+            let new_w = self.width as f32 * scale;
+            let new_h = self.height as f32 * scale;
+            let pad_left = (model_w - new_w) / 2.0;
+            let pad_top = (model_h - new_h) / 2.0;
 
-                    // Sample from the non-padded region only
-                    let result = sample_from_dense_flow(&flow_data, &gray_data, model_w as u32, model_h as u32);
-                    if let Some((ref from_pts, ref to_pts)) = result {
-                        // Remove padding offset and scale back to original resolution
-                        let from_scaled: Vec<(f32, f32)> = from_pts.iter()
-                            .filter(|(x, y)| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
-                            .map(|(x, y)| ((x - pad_left) / scale, (y - pad_top) / scale))
-                            .collect();
-                        let to_scaled: Vec<(f32, f32)> = to_pts.iter()
-                            .zip(from_pts.iter())
-                            .filter(|(_, (x, y))| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
-                            .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
-                            .collect();
-
-                        if from_scaled.len() >= 10 {
-                            // Store sampled points for UI display
-                            unsafe { *self.features.get() = from_scaled.clone(); }
-                            // Cache result for re-use by cache_optical_flow()
-                            self.matched_points.write().insert(
-                                next.timestamp_us,
-                                (from_scaled.clone(), to_scaled.clone()),
-                            );
-                            self.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            next.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            return Some((from_scaled, to_scaled));
+            // Dispatch to backend-specific inference
+            let result = match self.backend {
+                #[cfg(feature = "neuflow-ort")]
+                3 => {
+                    // ORT: full tensor readback → CPU dense sampling
+                    match neuflow_inference(
+                        &self.nv12_frame, self.width, self.height, self.stride,
+                        &next.nv12_frame, next.width, next.height, next.stride,
+                    ) {
+                        Ok((flow_data, gray_data)) => {
+                            sample_from_dense_flow(&flow_data, &gray_data, model_w as u32, model_h as u32)
+                        }
+                        Err(e) => {
+                            log::warn!("NeuFlow ORT inference failed: {e}, falling back to DIS");
+                            return fallback_to_dis(self, next);
                         }
                     }
-                    log::warn!("NeuFlow: too few points, falling back to DIS");
+                }
+                #[cfg(feature = "neuflow-burn")]
+                4 => {
+                    // Burn: GPU-side sparse sampling (no full tensor readback)
+                    match super::neuflow_burn::neuflow_inference_burn_sampled(
+                        &self.nv12_frame, self.width, self.height, self.stride,
+                        &next.nv12_frame, next.width, next.height, next.stride,
+                    ) {
+                        Ok(sampled) => {
+                            if sampled.from_pts.len() >= 10 {
+                                // Apply median consistency filter
+                                Some(median_filter_points(sampled.from_pts, sampled.to_pts))
+                            } else {
+                                None
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("NeuFlow Burn inference failed: {e}, falling back to DIS");
+                            return fallback_to_dis(self, next);
+                        }
+                    }
+                }
+                _ => {
+                    log::warn!("Unknown NeuFlow backend: {}, falling back to DIS", self.backend);
                     return fallback_to_dis(self, next);
                 }
-                Err(e) => {
-                    log::warn!("NeuFlow inference failed: {e}, falling back to DIS");
-                    return fallback_to_dis(self, next);
+            };
+
+            if let Some((ref from_pts, ref to_pts)) = result {
+                // Remove padding offset and scale back to original resolution
+                let from_scaled: Vec<(f32, f32)> = from_pts.iter()
+                    .filter(|(x, y)| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                    .map(|(x, y)| ((x - pad_left) / scale, (y - pad_top) / scale))
+                    .collect();
+                let to_scaled: Vec<(f32, f32)> = to_pts.iter()
+                    .zip(from_pts.iter())
+                    .filter(|(_, (x, y))| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                    .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
+                    .collect();
+
+                if from_scaled.len() >= 10 {
+                    unsafe { *self.features.get() = from_scaled.clone(); }
+                    self.matched_points.write().insert(
+                        next.timestamp_us,
+                        (from_scaled.clone(), to_scaled.clone()),
+                    );
+                    self.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    next.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return Some((from_scaled, to_scaled));
                 }
             }
+            log::warn!("NeuFlow: too few points, falling back to DIS");
+            return fallback_to_dis(self, next);
         }
         None
     }
@@ -152,26 +185,13 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
     }
 }
 
-#[cfg(feature = "neuflow")]
+/// ORT inference: returns (dense_flow_hw2, gray).
+#[cfg(feature = "neuflow-ort")]
 fn neuflow_inference(
     nv12_0: &[u8], w0: u32, h0: u32, stride0: usize,
     nv12_1: &[u8], w1: u32, h1: u32, stride1: usize,
 ) -> Result<(Vec<f32>, Vec<u8>), String> {
-    let (img0, gray0, proc_h, proc_w) = preprocess_frame_nv12(nv12_0, w0, h0, stride0)?;
-    let (img1, _, _, _) = preprocess_frame_nv12(nv12_1, w1, h1, stride1)?;
-
-    let start = std::time::Instant::now();
-
-    // Run inference via ONNX Runtime (session is cached internally)
-    let flow = crate::neuflow::infer(&img0, &img1, proc_h, proc_w)?;
-
-    let elapsed = start.elapsed();
-    if elapsed.as_secs() > 60 {
-        return Err(format!("NeuFlow ORT inference timeout: {elapsed:?}"));
-    }
-
-    log::debug!("NeuFlow ORT inference: {}x{} in {:?}", proc_w, proc_h, elapsed);
-    Ok((flow, gray0))
+    super::neuflow_ort::neuflow_inference_ort(nv12_0, w0, h0, stride0, nv12_1, w1, h1, stride1)
 }
 
 /// Fused NV12→CHW preprocessing: reads NV12 data directly and produces
@@ -180,8 +200,8 @@ fn neuflow_inference(
 /// This eliminates the intermediate RGB buffer allocation (w×h×3) and converts
 /// only the output-resolution pixels (640×480) instead of all source pixels.
 /// For a 960×540 source, this is ~60% fewer pixel operations.
-#[cfg(feature = "neuflow")]
-fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride: usize) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
+#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+pub(super) fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride: usize) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
     let w = width as usize;
     let h = height as usize;
     let s = stride;
@@ -191,9 +211,9 @@ fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride: usize) ->
         return Err(format!("NV12 buffer too small: {} < {}", nv12.len(), uv_start + s * (h / 2)));
     }
 
-    // ONNX model fixed at 480x640. Letterbox: fit within, maintain aspect ratio.
-    let target_h = 480usize;
-    let target_w = 640usize;
+    // ONNX model fixed at 432x768. Letterbox: fit within, maintain aspect ratio.
+    let target_h = 432usize;
+    let target_w = 768usize;
 
     let scale = (target_w as f32 / w as f32).min(target_h as f32 / h as f32);
     let new_w = (w as f32 * scale) as usize;
@@ -257,6 +277,30 @@ fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride: usize) ->
     }
 
     Ok((chw, gray, target_h, target_w))
+}
+
+/// Median-consistency filter: reject points whose flow deviates too far from the median.
+/// Shared by both ORT (via sample_from_dense_flow) and Burn (via GPU sparse sampling).
+fn median_filter_points(from_pts: Vec<(f32, f32)>, to_pts: Vec<(f32, f32)>) -> (Vec<(f32, f32)>, Vec<(f32, f32)>) {
+    let mut dxs: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.0 - f.0).collect();
+    let mut dys: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.1 - f.1).collect();
+    dxs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    dys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let median_dx = dxs[dxs.len() / 2];
+    let median_dy = dys[dys.len() / 2];
+
+    let max_dev = 2.0f32;
+    let mut filtered_from = Vec::new();
+    let mut filtered_to = Vec::new();
+    for (f, t) in from_pts.iter().zip(to_pts.iter()) {
+        let dx = t.0 - f.0;
+        let dy = t.1 - f.1;
+        if (dx - median_dx).abs() <= max_dev && (dy - median_dy).abs() <= max_dev {
+            filtered_from.push(*f);
+            filtered_to.push(*t);
+        }
+    }
+    (filtered_from, filtered_to)
 }
 
 /// Sample sparse point correspondences from a dense optical flow field
@@ -516,7 +560,7 @@ mod tests {
         // NV12: stride*h (Y) + stride*(h/2) (UV)
         let stride = 100;
         let frame = Arc::new(vec![0u8; stride * 100 + stride * 50]);
-        let nf = OFNeuFlowV2::new(12345, frame, 100, 100, stride);
+        let nf = OFNeuFlowV2::new(12345, frame, 100, 100, stride, 3);
         assert_eq!(nf.size(), (100, 100));
         assert!(nf.features().is_empty());
         assert!(!nf.can_cleanup());
@@ -526,7 +570,7 @@ mod tests {
     fn test_ofneuflowv2_cleanup() {
         let stride = 10;
         let frame = Arc::new(vec![128u8; stride * 10 + stride * 5]);
-        let mut nf = OFNeuFlowV2::new(0, frame, 10, 10, stride);
+        let mut nf = OFNeuFlowV2::new(0, frame, 10, 10, stride, 3);
         assert!(!nf.nv12_frame.is_empty());
         nf.cleanup();
         assert!(nf.nv12_frame.is_empty());
@@ -600,7 +644,7 @@ mod tests {
     fn test_of_method_3_dispatch() {
         // method=3 should create OFNeuFlowV2 variant
         let img = Arc::new(image::GrayImage::new(100, 80));
-        let method = OpticalFlowMethod::detect_features(3, 0, img, None, 100, 80);
+        let method = OpticalFlowMethod::detect_features(3, 0, img, None, 100, 80, 100);
         assert!(
             matches!(method, OpticalFlowMethod::OFNeuFlowV2(_)),
             "method=3 should produce OFNeuFlowV2"

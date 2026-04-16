@@ -120,8 +120,8 @@ fn init_pool() -> Result<SessionPool, String> {
                 let mut session = create_session(&p)?;
                 if i == 0 {
                     // Warmup session 0: compiles CUDA kernels (shared across all sessions)
-                    let h = 480usize;
-                    let w = 640usize;
+                    let h = 432usize;
+                    let w = 768usize;
                     let dummy = vec![0.0f32; 3 * h * w];
                     let shape = [1usize, 3, h, w];
                     if let Ok(img0) = TensorRef::from_array_view((shape, dummy.as_slice())) {
@@ -208,9 +208,10 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
     Ok(flow)
 }
 
-/// Find the NeuFlow v2 ONNX model file. Prefers mixed-precision (FP16 Conv/MatMul) over FP32.
+/// Find the NeuFlow v2 ONNX model file. Prefers FP32 432×768 (iter5), then legacy fallbacks.
 pub fn find_weight_file() -> Option<PathBuf> {
-    ["resources/neuflow_v2_mixed.onnx", "../resources/neuflow_v2_mixed.onnx",
+    ["resources/neuflow_v2_fp32_432x768.onnx", "../resources/neuflow_v2_fp32_432x768.onnx",
+     "resources/neuflow_v2_mixed.onnx", "../resources/neuflow_v2_mixed.onnx",
      "resources/neuflow_v2.onnx", "../resources/neuflow_v2.onnx"]
         .iter().map(PathBuf::from).find(|p| p.exists())
 }
