@@ -357,19 +357,11 @@ impl AutosyncProcess {
                     total_detected_frames.fetch_add(1, SeqCst);
 
                     if frame_no % 7 == 0 {
-                        let drain_cb = |done: usize, total: usize| {
-                            if let Some(cb) = &progress_cb {
-                                let d = total_detected_frames.load(SeqCst);
-                                let t = total_read_frames.load(SeqCst).max(frame_count);
-                                let frac = done as f64 / total.max(1) as f64;
-                                cb(0.10 + frac * 0.50, d, t);
-                            }
-                        };
                         estimator.process_detected_frames(
                             org_fps,
                             scaled_fps,
                             &compute_params.read(),
-                            Some(&drain_cb),
+                            None,
                         );
                         estimator.recalculate_gyro_data(org_fps, false);
                     }
@@ -377,7 +369,7 @@ impl AutosyncProcess {
                     if let Some(cb) = &progress_cb {
                         let d = total_detected_frames.load(SeqCst);
                         let t = total_read_frames.load(SeqCst).max(frame_count);
-                        cb((d as f64 / t.max(1) as f64) * 0.10, d, t);
+                        cb((d as f64 / t.max(1) as f64) * 0.60, d, t);
                     }
                 } else {
                     log::warn!("Failed to get image {:?}", img);
@@ -403,19 +395,11 @@ impl AutosyncProcess {
         log::info!(
             "[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames"
         );
-        let drain_cb = |done: usize, total: usize| {
-            if let Some(cb) = &progress_cb {
-                let d = self.total_detected_frames.load(SeqCst);
-                let t = self.total_read_frames.load(SeqCst);
-                let frac = done as f64 / total.max(1) as f64;
-                cb(0.10 + frac * 0.50, d, t);
-            }
-        };
         self.estimator.process_detected_frames(
             self.org_fps,
             self.scaled_fps,
             &self.compute_params.read(),
-            Some(&drain_cb),
+            None,
         );
         log::info!(
             "[NeuFlow timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",

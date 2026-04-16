@@ -31,7 +31,7 @@
     unused_variables,
     dead_code
 )]
-#[path = "generated_mixed/neuflow_v2_mixed_fp16.rs"]
+#[path = "generated_iter5/neuflow_v2_iter5_768x432.rs"]
 mod neuflow_v2_generated_fp16;
 
 use std::path::{Path, PathBuf};
@@ -718,7 +718,7 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
         "unoptimized"
     };
     log::info!(
-        "NeuFlow Burn: loading generated_mixed model from {} (weight_variant={weight_variant})",
+        "NeuFlow Burn: loading generated_iter5 model from {} (weight_variant={weight_variant})",
         path.display()
     );
 
@@ -732,7 +732,7 @@ fn init_model() -> Result<(Model<B>, burn::backend::wgpu::WgpuDevice), String> {
         .map_err(|e| format!("Failed to load model weights: {e}"))?;
 
     log::info!(
-        "NeuFlow Burn: generated_mixed model loaded on {:?} (weight_variant={weight_variant})",
+        "NeuFlow Burn: generated_iter5 model loaded on {:?} (weight_variant={weight_variant})",
         device
     );
     Ok((model, device))
@@ -800,44 +800,36 @@ fn log_trace_summary(seq: u64, kind: &str) {
 /// Find the NeuFlow v2 weight file (.bpk format).
 pub fn find_weight_file() -> Option<PathBuf> {
     let mut candidates: Vec<PathBuf> = vec![
-        "src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
-        "../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
-        "../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
-        "neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
-        "generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk".into(),
-        "src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
-        "../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
-        "../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
-        "neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
-        "generated_mixed/neuflow_v2_mixed_fp16.bpk".into(),
+        "src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk".into(),
+        "../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk".into(),
+        "../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk".into(),
+        "neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk".into(),
+        "generated_iter5/neuflow_v2_iter5_768x432.bpk".into(),
     ];
 
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
-            candidates.push(dir.join("../generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
-            candidates.push(dir.join("../../generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk"));
             candidates.push(
                 dir.join(
-                    "src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk",
+                    "src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
                 ),
             );
             candidates.push(dir.join(
-                "../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk",
+                "../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
             ));
             candidates.push(dir.join(
-                "../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16_optimized.bpk",
+                "../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
             ));
-            candidates.push(dir.join("generated_mixed/neuflow_v2_mixed_fp16.bpk"));
-            candidates.push(dir.join("../generated_mixed/neuflow_v2_mixed_fp16.bpk"));
-            candidates.push(dir.join("../../generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+            candidates.push(dir.join("generated_iter5/neuflow_v2_iter5_768x432.bpk"));
+            candidates.push(dir.join("../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
+            candidates.push(dir.join("../../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
             candidates
-                .push(dir.join("src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"));
+                .push(dir.join("src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"));
             candidates.push(
-                dir.join("../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"),
+                dir.join("../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
             );
             candidates.push(
-                dir.join("../../src/core/neuflow_burn/generated_mixed/neuflow_v2_mixed_fp16.bpk"),
+                dir.join("../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
             );
         }
     }
