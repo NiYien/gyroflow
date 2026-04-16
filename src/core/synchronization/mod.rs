@@ -91,9 +91,10 @@ impl PoseEstimator {
         frame_no: usize,
         timestamp_us: i64,
         img: Arc<image::GrayImage>,
-        rgb_data: Option<Arc<Vec<u8>>>,
+        frame_data: Option<Arc<Vec<u8>>>,
         width: u32,
         height: u32,
+        stride: usize,
         of_method: u32,
     ) {
         let frame_size = (width, height);
@@ -104,9 +105,10 @@ impl PoseEstimator {
                     of_method,
                     timestamp_us,
                     img,
-                    rgb_data,
+                    frame_data,
                     width,
                     height,
+                    stride,
                 ),
                 frame_no,
                 frame_size,

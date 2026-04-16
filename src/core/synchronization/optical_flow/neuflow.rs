@@ -10,9 +10,12 @@ use std::sync::atomic::AtomicU32;
 
 pub struct OFNeuFlowV2 {
     timestamp_us: i64,
-    pub(crate) rgb_frame: Arc<Vec<u8>>,
+    /// Raw NV12 frame data (Y plane + interleaved UV plane).
+    /// Fused NV12→CHW conversion in preprocess avoids intermediate RGB allocation.
+    pub(crate) nv12_frame: Arc<Vec<u8>>,
     width: u32,
     height: u32,
+    stride: usize,
     /// Sampled feature points from the most recent NeuFlow inference.
     features: Arc<std::cell::UnsafeCell<Vec<(f32, f32)>>>,
     /// Cache of optical flow results, keyed by target timestamp.
@@ -31,9 +34,10 @@ impl Clone for OFNeuFlowV2 {
     fn clone(&self) -> Self {
         Self {
             timestamp_us: self.timestamp_us,
-            rgb_frame: self.rgb_frame.clone(),
+            nv12_frame: self.nv12_frame.clone(),
             width: self.width,
             height: self.height,
+            stride: self.stride,
             features: self.features.clone(),
             matched_points: self.matched_points.clone(),
             used: self.used.clone(),
@@ -44,15 +48,17 @@ impl Clone for OFNeuFlowV2 {
 impl OFNeuFlowV2 {
     pub fn new(
         timestamp_us: i64,
-        rgb_frame: Arc<Vec<u8>>,
+        nv12_frame: Arc<Vec<u8>>,
         width: u32,
         height: u32,
+        stride: usize,
     ) -> Self {
         Self {
             timestamp_us,
-            rgb_frame,
+            nv12_frame,
             width,
             height,
+            stride,
             features: Arc::new(std::cell::UnsafeCell::new(Vec::new())),
             matched_points: Default::default(),
             used: Default::default(),
@@ -74,18 +80,18 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
         #[cfg(feature = "neuflow")]
         if let OpticalFlowMethod::OFNeuFlowV2(next) = _to {
             // Return cached result if available (needed because cache_optical_flow
-            // calls this again after process_detected_frames has cleaned up RGB frames)
+            // calls this again after process_detected_frames has cleaned up frames)
             if let Some(cached) = self.matched_points.read().get(&next.timestamp_us) {
                 return Some(cached.clone());
             }
 
-            if self.rgb_frame.is_empty() || next.rgb_frame.is_empty() {
+            if self.nv12_frame.is_empty() || next.nv12_frame.is_empty() {
                 return fallback_to_dis(self, next);
             }
 
             match neuflow_inference(
-                &self.rgb_frame, self.width, self.height,
-                &next.rgb_frame, next.width, next.height,
+                &self.nv12_frame, self.width, self.height, self.stride,
+                &next.nv12_frame, next.width, next.height, next.stride,
             ) {
                 Ok((flow_data, gray_data)) => {
                     // Letterbox parameters (must match preprocess_frame)
@@ -142,17 +148,17 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
     }
 
     fn cleanup(&mut self) {
-        self.rgb_frame = Arc::new(Vec::new());
+        self.nv12_frame = Arc::new(Vec::new());
     }
 }
 
 #[cfg(feature = "neuflow")]
 fn neuflow_inference(
-    rgb0: &[u8], w0: u32, h0: u32,
-    rgb1: &[u8], w1: u32, h1: u32,
+    nv12_0: &[u8], w0: u32, h0: u32, stride0: usize,
+    nv12_1: &[u8], w1: u32, h1: u32, stride1: usize,
 ) -> Result<(Vec<f32>, Vec<u8>), String> {
-    let (img0, gray0, proc_h, proc_w) = preprocess_frame(rgb0, w0, h0)?;
-    let (img1, _, _, _) = preprocess_frame(rgb1, w1, h1)?;
+    let (img0, gray0, proc_h, proc_w) = preprocess_frame_nv12(nv12_0, w0, h0, stride0)?;
+    let (img1, _, _, _) = preprocess_frame_nv12(nv12_1, w1, h1, stride1)?;
 
     let start = std::time::Instant::now();
 
@@ -168,13 +174,21 @@ fn neuflow_inference(
     Ok((flow, gray0))
 }
 
+/// Fused NV12→CHW preprocessing: reads NV12 data directly and produces
+/// model-ready CHW float32 tensor + grayscale in a single pass.
+///
+/// This eliminates the intermediate RGB buffer allocation (w×h×3) and converts
+/// only the output-resolution pixels (640×480) instead of all source pixels.
+/// For a 960×540 source, this is ~60% fewer pixel operations.
 #[cfg(feature = "neuflow")]
-fn preprocess_frame(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
+fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride: usize) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
     let w = width as usize;
     let h = height as usize;
+    let s = stride;
+    let uv_start = s * h;
 
-    if rgb.len() < w * h * 3 {
-        return Err(format!("RGB buffer too small: {} < {}", rgb.len(), w * h * 3));
+    if nv12.len() < uv_start + s * (h / 2) {
+        return Err(format!("NV12 buffer too small: {} < {}", nv12.len(), uv_start + s * (h / 2)));
     }
 
     // ONNX model fixed at 480x640. Letterbox: fit within, maintain aspect ratio.
@@ -185,16 +199,17 @@ fn preprocess_frame(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<f32>, Ve
     let new_w = (w as f32 * scale) as usize;
     let new_h = (h as f32 * scale) as usize;
 
-    // Pad offset (center the image)
     let pad_top = (target_h - new_h) / 2;
     let pad_left = (target_w - new_w) / 2;
 
-    // Fused resize + letterbox + CHW conversion + grayscale extraction
-    // Uses bilinear interpolation directly on the source buffer (no intermediate allocation)
+    // Fused NV12→RGB + resize + letterbox + CHW conversion + grayscale extraction.
+    // Bilinear interpolation on Y; nearest-neighbor on UV (already 2x subsampled).
     let inv_scale = 1.0 / scale;
     let mut chw = vec![0.0f32; 3 * target_h * target_w];
     let mut gray = vec![0u8; target_h * target_w];
     let plane = target_h * target_w;
+    let max_uv_x = if w > 0 { w / 2 - 1 } else { 0 };
+    let max_uv_y = if h > 0 { h / 2 - 1 } else { 0 };
 
     for out_y in pad_top..(pad_top + new_h) {
         let src_yf = (out_y - pad_top) as f32 * inv_scale;
@@ -202,32 +217,42 @@ fn preprocess_frame(rgb: &[u8], width: u32, height: u32) -> Result<(Vec<f32>, Ve
         let sy1 = (sy0 + 1).min(h - 1);
         let fy = src_yf - sy0 as f32;
 
+        // UV row (nearest to interpolated source position)
+        let uv_y = ((src_yf * 0.5) as usize).min(max_uv_y);
+
         for out_x in pad_left..(pad_left + new_w) {
             let src_xf = (out_x - pad_left) as f32 * inv_scale;
             let sx0 = (src_xf as usize).min(w - 1);
             let sx1 = (sx0 + 1).min(w - 1);
             let fx = src_xf - sx0 as f32;
 
-            // Bilinear interpolation weights
+            // Bilinear interpolation on Y plane (full resolution)
             let w00 = (1.0 - fx) * (1.0 - fy);
             let w10 = fx * (1.0 - fy);
             let w01 = (1.0 - fx) * fy;
             let w11 = fx * fy;
 
-            let i00 = (sy0 * w + sx0) * 3;
-            let i10 = (sy0 * w + sx1) * 3;
-            let i01 = (sy1 * w + sx0) * 3;
-            let i11 = (sy1 * w + sx1) * 3;
+            let y_val = nv12[sy0 * s + sx0] as f32 * w00
+                      + nv12[sy0 * s + sx1] as f32 * w10
+                      + nv12[sy1 * s + sx0] as f32 * w01
+                      + nv12[sy1 * s + sx1] as f32 * w11;
+
+            // Nearest-neighbor UV from interleaved UV plane (half resolution)
+            let uv_x = ((src_xf * 0.5) as usize).min(max_uv_x);
+            let uv_offset = uv_start + uv_y * s + uv_x * 2;
+            let u_val = nv12[uv_offset] as f32 - 128.0;
+            let v_val = nv12[uv_offset + 1] as f32 - 128.0;
+
+            // YUV→RGB (BT.601 coefficients, matches original nv12_to_rgb)
+            let r = (y_val + 1.402 * v_val).clamp(0.0, 255.0);
+            let g = (y_val - 0.344136 * u_val - 0.714136 * v_val).clamp(0.0, 255.0);
+            let b = (y_val + 1.772 * u_val).clamp(0.0, 255.0);
 
             let out_idx = out_y * target_w + out_x;
-            for c in 0..3 {
-                let v = rgb[i00 + c] as f32 * w00
-                      + rgb[i10 + c] as f32 * w10
-                      + rgb[i01 + c] as f32 * w01
-                      + rgb[i11 + c] as f32 * w11;
-                chw[c * plane + out_idx] = v;
-            }
-            gray[out_idx] = chw[out_idx] as u8; // R channel as grayscale
+            chw[out_idx] = r;               // R plane
+            chw[plane + out_idx] = g;        // G plane
+            chw[2 * plane + out_idx] = b;    // B plane
+            gray[out_idx] = r as u8;         // R channel as grayscale (matches original)
         }
     }
 
@@ -341,18 +366,18 @@ fn texture_variance(gray: &[u8], x: usize, y: usize, w: usize, h: usize, patch: 
     sum_sq / count - mean * mean
 }
 
-/// Fallback: convert RGB frames to grayscale and use OpenCV DIS for optical flow.
+/// Fallback: extract grayscale from NV12 Y plane and use OpenCV DIS for optical flow.
 fn fallback_to_dis(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> OpticalFlowPair {
-    if self_frame.rgb_frame.is_empty() || next_frame.rgb_frame.is_empty() {
-        log::warn!("NeuFlow fallback: one or both RGB frames are empty");
+    if self_frame.nv12_frame.is_empty() || next_frame.nv12_frame.is_empty() {
+        log::warn!("NeuFlow fallback: one or both NV12 frames are empty");
         return None;
     }
     if self_frame.width == 0 || self_frame.height == 0 {
         return None;
     }
 
-    let gray1 = rgb_to_gray(&self_frame.rgb_frame, self_frame.width, self_frame.height);
-    let gray2 = rgb_to_gray(&next_frame.rgb_frame, next_frame.width, next_frame.height);
+    let gray1 = nv12_to_gray(&self_frame.nv12_frame, self_frame.width, self_frame.height, self_frame.stride);
+    let gray2 = nv12_to_gray(&next_frame.nv12_frame, next_frame.width, next_frame.height, next_frame.stride);
 
     let dis1 = OFOpenCVDis::detect_features(
         self_frame.timestamp_us,
@@ -377,8 +402,26 @@ fn fallback_to_dis(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> Optica
     result
 }
 
+/// Extract grayscale from NV12 Y plane (zero-cost: Y is already luma).
+fn nv12_to_gray(nv12: &[u8], width: u32, height: u32, stride: usize) -> image::GrayImage {
+    let w = width as usize;
+    let h = height as usize;
+    if nv12.len() < stride * h {
+        log::warn!("NeuFlow nv12_to_gray: buffer too small (expected {}, got {})", stride * h, nv12.len());
+        return image::GrayImage::new(width, height);
+    }
+    let mut gray = image::GrayImage::new(width, height);
+    for y in 0..h {
+        let src_row = &nv12[y * stride..y * stride + w];
+        let dst_row = &mut gray.as_mut()[(y * w)..((y + 1) * w)];
+        dst_row.copy_from_slice(src_row);
+    }
+    gray
+}
+
 /// Convert an RGB buffer to a grayscale image using standard luminance coefficients.
 /// Y = 0.299*R + 0.587*G + 0.114*B
+#[cfg(test)]
 fn rgb_to_gray(rgb: &[u8], width: u32, height: u32) -> image::GrayImage {
     let expected_len = (width * height * 3) as usize;
     if rgb.len() < expected_len {
@@ -470,8 +513,10 @@ mod tests {
 
     #[test]
     fn test_ofneuflowv2_new() {
-        let frame = Arc::new(vec![0u8; 100 * 100 * 3]);
-        let nf = OFNeuFlowV2::new(12345, frame, 100, 100);
+        // NV12: stride*h (Y) + stride*(h/2) (UV)
+        let stride = 100;
+        let frame = Arc::new(vec![0u8; stride * 100 + stride * 50]);
+        let nf = OFNeuFlowV2::new(12345, frame, 100, 100, stride);
         assert_eq!(nf.size(), (100, 100));
         assert!(nf.features().is_empty());
         assert!(!nf.can_cleanup());
@@ -479,11 +524,12 @@ mod tests {
 
     #[test]
     fn test_ofneuflowv2_cleanup() {
-        let frame = Arc::new(vec![128u8; 10 * 10 * 3]);
-        let mut nf = OFNeuFlowV2::new(0, frame, 10, 10);
-        assert!(!nf.rgb_frame.is_empty());
+        let stride = 10;
+        let frame = Arc::new(vec![128u8; stride * 10 + stride * 5]);
+        let mut nf = OFNeuFlowV2::new(0, frame, 10, 10, stride);
+        assert!(!nf.nv12_frame.is_empty());
         nf.cleanup();
-        assert!(nf.rgb_frame.is_empty());
+        assert!(nf.nv12_frame.is_empty());
     }
 
     #[test]

@@ -48,9 +48,10 @@ impl OpticalFlowMethod {
         method: u32,
         timestamp_us: i64,
         img: Arc<image::GrayImage>,
-        rgb_data: Option<Arc<Vec<u8>>>,
+        frame_data: Option<Arc<Vec<u8>>>,
         width: u32,
         height: u32,
+        stride: usize,
     ) -> Self {
         match method {
             0 => Self::OFAkaze(OFAkaze::detect_features(timestamp_us, img, width, height)),
@@ -69,9 +70,10 @@ impl OpticalFlowMethod {
             #[cfg(feature = "neuflow")]
             3 => Self::OFNeuFlowV2(OFNeuFlowV2::new(
                 timestamp_us,
-                rgb_data.unwrap_or_else(|| Arc::new(Vec::new())),
+                frame_data.unwrap_or_else(|| Arc::new(Vec::new())),
                 width,
                 height,
+                stride,
             )),
             _ => {
                 log::error!("Unknown OF method {method}",);
