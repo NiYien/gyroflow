@@ -114,7 +114,16 @@ MenuItem {
 
         controller.set_video_rotation(root.videoRotation)
 
-        Qt.callLater(window.exportSettings.videoInfoLoaded, w, h, bitrate);
+        // Swap output dimensions for 90/270 metadata rotation so the export
+        // and preview start with the correct portrait/landscape orientation.
+        // R3D files are excluded — rotation is not supported for this format.
+        const isR3D = (root.filename || "").toLowerCase().endsWith(".r3d");
+        let exportW = w, exportH = h;
+        if (!isR3D && (root.metadataRotation == 90 || root.metadataRotation == 270)) {
+            exportW = h;
+            exportH = w;
+        }
+        Qt.callLater(window.exportSettings.videoInfoLoaded, exportW, exportH, bitrate);
     }
     function updateEntry(key: string, value: string): void {
         if (key == "File name") root.filename = value;

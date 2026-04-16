@@ -519,10 +519,25 @@ Item {
         if (urls.length == 1) {
             root.loadFile(urls[0], skip_detection);
         } else if (urls.length > 1) {
-            // [Fix2] 批量拖入直接加入渲染队列，不弹对话框
-            const urlsCopy = [...urls];
-            queue.item.dt.loadFiles(urlsCopy);
-            queue.item.shown = true;
+            // 过滤掉 .gyroflow 文件，同时拖入时以视频为主
+            let videoUrls = [];
+            for (const url of urls) {
+                if (!filesystem.get_filename(url).toLowerCase().endsWith(".gyroflow")) {
+                    videoUrls.push(url);
+                }
+            }
+            if (videoUrls.length === 0) {
+                // 全是 .gyroflow 文件，加载第一个
+                root.loadFile(urls[0], skip_detection);
+            } else if (videoUrls.length === 1) {
+                // 过滤后只剩一个视频：在主界面加载
+                root.loadFile(videoUrls[0], skip_detection);
+            } else {
+                // 多个视频：批量加入渲染队列
+                const urlsCopy = [...videoUrls];
+                queue.item.dt.loadFiles(urlsCopy);
+                queue.item.shown = true;
+            }
         }
     }
 

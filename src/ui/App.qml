@@ -881,7 +881,7 @@ Rectangle {
                     }
                 }
 
-                // Video info — mirror Full mode's vidInfo data
+                // ── 1. Video information + Export ──
                 MenuItem {
                     text: qsTranslate("VideoInformation", "Video information");
                     iconName: "info";
@@ -899,14 +899,18 @@ Rectangle {
                         width: parent.width;
                         model: window.vidInfo ? window.vidInfo.infoList.model : ({});
                     }
+                    SectionDivider { label: qsTranslate("Export", "Export settings"); }
+                    Menu.SimpleExport {
+                        width: parent.width;
+                    }
                 }
                 Hr { }
 
-                // ── 1. Data Loading ──
+                // ── 2. Sensor & Lens ──
                 MenuItem {
-                    text: qsTranslate("MotionData", "Motion data");
-                    iconName: "axes";
-                    objectName: "simple-data";
+                    text: qsTr("Sensor && Lens");
+                    iconName: "chart";
+                    objectName: "simple-sensor-lens";
                     opacity: batchState.active ? 0.4 : 1.0;
                     innerItem.enabled: !batchState.active;
                     Row {
@@ -940,39 +944,39 @@ Rectangle {
                         opacity: 0.7;
                         font.pixelSize: 11 * dpiScale;
                     }
+
+                    SectionDivider { visible: simpleDevice.active; }
+                    ItemLoader {
+                        id: simpleDevice;
+                        active: controller.device_connected || controller.ota_state !== "none";
+                        width: parent.width;
+                        sourceComponent: Component { Menu.SimpleDevice { } }
+                    }
+
+                    SectionDivider { }
+                    ItemLoader {
+                        id: simpleMounting;
+                        active: true;
+                        width: parent.width;
+                        opacity: batchState.active ? 0.4 : 1.0;
+                        sourceComponent: Component {
+                            Menu.MountingPresetSelector {
+                                innerItem.enabled: !batchState.active;
+                            }
+                        }
+                    }
+
+                    SectionDivider { visible: lensGroupConfig.active; }
+                    ItemLoader {
+                        id: lensGroupConfig;
+                        active: window.lensGroupPanelActive;
+                        width: parent.width;
+                        sourceComponent: Component { Menu.LensGroupConfig { } }
+                    }
                 }
                 Hr { }
 
-                ItemLoader {
-                    id: simpleDevice;
-                    active: controller.device_connected || controller.ota_state !== "none";
-                    width: parent.width;
-                    sourceComponent: Component { Menu.SimpleDevice { } }
-                }
-                Hr { visible: simpleDevice.active; }
-
-                ItemLoader {
-                    id: simpleMounting;
-                    active: window.isNiYienDevice;
-                    width: parent.width;
-                    opacity: batchState.active ? 0.4 : 1.0;
-                    sourceComponent: Component {
-                        Menu.MountingPresetSelector {
-                            innerItem.enabled: controller.gyro_loaded && !batchState.active;
-                        }
-                    }
-                }
-                Hr { visible: simpleMounting.active; }
-
-                ItemLoader {
-                    id: lensGroupConfig;
-                    active: window.lensGroupPanelActive;
-                    width: parent.width;
-                    sourceComponent: Component { Menu.LensGroupConfig { } }
-                }
-                Hr { visible: lensGroupConfig.active; }
-
-                // ── 2. Stabilization ──
+                // ── 3. Stabilization ──
                 MenuItem {
                     text: qsTranslate("Stabilization", "Stabilization");
                     iconName: "gyroflow";
@@ -985,24 +989,11 @@ Rectangle {
                 }
                 Hr { }
 
-                // ── 3. Export ──
+                // ── 4. Settings ──
                 MenuItem {
-                    text: qsTranslate("Export", "Export settings");
-                    iconName: "save";
-                    objectName: "simple-export";
-                    opacity: batchState.active ? 0.4 : 1.0;
-                    innerItem.enabled: window.videoArea.vid.loaded && !batchState.active;
-                    Menu.SimpleExport {
-                        width: parent.width;
-                    }
-                }
-                Hr { }
-
-                // ── 4. Advanced ──
-                MenuItem {
-                    text: qsTranslate("Advanced", "Advanced");
+                    text: qsTr("Settings");
                     iconName: "settings";
-                    objectName: "simple-advanced";
+                    objectName: "simple-settings";
                     opened: false;
                     opacity: batchState.active ? 0.4 : 1.0;
                     innerItem.enabled: !batchState.active;
@@ -1081,13 +1072,13 @@ Rectangle {
                             }
                         }
                     }
-                }
 
-                // ── 5. NLE Plugins (if installed) ──
-                Hr { visible: controller.is_nle_installed(); }
-                ItemLoader {
-                    active: controller.is_nle_installed();
-                    sourceComponent: Component { Menu.NlePlugins { } }
+                    SectionDivider { visible: controller.is_nle_installed(); }
+                    ItemLoader {
+                        active: controller.is_nle_installed();
+                        width: parent.width;
+                        sourceComponent: Component { Menu.NlePlugins { } }
+                    }
                 }
 
                 // Simple→Full toggle at bottom

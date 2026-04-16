@@ -34,6 +34,7 @@ RadioButton 1.0 RadioButton.qml
 ReadoutDirection 1.0 ReadoutDirection.qml
 ResizablePanel 1.0 ResizablePanel.qml
 SearchField 1.0 SearchField.qml
+SectionDivider 1.0 SectionDivider.qml
 SidePanel 1.0 SidePanel.qml
 Slider 1.0 Slider.qml
 SliderWithField 1.0 SliderWithField.qml

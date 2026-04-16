@@ -56,6 +56,8 @@ Column {
     // ── Codec ──
     ComboBox {
         id: codec;
+        enabled: window.videoArea.vid.loaded;
+        opacity: enabled ? 1.0 : 0.5;
         model: exportSettings ? exportSettings.exportFormats.map(x => x.name) : [];
         width: parent.width;
         currentIndex: exportSettings ? exportSettings.outCodec === "H.264/AVC" ? 0 : exportSettings.outCodec === "H.265/HEVC" ? 1 : 0 : 1;
@@ -73,6 +75,8 @@ Column {
     // ── Codec Sub-options ──
     ComboBox {
         id: codecOptions;
+        enabled: window.videoArea.vid.loaded;
+        opacity: enabled ? 1.0 : 0.5;
         model: exportSettings ? exportSettings.exportFormats[codec.currentIndex].variants : [];
         width: parent.width;
         visible: model.length > 0;
@@ -92,6 +96,8 @@ Column {
     Label {
         position: Label.LeftPosition;
         text: qsTranslate("Export", "Output size");
+        enabled: window.videoArea.vid.loaded;
+        opacity: enabled ? 1.0 : 0.5;
         Item {
             width: parent.width;
             height: simpleOutputWidth.height;
@@ -188,6 +194,8 @@ Column {
     Label {
         position: Label.LeftPosition;
         text: qsTranslate("Export", "Bitrate");
+        enabled: window.videoArea.vid.loaded;
+        opacity: enabled ? 1.0 : 0.5;
         visible: exportSettings && (exportSettings.outCodec === "H.264/AVC" || exportSettings.outCodec === "H.265/HEVC" || exportSettings.outCodec === "AV1");
         NumberField {
             id: simpleBitrate;

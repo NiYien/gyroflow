@@ -45,6 +45,7 @@ Column {
     property int _baselineOutHeight: 0
     property bool _autoRotateApplied: false
     property int _autoRotationDeg: 0
+    property bool _metadataRotationApplied: false
     property bool _syncingBatchAutoRotate: false
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
@@ -91,6 +92,7 @@ Column {
 
     function applyAutoRotation(): void {
         if (root._batchActive) return;
+        if (root._metadataRotationApplied) return;
 
         let outWidth = _baselineOutWidth;
         let outHeight = _baselineOutHeight;
@@ -108,6 +110,7 @@ Column {
 
     function revertAutoRotation(): void {
         if (root._batchActive) return;
+        if (root._metadataRotationApplied) return;
 
         root.setDisplayedRotation(_baselineRotation);
         window.videoArea.outWidth = _baselineOutWidth;
@@ -221,6 +224,7 @@ Column {
                 }
                 return;
             }
+            if (root._metadataRotationApplied) return;
             if (checked) {
                 root.applyAutoRotation();
             } else if (!checked && root._autoRotateApplied) {
@@ -313,7 +317,19 @@ Column {
                 const isSenseFlow = root.isSenseFlowSource(root._batchActive ? window.batchState.detectedSource : camera);
                 root.captureAutoRotateBaseline();
                 root._autoRotationDeg = 0;
-                if (isSenseFlow && additional_data && additional_data.auto_rotation_deg !== undefined) {
+                root._metadataRotationApplied = false;
+
+                const metaRot = root._baselineRotation;
+                const isR3D = (filename || "").toLowerCase().endsWith(".r3d");
+                if (!isR3D && metaRot !== 0 && !root._batchActive) {
+                    // Priority 1: video metadata rotation
+                    // Dimensions already swapped in videoInfoLoaded (via VideoInformation),
+                    // so just mark as applied — no dimension swap needed here.
+                    root._autoRotationDeg = metaRot;
+                    root._metadataRotationApplied = true;
+                    root._autoRotateApplied = true;
+                } else if (!isR3D && isSenseFlow && additional_data && additional_data.auto_rotation_deg !== undefined) {
+                    // Priority 2: gyroscope rotation → only apply if checkbox is on
                     root._autoRotationDeg = +additional_data.auto_rotation_deg;
                     if (autoRotateCb.checked && !root._batchActive) {
                         root.applyAutoRotation();

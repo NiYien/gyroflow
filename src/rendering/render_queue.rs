@@ -75,6 +75,7 @@ struct Job {
     // [T20] 保存 video_created_at，stab 释放后排序仍可用
     video_created_at: Option<i64>,
     original_video_rotation: f64,
+    original_output_size: (usize, usize),
 }
 
 #[derive(Clone, Debug, Default)]
@@ -886,6 +887,7 @@ impl RenderQueue {
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
         let original_video_rotation = stab.params.read().video_rotation;
+        let original_output_size = (render_options.output_width, render_options.output_height);
         self.jobs.insert(
             job_id,
             Job {
@@ -902,6 +904,7 @@ impl RenderQueue {
                 lens_group_index,
                 video_created_at,
                 original_video_rotation,
+                original_output_size,
             },
         );
         self.update_queue_indices();
@@ -2772,13 +2775,14 @@ impl RenderQueue {
         let fps = stab.params.read().fps;
 
         let sync_settings = stab.lens.read().sync_settings.clone().unwrap_or_default();
-        if !has_sync_points
-            && !has_accurate_timestamps
-            && sync_settings
-                .get("do_autosync")
-                .and_then(|v| v.as_bool())
-                .unwrap_or_default()
-        {
+        let force_autosync = sync_settings
+            .get("do_autosync")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_default();
+        if force_autosync && has_accurate_timestamps {
+            ::log::info!("do_autosync overriding has_accurate_timestamps for {}", url);
+        }
+        if !has_sync_points && (!has_accurate_timestamps || force_autosync) {
             // ----------------------------------------------------------------------------
             // --------------------------------- Autosync ---------------------------------
             processing_cb(0.01);
@@ -3767,6 +3771,9 @@ impl RenderQueue {
                             let auto_focus =
                                 anamorphic_presets::extract_video_focus_length_mm(&base_metadata);
 
+                            // Preserve sync_settings across lens profile replacement
+                            let saved_sync_settings = stab.lens.read().sync_settings.clone();
+
                             stab.apply_main_video_telemetry(&mut base_metadata, gyro_file_url, true);
                             *stab.camera_id.write() = base_metadata.camera_identifier.clone();
                             if let Err(err) = stab.autoload_lens_from_camera_id() {
@@ -3777,6 +3784,11 @@ impl RenderQueue {
                                 );
                             }
                             sync_readout_params_from_lens(stab.as_ref());
+
+                            // Restore sync_settings that may have been lost during lens replacement
+                            if let Some(ss) = saved_sync_settings {
+                                stab.lens.write().sync_settings = Some(ss);
+                            }
 
                             if let Some(lens_index) = lens_index {
                                 if let Some(group_config) = effective_configs.get(lens_index) {
@@ -3897,6 +3909,7 @@ impl RenderQueue {
             lens_group_index: Option<usize>,
             auto_rotate: bool,
             original_video_rotation: f64,
+            original_output_size: (usize, usize),
             base_lens_metadata: Option<JobLensMetadataBackup>,
             effective_lens_group_configs: Vec<anamorphic_presets::LensGroupConfig>,
             stab: Arc<StabilizationManager>,
@@ -3948,6 +3961,7 @@ impl RenderQueue {
                 base_render_output_size,
                 auto_rotate,
                 original_video_rotation,
+                original_output_size,
                 base_lens_metadata,
                 effective_lens_group_configs,
             ) = match self.jobs.get(&job_id) {
@@ -3963,6 +3977,7 @@ impl RenderQueue {
                         )),
                         job.auto_rotate,
                         job.original_video_rotation,
+                        job.original_output_size,
                         job.base_lens_metadata.clone().or_else(|| {
                             let gyro = stab.gyro.read();
                             let md = gyro.file_metadata.read();
@@ -4003,6 +4018,7 @@ impl RenderQueue {
                 lens_group_index: None,
                 auto_rotate,
                 original_video_rotation,
+                original_output_size,
                 base_lens_metadata,
                 effective_lens_group_configs,
                 stab,
@@ -4404,7 +4420,9 @@ impl RenderQueue {
                     let md =
                         clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
                     let detected_source = md.detected_source.as_deref().unwrap_or("");
-                    if item.auto_rotate && detected_source.starts_with("SenseFlow") {
+                    let is_r3d = item.render_options.input_filename.to_ascii_lowercase().ends_with(".r3d");
+                    let has_metadata_rotation = item.original_video_rotation.round() as i32 != 0 && !is_r3d;
+                    if !is_r3d && !has_metadata_rotation && item.auto_rotate && detected_source.starts_with("SenseFlow") {
                         ::log::info!(
                             "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={}",
                             item.render_options.input_filename,
@@ -4486,34 +4504,40 @@ impl RenderQueue {
                             .apply_main_video_telemetry(&mut md, &item.gyro_path, true);
                         let camera_id = md.camera_identifier.clone();
 
-                        let current_video_rotation = item.stab.params.read().video_rotation;
                         let detected_source =
                             md.detected_source.as_deref().unwrap_or("").to_string();
                         let metadata_raw_rotation =
                             denormalize_video_rotation_metadata(item.original_video_rotation);
 
-                        if (current_video_rotation - item.original_video_rotation).abs()
-                            >= f64::EPSILON
-                        {
-                            let current_is_vertical =
-                                current_video_rotation == 90.0 || current_video_rotation == 270.0;
-                            let original_is_vertical = item.original_video_rotation == 90.0
-                                || item.original_video_rotation == 270.0;
-                            if current_is_vertical != original_is_vertical {
-                                std::mem::swap(
-                                    &mut item.render_options.output_width,
-                                    &mut item.render_options.output_height,
-                                );
-                            }
-                        }
+                        // Always reset to original (pre-rotation) dimensions
+                        item.render_options.output_width = item.original_output_size.0;
+                        item.render_options.output_height = item.original_output_size.1;
                         item.stab.set_video_rotation(item.original_video_rotation);
+
+                        // Priority 1: metadata rotation dimension swap (R3D excluded)
+                        let metadata_rot = item.original_video_rotation.round() as i32;
+                        let is_r3d = item.render_options.input_filename.to_ascii_lowercase().ends_with(".r3d");
+                        let has_metadata_rotation = metadata_rot != 0 && !is_r3d;
+                        if has_metadata_rotation && (metadata_rot == 90 || metadata_rot == 270) {
+                            std::mem::swap(
+                                &mut item.render_options.output_width,
+                                &mut item.render_options.output_height,
+                            );
+                            ::log::info!(
+                                "[apply_match] job[{}] metadata rotation {} → dimension swap ({}x{})",
+                                idx, metadata_rot,
+                                item.render_options.output_width,
+                                item.render_options.output_height
+                            );
+                        }
                         item.stab.set_output_size(
                             item.render_options.output_width,
                             item.render_options.output_height,
                         );
 
+                        // Priority 2: gyroscope rotation (only when no metadata rotation)
                         let should_apply_auto_rotate =
-                            item.auto_rotate && detected_source.starts_with("SenseFlow");
+                            !has_metadata_rotation && item.auto_rotate && detected_source.starts_with("SenseFlow");
                         let auto_rotation = if should_apply_auto_rotate {
                             auto_rotation_results
                                 .get(&item.job_id)
@@ -4607,7 +4631,7 @@ impl RenderQueue {
                                 item.render_options.output_width,
                                 item.render_options.output_height
                             );
-                        } else if item.auto_rotate && detected_source.starts_with("SenseFlow") {
+                        } else if should_apply_auto_rotate {
                             ::log::info!(
                                 "[auto_rotate compare] file='{}' detected_source='{}' metadata_raw={} metadata_normalized={} auto_rotate_result=None matches_normalized=false",
                                 item.render_options.input_filename,
@@ -4720,7 +4744,7 @@ impl RenderQueue {
                     "every_nth_frame": every_nth_frame,
                     "initial_offset": 0.0,
                     "pose_method": 0,
-                    "of_method": 2,
+                    "of_method": 3,
                     "offset_method": 2
                 }));
                 drop(lens);

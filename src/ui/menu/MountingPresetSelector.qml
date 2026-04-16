@@ -4,10 +4,8 @@
 pragma ComponentBehavior: Bound
 
 import QtQuick
-import QtQuick.Controls as QQC
 
 import "../components/"
-import "mounting_orientation.js" as MountingOrientation
 
 MenuItem {
     id: root;
@@ -16,202 +14,155 @@ MenuItem {
     objectName: "simple-mounting";
     opened: true;
 
-    property string currentPosition: settings.value("mountingPosition", "top")
-    property int currentRotation: parseInt(settings.value("mountingRotation", "0")) || 0
-    property string lastKnownOrientation: ""
-    property bool isCustom: false
+    property string currentMode: ""
+    property real customPitch: 0
+    property real customRoll: 0
+    property real customYaw: 0
+    property bool initialized: false
 
-    readonly property bool lightTheme: style === "light"
-    readonly property color cardBorderColor: root.lightTheme ? "#d8dde6" : Qt.rgba(1, 1, 1, 0.14)
+    readonly property var presetAngles: ({
+        "top":    [0, 0, 0],
+        "bottom": [0, 180, 0],
+        "left":   [0, -90, 0],
+        "right":  [0, 90, 0]
+    })
+    readonly property var modeKeys:   ["top", "bottom", "left", "right", "custom"]
+    readonly property var modeLabels: [qsTr("Top"), qsTr("Bottom"), qsTr("Left"), qsTr("Right"), qsTr("Custom")]
 
-    readonly property var positions: [
-        { face: "top",    label: qsTr("Top") },
-        { face: "left",   label: qsTr("Left") },
-        { face: "right",  label: qsTr("Right") },
-        { face: "bottom", label: qsTr("Bottom") }
-    ]
-    readonly property var rotations: [
-        { angle: 0,    label: "0\u00B0" },
-        { angle: 90,   label: "+90\u00B0" },
-        { angle: -90,  label: "-90\u00B0" },
-        { angle: 180,  label: "180\u00B0" }
-    ]
-    function mountingSvgSource(): string {
-        return "qrc:/resources/mounting/mount_" + root.currentPosition + "_" + root.currentRotation + ".svg";
-    }
-
-    function applyPreset(): void {
-        const str = MountingOrientation.getOrientationString(root.currentPosition, root.currentRotation);
-        if (str) {
-            root.isCustom = false;
-            root.lastKnownOrientation = str;
-            controller.set_imu_orientation(str);
-            Qt.callLater(controller.recompute_gyro);
-            root.savePreset();
-        }
-    }
-
-    function updateFromOrientation(orientationStr: string): void {
-        if (!orientationStr || orientationStr.length === 0) return;
-        root.lastKnownOrientation = orientationStr;
-        const preset = MountingOrientation.reverseMapping(orientationStr);
-        if (preset) {
-            root.currentPosition = preset.face;
-            root.currentRotation = preset.rotation;
-            root.isCustom = false;
-            root.savePreset();
+    function applyMode(): void {
+        if (!root.initialized) return;
+        if (root.currentMode === "custom") {
+            controller.set_imu_rotation(root.customPitch, root.customRoll, root.customYaw);
         } else {
-            root.isCustom = true;
+            const angles = root.presetAngles[root.currentMode];
+            if (angles) {
+                controller.set_imu_rotation(angles[0], angles[1], angles[2]);
+            }
         }
+        Qt.callLater(controller.recompute_gyro);
+        root.saveSettings();
     }
 
-    function savePreset(): void {
-        settings.setValue("mountingPosition", root.currentPosition);
-        settings.setValue("mountingRotation", root.currentRotation.toString());
+    function saveSettings(): void {
+        settings.setValue("mountingMode", root.currentMode);
+        settings.setValue("mountingCustomPitch", root.customPitch.toString());
+        settings.setValue("mountingCustomRoll", root.customRoll.toString());
+        settings.setValue("mountingCustomYaw", root.customYaw.toString());
     }
 
-    function restorePreset(): void {
-        const pos = settings.value("mountingPosition", "top");
-        const rot = parseInt(settings.value("mountingRotation", "0")) || 0;
-        root.currentPosition = pos;
-        root.currentRotation = rot;
-        root.isCustom = false;
+    function restoreSettings(): void {
+        let mode = settings.value("mountingMode", "");
+        if (!mode) {
+            // Migration from old settings
+            const oldPos = settings.value("mountingPosition", "top");
+            const oldRot = parseInt(settings.value("mountingRotation", "0")) || 0;
+            mode = (oldRot === 0 && root.presetAngles.hasOwnProperty(oldPos)) ? oldPos : "custom";
+            settings.setValue("mountingMode", mode);
+        }
+        root.currentMode = mode;
+        root.customPitch = parseFloat(settings.value("mountingCustomPitch", "0")) || 0;
+        root.customRoll  = parseFloat(settings.value("mountingCustomRoll", "0")) || 0;
+        root.customYaw   = parseFloat(settings.value("mountingCustomYaw", "0")) || 0;
+
+        // Sync ComboBox index
+        const idx = root.modeKeys.indexOf(root.currentMode);
+        modeCombo.currentIndex = idx >= 0 ? idx : 0;
     }
 
-    Component.onCompleted: root.restorePreset()
+    Component.onCompleted: {
+        root.restoreSettings();
+        root.initialized = true;
+        root.applyMode();
+    }
 
     Connections {
         target: controller;
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
-            // User preset takes priority over video orientation.
-            // Only update UI if no saved preset exists (first launch scenario).
-            if (additional_data.imu_orientation) {
-                root.lastKnownOrientation = additional_data.imu_orientation;
-                // Check if video orientation matches a preset, update UI display only
-                const preset = MountingOrientation.reverseMapping(additional_data.imu_orientation);
-                if (preset) {
-                    // Don't override user's saved preset — just note the match
-                } else {
-                    // Video has a non-preset orientation
+            // Re-apply mounting rotation after MotionData clears it
+            Qt.callLater(root.applyMode);
+        }
+    }
+
+    // ── Mode selector ──
+    ComboBox {
+        id: modeCombo;
+        model: root.modeLabels;
+        font.pixelSize: 12 * dpiScale;
+        width: parent.width;
+        currentIndex: 0;
+        onCurrentIndexChanged: {
+            if (!root.initialized) return;
+            root.currentMode = root.modeKeys[currentIndex];
+            root.applyMode();
+        }
+    }
+
+    // ── Custom rotation angles (visible only in custom mode) ──
+    Flow {
+        width: parent.width;
+        spacing: 5 * dpiScale;
+        visible: root.currentMode === "custom";
+
+        Label {
+            position: Label.LeftPosition;
+            text: qsTr("Pitch");
+            width: undefined;
+            inner.width: 50 * dpiScale;
+            spacing: 5 * dpiScale;
+            NumberField {
+                id: pitchField;
+                unit: "°";
+                precision: 1;
+                from: -360;
+                to: 360;
+                width: 50 * dpiScale;
+                value: root.customPitch;
+                onValueChanged: {
+                    if (!root.initialized) return;
+                    root.customPitch = value;
+                    root.applyMode();
                 }
             }
         }
-        function onOrientation_guessed(value: string): void {
-            // Guess overrides user preset (user actively triggered Guess)
-            root.updateFromOrientation(value);
-        }
-    }
-
-    // ── Position buttons ──
-    Row {
-        width: parent.width;
-        spacing: 8 * dpiScale;
-
-        Repeater {
-            model: root.positions
-            delegate: Rectangle {
-                id: posBtn
-                required property var modelData
-                required property int index
-                width: (parent.width - (root.positions.length - 1) * parent.spacing) / root.positions.length
-                height: 30 * dpiScale
-                radius: 6 * dpiScale
-                color: root.currentPosition === modelData.face && !root.isCustom
-                    ? Qt.rgba(styleAccentColor.r, styleAccentColor.g, styleAccentColor.b, 0.18)
-                    : posArea.containsMouse ? Qt.lighter(styleButtonColor, 1.2) : styleButtonColor
-                border.width: root.currentPosition === modelData.face && !root.isCustom ? 1 : 0
-                border.color: styleAccentColor
-                scale: posArea.pressed ? 0.97 : 1.0
-                Ease on scale { duration: 200; }
-
-                BasicText {
-                    anchors.centerIn: parent;
-                    text: posBtn.modelData.label;
-                    font.pixelSize: 12 * dpiScale;
-                    color: styleTextColor;
-                    leftPadding: 0;
-                }
-                MouseArea {
-                    id: posArea;
-                    anchors.fill: parent;
-                    hoverEnabled: true;
-                    cursorShape: Qt.PointingHandCursor;
-                    onClicked: {
-                        root.currentPosition = posBtn.modelData.face;
-                        root.applyPreset();
-                    }
+        Label {
+            position: Label.LeftPosition;
+            text: qsTr("Roll");
+            width: undefined;
+            inner.width: 50 * dpiScale;
+            spacing: 5 * dpiScale;
+            NumberField {
+                id: rollField;
+                unit: "°";
+                precision: 1;
+                from: -360;
+                to: 360;
+                width: 50 * dpiScale;
+                value: root.customRoll;
+                onValueChanged: {
+                    if (!root.initialized) return;
+                    root.customRoll = value;
+                    root.applyMode();
                 }
             }
         }
-    }
-
-    // ── 3D camera illustration ──
-    Item {
-        width: parent.width;
-        height: 140 * dpiScale;
-
-        Image {
-            id: mountingImage;
-            anchors.centerIn: parent;
-            height: parent.height - 6 * dpiScale;
-            fillMode: Image.PreserveAspectFit;
-            source: root.isCustom ? "" : root.mountingSvgSource();
-            visible: !root.isCustom;
-            opacity: 1.0;
-            Ease on opacity { duration: 300; }
-            onSourceChanged: { opacity = 0.3; opacity = 1.0; }
-        }
-
-        // Custom state label
-        BasicText {
-            anchors.centerIn: parent;
-            visible: root.isCustom;
-            text: qsTr("Custom");
-            font.pixelSize: 13 * dpiScale;
-            color: styleTextColor;
-            opacity: 0.5;
-            leftPadding: 0;
-        }
-    }
-
-    // ── Rotation buttons ──
-    Row {
-        width: parent.width;
-        spacing: 8 * dpiScale;
-
-        Repeater {
-            model: root.rotations
-            delegate: Rectangle {
-                id: rotBtn
-                required property var modelData
-                required property int index
-                width: (parent.width - (root.rotations.length - 1) * parent.spacing) / root.rotations.length
-                height: 30 * dpiScale
-                radius: 6 * dpiScale
-                color: root.currentRotation === modelData.angle && !root.isCustom
-                    ? Qt.rgba(styleAccentColor.r, styleAccentColor.g, styleAccentColor.b, 0.18)
-                    : rotArea.containsMouse ? Qt.lighter(styleButtonColor, 1.2) : styleButtonColor
-                border.width: root.currentRotation === modelData.angle && !root.isCustom ? 1 : 0
-                border.color: styleAccentColor
-                scale: rotArea.pressed ? 0.97 : 1.0
-                Ease on scale { duration: 200; }
-
-                BasicText {
-                    anchors.centerIn: parent;
-                    text: rotBtn.modelData.label;
-                    font.pixelSize: 12 * dpiScale;
-                    color: styleTextColor;
-                    leftPadding: 0;
-                }
-                MouseArea {
-                    id: rotArea;
-                    anchors.fill: parent;
-                    hoverEnabled: true;
-                    cursorShape: Qt.PointingHandCursor;
-                    onClicked: {
-                        root.currentRotation = rotBtn.modelData.angle;
-                        root.applyPreset();
-                    }
+        Label {
+            position: Label.LeftPosition;
+            text: qsTr("Yaw");
+            width: undefined;
+            inner.width: 50 * dpiScale;
+            spacing: 5 * dpiScale;
+            NumberField {
+                id: yawField;
+                unit: "°";
+                precision: 1;
+                from: -360;
+                to: 360;
+                width: 50 * dpiScale;
+                value: root.customYaw;
+                onValueChanged: {
+                    if (!root.initialized) return;
+                    root.customYaw = value;
+                    root.applyMode();
                 }
             }
         }

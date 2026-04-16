@@ -163,9 +163,4 @@ MenuItem {
         }
     }
 
-    LinkButton {
-        text: qsTr("More information");
-        onClicked: filesystem.open_file_externally("https://github.com/gyroflow/gyroflow-plugins");
-        anchors.horizontalCenter: parent.horizontalCenter;
-    }
 }
