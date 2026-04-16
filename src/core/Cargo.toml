@@ -52,6 +52,7 @@ ciborium = "0.2.2"
 dyn-clone = "1.0"
 app_dirs2 = { git = "https://github.com/app-dirs-rs/app_dirs2.git", version = "2.5" }
 whoami = "2.1"
+sha2 = "0.10"
 
 akaze = { version = "*", git = "https://github.com/rust-cv/cv.git", rev = "d271a9a", features = ["rayon"] }
 eight-point = { version = "*", git = "https://github.com/rust-cv/cv.git", rev = "d271a9a" }
@@ -75,6 +76,7 @@ walkdir = "2.5.0"
 url = "2.5.8"
 urlencoding = "2.1.3"
 log = "0.4"
+neuflow-trace-shared = { path = "../../vendor/neuflow-trace/neuflow-trace-shared" }
 ocl = { version = "0.19.7", optional = true }
 ocl-interop = { version = "0.1.6", optional = true }
 rustfft = "6.4.1"
@@ -83,13 +85,19 @@ opencv = { version = "0.98", default-features = false, features = [ "calib3d", "
 median = "0.3"
 
 wgpu = { version = "29", features = ["spirv", "naga-ir"] }
-ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
+
+# Burn framework for NeuFlow v2 inference (replaces ORT)
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
 objc2-metal = "0.3"
 objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
+burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
+
+[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
@@ -104,7 +112,7 @@ use-opencl = ["ocl", "ocl-interop"]
 use-opencv = ["opencv"]
 bundle-lens-profiles = []
 cache-gyro-metadata = []
-neuflow = ["dep:ort"]
+neuflow = ["dep:burn", "dep:burn-store"]
 
 [profile.deploy]
 inherits = "release"
@@ -120,8 +128,45 @@ jni = "0.22"
 ndk = { version = "0.9.0", features = ["media", "api-level-26"] }
 ndk-sys = { version = "0.6.0" }
 ndk-context = { version = "0.1.1" }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "burnpack"], optional = true }
+
+[patch.crates-io]
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-core = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-cpp = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-cpu = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-cuda = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-hip = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-macros = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-macros-internal = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-opt = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-runtime = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-spirv = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-std = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-wgpu = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubecl-zspace = { git = "https://github.com/tracel-ai/cubecl", rev = "34625c911c3e07b0438d91bea9af0f2233050589" }
+cubek = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-attention = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-convolution = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-fft = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-matmul = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-quant = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-random = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-reduce = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-std = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+cubek-test-utils = { git = "https://github.com/tracel-ai/cubek", rev = "aaa8b1276650e688ac6f46701af1e79cf1c5d112" }
+
+[patch."https://github.com/tracel-ai/burn"]
+burn-cubecl = { path = "../../vendor/burn-compat/burn-cubecl" }
 
 [dev-dependencies]
 
 [build-dependencies]
 ureq = "3.3"
+
+[[bin]]
+name = "neuflow_bpk_tool"
+path = "bin/neuflow_bpk_tool.rs"

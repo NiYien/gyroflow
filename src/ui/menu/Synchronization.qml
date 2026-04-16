@@ -35,6 +35,7 @@ MenuItem {
         function propChanged() { settings.propChanged(sett); }
     }
 
+    property alias syncMethodIndex: syncMethod.currentIndex;
     property alias timePerSyncpoint: timePerSyncpoint;
     property alias everyNthFrame: everyNthFrame;
     property alias poseMethod: poseMethod;

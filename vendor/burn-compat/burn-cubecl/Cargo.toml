@@ -1,0 +1,89 @@
+[package]
+name = "burn-cubecl"
+version = "0.21.0-pre.3"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
+categories = ["science"]
+description = "Generic backend that can be compiled just-in-time to any shader language target"
+documentation = "https://docs.rs/burn-cubecl"
+keywords = ["deep-learning", "machine-learning", "gpu"]
+repository = "https://github.com/tracel-ai/burn/tree/main/crates/burn-cubecl"
+
+[features]
+default = [
+    "autotune",
+    "std",
+    "fusion",
+    "cubecl/default",
+    "burn-backend/default",
+    "burn-fusion?/default",
+    "burn-cubecl-fusion?/default",
+]
+std = [
+    "cubecl/std",
+    "burn-backend/std",
+    "burn-fusion?/std",
+    "burn-cubecl-fusion?/std",
+]
+doc = ["default"]
+memory-checks = ["burn-fusion?/memory-checks"]
+tracing = [
+    "dep:tracing",
+    "cubecl/tracing",
+    "burn-std/tracing",
+    "burn-backend/tracing",
+    "burn-fusion?/tracing",
+    "burn-cubecl-fusion?/tracing",
+]
+
+autotune = ["burn-cubecl-fusion?/autotune"]
+autotune-checks = [
+    "autotune",
+    "cubecl/autotune-checks",
+    "burn-cubecl-fusion?/autotune-checks",
+]
+
+fusion = ["burn-fusion", "burn-cubecl-fusion"]
+fusion-experimental = ["fusion"]
+
+template = []
+
+distributed = ["std", "burn-backend/distributed"]
+
+[dependencies]
+burn-cubecl-fusion = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-cubecl-fusion", version = "=0.21.0-pre.3", default-features = false, optional = true }
+burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-fusion", version = "=0.21.0-pre.3", default-features = false, optional = true }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-ir", version = "=0.21.0-pre.3", default-features = false }
+burn-std = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-std", version = "=0.21.0-pre.3", default-features = false, features = [
+    "cubecl",
+] }
+burn-backend = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-backend", version = "=0.21.0-pre.3", default-features = false, features = [
+    "cubecl",
+] }
+cubecl = { version = "=0.10.0-pre.3", default-features = false, features = ["stdlib"] }
+cubek = { version = "=0.2.0-pre.3", default-features = false, features = [
+    "attention",
+    "matmul",
+    "convolution",
+    "reduce",
+    "random",
+    "quantization",
+    "stdlib",
+    "fft",
+] }
+tracing = { version = "0.1.44", default-features = false, features = ["attributes"], optional = true }
+
+derive-new = { version = "0.7.0", default-features = false }
+log = { version = "0.4.29", default-features = false }
+
+# Async
+futures-lite = { version = "2.6.1", default-features = false, features = ["std"] }
+
+# Template
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+text_placeholder = { version = "0.5.1", features = ["struct_context"] }
+
+[package.metadata.docs.rs]
+features = ["doc"]
+rustdoc-args = ["--cfg", "docsrs"]

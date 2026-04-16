@@ -1,0 +1,42 @@
+[package]
+edition = "2024"
+name = "burn-fusion"
+version = "0.21.0-pre.3"
+authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
+description = "Kernel fusion backend decorator for the Burn framework"
+documentation = "https://docs.rs/burn-fusion"
+readme = "README.md"
+keywords = ["deep-learning", "machine-learning", "data"]
+categories = ["science"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tracel-ai/burn/tree/main/crates/burn-fusion"
+resolver = "2"
+
+[features]
+default = ["std", "tracing"]
+std = ["serde/std", "tracing?/std"]
+doc = ["default"]
+memory-checks = ["std"]
+
+tracing = [
+    "dep:tracing",
+    "burn-backend/tracing",
+    "burn-ir/tracing",
+]
+
+[dependencies]
+burn-backend = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", version = "=0.21.0-pre.3" }
+burn-std = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", version = "=0.21.0-pre.3" }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", version = "=0.21.0-pre.3" }
+tracing = { version = "0.1.44", optional = true, default-features = false, features = ["attributes"] }
+smallvec = { version = "1", features = ["const_generics", "const_new"] }
+hashbrown = { version = "0.16" }
+derive-new = { version = "0.7.0", default-features = false }
+spin = { version = "0.10.0", features = ["mutex", "spin_mutex", "portable-atomic"] }
+log = { version = "0.4.29", default-features = false }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+neuflow-trace-shared = { path = "../neuflow-trace-shared" }
+
+[package.metadata.docs.rs]
+features = ["doc"]
+rustdoc-args = ["--cfg", "docsrs"]

@@ -1,0 +1,212 @@
+use crate::{
+    FusionBackend, FusionRuntime, UnfusedOp,
+    stream::{MultiStream, OperationStreams, StreamId},
+};
+use burn_backend::{TensorData, backend::ExecutionError};
+use burn_ir::{HandleContainer, OperationIr, TensorId, TensorIr};
+use neuflow_trace_shared::{self as neuflow_trace, DurationMetric};
+use std::time::Instant;
+
+pub struct FusionServer<R: FusionRuntime> {
+    streams: MultiStream<R>,
+    pub(crate) handles: HandleContainer<R::FusionHandle>,
+}
+
+impl<R> FusionServer<R>
+where
+    R: FusionRuntime,
+{
+    pub fn new(device: R::FusionDevice) -> Self {
+        Self {
+            streams: MultiStream::new(device.clone()),
+            handles: HandleContainer::new(),
+        }
+    }
+
+    pub fn register(
+        &mut self,
+        streams: OperationStreams,
+        repr: OperationIr,
+        operation: UnfusedOp<R>,
+    ) {
+        let trace_start = Instant::now();
+        self.streams
+            .register(streams, repr, operation, &mut self.handles);
+        neuflow_trace::record_duration_current(
+            DurationMetric::ForwardServerRegister,
+            trace_start.elapsed(),
+        );
+    }
+
+    pub fn drain_stream(&mut self, id: StreamId) {
+        self.streams.drain(&mut self.handles, id)
+    }
+
+    pub fn read_float<B>(
+        &mut self,
+        tensor: TensorIr,
+        id: StreamId,
+    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send + use<R, B>
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        // Make sure all registered operations are executed.
+        // The underlying backend can still be async.
+        let trace_start = Instant::now();
+        self.drain_stream(id);
+        neuflow_trace::record_duration_current(DurationMetric::ReadbackDrain, trace_start.elapsed());
+        let tensor_float = self.handles.get_float_tensor::<B>(&tensor);
+        self.streams.mark_read(id, &tensor, &self.handles);
+        B::float_into_data(tensor_float)
+    }
+
+    pub fn read_int<B>(
+        &mut self,
+        tensor: TensorIr,
+        id: StreamId,
+    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send + use<R, B>
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        // Make sure all registered operations are executed.
+        // The underlying backend can still be async.
+        let trace_start = Instant::now();
+        self.drain_stream(id);
+        neuflow_trace::record_duration_current(DurationMetric::ReadbackDrain, trace_start.elapsed());
+        let tensor_int = self.handles.get_int_tensor::<B>(&tensor);
+        self.streams.mark_read(id, &tensor, &self.handles);
+        B::int_into_data(tensor_int)
+    }
+
+    pub fn read_bool<B>(
+        &mut self,
+        tensor: TensorIr,
+        id: StreamId,
+    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send + use<R, B>
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        // Make sure all registered operations are executed.
+        // The underlying backend can still be async.
+        let trace_start = Instant::now();
+        self.drain_stream(id);
+        neuflow_trace::record_duration_current(DurationMetric::ReadbackDrain, trace_start.elapsed());
+        let tensor_bool = self.handles.get_bool_tensor::<B>(&tensor);
+        self.streams.mark_read(id, &tensor, &self.handles);
+        B::bool_into_data(tensor_bool)
+    }
+
+    pub fn read_quantized<B>(
+        &mut self,
+        tensor: TensorIr,
+        id: StreamId,
+    ) -> impl Future<Output = Result<TensorData, ExecutionError>> + Send + use<R, B>
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        // Make sure all registered operations are executed.
+        // The underlying backend can still be async.
+        let trace_start = Instant::now();
+        self.drain_stream(id);
+        neuflow_trace::record_duration_current(DurationMetric::ReadbackDrain, trace_start.elapsed());
+        let tensor_q = self.handles.get_quantized_tensor::<B>(&tensor);
+        self.streams.mark_read(id, &tensor, &self.handles);
+        B::q_into_data(tensor_q)
+    }
+
+    pub fn change_server_float<B>(
+        &mut self,
+        tensor: &TensorIr,
+        output_id: TensorId,
+        stream_tensor: StreamId,
+        device: &R::FusionDevice,
+        server_device: &mut Self,
+    ) where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        let tensor_float = self.handles.get_float_tensor::<B>(tensor);
+        self.streams.mark_read(stream_tensor, tensor, &self.handles);
+
+        let tensor = B::float_to_device(tensor_float, device);
+
+        server_device
+            .handles
+            .register_float_tensor::<B>(&output_id, tensor.clone());
+    }
+
+    pub fn resolve_server_float<B>(&mut self, tensor: &TensorIr) -> B::FloatTensorPrimitive
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        self.handles.get_float_tensor::<B>(tensor)
+    }
+
+    pub fn resolve_server_int<B>(&mut self, tensor: &TensorIr) -> B::IntTensorPrimitive
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        self.handles.get_int_tensor::<B>(tensor)
+    }
+
+    pub fn resolve_server_bool<B>(&mut self, tensor: &TensorIr) -> B::BoolTensorPrimitive
+    where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        self.handles.get_bool_tensor::<B>(tensor)
+    }
+
+    pub fn change_server_int<B>(
+        &mut self,
+        tensor: &TensorIr,
+        output_id: TensorId,
+        stream_tensor: StreamId,
+        device: &R::FusionDevice,
+        server_device: &mut Self,
+    ) where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        let tensor_int = self.handles.get_int_tensor::<B>(tensor);
+        self.streams.mark_read(stream_tensor, tensor, &self.handles);
+        let tensor = B::int_to_device(tensor_int, device);
+
+        server_device
+            .handles
+            .register_int_tensor::<B>(&output_id, tensor.clone());
+    }
+
+    pub fn change_server_bool<B>(
+        &mut self,
+        tensor: &TensorIr,
+        output_id: TensorId,
+        stream_tensor: StreamId,
+        device: &R::FusionDevice,
+        server_device: &mut Self,
+    ) where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        let tensor_bool = self.handles.get_bool_tensor::<B>(tensor);
+        self.streams.mark_read(stream_tensor, tensor, &self.handles);
+        let tensor = B::bool_to_device(tensor_bool, device);
+
+        server_device
+            .handles
+            .register_bool_tensor::<B>(&output_id, tensor.clone());
+    }
+
+    pub fn change_server_quantized<B>(
+        &mut self,
+        tensor: &TensorIr,
+        output_id: TensorId,
+        device: &R::FusionDevice,
+        server_device: &mut Self,
+    ) where
+        B: FusionBackend<FusionRuntime = R>,
+    {
+        let tensor = self.handles.get_quantized_tensor::<B>(tensor);
+        let tensor = B::q_to_device(tensor, device);
+
+        server_device
+            .handles
+            .register_quantized_tensor::<B>(&output_id, tensor);
+    }
+}

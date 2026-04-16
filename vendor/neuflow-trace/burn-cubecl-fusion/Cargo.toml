@@ -1,0 +1,57 @@
+[package]
+edition = "2024"
+name = "burn-cubecl-fusion"
+version = "0.21.0-pre.3"
+authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
+description = "Provide optimizations that can be used with cubecl based backends."
+documentation = "https://docs.rs/burn-cubecl-fusion"
+readme = "README.md"
+keywords = ["deep-learning", "machine-learning", "gpu"]
+categories = ["science"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tracel-ai/burn/tree/main/crates/burn-cubecl-fusion"
+resolver = "2"
+
+[features]
+default = ["autotune", "std", "cubecl/default", "burn-fusion/default"]
+
+autotune = []
+autotune-checks = ["cubecl/autotune-checks", "burn-backend", "half"]
+doc = ["default"]
+std = ["cubecl/std", "burn-backend?/std", "burn-fusion/std"]
+tracing = [
+    "cubecl/tracing",
+    "burn-std/tracing",
+    "burn-backend/tracing",
+    "burn-fusion/tracing",
+]
+
+[dependencies]
+burn-fusion = { path = "../burn-fusion", version = "=0.21.0-pre.3", default-features = false }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", version = "=0.21.0-pre.3", default-features = false }
+burn-std = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", version = "=0.21.0-pre.3", features = [
+    "cubecl",
+] }
+cubecl = { version = "=0.10.0-pre.3", default-features = false }
+cubek = { version = "=0.2.0-pre.3", default-features = false, features = [
+    "matmul",
+    "reduce",
+    "quantization",
+    "stdlib",
+] }
+half = { version = "2.7.1", default-features = false, features = ["alloc", "num-traits", "serde"], optional = true }
+
+# Only for `TensorData` with autotune-checks
+burn-backend = { git = "https://github.com/tracel-ai/burn", rev = "c33867c60a99958aafd4d05df782c68d242a6510", version = "=0.21.0-pre.3", default-features = false, optional = true }
+
+derive-new = { version = "0.7.0", default-features = false }
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+neuflow-trace-shared = { path = "../neuflow-trace-shared" }
+
+[dev-dependencies]
+cubecl = { version = "=0.10.0-pre.3", default-features = false, features = ["test-runtime"] }
+half = { version = "2.7.1", default-features = false, features = ["alloc", "num-traits", "serde"] }
+
+[package.metadata.docs.rs]
+features = ["doc"]
+rustdoc-args = ["--cfg", "docsrs"]

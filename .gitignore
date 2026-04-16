@@ -31,3 +31,12 @@ AGENTS.md
 /.npm-cache
 /.agents
 /target-codex6
+/target_auto_rotate
+/target_auto_rotate_core
+/target-codex-menu-fix
+ffd35262-d280-4462-918f-480a9edc18f8.dmp
+/.codex-tmp
+/.pip-temp
+/.pip-temp/
+__pycache__/
+distribution/control_center.config.json
