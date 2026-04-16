@@ -7,6 +7,8 @@ ProjectDir := if path_exists(justfile_directory() / "Cargo.toml") == "true" { ju
        } else { justfile_directory() }
 ExtDir := ProjectDir / "ext"
 Arch := env("FORCE_ARCH", arch())
+ArtifactPrefix := `python read_distribution_config.py brand.artifact_prefix`
+DisplayName := `python read_distribution_config.py brand.display_name`
 
 # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
 QtVersion := env_var_or_default("FORCE_QT_VERSION", if os() == "windows" { "6.7.3" } else { if Arch == "aarch64" { "6.7.3" } else { "6.4.3" } })

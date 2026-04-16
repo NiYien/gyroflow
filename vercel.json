@@ -1,0 +1,10 @@
+{
+  "functions": {
+    "api/manifest.js": {
+      "regions": ["hkg1", "sin1"]
+    },
+    "api/telemetry.js": {
+      "regions": ["hkg1", "sin1"]
+    }
+  }
+}

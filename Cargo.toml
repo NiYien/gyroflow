@@ -17,7 +17,7 @@ gyroflow-core = { path = "src/core/", features = ["use-opencv", "use-opencl", "n
 system_shutdown = "4.1"
 breakpad-sys = "0.2.0"
 trash = "5.2"
-serialport = { path = "ext/serialport-rs", optional = true, default-features = false }
+serialport = { version = "4.7.0", optional = true, default-features = false }
 # For nle_plugins
 zip = { version = "8.4", default-features = false, features = ["deflate-flate2"] }
 zip-extensions = { version = "0.14", default-features = false, features = ["deflate-flate2"] }
@@ -33,9 +33,11 @@ cstr = "0.2.12"
 cpp = "0.5.9"
 serde = "1.0"
 serde_json = "1.0"
+ciborium = "0.2.2"
 bytemuck = "1.25"
 nalgebra = "0.34"
 semver = "1.0.27"
+sha2 = "0.10"
 fastrand = "2.1.0"
 itertools = "0.14.0"
 regex = "1.12"
@@ -73,6 +75,7 @@ whoami = "2.1"
 tar = "0.4.45"
 lru = "0.16"
 chrono = "0.4"
+toml = "0.9"
 
 log-panics = { version = "2.1", features = ["with-backtrace"] }
 

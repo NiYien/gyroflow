@@ -35,7 +35,7 @@ install-deps:
         $Python = resolve-path "{{ExtDir}}\WPy64-310100b3\python-3.10.10.amd64\python.exe"
     }
 
-    # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
+    # ---- Qt ----
     if (-not (Test-Path -Path "{{QtVersion}}/{{QtArch}}")) {
         echo "Downloading Qt {{QtVersion}}"
         & $Python -m pip install -U pip aqtinstall===3.2.0
@@ -46,18 +46,18 @@ install-deps:
             & $Python -m aqt install-qt windows desktop {{QtVersion}} win64_{{QtArch}}
         }
     }
-    # ――――――――――――――――――――――――――――――――――――――――― Qt ――――――――――――――――――――――――――――――――――――――――――
+    # ---- Qt ----
 
-    # ――――――――――――――――――――――――――――――――――――――― FFmpeg ――――――――――――――――――――――――――――――――――――――――
+    # ---- FFmpeg ----
     if (-not (Test-Path -Path "{{FFmpeg}}")) {
         echo "Downloading {{FFmpeg}}"
         wget "https://master.dl.sourceforge.net/project/avbuild/windows-desktop/{{FFmpeg}}.7z?viasf=1" -outfile "{{FFmpeg}}.7z"
         7z x -y {{FFmpeg}}.7z
         del {{FFmpeg}}.7z
     }
-    # ――――――――――――――――――――――――――――――――――――――― FFmpeg ――――――――――――――――――――――――――――――――――――――――
+    # ---- FFmpeg ----
 
-    # ――――――――――――――――――――――――――――――――――――――― OpenCV ――――――――――――――――――――――――――――――――――――――――
+    # ---- OpenCV ----
     if (-not (Test-Path -Path "vcpkg/installed/{{VcpkgArch}}/lib/opencv_core4.lib")) {
         echo "Downloading OpenCV"
         rm -Recurse -Force \vcpkg -ErrorAction SilentlyContinue
@@ -78,9 +78,9 @@ install-deps:
         rm -Recurse -Force .\vcpkg\buildtrees
         rm -Recurse -Force .\vcpkg\downloads
     }
-    # ――――――――――――――――――――――――――――――――――――――― OpenCV ――――――――――――――――――――――――――――――――――――――――
+    # ---- OpenCV ----
 
-    # ――――――――――――――――――――――――――――――――――――――― LLVM ――――――――――――――――――――――――――――――――――――――――
+    # ---- LLVM ----
     if (-not (Test-Path -Path "{{LLVMPath}}\libclang.dll")) {
         $Arch = "win64"
         if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {
@@ -91,7 +91,7 @@ install-deps:
         7z x -y llvm.exe -ollvm
         del "llvm.exe"
     }
-    # ――――――――――――――――――――――――――――――――――――――― LLVM ――――――――――――――――――――――――――――――――――――――――
+    # ---- LLVM ----
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Development ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -284,7 +284,7 @@ deploy:
         Invoke-WebRequest -URI "https://api.gyroflow.xyz/sdk/shaderc_shared.dll" -OutFile "$TargetDir\shaderc_shared.dll"
     }
 
-    7z a $ProjectDir\_deployment\_binaries\Gyroflow-{{NameSuffix}}.zip $TargetDir\*
+    7z a $ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}-{{NameSuffix}}.zip $TargetDir\*
 
 [no-cd]
 bundle:
@@ -334,7 +334,7 @@ bundle:
     # MsixPackagingTool.exe create-package --template installer_msix.xml
 
     # Build .msix
-    Remove-Item -Path "..\_binaries\Gyroflow-{{NameSuffix}}.msix" -ErrorAction SilentlyContinue
+    Remove-Item -Path "..\_binaries\{{ArtifactPrefix}}-{{NameSuffix}}.msix" -ErrorAction SilentlyContinue
     mkdir -Force "bundle"
     cp -Recurse -Force $TargetDir\* bundle\
     cp -Recurse -Force Assets bundle\Assets
@@ -353,8 +353,8 @@ bundle:
     makepri.exe createconfig /cf priconfig.xml /dq en-us
     makepri.exe new /pr bundle\Assets\ /cf priconfig.xml /mn bundle\AppxManifest.xml /of bundle\resources.pri /o
 
-    makeappx.exe pack /d bundle /p ..\_binaries\Gyroflow-{{NameSuffix}}.msix
-    signtool.exe sign /f msix_signing_key.pfx /p $Env:MS_STORE_SIGNING_PASS /fd sha256 ..\_binaries\Gyroflow-{{NameSuffix}}.msix
+    makeappx.exe pack /d bundle /p ..\_binaries\{{ArtifactPrefix}}-{{NameSuffix}}.msix
+    signtool.exe sign /f msix_signing_key.pfx /p $Env:MS_STORE_SIGNING_PASS /fd sha256 ..\_binaries\{{ArtifactPrefix}}-{{NameSuffix}}.msix
 
     # To bundle
     # makeappx.exe bundle /d bundle /p Gyroflow.msixbundle

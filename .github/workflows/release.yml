@@ -1,8 +1,9 @@
-name: Release
+name: NiYien App Release
 
 on:
   push:
-  pull_request:
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -13,30 +14,24 @@ jobs:
         targets: [
           { os: ubuntu-latest, type: linux },
           { os: macos-14,      type: macos },
-          { os: macos-14,      type: macstore },
           { os: windows-2022,  type: windows },
-          { os: windows-2022,  type: windows-arm },
-          { os: macos-14,      type: ios },
           { os: windows-2022,  type: android }
         ]
-    name: Gyroflow for ${{ matrix.targets.type }}
+    name: Build gyroflow(niyien) for ${{ matrix.targets.type }}
     runs-on: ${{ matrix.targets.os }}
-    env:
-      BUILD_APP_STORE_BUNDLE: ${{ startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' }}
-      IS_MANUAL_DISPATCH: ${{ github.event_name == 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.targets.type }}-gyroflow-0
+          key: ${{ matrix.targets.type }}-gyroflow-niyien-0
       - name: Dependencies cache
         id: extcache
         uses: actions/cache@v4
         with:
           path: '${{ github.workspace }}/ext/'
-          key: ${{ matrix.targets.type }}-gyroflow-ext-0
+          key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-0
 
       - name: Prepare Vulkan SDK
         uses: johnnynunez/setup-vulkan-sdk@v1
@@ -55,98 +50,44 @@ jobs:
         run: |
           rm -r -force ${{ github.workspace }}/target/deploy/build/qml-video-rs* -ErrorAction SilentlyContinue
           rm -r -force ${{ github.workspace }}/target/x86_64-pc-windows-msvc/deploy/build/qml-video-rs* -ErrorAction SilentlyContinue
-          rm -r -force ${{ github.workspace }}/target/aarch64-pc-windows-msvc/deploy/build/qml-video-rs* -ErrorAction SilentlyContinue
           rm -r -force ${{ github.workspace }}/target/release/build/qml-video-rs* -ErrorAction SilentlyContinue
 
       - name: Install Mac certificates
-        if: ${{ matrix.targets.os == 'macos-13' || matrix.targets.os == 'macos-14' || matrix.targets.os == 'macos-15' }}
+        if: ${{ matrix.targets.os == 'macos-14' || matrix.targets.os == 'macos-15' }}
         uses: apple-actions/import-codesign-certs@v3
         with:
           p12-file-base64: ${{ secrets.MACOS_CERTIFICATES }}
           p12-password: ${{ secrets.MACOS_CERTIFICATE_PWD }}
-      - name: Download Provisioning Profiles
-        if: ${{ matrix.targets.type == 'ios' }}
-        id: provisioning
-        uses: apple-actions/download-provisioning-profiles@v3
-        with:
-          bundle-id: 'xyz.gyroflow'
-          profile-type: 'IOS_APP_STORE'
-          issuer-id: ${{ secrets.MACOS_ITCONNECT_ISSUER }}
-          api-key-id: ${{ secrets.MACOS_ITCONNECT_KEY_ID }}
-          api-private-key: ${{ secrets.MACOS_ITCONNECT_KEY }}
-      - name: Download Provisioning Profiles
-        if: ${{ matrix.targets.type == 'macstore' }}
-        id: provisioning_mac
-        uses: apple-actions/download-provisioning-profiles@v3
-        with:
-          bundle-id: 'xyz.gyroflow'
-          profile-type: 'MAC_APP_STORE'
-          issuer-id: ${{ secrets.MACOS_ITCONNECT_ISSUER }}
-          api-key-id: ${{ secrets.MACOS_ITCONNECT_KEY_ID }}
-          api-private-key: ${{ secrets.MACOS_ITCONNECT_KEY }}
 
       - name: Save keystore to file
-        if: ${{ matrix.targets.os == 'windows-2022' }}
+        if: ${{ matrix.targets.type == 'android' }}
         run: |
           echo "${{ secrets.ANDROID_RELEASE_KEYSTORE }}" > ${{ github.workspace }}/android_release.keystore.b64
-          echo "${{ secrets.MS_STORE_SIGNING_KEY }}" > ${{ github.workspace }}/_deployment/windows/msix_signing_key.pfx.b64
           certutil -decode ${{ github.workspace }}/android_release.keystore.b64 ${{ github.workspace }}/android_release.keystore
-          certutil -decode ${{ github.workspace }}/_deployment/windows/msix_signing_key.pfx.b64 ${{ github.workspace }}/_deployment/windows/msix_signing_key.pfx
 
       - uses: extractions/setup-just@v2
 
-      - name: Build Gyroflow (macOS)
+      - name: Build gyroflow(niyien) (macOS)
         if: ${{ matrix.targets.type == 'macos' }}
         env:
           SIGNING_FINGERPRINT: ${{ secrets.MACOS_CERTIFICATE_FINGERPRINT }}
         run: |
           just install-deps
           just deploy universal
-          xcrun notarytool submit --wait --apple-id ${{ secrets.MACOS_ACCOUNT_USER }} --team-id ${{ secrets.MACOS_TEAM }} --password ${{ secrets.MACOS_ACCOUNT_PASS }} ${{ github.workspace }}/_deployment/_binaries/Gyroflow-mac-universal.dmg
-          xcrun stapler staple --verbose ${{ github.workspace }}/_deployment/_binaries/Gyroflow-mac-universal.dmg
+          xcrun notarytool submit --wait --apple-id ${{ secrets.MACOS_ACCOUNT_USER }} --team-id ${{ secrets.MACOS_TEAM }} --password ${{ secrets.MACOS_ACCOUNT_PASS }} ${{ github.workspace }}/_deployment/_binaries/gyroflow-niyien-mac-universal.dmg
+          xcrun stapler staple --verbose ${{ github.workspace }}/_deployment/_binaries/gyroflow-niyien-mac-universal.dmg
 
-      - name: Build Gyroflow (macOS App Store)
-        if: ${{ matrix.targets.type == 'macstore' && (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') }}
-        env:
-          SIGNING_FINGERPRINT: ${{ secrets.MACOS_CERTIFICATE_FINGERPRINT }}
-          # For Mac App Store
-          SIGN_KEY: 05AC9B1B232615B6DBE1FECD5A02AC21BBE967A9
-          PKG_SIGN_KEY: 67FDE536BC3BEBDB68E1224CF5DB17B8EB936F49
-          PROVISIONING_PROFILE: /Users/runner/Library/MobileDevice/Provisioning Profiles/${{ matrix.targets.type == 'macstore' && fromJSON(steps.provisioning_mac.outputs.profiles)[0].udid || '' }}.mobileprovision
-          FORCE_QT_VERSION: 6.7.3
-          DONT_BUILD_DMG: true
-        run: |
-          sudo xcode-select --switch /Applications/Xcode_16.2.app/Contents/Developer
-          /usr/libexec/PlistBuddy -x -c "Set :LSMinimumSystemVersion \"11.0\"" ${{ github.workspace }}/_deployment/mac/Gyroflow.app/Contents/Info.plist
-          sed -i -e 's/"10.15"/"11.0"/' ${{ github.workspace }}/_scripts/macos.just
-          just install-deps
-          just deploy universal
-          just bundle
-
-      - name: Build Gyroflow (Linux)
+      - name: Build gyroflow(niyien) (Linux)
         if: ${{ matrix.targets.type == 'linux' }}
         run: just deploy docker
 
-      - name: Build Gyroflow (Windows)
+      - name: Build gyroflow(niyien) (Windows)
         if: ${{ matrix.targets.type == 'windows' }}
-        env:
-          MS_STORE_SIGNING_PASS: ${{ secrets.MS_STORE_SIGNING_PASS }}
         run: |
           just install-deps
           just deploy
-          if ("$Env:BUILD_APP_STORE_BUNDLE" -eq "true") { just bundle }
 
-      - name: Build Gyroflow (Windows arm64)
-        if: ${{ matrix.targets.type == 'windows-arm' }}
-        env:
-          MS_STORE_SIGNING_PASS: ${{ secrets.MS_STORE_SIGNING_PASS }}
-          FORCE_ARCH: aarch64
-        run: |
-          just install-deps
-          just deploy
-          if ("$Env:BUILD_APP_STORE_BUNDLE" -eq "true") { just bundle }
-
-      - name: Build Gyroflow (Android)
+      - name: Build gyroflow(niyien) (Android)
         if: ${{ matrix.targets.type == 'android' }}
         env:
           KEY_STORE_PATH: ${{ github.workspace }}/android_release.keystore
@@ -155,83 +96,56 @@ jobs:
           BUILD_PROFILE: deploy
         run: |
           $Env:JAVA_HOME = $Env:JAVA_HOME_21_X64
-          Get-ChildItem Env:
           just android install-deps
           just android deploy
 
-      - name: Build Gyroflow (iOS)
-        if: ${{ matrix.targets.type == 'ios' }}
-        env:
-          SIGN_KEY: 05AC9B1B232615B6DBE1FECD5A02AC21BBE967A9
-          PROVISIONING_PROFILE: /Users/runner/Library/MobileDevice/Provisioning Profiles/${{ matrix.targets.type == 'ios' && fromJSON(steps.provisioning.outputs.profiles)[0].udid || '' }}.mobileprovision
-        run: |
-          sudo xcode-select --switch /Applications/Xcode_16.2.app/Contents/Developer
-          just ios install-deps
-          just ios build-ipa
-
-      - name: Save debug symbols
-        if: ${{ matrix.targets.type == 'windows' || matrix.targets.type == 'windows-arm' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: Gyroflow-debug-symbols-${{ matrix.targets.type }}
-          path: |
-            ${{ github.workspace }}/target/${{ matrix.targets.type == 'windows' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}/deploy/deps/gyroflow.pdb
-            ${{ github.workspace }}/target/${{ matrix.targets.type == 'windows' && 'x86_64-pc-windows-msvc' || 'aarch64-pc-windows-msvc' }}/deploy/*.pdb
       - name: Save Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: Gyroflow-${{ matrix.targets.type }}
+          name: gyroflow-niyien-${{ matrix.targets.type }}
           path: _deployment/_binaries/*.*
 
   github_release:
     name: Create GitHub release
     needs: build
-    runs-on: macos-15
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
 
-      - run: find . -type f
-
-      - if: startsWith(github.ref, 'refs/tags/')
-        run: rm -rf ./Gyroflow-debug-symbols*
-
-      - name: Upload to App Store
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        run: |
-          xcrun altool --upload-app -f ./Gyroflow-ios/Gyroflow.ipa -t iOS -u ${{ secrets.MACOS_ACCOUNT_USER }} -p ${{ secrets.MACOS_ACCOUNT_PASS }}
-          xcrun altool --upload-app -f ./Gyroflow-macstore/Gyroflow.pkg -t macos -u ${{ secrets.MACOS_ACCOUNT_USER }} -p ${{ secrets.MACOS_ACCOUNT_PASS }}
-
-      - name: Upload to Google Play
-        uses: r0adkll/upload-google-play@v1
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
-        with:
-          serviceAccountJsonPlainText: ${{ secrets.ANDROID_SERVICE_ACCOUNT_JSON }}
-          packageName: xyz.gyroflow
-          releaseFiles: ./Gyroflow-android/Gyroflow.aab
-          track: ${{ startsWith(github.ref, 'refs/tags/') && 'production' || 'beta' }}
-
       - name: Publish
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
-          prerelease: true
+          prerelease: false
           files: |
-            ./Gyroflow-windows/Gyroflow-windows64.zip
-            ./Gyroflow-windows-arm/Gyroflow-windows-arm64.zip
-            ./Gyroflow-macos/Gyroflow-mac-universal.dmg
-            ./Gyroflow-linux/Gyroflow-linux64.AppImage
-            ./Gyroflow-linux/Gyroflow-linux64.tar.gz
-            ./Gyroflow-android/Gyroflow.apk
-  winget_release:
-    name: Publish to WinGet
-    needs: github_release
-    if: startsWith(github.ref, 'refs/tags/')
-    runs-on: windows-latest
-    # If this fails, go to gyroflow/winget-pkgs on GitHub and sync fork
+            ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip
+            ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg
+            ./gyroflow-niyien-linux/gyroflow-niyien-linux64.AppImage
+            ./gyroflow-niyien-linux/gyroflow-niyien-linux64.tar.gz
+            ./gyroflow-niyien-android/gyroflow-niyien.apk
+
+  mirror_sync:
+    name: Sync app assets to download.niyien.com
+    needs: build
+    if: ${{ secrets.NIYIEN_MIRROR_HOST != '' && secrets.NIYIEN_MIRROR_USER != '' && secrets.NIYIEN_MIRROR_KEY != '' && secrets.NIYIEN_MIRROR_PATH != '' }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: vedantmgoyal9/winget-releaser@v2
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+      - name: Prepare sync bundle
+        run: |
+          mkdir -p mirror
+          cp ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip mirror/ || true
+          cp ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg mirror/ || true
+          cp ./gyroflow-niyien-linux/gyroflow-niyien-linux64.AppImage mirror/ || true
+          cp ./gyroflow-niyien-linux/gyroflow-niyien-linux64.tar.gz mirror/ || true
+          cp ./gyroflow-niyien-android/gyroflow-niyien.apk mirror/ || true
+      - name: Upload to domestic mirror
+        uses: appleboy/scp-action@v0.1.7
         with:
-          identifier: Gyroflow.Gyroflow
-          token: ${{ secrets.WINGET_TOKEN }}
-          installers-regex: 'Gyroflow\-windows64\.zip$'
+          host: ${{ secrets.NIYIEN_MIRROR_HOST }}
+          username: ${{ secrets.NIYIEN_MIRROR_USER }}
+          key: ${{ secrets.NIYIEN_MIRROR_KEY }}
+          source: "mirror/*"
+          target: "${{ secrets.NIYIEN_MIRROR_PATH }}/${{ github.ref_name }}/"

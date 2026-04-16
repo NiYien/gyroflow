@@ -334,16 +334,16 @@ deploy *param:
                 sudo pkill -9 XProtect >/dev/null || true
                 while pgrep XProtect; do sleep 3; done;
 
-                hdiutil create "$PROJECT_DIR/_deployment/_binaries/Gyroflow-mac-universal.dmg" -volname "Gyroflow v{{ProjectVersion}}" -fs HFS+ -srcfolder "$PROJECT_DIR/_deployment/_binaries/mac/" -ov -format UDZO -imagekey zlib-level=9 || true
+                hdiutil create "$PROJECT_DIR/_deployment/_binaries/{{ArtifactPrefix}}-mac-universal.dmg" -volname "{{DisplayName}} v{{ProjectVersion}}" -fs HFS+ -srcfolder "$PROJECT_DIR/_deployment/_binaries/mac/" -ov -format UDZO -imagekey zlib-level=9 || true
 
-                if [ -f "$PROJECT_DIR/_deployment/_binaries/Gyroflow-mac-universal.dmg" ]; then
+                if [ -f "$PROJECT_DIR/_deployment/_binaries/{{ArtifactPrefix}}-mac-universal.dmg" ]; then
                     break
                 fi
             done
 
             if [ "$SIGNING_FINGERPRINT" != "" ]; then
-                codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT "$PROJECT_DIR/_deployment/_binaries/Gyroflow-mac-universal.dmg"
-                codesign -vvvv --deep --verify "$PROJECT_DIR/_deployment/_binaries/Gyroflow-mac-universal.dmg"
+                codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT "$PROJECT_DIR/_deployment/_binaries/{{ArtifactPrefix}}-mac-universal.dmg"
+                codesign -vvvv --deep --verify "$PROJECT_DIR/_deployment/_binaries/{{ArtifactPrefix}}-mac-universal.dmg"
             fi
         fi
     fi

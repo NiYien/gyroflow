@@ -291,11 +291,11 @@ deploy *param:
     Stop-Job $job
 
     New-Item -Type dir "$ProjectDir\_deployment\_binaries\" -ErrorAction SilentlyContinue
-    Copy-Item -Path "$ProjectDir\target\android-build\build\outputs\$ApkName" -Destination "$ProjectDir\_deployment\_binaries\Gyroflow.apk" -Force -ErrorAction SilentlyContinue
-    Copy-Item -Path "$ProjectDir\target\android-build\build\outputs\bundle\release\android-build-release.aab" -Destination "$ProjectDir\_deployment\_binaries\Gyroflow.aab" -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$ProjectDir\target\android-build\build\outputs\$ApkName" -Destination "$ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}.apk" -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path "$ProjectDir\target\android-build\build\outputs\bundle\release\android-build-release.aab" -Destination "$ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}.aab" -Force -ErrorAction SilentlyContinue
 
     if ("{{param}}" -eq "install") {
-        adb install "$ProjectDir\_deployment\_binaries\Gyroflow.apk"
+        adb install "$ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}.apk"
         adb logcat -c
         adb shell am start -n xyz.gyroflow/xyz.gyroflow.MainActivity
         adb logcat -s Gyroflow

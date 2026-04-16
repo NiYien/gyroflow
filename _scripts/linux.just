@@ -349,7 +349,7 @@ deploy *param:
     cp -f "$PROJECT_DIR/resources/camera_presets/profiles.cbor.gz" "$TARGET/camera_presets/profiles.cbor.gz"
 
     pushd $TARGET/..
-    tar -czf Gyroflow-{{PackageSuffix}}.tar.gz --transform 's!{{PackageSuffix}}!Gyroflow!' {{PackageSuffix}}
+    tar -czf {{ArtifactPrefix}}-{{PackageSuffix}}.tar.gz --transform 's!{{PackageSuffix}}!Gyroflow!' {{PackageSuffix}}
 
     # ---- Build AppImage ----
     export APP_DIR=$TARGET/../AppDir
@@ -387,7 +387,7 @@ deploy *param:
     ARCH={{Arch}} appimagetool ./Gyroflow.AppDir
     rm -rf Gyroflow.AppDir
 
-    mv Gyroflow-{{ArchName}}.AppImage Gyroflow-{{PackageSuffix}}.AppImage
+    mv Gyroflow-{{ArchName}}.AppImage {{ArtifactPrefix}}-{{PackageSuffix}}.AppImage
     # ---- Build AppImage ----
 
     rm -rf $APP_DIR
