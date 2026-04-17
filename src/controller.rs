@@ -593,7 +593,7 @@ impl Controller {
         );
         let set_offsets = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            move |this, offsets: Vec<(f64, f64, f64)>| {
+            move |this, offsets: Vec<(f64, f64, f64, f64)>| {
                 if for_rs {
                     if let Some(offs) = offsets.first() {
                         this.rolling_shutter_estimated(offs.1);
@@ -602,16 +602,25 @@ impl Controller {
                     let mut gyro = this.stabilizer.gyro.write();
                     gyro.prevent_recompute = true;
                     for x in offsets {
-                        ::log::info!("Setting offset at {:.4}: {:.4} (cost {:.4})", x.0, x.1, x.2);
+                        ::log::info!(
+                            "Setting offset at {:.4}: {:.4} (cost {:.4}, conf {:.3})",
+                            x.0, x.1, x.2, x.3
+                        );
                         let new_ts = ((x.0 - x.1) * 1000.0) as i64;
+                        let confidence = x.3;
                         {
-                            // Check the offset
-                            let sync_data = this.stabilizer.sync_data.read();
-                            if !sync_data.rank.is_empty() {
-                                let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0))
-                                    .round() as usize;
-                                if index < sync_data.rank.len() && sync_data.rank[index] < 13.0 {
-                                    continue;
+                            // Check the offset — confidence ≥ 0.4（NCC 验证通过）时
+                            // bypass sync_data.rank 过滤（NCC 是比 rank 更可靠的质量指标）
+                            if confidence < 0.4 {
+                                let sync_data = this.stabilizer.sync_data.read();
+                                if !sync_data.rank.is_empty() {
+                                    let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0))
+                                        .round() as usize;
+                                    if index < sync_data.rank.len()
+                                        && sync_data.rank[index] < 13.0
+                                    {
+                                        continue;
+                                    }
                                 }
                             }
                         }

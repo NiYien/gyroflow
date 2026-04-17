@@ -29,7 +29,7 @@ pub struct AutosyncProcess {
     finished_cb: Option<
         Arc<
             Box<
-                dyn Fn(Either<Vec<(f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
+                dyn Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
             >,
         >,
     >,
@@ -204,6 +204,7 @@ impl AutosyncProcess {
             .unwrap();
 
         crate::synchronization::sync_perf::reset();
+        crate::synchronization::sync_diag::init_session();
 
         Ok(Self {
             frame_count,
@@ -482,8 +483,8 @@ impl AutosyncProcess {
                     if offsets2.len() > offsets.len() {
                         cb(Either::Left(offsets2));
                     } else if offsets2.len() == offsets.len() {
-                        let sum1: f64 = offsets.iter().map(|(_, _, cost)| *cost).sum();
-                        let sum2: f64 = offsets2.iter().map(|(_, _, cost)| *cost).sum();
+                        let sum1: f64 = offsets.iter().map(|(_, _, cost, _)| *cost).sum();
+                        let sum2: f64 = offsets2.iter().map(|(_, _, cost, _)| *cost).sum();
                         if sum1 < sum2 {
                             cb(Either::Left(offsets));
                         } else {
@@ -500,6 +501,7 @@ impl AutosyncProcess {
             cb(1.0, len, len);
         }
         crate::synchronization::sync_perf::dump_and_reset();
+        crate::synchronization::sync_diag::flush_and_close();
     }
 
     pub fn on_progress<F>(&mut self, cb: F)
@@ -510,7 +512,7 @@ impl AutosyncProcess {
     }
     pub fn on_finished<F>(&mut self, cb: F)
     where
-        F: Fn(Either<Vec<(f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
+        F: Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
     {
         self.finished_cb = Some(Arc::new(Box::new(cb)));
     }

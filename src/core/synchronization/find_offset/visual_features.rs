@@ -18,8 +18,9 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
     for_rs: bool,
     progress_cb: F,
     cancel_flag: Arc<AtomicBool>,
-) -> Vec<(f64, f64, f64)> {
-    // Vec<(timestamp, offset, cost)>
+) -> Vec<(f64, f64, f64, f64)> {
+    // Vec<(timestamp, offset, cost, confidence)>
+    // visual_features 路径 confidence 占位 0.5（不走 NCC，无天然 confidence 度量）
     let mut params = params_arg.clone();
     params.gyro = Arc::new(RwLock::new(params_arg.gyro.read().clone()));
     if !for_rs {
@@ -145,7 +146,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                 });
             log::debug!("lowest: {:?}", &lowest);
             if let Some(lowest) = lowest {
-                final_offsets.push((0.0, lowest.0, lowest.1));
+                final_offsets.push((0.0, lowest.0, lowest.1, 0.5));
             }
         } else {
             // First search every 1 ms
@@ -175,7 +176,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
 
                 // Only accept offsets that are within 90% of search size range
                 if (lowest.0 - sync_params.initial_offset).abs() < sync_params.search_size * 0.9 {
-                    final_offsets.push((middle_timestamp, lowest.0, lowest.1));
+                    final_offsets.push((middle_timestamp, lowest.0, lowest.1, 0.5));
                 } else {
                     log::warn!(
                         "Sync point out of acceptable range {} < {}",

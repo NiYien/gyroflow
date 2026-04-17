@@ -28,6 +28,7 @@ use super::gyro_source::TimeIMU;
 mod autosync;
 pub mod optimsync;
 pub mod sync_perf;
+pub mod sync_diag;
 use crate::util::MapClosest;
 pub use autosync::{AutosyncProcess, describe_autosync_init_failure};
 
@@ -516,8 +517,8 @@ impl PoseEstimator {
         params: &ComputeParams,
         progress_cb: F,
         cancel_flag: Arc<AtomicBool>,
-    ) -> Vec<(f64, f64, f64)> {
-        // Vec<(timestamp, offset, cost)>
+    ) -> Vec<(f64, f64, f64, f64)> {
+        // Vec<(timestamp, offset, cost, confidence)>
         match self.offset_method.load(SeqCst) {
             0 => find_offset::essential_matrix::find_offsets(
                 &self,

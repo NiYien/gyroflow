@@ -20,8 +20,9 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
     params: &ComputeParams,
     progress_cb: F,
     cancel_flag: Arc<AtomicBool>,
-) -> Vec<(f64, f64, f64)> {
-    // Vec<(timestamp, offset, cost)>
+) -> Vec<(f64, f64, f64, f64)> {
+    // Vec<(timestamp, offset, cost, confidence)>
+    // essential_matrix 路径 confidence 占位 0.5（不走 NCC，无天然 confidence 度量）
     let estimated_gyro = estimator.estimated_gyro.read().clone();
 
     let mut offsets = Vec::new();
@@ -126,13 +127,50 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                     // Only accept offsets that are within 90% of search size range
                     if (lowest.0 - sync_params.initial_offset).abs() < sync_params.search_size * 0.9
                     {
-                        offsets.push((middle_timestamp, lowest.0, lowest.1));
+                        offsets.push((middle_timestamp, lowest.0, lowest.1, 0.5));
                     } else {
                         log::warn!(
                             "Sync point out of acceptable range {} < {}",
                             (lowest.0 - sync_params.initial_offset).abs(),
                             sync_params.search_size * 0.9
                         );
+                    }
+
+                    if crate::synchronization::sync_diag::is_enabled() {
+                        crate::synchronization::sync_diag::record_initial_offset_segment(
+                            i,
+                            lowest.0,
+                            lowest.1,
+                            max_angle,
+                            of_item.len(),
+                        );
+                        let cost_steps = (sync_params.search_size as usize) * 2;
+                        let curve: Vec<(f64, f64)> = (0..cost_steps)
+                            .map(|k| {
+                                let offs = sync_params.initial_offset
+                                    - sync_params.search_size
+                                    + (k as f64);
+                                (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                            })
+                            .collect();
+                        crate::synchronization::sync_diag::record_cost_curve_essmat(i, &curve);
+                        for (k, o) in of_item.iter().enumerate() {
+                            if k % 10 != 0 {
+                                continue;
+                            }
+                            let est = o.gyro.unwrap_or([0.0; 3]);
+                            let raw = gyro_at_timestamp(
+                                o.timestamp_ms - lowest.0,
+                                &gyro_bintree,
+                            )
+                            .and_then(|g| g.gyro)
+                            .unwrap_or([0.0; 3]);
+                            crate::synchronization::sync_diag::record_estimated_vs_raw_gyro(
+                                o.timestamp_ms,
+                                est[0], est[1], est[2],
+                                raw[0], raw[1], raw[2],
+                            );
+                        }
                     }
                 }
             }

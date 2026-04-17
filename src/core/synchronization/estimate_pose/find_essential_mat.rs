@@ -79,7 +79,25 @@ impl EstimatePoseTrait for PoseFindEssentialMat {
                 return Err(opencv::Error::new(0, "Model not found".to_string()));
             }
 
-            cv_to_na(r1)
+            let rot = cv_to_na(r1)?;
+            if crate::synchronization::sync_diag::is_enabled() {
+                let sa = rot.scaled_axis();
+                let angle_rad = sa.norm();
+                let (ax, ay, az) = if angle_rad > 1e-12 {
+                    (sa[0] / angle_rad, sa[1] / angle_rad, sa[2] / angle_rad)
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
+                crate::synchronization::sync_diag::record_pose_frame(
+                    timestamp_us,
+                    inliers,
+                    angle_rad.to_degrees(),
+                    ax,
+                    ay,
+                    az,
+                );
+            }
+            Ok(rot)
         }();
         #[cfg(not(feature = "use-opencv"))]
         let result = Err(());
