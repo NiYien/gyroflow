@@ -16,7 +16,12 @@ pub(super) fn neuflow_inference_burn_sampled(
     chw0: Vec<f32>, chw1: Vec<f32>, gray0: &[u8], proc_h: usize, proc_w: usize,
 ) -> Result<BurnSampledResult, String> {
     // Compute texture-aware grid points from gray0
-    let (grid_points, linear_indices) = compute_grid_points(gray0, proc_w, proc_h);
+    let (grid_points, linear_indices) = {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::ComputeGridPoints,
+        );
+        compute_grid_points(gray0, proc_w, proc_h)
+    };
 
     if grid_points.is_empty() {
         return Err("No textured grid points found".to_string());
@@ -24,10 +29,15 @@ pub(super) fn neuflow_inference_burn_sampled(
 
     let start = std::time::Instant::now();
 
-    let sampled = crate::neuflow_burn::infer_and_sample(
-        chw0, chw1, proc_h, proc_w,
-        grid_points, linear_indices,
-    )?;
+    let sampled = {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::InferAndSample,
+        );
+        crate::neuflow_burn::infer_and_sample(
+            chw0, chw1, proc_h, proc_w,
+            grid_points, linear_indices,
+        )?
+    };
 
     let elapsed = start.elapsed();
     log::debug!("NeuFlow Burn inference+sample: {}x{} ({} pts) in {:?}",

@@ -113,13 +113,23 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
 
             // Preprocess both frames (cached — each frame preprocessed at most once).
             // Uses cache if available, even after cleanup() has freed the NV12 data.
-            let (chw0, gray0, proc_h, proc_w) = match self.get_or_preprocess() {
-                Ok(v) => v,
-                Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+            let (chw0, gray0, proc_h, proc_w) = {
+                let _g = crate::synchronization::sync_perf::StageGuard::new(
+                    crate::synchronization::sync_perf::Stage::PreprocessNv12,
+                );
+                match self.get_or_preprocess() {
+                    Ok(v) => v,
+                    Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+                }
             };
-            let (chw1, _, _, _) = match next.get_or_preprocess() {
-                Ok(v) => v,
-                Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+            let (chw1, _, _, _) = {
+                let _g = crate::synchronization::sync_perf::StageGuard::new(
+                    crate::synchronization::sync_perf::Stage::PreprocessNv12,
+                );
+                match next.get_or_preprocess() {
+                    Ok(v) => v,
+                    Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+                }
             };
 
             let model_w = proc_w as f32;
