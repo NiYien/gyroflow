@@ -6389,7 +6389,6 @@ dependencies = [
 [[package]]
 name = "rs-sync"
 version = "0.1.0"
-source = "git+https://github.com/gyroflow/rs-sync.git?rev=fc5cf51#fc5cf51fac11c2ed12bfd4cf0c4c221da9aa04e3"
 dependencies = [
  "argmin",
  "argmin-math",
