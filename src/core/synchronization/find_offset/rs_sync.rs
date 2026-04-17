@@ -230,7 +230,7 @@ impl FindOffsetsRssync<'_> {
 
     pub fn guess_orient(&mut self) -> Option<(String, f64)> {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
-            crate::synchronization::sync_perf::Stage::RsSyncPreSync,
+            crate::synchronization::sync_perf::Stage::RsSyncGuessOrient,
         );
         self.is_guess_orient.store(true, SeqCst);
 

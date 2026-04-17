@@ -34,7 +34,7 @@ pub enum Stage {
     FindOffCoarse = 15,
     FindOffRefine = 16,
     RsSyncFullSync = 17,
-    RsSyncPreSync = 18,
+    RsSyncGuessOrient = 18,
     DecodeNv12Concat = 19,
 }
 const NUM_STAGES: usize = 20;
@@ -58,7 +58,7 @@ const STAGE_NAMES: [&str; NUM_STAGES] = [
     "findoff.coarse",
     "findoff.refine",
     "rssync.full_sync",
-    "rssync.pre_sync",
+    "rssync.guess_orient",
     "decode.nv12_concat",
 ];
 
