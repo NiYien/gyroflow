@@ -36,6 +36,16 @@ pub type OpticalFlowPoints = Vec<(f32, f32)>; // timestamp_us, points
 pub type OpticalFlowPair = Option<(OpticalFlowPoints, OpticalFlowPoints)>;
 pub type OpticalFlowPairWithTs = Option<((i64, OpticalFlowPoints), (i64, OpticalFlowPoints))>;
 
+#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+fn is_neuflow_method(method: &OpticalFlowMethod) -> bool {
+    matches!(method, OpticalFlowMethod::OFNeuFlowV2(_))
+}
+
+#[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
+fn is_neuflow_method(_method: &OpticalFlowMethod) -> bool {
+    false
+}
+
 #[derive(Default, Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct SyncParams {
@@ -78,6 +88,7 @@ pub struct PoseEstimator {
     pub every_nth_frame: AtomicU32,
     pub pose_method: AtomicU32,
     pub offset_method: AtomicU32,
+    pub neuflow_processing: AtomicBool,
 }
 
 impl PoseEstimator {
@@ -102,8 +113,14 @@ impl PoseEstimator {
             crate::synchronization::sync_perf::Stage::DetectFeatures,
         );
         let frame_size = (width, height);
-        let contains = self.sync_results.read().contains_key(&timestamp_us);
-        if !contains {
+        let needs_insert = {
+            let l = self.sync_results.read();
+            match l.get(&timestamp_us) {
+                None => true,
+                Some(existing) => !existing.of_method.has_data(), // Re-detect if RGB was cleaned
+            }
+        };
+        if needs_insert {
             let result = FrameResult {
                 of_method: OpticalFlowMethod::detect_features(
                     of_method,
@@ -124,7 +141,7 @@ impl PoseEstimator {
                 optical_flow: Default::default(),
             };
             let mut l = self.sync_results.write();
-            l.entry(timestamp_us).or_insert(result);
+            l.insert(timestamp_us, result);
         }
     }
 
@@ -142,7 +159,14 @@ impl PoseEstimator {
             .collect()
     }
 
-    pub fn process_detected_frames(&self, fps: f64, scaled_fps: f64, params: &ComputeParams, cancel_flag: Option<Arc<AtomicBool>>) {
+    pub fn process_detected_frames(
+        &self,
+        fps: f64,
+        scaled_fps: f64,
+        params: &ComputeParams,
+        cancel_flag: Option<Arc<AtomicBool>>,
+        drain_progress_cb: Option<&(dyn Fn(usize, usize) + Sync)>,
+    ) {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
             crate::synchronization::sync_perf::Stage::ProcessDetected,
         );
@@ -165,7 +189,19 @@ impl PoseEstimator {
         let results = self.sync_results.clone();
         let mut pose = EstimatePoseMethod::from(self.pose_method.load(SeqCst));
         pose.init(params);
-        frames_to_process.par_iter().for_each(move |(ts, next_ts)| {
+
+        let use_serial_neuflow = {
+            let l = results.read();
+            frames_to_process.iter().any(|(ts, next_ts)| {
+                l.get(ts)
+                    .zip(l.get(next_ts))
+                    .is_some_and(|(curr, next)| {
+                        is_neuflow_method(&curr.of_method) || is_neuflow_method(&next.of_method)
+                    })
+            })
+        };
+
+        let process_pair_no_cleanup = |(ts, next_ts): &(i64, i64)| {
             let _g_pair = crate::synchronization::sync_perf::StageGuard::new(
                 crate::synchronization::sync_perf::Stage::PairOpticalFlow,
             );
@@ -177,51 +213,50 @@ impl PoseEstimator {
                     return;
                 }
             }
-            {
-                let l = results.read();
-                if let Some(curr) = l.get(ts) {
-                    if curr.rotation.is_none() {
-                        //let curr = curr.item.clone();
-                        if let Some(next) = l.get(next_ts) {
-                            // TODO estimate pose should be quick so test if instead of cloning it is faster just to keep the lock for longer
-                            let curr_of = curr.of_method.clone();
-                            let next_of = next.of_method.clone();
+            let l = results.read();
+            if let Some(curr) = l.get(ts) {
+                if curr.rotation.is_none() {
+                    if let Some(next) = l.get(next_ts) {
+                        let curr_of = curr.of_method.clone();
+                        let next_of = next.of_method.clone();
 
-                            // Unlock the mutex for estimate_pose
-                            drop(l);
+                        // Unlock the mutex for estimate_pose
+                        drop(l);
 
-                            // optical_flow_to 内部的 NeuFlow preprocess/grid/infer 各阶段在 Task 4 单独插桩
-                            let of_result = curr_of.optical_flow_to(&next_of);
+                        // optical_flow_to 内部的 NeuFlow preprocess/grid/infer 各阶段在 Task 4 单独插桩
+                        let of_result = curr_of.optical_flow_to(&next_of);
 
-                            let rot_opt = {
-                                let _g = crate::synchronization::sync_perf::StageGuard::new(
-                                    crate::synchronization::sync_perf::Stage::EstimatePose,
-                                );
-                                pose.estimate_pose(
-                                    &of_result,
-                                    curr_of.size(),
-                                    params,
-                                    *ts,
-                                    *next_ts,
-                                )
-                            };
+                        let rot_opt = {
+                            let _g = crate::synchronization::sync_perf::StageGuard::new(
+                                crate::synchronization::sync_perf::Stage::EstimatePose,
+                            );
+                            pose.estimate_pose(
+                                &of_result,
+                                curr_of.size(),
+                                params,
+                                *ts,
+                                *next_ts,
+                            )
+                        };
 
-                            if let Some(rot) = rot_opt {
-                                let mut l = results.write();
-                                if let Some(x) = l.get_mut(ts) {
-                                    x.rotation = Some(rot);
-                                    x.quat = Some(Quat64::from(rot));
-                                    let rotvec = rot.scaled_axis() * (scaled_fps / every_nth_frame);
-                                    x.euler = Some((rotvec[0], rotvec[1], rotvec[2]));
-                                } else {
-                                    log::warn!("Failed to get ts {}", ts);
-                                }
+                        if let Some(rot) = rot_opt {
+                            let mut l = results.write();
+                            if let Some(x) = l.get_mut(ts) {
+                                x.rotation = Some(rot);
+                                x.quat = Some(Quat64::from(rot));
+                                let rotvec = rot.scaled_axis() * (scaled_fps / every_nth_frame);
+                                x.euler = Some((rotvec[0], rotvec[1], rotvec[2]));
+                            } else {
+                                log::warn!("Failed to get ts {}", ts);
                             }
                         }
                     }
                 }
             }
-
+        };
+        // Legacy closure for non-NeuFlow par_iter path (cleanup inline per pair)
+        let process_pair = |(ts, next_ts): &(i64, i64)| {
+            process_pair_no_cleanup(&(*ts, *next_ts));
             // Free unneeded img memory
             let mut l = results.write();
             if let Some(curr) = l.get_mut(ts) {
@@ -234,7 +269,104 @@ impl PoseEstimator {
                     }
                 }
             }
-        });
+        };
+
+        if use_serial_neuflow {
+            if self
+                .neuflow_processing
+                .compare_exchange(false, true, SeqCst, SeqCst)
+                .is_err()
+            {
+                log::debug!(
+                    "Synchronization: skipping {} NeuFlow pairs (another thread is processing)",
+                    frames_to_process.len()
+                );
+                self.recalculate_gyro_data(fps, false);
+                return;
+            }
+            let drain_t0 = std::time::Instant::now();
+            let mut drain_iter = 0u32;
+            // Drain loop: keep processing until no new unprocessed pairs arrive
+            loop {
+                if let Some(ref flag) = cancel_flag {
+                    if flag.load(SeqCst) {
+                        break;
+                    }
+                }
+                let pairs: Vec<(i64, i64)> = {
+                    let l = self.sync_results.read();
+                    l.iter()
+                        .filter_map(|(k, v)| {
+                            if v.rotation.is_none()
+                                && v.frame_size.0 > 0
+                                && v.of_method.has_data()
+                            {
+                                l.range(k..)
+                                    .find(|(_, next)| {
+                                        v.frame_no + 1 == next.frame_no
+                                            && next.frame_size.0 > 0
+                                            && next.of_method.has_data()
+                                    })
+                                    .map(|(next_k, _)| (*k, *next_k))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
+                if pairs.is_empty() {
+                    log::info!(
+                        "[NeuFlow drain] exit: iter={drain_iter} elapsed={:.1}ms (no more pairs)",
+                        drain_t0.elapsed().as_secs_f64() * 1000.0
+                    );
+                    break;
+                }
+                let done_before = {
+                    let l = self.sync_results.read();
+                    l.values().filter(|v| v.rotation.is_some()).count()
+                };
+                drain_iter += 1;
+                log::info!(
+                    "[NeuFlow drain] iter={drain_iter} pairs={} elapsed={:.1}ms",
+                    pairs.len(),
+                    drain_t0.elapsed().as_secs_f64() * 1000.0
+                );
+                pairs.par_iter().for_each(&process_pair_no_cleanup);
+                // Don't cleanup inside drain loop — frames may be needed by next iteration's new pairs.
+                // Cleanup happens once after the drain loop exits.
+                let done_after = {
+                    let l = self.sync_results.read();
+                    l.values().filter(|v| v.rotation.is_some()).count()
+                };
+                if let Some(cb) = drain_progress_cb {
+                    let total = {
+                        let l = self.sync_results.read();
+                        l.len()
+                    };
+                    cb(done_after, total);
+                }
+                if done_after == done_before {
+                    log::info!(
+                        "[NeuFlow drain] exit: iter={drain_iter} elapsed={:.1}ms (no rotations set, {} stuck pairs)",
+                        drain_t0.elapsed().as_secs_f64() * 1000.0,
+                        pairs.len()
+                    );
+                    break;
+                }
+            }
+            // Cleanup all processable frames after drain loop completes
+            {
+                let mut l = self.sync_results.write();
+                for (_, v) in l.iter_mut() {
+                    if v.of_method.can_cleanup() {
+                        v.of_method.cleanup();
+                    }
+                }
+            }
+            self.neuflow_processing.store(false, SeqCst);
+        } else {
+            frames_to_process.par_iter().for_each(process_pair);
+        }
         self.recalculate_gyro_data(fps, false);
     }
 
@@ -295,6 +427,11 @@ impl PoseEstimator {
                     if let Some(to_key) = keys.get(i + d) {
                         if let Some(to_item) = l.get(to_key) {
                             if from_fr.frame_no + d == to_item.frame_no {
+                                // Skip NeuFlow multi-frame pairs (d>1) to avoid triggering
+                                // new GPU inference. d=1 hits the matched_points cache.
+                                if d > 1 && is_neuflow_method(&from_fr.of_method) {
+                                    continue;
+                                }
                                 let of = from_fr.of_method.optical_flow_to(&to_item.of_method);
                                 if let Ok(mut from_of) = from_fr.optical_flow.try_borrow_mut() {
                                     from_of.insert(
@@ -319,6 +456,9 @@ impl PoseEstimator {
             crate::synchronization::sync_perf::Stage::Cleanup,
         );
         let mut l = self.sync_results.write();
+        // Remove unprocessed frames (rotation=None) — they have no useful data
+        // and would become stuck pairs in future scans after RGB is freed.
+        l.retain(|_, v| v.rotation.is_some());
         for (_, i) in l.iter_mut() {
             i.of_method.cleanup();
         }

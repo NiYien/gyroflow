@@ -26,6 +26,7 @@ pub trait OpticalFlowTrait {
     fn optical_flow_to(&self, to: &OpticalFlowMethod) -> OpticalFlowPair;
     fn cleanup(&mut self);
     fn can_cleanup(&self) -> bool;
+    fn has_data(&self) -> bool { true }
 }
 
 #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
