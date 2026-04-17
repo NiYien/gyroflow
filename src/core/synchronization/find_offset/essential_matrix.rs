@@ -70,42 +70,54 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                     continue;
                 }
 
-                let sample_rate = raw_imu_len as f64 / (gyro.duration_ms / 1000.0);
-                let _ =
-                    Lowpass::filter_gyro_forward_backward(20.0, params.scaled_fps, &mut of_item);
-                let _ = Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
-
-                let gyro_bintree: BTreeMap<usize, TimeIMU> = gyro_item
-                    .into_iter()
-                    .map(|x| ((x.timestamp_ms * 1000.0) as usize, x))
-                    .collect();
+                let gyro_bintree: BTreeMap<usize, TimeIMU> = {
+                    let _g = crate::synchronization::sync_perf::StageGuard::new(
+                        crate::synchronization::sync_perf::Stage::FindOffPrep,
+                    );
+                    let sample_rate = raw_imu_len as f64 / (gyro.duration_ms / 1000.0);
+                    let _ =
+                        Lowpass::filter_gyro_forward_backward(20.0, params.scaled_fps, &mut of_item);
+                    let _ = Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
+                    gyro_item
+                        .into_iter()
+                        .map(|x| ((x.timestamp_ms * 1000.0) as usize, x))
+                        .collect()
+                };
 
                 let find_min =
                     |a: (f64, f64), b: (f64, f64)| -> (f64, f64) { if a.1 < b.1 { a } else { b } };
 
                 // First search every 1 ms
                 let steps = sync_params.search_size as usize * 2;
-                let lowest = (0..steps)
-                    .into_par_iter()
-                    .map(|i| {
-                        let offs =
-                            sync_params.initial_offset - sync_params.search_size + (i as f64);
-                        (offs, calculate_cost(offs, &of_item, &gyro_bintree))
-                    })
-                    .reduce_with(find_min)
-                    .and_then(|lowest| {
-                        // Then refine to 0.01 ms accuracy
-                        let search_size = 2.0; // ms
-                        let steps = (search_size * 100.0) as usize; // 100 times per ms
-                        let step = search_size / steps as f64;
-                        (0..steps)
-                            .into_par_iter()
-                            .map(|i| {
-                                let offs = lowest.0 + (-search_size + (i as f64 * step));
-                                (offs, calculate_cost(offs, &of_item, &gyro_bintree))
-                            })
-                            .reduce_with(find_min)
-                    });
+                let coarse_lowest = {
+                    let _g = crate::synchronization::sync_perf::StageGuard::new(
+                        crate::synchronization::sync_perf::Stage::FindOffCoarse,
+                    );
+                    (0..steps)
+                        .into_par_iter()
+                        .map(|i| {
+                            let offs =
+                                sync_params.initial_offset - sync_params.search_size + (i as f64);
+                            (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                        })
+                        .reduce_with(find_min)
+                };
+                let lowest = coarse_lowest.and_then(|lowest| {
+                    let _g = crate::synchronization::sync_perf::StageGuard::new(
+                        crate::synchronization::sync_perf::Stage::FindOffRefine,
+                    );
+                    // Then refine to 0.01 ms accuracy
+                    let search_size = 2.0; // ms
+                    let steps = (search_size * 100.0) as usize; // 100 times per ms
+                    let step = search_size / steps as f64;
+                    (0..steps)
+                        .into_par_iter()
+                        .map(|i| {
+                            let offs = lowest.0 + (-search_size + (i as f64 * step));
+                            (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                        })
+                        .reduce_with(find_min)
+                });
 
                 if let Some(lowest) = lowest {
                     let middle_timestamp =
