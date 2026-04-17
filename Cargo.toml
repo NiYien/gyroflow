@@ -10,7 +10,7 @@ default = ["opencv", "niyien-serialport", "neuflow"]
 opencl = ["gyroflow-core/use-opencl"]
 opencv = ["gyroflow-core/use-opencv"]
 niyien-serialport = ["dep:serialport"]
-neuflow = ["gyroflow-core/neuflow"]
+neuflow = ["gyroflow-core/neuflow", "neuflow-ort", "neuflow-burn"]
 neuflow-ort = ["gyroflow-core/neuflow-ort"]
 neuflow-burn = ["gyroflow-core/neuflow-burn"]
 

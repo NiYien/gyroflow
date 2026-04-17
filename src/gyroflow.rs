@@ -77,6 +77,12 @@ fn entry() {
     util::set_android_context();
     log_panics::init();
 
+    // Enable cubecl SPIR-V pipeline cache before any wgpu device probe so the
+    // cubecl GlobalConfig can still accept `set()`. Without this, NeuFlow Burn
+    // warmup recompiles every kernel on every launch (~4-5 s).
+    #[cfg(feature = "neuflow-burn")]
+    core::neuflow_burn::init_cubecl_cache();
+
     let brand = gyroflow_core::distribution::config().brand.clone();
     let organization_name = QString::from(brand.organization_name.as_str());
     let organization_domain = QString::from(brand.organization_domain.as_str());

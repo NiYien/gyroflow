@@ -342,7 +342,7 @@ Item {
             property string status: render_queue.status;
             property var statuses: ({
                 "stopped": [qsTr("Start exporting"), "play",  styleAccentColor, "start"],
-                "paused":  [qsTr("Resume"),          "play",  "#70e574",        "start"],
+                "paused":  [qsTr("Resume"),          "play",  "#70e574",        "resume"],
                 "active":  [qsTr("Pause"),           "pause", "#f6a00b",        "pause"],
             })
             text: statuses[status][0];

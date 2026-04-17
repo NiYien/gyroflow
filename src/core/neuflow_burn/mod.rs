@@ -108,6 +108,45 @@ struct InferenceHandle {
 static INFERENCE_HANDLE: OnceLock<Result<InferenceHandle, String>> = OnceLock::new();
 static QUEUE_DEPTH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// Initialize cubecl's global SPIR-V pipeline cache to persist compiled kernels
+/// across runs. Without this, every `just run` recompiles all SPIR-V kernels
+/// (~4-5 s warmup). With this, subsequent runs load from disk (<1 s).
+///
+/// Must be called before any cubecl `GlobalConfig::get()` or Wgpu device init,
+/// otherwise `GlobalConfig::set` panics. Call at the very top of main before
+/// wgpu GPU probing (see `util::init_logging` in `gyroflow.rs`).
+pub fn init_cubecl_cache() {
+    use cubecl_runtime::config::{GlobalConfig, cache::CacheConfig, compilation::CompilationConfig};
+
+    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    if DONE.get().is_some() {
+        return;
+    }
+
+    let cache_root = crate::settings::data_dir().join("cubecl_cache");
+    if let Err(e) = std::fs::create_dir_all(&cache_root) {
+        log::warn!("NeuFlow Burn: failed to create cubecl cache dir {:?}: {e}", cache_root);
+        let _ = DONE.set(());
+        return;
+    }
+
+    let config = GlobalConfig {
+        compilation: CompilationConfig {
+            cache: Some(CacheConfig::File(cache_root.clone())),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+
+    // `set()` panics if config is already set (e.g. test re-entry). Guard with catch_unwind.
+    let result = std::panic::catch_unwind(|| GlobalConfig::set(config));
+    match result {
+        Ok(_) => log::info!("NeuFlow Burn: SPIR-V cache enabled at {:?}", cache_root),
+        Err(_) => log::debug!("NeuFlow Burn: cubecl GlobalConfig already set, skipping"),
+    }
+    let _ = DONE.set(());
+}
+
 /// Spawn the inference thread: loads model, then loops on channel receiving requests.
 fn spawn_inference_thread() -> Result<InferenceHandle, String> {
     let (tx, rx) = mpsc::channel::<InferRequest>();
@@ -121,6 +160,8 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
                     std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0");
                 }
             }
+
+            init_cubecl_cache();
 
             let model_result = init_model();
             match model_result {

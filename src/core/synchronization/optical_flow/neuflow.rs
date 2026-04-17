@@ -8,6 +8,9 @@ use super::{OFOpenCVDis, OpticalFlowMethod, OpticalFlowTrait};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU32;
 
+/// Cached result of preprocess_frame_nv12: (chw, gray, proc_h, proc_w).
+type PreprocessedFrame = (Vec<f32>, Vec<u8>, usize, usize);
+
 pub struct OFNeuFlowV2 {
     timestamp_us: i64,
     /// Raw NV12 frame data (Y plane + interleaved UV plane).
@@ -18,6 +21,9 @@ pub struct OFNeuFlowV2 {
     stride: usize,
     /// Backend selector: 3 = ORT/CUDA, 4 = Burn/Vulkan
     backend: u32,
+    /// Cached NV12→CHW preprocessing result. Avoids recomputing when the same
+    /// frame appears as img0 in one pair and img1 in another.
+    preprocessed: Arc<parking_lot::Mutex<Option<PreprocessedFrame>>>,
     /// Sampled feature points from the most recent NeuFlow inference.
     features: Arc<std::cell::UnsafeCell<Vec<(f32, f32)>>>,
     /// Cache of optical flow results, keyed by target timestamp.
@@ -41,6 +47,7 @@ impl Clone for OFNeuFlowV2 {
             height: self.height,
             stride: self.stride,
             backend: self.backend,
+            preprocessed: self.preprocessed.clone(),
             features: self.features.clone(),
             matched_points: self.matched_points.clone(),
             used: self.used.clone(),
@@ -64,10 +71,24 @@ impl OFNeuFlowV2 {
             height,
             stride,
             backend,
+            preprocessed: Default::default(),
             features: Arc::new(std::cell::UnsafeCell::new(Vec::new())),
             matched_points: Default::default(),
             used: Default::default(),
         }
+    }
+
+    /// Get cached preprocessed CHW tensor + gray, or compute from NV12 and cache.
+    /// Thread-safe: Mutex ensures only one thread computes; others wait and get the cached result.
+    #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+    fn get_or_preprocess(&self) -> Result<PreprocessedFrame, String> {
+        let mut cache = self.preprocessed.lock();
+        if let Some(ref cached) = *cache {
+            return Ok(cached.clone());
+        }
+        let result = preprocess_frame_nv12(&self.nv12_frame, self.width, self.height, self.stride)?;
+        *cache = Some(result.clone());
+        Ok(result)
     }
 }
 
@@ -90,12 +111,19 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 return Some(cached.clone());
             }
 
-            if self.nv12_frame.is_empty() || next.nv12_frame.is_empty() {
-                return fallback_to_dis(self, next);
-            }
+            // Preprocess both frames (cached — each frame preprocessed at most once).
+            // Uses cache if available, even after cleanup() has freed the NV12 data.
+            let (chw0, gray0, proc_h, proc_w) = match self.get_or_preprocess() {
+                Ok(v) => v,
+                Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+            };
+            let (chw1, _, _, _) = match next.get_or_preprocess() {
+                Ok(v) => v,
+                Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+            };
 
-            let model_w = 768.0f32;
-            let model_h = 432.0f32;
+            let model_w = proc_w as f32;
+            let model_h = proc_h as f32;
             let scale = (model_w / self.width as f32).min(model_h / self.height as f32);
             let new_w = self.width as f32 * scale;
             let new_h = self.height as f32 * scale;
@@ -107,12 +135,9 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 #[cfg(feature = "neuflow-ort")]
                 3 => {
                     // ORT: full tensor readback → CPU dense sampling
-                    match neuflow_inference(
-                        &self.nv12_frame, self.width, self.height, self.stride,
-                        &next.nv12_frame, next.width, next.height, next.stride,
-                    ) {
-                        Ok((flow_data, gray_data)) => {
-                            sample_from_dense_flow(&flow_data, &gray_data, model_w as u32, model_h as u32)
+                    match super::neuflow_ort::neuflow_inference_ort(&chw0, &chw1, proc_h, proc_w) {
+                        Ok(flow_data) => {
+                            sample_from_dense_flow(&flow_data, &gray0, proc_w as u32, proc_h as u32)
                         }
                         Err(e) => {
                             log::warn!("NeuFlow ORT inference failed: {e}, falling back to DIS");
@@ -124,12 +149,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 4 => {
                     // Burn: GPU-side sparse sampling (no full tensor readback)
                     match super::neuflow_burn::neuflow_inference_burn_sampled(
-                        &self.nv12_frame, self.width, self.height, self.stride,
-                        &next.nv12_frame, next.width, next.height, next.stride,
+                        chw0, chw1, &gray0, proc_h, proc_w,
                     ) {
                         Ok(sampled) => {
                             if sampled.from_pts.len() >= 10 {
-                                // Apply median consistency filter
                                 Some(median_filter_points(sampled.from_pts, sampled.to_pts))
                             } else {
                                 None
@@ -182,16 +205,9 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
 
     fn cleanup(&mut self) {
         self.nv12_frame = Arc::new(Vec::new());
+        // Note: preprocessed cache is intentionally kept — other threads in par_iter
+        // may still need the CHW tensor after NV12 is freed.
     }
-}
-
-/// ORT inference: returns (dense_flow_hw2, gray).
-#[cfg(feature = "neuflow-ort")]
-fn neuflow_inference(
-    nv12_0: &[u8], w0: u32, h0: u32, stride0: usize,
-    nv12_1: &[u8], w1: u32, h1: u32, stride1: usize,
-) -> Result<(Vec<f32>, Vec<u8>), String> {
-    super::neuflow_ort::neuflow_inference_ort(nv12_0, w0, h0, stride0, nv12_1, w1, h1, stride1)
 }
 
 /// Fused NV12→CHW preprocessing: reads NV12 data directly and produces

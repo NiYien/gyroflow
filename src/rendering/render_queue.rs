@@ -483,6 +483,7 @@ pub struct RenderQueue {
 
     start: qt_method!(fn(&mut self)),
     pause: qt_method!(fn(&mut self)),
+    resume: qt_method!(fn(&mut self)),
     stop: qt_method!(fn(&mut self)),
 
     render_job: qt_method!(fn(&mut self, job_id: u32)),
@@ -517,11 +518,13 @@ pub struct RenderQueue {
     total_frames: qt_property!(u64; READ get_total_frames NOTIFY queue_changed),
     pub status: qt_property!(QString; NOTIFY status_changed),
     pub auto_rotate: qt_property!(bool; NOTIFY auto_rotate_changed),
+    pub simple_mode: qt_property!(bool; NOTIFY simple_mode_changed),
 
     pub progress_changed: qt_signal!(),
     pub queue_changed: qt_signal!(),
     pub status_changed: qt_signal!(),
     pub auto_rotate_changed: qt_signal!(),
+    pub simple_mode_changed: qt_signal!(),
 
     pub render_progress: qt_signal!(job_id: u32, progress: f64, current_frame: usize, total_frames: usize, finished: bool, start_time: f64, is_conversion: bool),
     pub encoder_initialized: qt_signal!(job_id: u32, encoder_name: String),
@@ -979,76 +982,100 @@ impl RenderQueue {
     }
 
     pub fn start(&mut self) {
-        let paused = self.pause_flag.load(SeqCst);
+        // No-op when paused. Previously this unconditionally cleared pause_flag,
+        // so when multiple job-done callbacks hit start() concurrently, the first
+        // call cleared the flag and subsequent calls saw paused=false and kicked
+        // off the next job — the user-visible "pause stopped the current one but
+        // others started anyway" bug. Explicit Resume goes through `resume()`.
+        if self.pause_flag.load(SeqCst) {
+            return;
+        }
 
+        for (_id, job) in self.jobs.iter() {
+            job.cancel_flag.store(false, SeqCst);
+        }
+
+        self.status = QString::from("active");
+        self.status_changed();
+
+        if self.start_timestamp == 0 {
+            self.start_frame = 0;
+            self.start_timestamp = Self::current_timestamp();
+            self.start_frame = self.get_current_frame();
+            self.progress_changed();
+        }
+
+        loop {
+            if self.get_active_render_count() >= self.parallel_renders.max(1) as usize {
+                break;
+            }
+
+            let mut job_id = None;
+            for v in self.queue.borrow().iter() {
+                if v.current_frame == 0
+                    && v.total_frames > 0
+                    && v.status == JobStatus::Queued
+                    && (v.processing_progress == 0.0 || v.processing_progress == 1.0)
+                {
+                    job_id = Some(v.job_id);
+                    break;
+                }
+            }
+            if let Some(job_id) = job_id {
+                self.render_job(job_id);
+            } else {
+                if self.get_active_render_count() == 0 {
+                    self.post_render_action();
+                    self.queue_finished();
+
+                    self.start_frame = 0;
+                    self.start_timestamp = 0;
+                    self.progress_changed();
+
+                    self.status = QString::from("stopped");
+                    self.status_changed();
+                }
+                break;
+            }
+        }
+    }
+    pub fn resume(&mut self) {
+        // Explicit Resume: clear pause_flag, adjust timestamps, reset each
+        // job's cancel_flag, then let start() schedule pending jobs normally.
+        if !self.pause_flag.load(SeqCst) {
+            return;
+        }
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(false, SeqCst);
         }
         self.pause_flag.store(false, SeqCst);
 
-        self.status = QString::from("active");
-        self.status_changed();
-
-        if !paused && self.start_timestamp == 0 {
-            self.start_frame = 0;
-            self.start_timestamp = Self::current_timestamp();
-            self.start_frame = self.get_current_frame();
-            self.progress_changed();
-        } else if let Some(paused_timestamp) = self.paused_timestamp.take() {
+        if let Some(paused_timestamp) = self.paused_timestamp.take() {
             let diff = Self::current_timestamp() - paused_timestamp;
             self.start_timestamp += diff;
             let mut q = self.queue.borrow_mut();
             for i in 0..q.row_count() as usize {
-                //let mut v = &mut q[i];
                 let mut v = q[i].clone();
                 if v.start_timestamp > 0 && v.current_frame < v.total_frames {
                     v.start_timestamp += diff;
                     v.frame_times.clear();
-                    //q.data_changed(i);
                     q.change_line(i, v);
                 }
             }
         }
 
-        if !paused {
-            loop {
-                if self.get_active_render_count() >= self.parallel_renders.max(1) as usize {
-                    break;
-                }
-
-                let mut job_id = None;
-                for v in self.queue.borrow().iter() {
-                    if v.current_frame == 0
-                        && v.total_frames > 0
-                        && v.status == JobStatus::Queued
-                        && (v.processing_progress == 0.0 || v.processing_progress == 1.0)
-                    {
-                        job_id = Some(v.job_id);
-                        break;
-                    }
-                }
-                if let Some(job_id) = job_id {
-                    self.render_job(job_id);
-                } else {
-                    if self.get_active_render_count() == 0 {
-                        self.post_render_action();
-                        self.queue_finished();
-
-                        self.start_frame = 0;
-                        self.start_timestamp = 0;
-                        self.progress_changed();
-
-                        self.status = QString::from("stopped");
-                        self.status_changed();
-                    }
-                    break;
-                }
-            }
-        }
+        self.start();
     }
     pub fn pause(&mut self) {
         self.pause_flag.store(true, SeqCst);
         self.paused_timestamp = Some(Self::current_timestamp());
+
+        // The sync stage has no resumable checkpoint, so pausing must cancel any
+        // in-flight autosync on every job — otherwise the UI appears frozen while
+        // NeuFlow inference keeps running. resume() resets cancel_flag back to false.
+        for (_id, job) in self.jobs.iter() {
+            job.cancel_flag.store(true, SeqCst);
+        }
 
         self.status = QString::from("paused");
         self.status_changed();
@@ -1963,8 +1990,9 @@ impl RenderQueue {
                 }
             }
 
+            let sync_cancel_flag = cancel_flag.clone();
             core::run_threaded(move || {
-                Self::do_autosync(stab.clone(), processing, &input_file, err2, proc_height);
+                Self::do_autosync(stab.clone(), processing, &input_file, err2, proc_height, sync_cancel_flag);
                 stab.recompute_blocking();
 
                 if let Some((opt, path, fields)) = export_metadata {
@@ -2756,6 +2784,7 @@ impl RenderQueue {
         input_file: &gyroflow_core::InputFile,
         err: F2,
         proc_height: i32,
+        cancel_flag: Arc<AtomicBool>,
     ) {
         let (url, duration_ms) = {
             (
@@ -2828,12 +2857,16 @@ impl RenderQueue {
                     let _prevent_system_sleep =
                         keep_awake::inhibit_display("Gyroflow", "Autosyncing");
 
-                    let cancel_flag = Arc::new(AtomicBool::new(false));
+                    // cancel_flag is passed in from the caller (Job.cancel_flag) and
+                    // is toggled by RenderQueue::pause/stop/cancel_job. Previously a
+                    // local flag was created here, so pause/stop could never interrupt
+                    // an in-flight NeuFlow sync.
                     sync_params.initial_offset *= 1000.0; // s to ms
                     sync_params.time_per_syncpoint *= 1000.0; // s to ms
                     sync_params.search_size *= 1000.0; // s to ms
 
                     let every_nth_frame = sync_params.every_nth_frame.max(1);
+                    let of_method = sync_params.of_method;
 
                     let size = stab.params.read().size;
 
@@ -2951,19 +2984,41 @@ impl RenderQueue {
                                           converter,
                                           _rate_control| {
                                         if abs_frame_no % every_nth_frame == 0 {
+                                            // NeuFlow (of_method=3 or 4) needs NV12 for color data;
+                                            // other methods use GRAY8.
+                                            let pix_fmt = if of_method == 3 || of_method == 4 {
+                                                ffmpeg_next::format::Pixel::NV12
+                                            } else {
+                                                ffmpeg_next::format::Pixel::GRAY8
+                                            };
                                             match converter.scale(
                                                 input_frame,
-                                                ffmpeg_next::format::Pixel::GRAY8,
+                                                pix_fmt,
                                                 sw,
                                                 sh,
                                             ) {
                                                 Ok(small_frame) => {
-                                                    let (width, height, stride, pixels) = (
-                                                        small_frame.plane_width(0),
-                                                        small_frame.plane_height(0),
-                                                        small_frame.stride(0),
-                                                        small_frame.data(0),
-                                                    );
+                                                    let (width, height, stride, pixels) = if of_method == 3 || of_method == 4 {
+                                                        // NV12: pass all planes (Y + UV)
+                                                        let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
+                                                                      + small_frame.stride(1) * small_frame.plane_height(1) as usize;
+                                                        let mut all_data = Vec::with_capacity(total_len);
+                                                        all_data.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
+                                                        all_data.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
+                                                        (
+                                                            small_frame.plane_width(0),
+                                                            small_frame.plane_height(0),
+                                                            small_frame.stride(0),
+                                                            all_data,
+                                                        )
+                                                    } else {
+                                                        (
+                                                            small_frame.plane_width(0),
+                                                            small_frame.plane_height(0),
+                                                            small_frame.stride(0),
+                                                            small_frame.data(0).to_vec(),
+                                                        )
+                                                    };
 
                                                     sync2.feed_frame(
                                                         timestamp_us,
@@ -2971,7 +3026,7 @@ impl RenderQueue {
                                                         width,
                                                         height,
                                                         stride,
-                                                        pixels,
+                                                        &pixels,
                                                     );
                                                 }
                                                 Err(e) => err2((
@@ -4189,6 +4244,16 @@ impl RenderQueue {
             },
         );
 
+        // Simple mode defaults to NeuFlow v2 Burn (method=4); Advanced stays on
+        // NeuFlow v2 CUDA/ORT (method=3). Falls back to AKAZE if neither backend
+        // is compiled in. Must be read outside run_threaded since RenderQueue
+        // contains QObjectCppWrapper and is not Send.
+        let default_of_method: u64 = if self.simple_mode && cfg!(feature = "neuflow-burn") {
+            4
+        } else {
+            3
+        };
+
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
             let lens_group_status = Arc::new(ParkingMutex::new(
@@ -4744,7 +4809,7 @@ impl RenderQueue {
                     "every_nth_frame": every_nth_frame,
                     "initial_offset": 0.0,
                     "pose_method": 0,
-                    "of_method": 3,
+                    "of_method": default_of_method,
                     "offset_method": 2
                 }));
                 drop(lens);

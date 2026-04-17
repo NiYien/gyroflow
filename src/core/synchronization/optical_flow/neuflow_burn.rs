@@ -1,31 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 NiYien
 
-//! Burn/Vulkan backend — NV12 direct preprocess + GPU-side sparse sampling.
-//! Uses infer_and_sample to extract ~200 flow values on GPU, avoiding full tensor readback.
-
-use super::neuflow::preprocess_frame_nv12;
+//! Burn/Vulkan backend — accepts preprocessed CHW tensors + gray,
+//! uses GPU-side sparse sampling via infer_and_sample.
 
 /// Sampled optical flow result from Burn GPU-side sparse sampling.
 pub(super) struct BurnSampledResult {
-    /// (x, y) grid points in model space
     pub from_pts: Vec<(f32, f32)>,
-    /// (x + dx, y + dy) destination points in model space
     pub to_pts: Vec<(f32, f32)>,
 }
 
-/// Run Burn inference with GPU-side sparse sampling.
-/// Returns sampled points directly (no full flow tensor readback).
+/// Run Burn inference with GPU-side sparse sampling on preprocessed CHW tensors.
+/// chw0/chw1 are moved (owned) into Burn's TensorData for zero-copy.
 pub(super) fn neuflow_inference_burn_sampled(
-    nv12_0: &[u8], w0: u32, h0: u32, stride0: usize,
-    nv12_1: &[u8], w1: u32, h1: u32, stride1: usize,
+    chw0: Vec<f32>, chw1: Vec<f32>, gray0: &[u8], proc_h: usize, proc_w: usize,
 ) -> Result<BurnSampledResult, String> {
-    // Preprocess both frames: NV12 → CHW + gray (same path as ORT)
-    let (img0, gray0, proc_h, proc_w) = preprocess_frame_nv12(nv12_0, w0, h0, stride0)?;
-    let (img1, _, _, _) = preprocess_frame_nv12(nv12_1, w1, h1, stride1)?;
-
     // Compute texture-aware grid points from gray0
-    let (grid_points, linear_indices) = compute_grid_points(&gray0, proc_w, proc_h);
+    let (grid_points, linear_indices) = compute_grid_points(gray0, proc_w, proc_h);
 
     if grid_points.is_empty() {
         return Err("No textured grid points found".to_string());
@@ -34,7 +25,7 @@ pub(super) fn neuflow_inference_burn_sampled(
     let start = std::time::Instant::now();
 
     let sampled = crate::neuflow_burn::infer_and_sample(
-        img0, img1, proc_h, proc_w,
+        chw0, chw1, proc_h, proc_w,
         grid_points, linear_indices,
     )?;
 
@@ -48,26 +39,21 @@ pub(super) fn neuflow_inference_burn_sampled(
     for (i, &(gx, gy)) in sampled.grid_points.iter().enumerate() {
         let fx = gx as f32;
         let fy = gy as f32;
-        let tx = fx + sampled.dx[i];
-        let ty = fy + sampled.dy[i];
-        // Skip invalid flow
         if !sampled.dx[i].is_finite() || !sampled.dy[i].is_finite() {
             continue;
         }
+        let tx = fx + sampled.dx[i];
+        let ty = fy + sampled.dy[i];
         if tx >= 0.0 && tx < proc_w as f32 && ty >= 0.0 && ty < proc_h as f32 {
             from_pts.push((fx, fy));
             to_pts.push((tx, ty));
         }
     }
 
-    Ok(BurnSampledResult {
-        from_pts,
-        to_pts,
-    })
+    Ok(BurnSampledResult { from_pts, to_pts })
 }
 
 /// Compute texture-aware grid points for GPU sparse sampling.
-/// Same logic as sample_from_dense_flow's grid generation, but only returns coordinates.
 fn compute_grid_points(gray: &[u8], w: usize, h: usize) -> (Vec<(usize, usize)>, Vec<i32>) {
     let step = (w / 15).max(4);
     let window_size = ((w as f32 * 0.02).round() as usize).max(10);
@@ -90,7 +76,6 @@ fn compute_grid_points(gray: &[u8], w: usize, h: usize) -> (Vec<(usize, usize)>,
     (grid_points, linear_indices)
 }
 
-/// Compute grayscale variance in a patch around (x, y).
 fn texture_variance(gray: &[u8], x: usize, y: usize, w: usize, h: usize, patch: usize) -> f32 {
     let half = patch / 2;
     let x0 = x.saturating_sub(half);

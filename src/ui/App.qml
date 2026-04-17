@@ -19,7 +19,10 @@ Rectangle {
     property QtObject controller: main_controller;
 
     property bool isSimpleMode: settings.value("simpleMode", "false") == "true";
-    onIsSimpleModeChanged: settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
+    onIsSimpleModeChanged: {
+        settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
+        render_queue.simple_mode = isSimpleMode;
+    }
 
     function _isSenseFlow(s) { return (s || "").indexOf("SenseFlow") >= 0; }
     property bool isNiYienDevice: {
@@ -1260,6 +1263,7 @@ Rectangle {
     Component.onCompleted: {
         controller.check_updates();
         updateLensGroupPanelState();
+        render_queue.simple_mode = isSimpleMode;
 
         QT_TRANSLATE_NOOP("App", "An error occured: %1");
         QT_TRANSLATE_NOOP("App", "Gyroflow file exported to %1.");

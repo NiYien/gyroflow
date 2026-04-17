@@ -313,6 +313,7 @@ impl AutosyncProcess {
                             org_fps,
                             scaled_fps,
                             &compute_params.read(),
+                            Some(cancel_flag.clone()),
                         );
                         estimator.recalculate_gyro_data(org_fps, false);
                     }
@@ -342,6 +343,7 @@ impl AutosyncProcess {
             self.org_fps,
             self.scaled_fps,
             &self.compute_params.read(),
+            Some(self.cancel_flag.clone()),
         );
         self.estimator.recalculate_gyro_data(self.org_fps, true);
         self.estimator

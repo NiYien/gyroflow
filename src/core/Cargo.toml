@@ -88,6 +88,7 @@ neuflow-trace-shared = { path = "../../vendor/neuflow-trace/neuflow-trace-shared
 
 # Burn framework for NeuFlow v2 inference (Vulkan/Metal backend)
 burn-store = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "burnpack"], optional = true }
+cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
@@ -113,7 +114,7 @@ use-opencv = ["opencv"]
 bundle-lens-profiles = []
 cache-gyro-metadata = []
 neuflow-ort = ["dep:ort"]
-neuflow-burn = ["dep:burn", "dep:burn-store"]
+neuflow-burn = ["dep:burn", "dep:burn-store", "dep:cubecl-runtime"]
 neuflow = ["neuflow-ort", "neuflow-burn"]
 
 [profile.deploy]

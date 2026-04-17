@@ -3624,6 +3624,7 @@ dependencies = [
  "byteorder",
  "ciborium",
  "crc32fast",
+ "cubecl-runtime",
  "cv-core",
  "cv-pinhole",
  "dyn-clone",

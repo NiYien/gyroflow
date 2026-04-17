@@ -138,7 +138,7 @@ impl PoseEstimator {
             .collect()
     }
 
-    pub fn process_detected_frames(&self, fps: f64, scaled_fps: f64, params: &ComputeParams) {
+    pub fn process_detected_frames(&self, fps: f64, scaled_fps: f64, params: &ComputeParams, cancel_flag: Option<Arc<AtomicBool>>) {
         let every_nth_frame = self.every_nth_frame.load(SeqCst) as f64;
         let mut frames_to_process = Vec::new();
         {
@@ -159,6 +159,14 @@ impl PoseEstimator {
         let mut pose = EstimatePoseMethod::from(self.pose_method.load(SeqCst));
         pose.init(params);
         frames_to_process.par_iter().for_each(move |(ts, next_ts)| {
+            // Early-exit for expensive optical flow methods (NeuFlow CUDA/Burn).
+            // Without this, pressing "pause" during sync waits for all queued
+            // frames to finish (can take tens of seconds with NeuFlow).
+            if let Some(ref flag) = cancel_flag {
+                if flag.load(SeqCst) {
+                    return;
+                }
+            }
             {
                 let l = results.read();
                 if let Some(curr) = l.get(ts) {
