@@ -20,7 +20,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
     cancel_flag: Arc<AtomicBool>,
 ) -> Vec<(f64, f64, f64, f64)> {
     // Vec<(timestamp, offset, cost, confidence)>
-    // visual_features 路径 confidence 占位 0.5（不走 NCC，无天然 confidence 度量）
+    // visual_features path: confidence placeholder 0.5 (no NCC, no natural confidence metric)
     let mut params = params_arg.clone();
     params.gyro = Arc::new(RwLock::new(params_arg.gyro.read().clone()));
     if !for_rs {

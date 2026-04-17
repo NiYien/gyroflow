@@ -22,7 +22,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
     cancel_flag: Arc<AtomicBool>,
 ) -> Vec<(f64, f64, f64, f64)> {
     // Vec<(timestamp, offset, cost, confidence)>
-    // essential_matrix 路径 confidence 占位 0.5（不走 NCC，无天然 confidence 度量）
+    // essential_matrix path: confidence placeholder 0.5 (no NCC, no natural confidence metric)
     let estimated_gyro = estimator.estimated_gyro.read().clone();
 
     let mut offsets = Vec::new();

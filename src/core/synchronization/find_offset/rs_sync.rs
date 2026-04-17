@@ -23,7 +23,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
     cancel_flag: Arc<AtomicBool>,
 ) -> Vec<(f64, f64, f64, f64)> {
     // Vec<(timestamp, offset, cost, confidence)>
-    // confidence ∈ [0, 1]: 高置信度 offset 可在 controller.rs 跳过 sync_data.rank 过滤
+    // confidence ∈ [0, 1]: high-confidence offsets bypass sync_data.rank filter in controller.rs
     // Try essential matrix first, because it's much faster
     let mut sync_params = sync_params.clone();
 
@@ -272,7 +272,7 @@ impl FindOffsetsRssync<'_> {
 
     pub fn full_sync(&mut self) -> Vec<(f64, f64, f64, f64)> {
         // Vec<(timestamp, offset, cost, confidence)>
-        // 初始 confidence = 0.5（占位，由后续融合/rerank 阶段更新）
+        // Initial confidence = 0.5 (placeholder, updated by subsequent fusion/rerank stage)
         self.is_guess_orient.store(false, SeqCst);
 
         let mut offsets = Vec::new();
@@ -304,7 +304,7 @@ impl FindOffsetsRssync<'_> {
                         (from_ts + to_ts) as f64 / 2.0 / 1000.0,
                         final_offset,
                         delay.0,
-                        0.5, // confidence 占位；由融合阶段覆写
+                        0.5, // confidence placeholder; overwritten by fusion stage
                     ));
                 } else {
                     log::warn!(
@@ -315,11 +315,12 @@ impl FindOffsetsRssync<'_> {
                     final_offset_external_ms = -offset - (self.frame_readout_time * 1000.0 / 2.0);
                 }
 
-                // 注：cost 曲线扫描（5ms 步，600 次 pre_sync）+ diag 记录已移到
-                // `ncc_fusion_decide` 的 `scan_cost_curve_per_seg`。理由：在
-                // full_sync 里扫描会触发 rs-sync 的 on_progress callback，让外部
-                // 进度条跳回 50%（每次 pre_sync 内部 counter 从 0 开始）。
-                // ncc_fusion_decide 会在开始时 suppress 这个 callback，避免副作用。
+                // Note: cost curve scan (5ms step, 600 pre_sync calls) + diag logging
+                // moved to `scan_cost_curve_per_seg` in `ncc_fusion_decide`. Reason:
+                // scanning here triggers rs-sync's on_progress callback, causing the
+                // outer progress bar to jump back to ~50% (each pre_sync resets its
+                // internal counter). ncc_fusion_decide suppresses the callback on
+                // entry to avoid this side effect.
                 let _ = final_offset_external_ms;
             }
             self.current_sync_point.fetch_add(1, SeqCst);
@@ -327,9 +328,9 @@ impl FindOffsetsRssync<'_> {
         offsets
     }
 
-    /// 扫 rs-sync cost 曲线（5ms 步）并返回 (best_external_ms, 2nd_best/best)。
-    /// 在 diag 启用时同步写 sync_diag 的 cost_curves_rssync.csv / summary /
-    /// local_minima。
+    /// Scan rs-sync cost curve (5ms step) and return (best_external_ms, 2nd_best/best).
+    /// When diag is enabled, also writes sync_diag's cost_curves_rssync.csv / summary /
+    /// local_minima.
     fn scan_cost_curve_per_seg(
         &self,
         range_idx: usize,
@@ -395,14 +396,15 @@ impl FindOffsetsRssync<'_> {
         (best_offs, ratio)
     }
 
-    /// Top-N correlation 重排：对每个已选 offset 检查 corr@final，若低则
-    /// 用 debug_pre_sync 拿完整 cost 曲线，在 top-N 候选中找 correlation≥0.3
-    /// 的最低 cost 点，并在该点局部精搜覆盖原 offset。
+    /// Top-N correlation rerank: for each selected offset, check corr@final; if low,
+    /// use debug_pre_sync to obtain the full cost curve, find the lowest-cost point
+    /// with correlation≥0.3 among top-N candidates, and locally refine at that point
+    /// to replace the original offset.
     ///
-    /// 阈值（基于 12 个样本分析确定，保留 0.37 宽安全间隔）：
-    /// - corr@final ≥ 0.30：cost 与形状一致 → 保留
-    /// - corr@final ∈ (0.20, 0.30)：中间模糊区 → 保留但告警
-    /// - corr@final ≤ 0.20：cost 选错 → 触发 rerank
+    /// Thresholds (determined from 12-sample analysis, with 0.37 wide safety margin):
+    /// - corr@final ≥ 0.30: cost and shape consistent → keep
+    /// - corr@final ∈ (0.20, 0.30): ambiguous middle region → keep but warn
+    /// - corr@final ≤ 0.20: cost chose wrong → trigger rerank
     pub fn correlation_rerank(
         &self,
         offsets: &mut Vec<(f64, f64, f64, f64)>,
@@ -426,7 +428,7 @@ impl FindOffsetsRssync<'_> {
             let (mid_ms, cost_final_ext_ms, cost_final_value, _conf) = offsets[i];
             let mid_us = (mid_ms * 1000.0) as i64;
 
-            // 匹配原始 range（mid 落在其内）
+            // Match the original range (mid falls within it)
             let (from_us, to_us) = match ranges
                 .iter()
                 .find(|(f, t)| mid_us >= *f && mid_us <= *t)
@@ -435,7 +437,7 @@ impl FindOffsetsRssync<'_> {
                 None => continue,
             };
 
-            // 匹配 sync_points（同样条件）
+            // Match sync_points (same condition)
             let sp_match = self.sync_points.iter().find(|(f, t)| {
                 let mid_sp = (*f + *t) / 2;
                 mid_sp >= from_us && mid_sp <= to_us
@@ -445,7 +447,7 @@ impl FindOffsetsRssync<'_> {
                 None => continue,
             };
 
-            // 准备 estimated / raw 序列
+            // Prepare estimated / raw sequences
             let est: Vec<(f64, [f64; 3])> = estimated_map
                 .range(from_us..to_us)
                 .filter_map(|(_, imu)| imu.gyro.map(|g| (imu.timestamp_ms, g)))
@@ -499,7 +501,7 @@ impl FindOffsetsRssync<'_> {
                 continue;
             }
 
-            // 触发重排
+            // Trigger rerank
             let initial_delay_s = -self.sync_params.initial_offset / 1000.0;
             let search_radius_s = self.sync_params.search_size / 1000.0;
             let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
@@ -516,8 +518,10 @@ impl FindOffsetsRssync<'_> {
                 DEBUG_POINT_COUNT,
             );
 
-            // Correlation-first 过滤：对整条曲线算 correlation，保留 corr>=阈值 的点，
-            // 在这些"形状对的"候选中选 cost 最低。这覆盖了"真对齐在 cost 排序靠后"的情况。
+            // Correlation-first filter: compute correlation over the full curve, keep
+            // points with corr>=threshold, and pick the lowest-cost among these
+            // "shape-matching" candidates. This covers the case where the true
+            // alignment ranks low by cost.
             let mut qualified: Vec<(f64, f64, f64, f64)> = Vec::new();
             // (cost, internal_delay_s, external_ms, corr_r)
             for (&internal_delay_s, &cost_c) in delays.iter().zip(costs.iter()) {
@@ -544,9 +548,11 @@ impl FindOffsetsRssync<'_> {
 
             match best {
                 Some((best_cost, best_internal_s, best_ext_ms, best_corr)) => {
-                    // 在 candidate 附近用 pre_sync 做局部细步长扫描（不用 sync 的 LBFGS，
-                    // 避免全局优化漂到别的 cost 谷）。
-                    // radius=5ms 覆盖 5ms 离散步长的邻域；step=0.1ms 给出亚毫秒精度。
+                    // Near the candidate, use pre_sync to do a fine-step local scan
+                    // (not sync's LBFGS, to avoid global optimization drifting to another
+                    // cost valley).
+                    // radius=5ms covers the 5ms discrete-step neighborhood; step=0.1ms
+                    // gives sub-millisecond precision.
                     let fine_radius_s = LOCAL_REFINE_RADIUS_MS / 1000.0 / 20.0; // 5ms
                     let fine_step_s = 0.0001; // 0.1ms
                     if let Some((refined_cost, refined_internal_s)) = self.sync.pre_sync(
@@ -583,16 +589,17 @@ impl FindOffsetsRssync<'_> {
         }
     }
 
-    /// Plan B 3 路径决策：rs-sync 可信时直接用，漂远时 NCC window 内精搜。
+    /// Plan B 3-path decision: trust rs-sync when reliable, refine within the NCC
+    /// window when it drifts.
     ///
-    /// 对每段 sync range：
-    ///   Path 0: NCC FFT 定位（peak_h < 0.20 或极静 → fallback initial）
-    ///   Path A: rs-sync cost argmin 在 NCC window 内 + 2nd/best>1.05 + NCC OK →
-    ///           直接保留 rs-sync offset（rs-sync 精度最好，不动）
-    ///   Path B: rs-sync 漂远 → 在 NCC peak 附近 `pre_sync` 0.1ms 步精搜
+    /// For each sync range:
+    ///   Path 0: NCC FFT localization (peak_h < 0.20 or motion too weak → fallback initial)
+    ///   Path A: rs-sync cost argmin inside NCC window + 2nd/best>1.05 + NCC OK →
+    ///           keep rs-sync offset as-is (rs-sync is most accurate)
+    ///   Path B: rs-sync drifted → `pre_sync` 0.1ms fine scan around NCC peak
     ///
-    /// **不做** Kalman 融合；**取消** cost_flat 保险（用户明确要求即使 cost
-    /// 平坦也做精搜）。
+    /// **No** Kalman fusion; cost_flat safety is removed (user explicitly requires
+    /// fine search even when cost is flat).
     pub fn ncc_fusion_decide(
         &mut self,
         offsets: &mut Vec<(f64, f64, f64, f64)>,
@@ -601,9 +608,9 @@ impl FindOffsetsRssync<'_> {
         params: &ComputeParams,
     ) {
         // Suppress rs-sync progress callback during this post-processing phase.
-        // cost 曲线扫描（600× pre_sync）和 NCC window 精搜（一次 pre_sync）内部
-        // 都会触发原 callback，导致外部进度条跳回。full_sync 完成后进度已到
-        // 100%，这里设 noop 保持稳定。
+        // Both cost-curve scan (600× pre_sync) and NCC-window refine (one pre_sync)
+        // trigger the original callback, causing the outer progress bar to jump back.
+        // full_sync has already reached 100%; set noop here to keep it stable.
         self.sync.on_progress(|_| true);
         const MIN_PEAK_HEIGHT: f64 = 0.20;
         const MAX_FWHM_MS: f64 = 500.0;
@@ -638,7 +645,7 @@ impl FindOffsetsRssync<'_> {
                 None => continue,
             };
 
-            // estimated / raw 序列
+            // estimated / raw sequences
             let est: Vec<(f64, [f64; 3])> = estimated_map
                 .range(from_us..to_us)
                 .filter_map(|(_, imu)| imu.gyro.map(|g| (imu.timestamp_ms, g)))
@@ -671,14 +678,14 @@ impl FindOffsetsRssync<'_> {
             let from_ms = from_us as f64 / 1000.0;
             let to_ms = to_us as f64 / 1000.0;
             let initial_offset = self.sync_params.initial_offset;
-            let rs_argmin_ms = cost_final_ext_ms; // full_sync 的 external offset
+            let rs_argmin_ms = cost_final_ext_ms; // full_sync's external offset
 
-            // 扫 rs-sync cost 曲线（5ms 步）得 best_offs + ratio（本地使用，
-            // 同时在 diag 启用时 write 到 sync_diag 输出）
+            // Scan rs-sync cost curve (5ms step) to get best_offs + ratio (local use;
+            // also writes to sync_diag output when diag is enabled)
             let (rs_best_offs, rs_2nd_over_best) =
                 self.scan_cost_curve_per_seg(i, sp_from, sp_to, cost_final_ext_ms);
 
-            // ── Path 0: 极静早退 ─────────────────────────────────────────
+            // ── Path 0: Motion-too-weak early exit ──────────────────────
             let max_axis_angle_deg = est
                 .iter()
                 .map(|(_, g)| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
@@ -701,7 +708,7 @@ impl FindOffsetsRssync<'_> {
                 continue;
             }
 
-            // ── Path 0: NCC FFT 定位 ──────────────────────────────────────
+            // ── Path 0: NCC FFT localization ────────────────────────────
             let ncc = match crate::synchronization::sync_diag::ncc_fft_align(
                 &est,
                 &raw_pairs,
@@ -729,7 +736,7 @@ impl FindOffsetsRssync<'_> {
                 }
             };
 
-            // NCC peak 加 frt/2 补偿（注释见下）
+            // Add frt/2 compensation to NCC peak (see note below)
             let ncc_peak_ms = ncc.peak_offset_ms + frt_offset_ms;
             let peak_h = ncc.peak_height;
             let fwhm_ms = ncc.fwhm_ms;
@@ -745,12 +752,13 @@ impl FindOffsetsRssync<'_> {
                 999.0
             };
 
-            // ── NCC 质量预警（不再 fallback initial，继续 Path A/B 给 best-effort
-            //    offset，但降低 confidence 表明该点不可靠）──────────────────
+            // ── NCC quality warning (no longer fallback initial; continue to Path A/B
+            //    with best-effort offset but reduced confidence marking unreliable) ─────
             //
-            // 用户反馈：fallback 到 initial_offset 是"放弃"，语义上肯定错。
-            // 不如尽力在 NCC peak / rs_argmin / 精搜 argmin 中选个最可靠的，
-            // 只是 confidence 打低让 GUI/rank 过滤能标记"不可靠"。
+            // User feedback: fallback to initial_offset is "giving up" and semantically
+            // wrong. Better to pick the most reliable among NCC peak / rs_argmin /
+            // refined argmin; just reduce confidence so GUI/rank filter flags as
+            // "unreliable".
             let quality_warn: Option<&str> = if peak_h < MIN_PEAK_HEIGHT {
                 Some("weak_signal")
             } else if w_ms > MAX_FWHM_MS {
@@ -767,14 +775,16 @@ impl FindOffsetsRssync<'_> {
                 );
             }
 
-            // ── Path A: rs-sync 可信（LBFGS 与 cost 扫描 argmin 一致）────────
-            // 条件：
-            //   A1. rs_argmin 在 NCC peak ± ncc_check_window 内（正确 basin）
-            //   A2. rs_argmin 与 5ms 扫描 argmin 相差 < 10ms（LBFGS 没陷入局部最小）
+            // ── Path A: rs-sync trusted (LBFGS consistent with cost-scan argmin) ──
+            // Conditions:
+            //   A1. rs_argmin within NCC peak ± ncc_check_window (correct basin)
+            //   A2. rs_argmin within 10ms of the 5ms-scan argmin (LBFGS did not
+            //       fall into a local minimum)
             //
-            // 实测（6380ms 样本）：rs-sync LBFGS 可能收敛到局部最小，虽然
-            // 在 NCC window 内但 cost 不是全局最小。当 LBFGS argmin 与
-            // 5ms 扫描 argmin 差距大，必须走精搜找真正 argmin。
+            // Empirically (6380ms sample): rs-sync LBFGS may converge to a local
+            // minimum — within the NCC window but cost not globally minimal. When
+            // LBFGS argmin differs significantly from the 5ms-scan argmin, we must
+            // run fine search to locate the true argmin.
             const RS_CONSISTENCY_TOL_MS: f64 = 10.0;
             let ncc_check_window = (3.0 * sigma_ncc_ms)
                 .max(w_ms)
@@ -784,7 +794,7 @@ impl FindOffsetsRssync<'_> {
                 && (rs_argmin_ms - rs_best_offs).abs() < RS_CONSISTENCY_TOL_MS;
 
             if rs_in_window && rs_lbfgs_consistent {
-                // 低质量样本：confidence 打低到 0.1-0.2 段，GUI/rank 过滤能标记
+                // Low-quality sample: reduce confidence to [0.1, 0.2] so GUI/rank filter flags it
                 let confidence = if quality_warn.is_some() {
                     peak_h.min(0.2).max(0.05)
                 } else {
@@ -819,7 +829,7 @@ impl FindOffsetsRssync<'_> {
                 );
             }
 
-            // ── Path B: rs-sync 漂远 → NCC peak 附近精搜 ──────────────────
+            // ── Path B: rs-sync drifted → fine search near NCC peak ────────────
             // (external_offset_ms = -internal_s * 1000 - frt_offset)
             // → internal_s = -(external_ms + frt_offset) / 1000
             let center_internal_s = -(ncc_peak_ms + frt_offset_ms) / 1000.0;
@@ -834,7 +844,7 @@ impl FindOffsetsRssync<'_> {
 
             let (fused_offset_ms, refined_cost, path_name, fb) = if let Some((c, s_best)) = refine {
                 let refined_ext_ms = -s_best * 1000.0 - frt_offset_ms;
-                // 边界兜底：精搜 argmin 落在窗口边界 → 可能错峰
+                // Boundary fallback: fine argmin landing on window edge likely signals wrong peak
                 let boundary_tol = FINE_STEP_S * 1000.0 * 2.0; // 0.2ms
                 let at_left = (refined_ext_ms - (ncc_peak_ms - w_ms)).abs() < boundary_tol;
                 let at_right = (refined_ext_ms - (ncc_peak_ms + w_ms)).abs() < boundary_tol;
@@ -851,7 +861,7 @@ impl FindOffsetsRssync<'_> {
                 (ncc_peak_ms, f64::NAN, "ncc_peak_only", Some("pre_sync_failed"))
             };
 
-            // 低质量样本 confidence 打折
+            // Low-quality sample: discount confidence
             let confidence = if quality_warn.is_some() {
                 peak_h.min(0.2).max(0.05)
             } else {

@@ -609,8 +609,8 @@ impl Controller {
                         let new_ts = ((x.0 - x.1) * 1000.0) as i64;
                         let confidence = x.3;
                         {
-                            // Check the offset — confidence ≥ 0.4（NCC 验证通过）时
-                            // bypass sync_data.rank 过滤（NCC 是比 rank 更可靠的质量指标）
+                            // Check the offset — when confidence ≥ 0.4 (NCC-verified),
+                            // bypass sync_data.rank filter (NCC is a more reliable quality metric than rank)
                             if confidence < 0.4 {
                                 let sync_data = this.stabilizer.sync_data.read();
                                 if !sync_data.rank.is_empty() {

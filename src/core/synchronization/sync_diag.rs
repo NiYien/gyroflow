@@ -1,18 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2026 Gyroflow contributors
 
-//! 同步链路质量诊断 dump（与 sync_perf 互补：perf 测时间，diag 测质量）。
+//! Sync pipeline quality-diagnostics dump (complements sync_perf: perf measures
+//! time, diag measures quality).
 //!
-//! 通过环境变量 `GYROFLOW_SYNC_DIAG=1` 启用。启用后 sync 启动时建立输出目录
-//! `<cwd>/sync_diag_<timestamp>/`，sync 结束时把缓冲区 dump 成 CSV：
-//! - `pose_frames.csv`            每帧 R 的 inliers + 轴角
-//! - `estimated_vs_raw_gyro.csv`  estimated_gyro 与 raw_imu 的双曲线对比
-//! - `initial_offsets.csv`        essential_matrix 阶段每段的 (offset, cost, max_angle)
-//! - `cost_curves_essmat.csv`     essential_matrix 阶段每段的完整 cost 曲线
-//! - `cost_curves_rssync.csv`     rs_sync 阶段每段的完整 cost 曲线
-//! - `summary.txt`                每段 initial vs final、second/best 比值
+//! Enabled via env var `GYROFLOW_SYNC_DIAG=1`. When enabled, sync creates an
+//! output directory `<cwd>/sync_diag_<timestamp>/` at startup and dumps buffers
+//! as CSV on completion:
+//! - `pose_frames.csv`            per-frame R inliers + axis-angle
+//! - `estimated_vs_raw_gyro.csv`  paired curves of estimated_gyro vs raw_imu
+//! - `initial_offsets.csv`        per-segment (offset, cost, max_angle) from essential_matrix
+//! - `cost_curves_essmat.csv`     full per-segment cost curve from essential_matrix
+//! - `cost_curves_rssync.csv`     full per-segment cost curve from rs_sync
+//! - `summary.txt`                per-segment initial vs final, second/best ratio
 //!
-//! 禁用时所有 sink 调用走一次原子 load 立即返回，零分配。
+//! When disabled, every sink call performs one atomic load and returns
+//! immediately — zero allocation.
 
 use parking_lot::Mutex;
 use std::fs::File;
@@ -58,10 +61,10 @@ struct FusionDecisionRecord {
     cost_final_ms: f64,
     fused_offset_ms: f64,
     refined_cost: f64,
-    // Plan B 新增：
-    rs_argmin_ms: f64,        // full_sync 的 cost 全局 argmin
+    // Plan B additions:
+    rs_argmin_ms: f64,        // full_sync's cost global argmin
     rs_2nd_over_best: f64,    // rs-sync 2nd_best_cost / best_cost
-    rs_refined_ms: f64,       // Path B 精搜结果（否则 NaN）
+    rs_refined_ms: f64,       // Path B fine-search result (otherwise NaN)
     path_taken: String,       // "rssync_trusted" | "ncc_window_refine" | "ncc_peak_only" | "fallback_initial" | "motion_too_weak" | "ncc_fft_failed" | "weak_signal" | ...
     fallback_reason: Option<String>,
 }
@@ -157,7 +160,8 @@ struct SharpnessSummaryRecord {
     sharpest_offset_diff_from_final_ms: f64,
 }
 
-/// sync 开始时调用。建立输出目录，重置缓冲。禁用时直接返回。
+/// Called at sync start. Creates the output directory and resets buffers.
+/// Returns immediately when disabled.
 pub fn init_session() {
     if !is_enabled() {
         return;
@@ -323,11 +327,14 @@ pub fn record_rssync_summary(
     }
 }
 
-/// 分析 cost 曲线的局部极小、深度、宽度、锐度（depth/width），并把结果记录到本段。
+/// Analyze a cost curve: local minima, depth, width, sharpness (depth/width),
+/// and record per-segment results.
 ///
-/// `curve` 顺序任意；内部按 offset 升序排序。
-/// `final_offset_ms` 是 rs_sync.full_sync 实际选出的 offset（外部口径），用于标记。
-/// `width_tolerance` 是判定"谷宽"的相对容差（如 0.05 表示 cost < min*(1+0.05) 算谷内）。
+/// `curve` can be in any order; internally sorted ascending by offset.
+/// `final_offset_ms` is the offset actually chosen by rs_sync.full_sync
+/// (external convention), used for tagging.
+/// `width_tolerance` is the relative tolerance for "valley width"
+/// (e.g. 0.05 means `cost < min*(1+0.05)` counts as within the valley).
 pub fn analyze_curve_and_record(
     range_idx: usize,
     curve: &[(f64, f64)],
@@ -352,7 +359,7 @@ pub fn analyze_curve_and_record(
     costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let baseline = costs[(costs.len() as f64 * 0.75) as usize];
 
-    // step_ms 估算 (用相邻点中位数)
+    // Estimate step_ms (median of adjacent-point gaps)
     let mut step_ms_samples: Vec<f64> = sorted
         .windows(2)
         .map(|w| (w[1].0 - w[0].0).abs())
@@ -364,7 +371,7 @@ pub fn analyze_curve_and_record(
         step_ms_samples[step_ms_samples.len() / 2].max(0.001)
     };
 
-    // 找局部极小
+    // Find local minima
     let n = sorted.len();
     let mut minima: Vec<(usize, f64, f64, f64, f64, f64)> = Vec::new();
     // (idx, offset, cost, depth, width_ms, sharpness)
@@ -372,12 +379,12 @@ pub fn analyze_curve_and_record(
         if sorted[i].1 < sorted[i - 1].1 && sorted[i].1 < sorted[i + 1].1 {
             let cost_i = sorted[i].1;
             let threshold = cost_i * (1.0 + width_tolerance);
-            // 向左扩展
+            // Expand left
             let mut l = i;
             while l > 0 && sorted[l - 1].1 < threshold {
                 l -= 1;
             }
-            // 向右扩展
+            // Expand right
             let mut r = i;
             while r + 1 < n && sorted[r + 1].1 < threshold {
                 r += 1;
@@ -393,7 +400,7 @@ pub fn analyze_curve_and_record(
         return;
     }
 
-    // 找 final 对应的极小（最近 offset）和 sharpest 极小
+    // Find the minimum nearest to `final_offset_ms` and the sharpest minimum
     let final_min = minima
         .iter()
         .min_by(|a, b| {
@@ -451,17 +458,19 @@ pub fn analyze_curve_and_record(
     }
 }
 
-/// 对视觉估计的 gyro 序列与真实 IMU gyro 做 Pearson 相关系数扫描（纯 dump 诊断）。
+/// Pearson correlation sweep between visually estimated gyro and raw IMU gyro
+/// (pure diagnostic dump).
 ///
-/// - `estimated_gyro`：(timestamp_ms, [x, y, z])，顺序随意
-/// - `raw_imu`：(timestamp_ms, [x, y, z])，**必须**按 ts 升序
-/// - 扫描范围：`initial_offset_ms ± search_size_ms`，步长 `step_ms`
+/// - `estimated_gyro`: (timestamp_ms, [x, y, z]), any order
+/// - `raw_imu`:        (timestamp_ms, [x, y, z]), **must** be ts-ascending
+/// - scan range: `initial_offset_ms ± search_size_ms`, step `step_ms`
 ///
-/// 对每个候选 offset，把 raw_imu 时移 offset 后与 estimated_gyro 配对，
-/// 逐轴算 Pearson r。输出 `correlation_curves.csv` 与 summary 对比 cost_final 与 corr_peak。
+/// For each candidate offset, shift raw_imu by the offset and pair with
+/// estimated_gyro; compute Pearson r per axis. Writes `correlation_curves.csv`
+/// and summary comparing `cost_final` vs `corr_peak`.
 ///
-/// Pearson 天然归一化了尺度与 DC offset，只度量"形状相似度"——这恰好是用户
-/// "肉眼看曲线能对上"的定量化。
+/// Pearson naturally normalizes scale and DC offset, measuring only "shape
+/// similarity" — exactly the quantification of "eyeballed curve alignment".
 pub fn analyze_correlation_and_record(
     range_idx: usize,
     estimated_gyro: &[(f64, [f64; 3])],
@@ -481,7 +490,7 @@ pub fn analyze_correlation_and_record(
     let n_steps = (search_size_ms * 2.0 / step_ms) as usize;
     let mut curve: Vec<CorrelationCurvePoint> = Vec::with_capacity(n_steps + 1);
 
-    let tol_ms = (step_ms * 2.0).max(10.0); // 最近邻匹配容差
+    let tol_ms = (step_ms * 2.0).max(10.0); // nearest-neighbor match tolerance
 
     for k in 0..=n_steps {
         let offset_ms = initial_offset_ms - search_size_ms + (k as f64) * step_ms;
@@ -498,7 +507,7 @@ pub fn analyze_correlation_and_record(
         });
     }
 
-    // 找 correlation peak（mean 最大值，要求 n_paired 足够）
+    // Find correlation peak (argmax of mean, with sufficient n_paired)
     let min_n = (estimated_gyro.len() / 3).max(10);
     let peak = curve
         .iter()
@@ -512,7 +521,7 @@ pub fn analyze_correlation_and_record(
         .map(|p| (p.offset_ms, p.corr_mean))
         .unwrap_or((f64::NAN, f64::NAN));
 
-    // 找 final 对应点（最接近 final_offset_ms 的曲线点）
+    // Find the point nearest to final_offset_ms
     let final_pt = curve
         .iter()
         .filter(|p| !p.corr_mean.is_nan())
@@ -524,7 +533,7 @@ pub fn analyze_correlation_and_record(
         });
     let final_corr = final_pt.map(|p| p.corr_mean).unwrap_or(f64::NAN);
 
-    // 找 initial 对应点
+    // Find the point nearest to initial_offset_ms
     let init_pt = curve
         .iter()
         .filter(|p| !p.corr_mean.is_nan())
@@ -551,8 +560,8 @@ pub fn analyze_correlation_and_record(
     }
 }
 
-/// 计算给定 offset 下 estimated vs raw gyro 的三轴 Pearson r 与配对数。
-/// 返回 (r_x, r_y, r_z, r_mean, n_paired)。
+/// Compute per-axis Pearson r and paired-count for estimated vs raw gyro at a
+/// given offset. Returns (r_x, r_y, r_z, r_mean, n_paired).
 pub fn compute_triaxis_correlation(
     estimated: &[(f64, [f64; 3])],
     raw: &[(f64, [f64; 3])],
@@ -632,7 +641,8 @@ fn pearson(xy: &[(f64, f64)]) -> f64 {
     cov / (vx * vy).sqrt()
 }
 
-/// 记录一条融合 B 决策。`path_taken` 记录决策路径，`fallback_reason` 保留向后兼容。
+/// Record a fusion-B decision. `path_taken` records the decision path;
+/// `fallback_reason` is retained for backward compatibility.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn record_fusion_decision(
@@ -674,7 +684,8 @@ pub fn record_fusion_decision(
     }
 }
 
-/// sync 结束时调用。把缓冲 dump 成 CSV，关闭 session。禁用时直接返回。
+/// Called at sync end. Dumps buffers to CSV and closes the session.
+/// Returns immediately when disabled.
 pub fn flush_and_close() {
     if !is_enabled() {
         return;
@@ -946,18 +957,18 @@ fn write_summary(s: &DiagSession) -> std::io::Result<()> {
     Ok(())
 }
 
-// ── FFT NCC 时延估计（sync 融合 B 的前置定位） ─────────────────────────────
+// ── FFT NCC time-delay estimation (pre-localization for fusion-B) ─────────────
 
-/// FFT NCC 的输出结构。
+/// Output of FFT NCC.
 ///
-/// - `peak_offset_ms`：NCC 全局 peak 对应的 offset（与 `gyro.set_offset` 同语义；
-///   即 `raw[t - peak_offset] ≈ estimated[t]`）
-/// - `peak_height`：peak 处归一化 NCC 值（∈ [-1, 1]，高 = 匹配度好）
-/// - `fwhm_ms`：peak 两侧 NCC 降到 peak_height/2 的 full-width half-max；
-///   当无法找到时为 `NAN`
-/// - `per_axis`：三轴各自的 peak 高度（诊断坐标系对齐）
-/// - `second_peak_ratio`：次级局部 peak / 主 peak，用于检测周期歧义
-/// - `valid_window_ms`：实际参与 FFT 的时间长度（重采样后的 grid span）
+/// - `peak_offset_ms`: offset at NCC global peak (same semantics as
+///   `gyro.set_offset`; i.e. `raw[t - peak_offset] ≈ estimated[t]`)
+/// - `peak_height`: normalized NCC value at the peak (∈ [-1, 1], higher = better match)
+/// - `fwhm_ms`: full-width half-max of NCC crossing peak_height/2 on both sides;
+///   `NAN` when not determinable
+/// - `per_axis`: per-axis peak heights (diagnostic for coordinate alignment)
+/// - `second_peak_ratio`: secondary local peak / main peak, for detecting periodic ambiguity
+/// - `valid_window_ms`: time span actually involved in the FFT (resampled grid span)
 #[derive(Debug, Clone, Copy)]
 pub struct NccResult {
     pub peak_offset_ms: f64,
@@ -968,12 +979,15 @@ pub struct NccResult {
     pub valid_window_ms: f64,
 }
 
-/// 在 sync range `[t_start_ms, t_end_ms]` 内，用 FFT-based 归一化互相关定位视觉
-/// `estimated` 与原始 `raw` 的相对时延。仅返回可信的 peak；若序列过短或单轴
-/// 信号能量过小（分母退化）则返回 `None`。
+/// Within sync range `[t_start_ms, t_end_ms]`, use FFT-based normalized
+/// cross-correlation to locate the relative time delay between visual
+/// `estimated` and raw IMU `raw`. Returns only trustworthy peaks; returns
+/// `None` when sequences are too short or a single axis has too little energy
+/// (denominator degenerate).
 ///
-/// `search_radius_ms` 限制仅在 peak 搜索阶段内考虑的 τ 范围 —— 通常传 rs-sync 的
-/// search_size_ms，避免 FFT 循环对应的 wrap-around 被当成 peak。
+/// `search_radius_ms` limits the τ range considered during peak search —
+/// typically set to rs-sync's search_size_ms to avoid FFT wrap-around being
+/// mistaken for a peak.
 pub fn ncc_fft_align(
     estimated: &[(f64, [f64; 3])],
     raw: &[(f64, [f64; 3])],
@@ -989,7 +1003,7 @@ pub fn ncc_fft_align(
         return None;
     }
 
-    // 估 estimated 的采样率（稳健：取 ts 相邻间隔中位数）
+    // Estimate sample rate of `estimated` (robust: median of adjacent ts gaps)
     let mut est_sorted: Vec<(f64, [f64; 3])> = estimated
         .iter()
         .filter(|(t, _)| *t >= t_start_ms && *t <= t_end_ms)
@@ -1010,17 +1024,18 @@ pub fn ncc_fft_align(
     est_dts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let est_dt_ms = est_dts[est_dts.len() / 2];
 
-    // 均匀 grid
+    // Uniform grid
     let grid_len: usize = ((t_window / est_dt_ms).floor() as usize).max(16);
     let dt_ms = t_window / (grid_len as f64);
     let grid_t0 = t_start_ms;
 
-    // 准备 raw 排序副本
+    // Prepare a sorted copy of raw
     let mut raw_sorted: Vec<(f64, [f64; 3])> = raw.to_vec();
     raw_sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 但 raw 需要覆盖 [t_start - search, t_end + search]，线性插值到 grid。
-    // 对超出 raw 时间范围的 grid 点填 0（零填充 → NCC 分母由总能量决定，OK）。
+    // raw must cover [t_start - search, t_end + search]; linearly interpolate
+    // onto grid. Grid points outside raw's time range are zero-filled
+    // (NCC denominator is determined by total energy, which is fine).
     let resample = |src: &[(f64, [f64; 3])], axis: usize| -> Vec<f64> {
         let mut out = vec![0.0f64; grid_len];
         if src.is_empty() {
@@ -1048,21 +1063,21 @@ pub fn ncc_fft_align(
         out
     };
 
-    // N = next_pow2(grid_len * 2)，零填充避免循环卷积混淆
+    // N = next_pow2(grid_len * 2); zero-padding avoids circular-convolution aliasing
     let n_fft = (grid_len * 2).next_power_of_two().max(64);
 
     let mut planner = FftPlanner::<f64>::new();
     let fft = planner.plan_fft_forward(n_fft);
     let ifft = planner.plan_fft_inverse(n_fft);
 
-    // 每轴单独计算 NCC(τ)，然后三轴求和
+    // Compute NCC(τ) per axis, then sum across axes
     let mut ncc_per_axis: [Vec<f64>; 3] = Default::default();
     let mut peak_per_axis = [0.0f64; 3];
     for axis in 0..3 {
         let est_grid = resample(&est_sorted, axis);
         let raw_grid = resample(&raw_sorted, axis);
 
-        // 去 DC（均值中心化）
+        // Remove DC (mean-centering)
         let est_mean: f64 = est_grid.iter().sum::<f64>() / (grid_len as f64);
         let raw_mean: f64 = raw_grid.iter().sum::<f64>() / (grid_len as f64);
         let mut x: Vec<Complex<f64>> = vec![Complex::default(); n_fft];
@@ -1077,7 +1092,7 @@ pub fn ncc_fft_align(
             ex2 += e * e;
             ey2 += r * r;
         }
-        // 分母太小 → 该轴信号能量不足，NCC = 0 不贡献
+        // Denominator too small → this axis has insufficient signal energy; NCC = 0 contributes nothing
         let denom = (ex2 * ey2).sqrt();
         if denom < 1e-12 {
             ncc_per_axis[axis] = vec![0.0; n_fft];
@@ -1088,10 +1103,11 @@ pub fn ncc_fft_align(
         fft.process(&mut x);
         fft.process(&mut y);
 
-        // 频域高通滤波（截止 0.3 Hz）抑制 DC / 低频漂移：低频能量把 NCC peak
-        // 拉宽 + 引入抛物线拟合 skew（实测 MVI_5502 seg 0 FWHM 虽窄但 peak 定位
-        // 偏 5.5ms）。典型视觉/IMU 信号关注 0.3-15 Hz 运动，0.3Hz 以下多是 bias
-        // 漂移。合成正弦信号最低 0.8Hz 不受影响。
+        // Frequency-domain high-pass (cutoff 0.3 Hz) to suppress DC / low-frequency
+        // drift. Low-frequency energy widens the NCC peak and introduces parabolic-fit
+        // skew (empirically MVI_5502 seg 0: FWHM narrow but peak location off by 5.5ms).
+        // Typical visual/IMU signals focus on 0.3–15 Hz motion; below 0.3 Hz is mostly
+        // bias drift. Synthetic sine signals (min 0.8 Hz) are unaffected.
         let cutoff_freq_hz = 0.3;
         let sample_rate_hz = 1000.0 / dt_ms;
         let cutoff_bin =
@@ -1106,18 +1122,19 @@ pub fn ncc_fft_align(
             y[i] = Complex::default();
         }
 
-        // 重算归一化分母（用滤波后的能量，Parseval 定理等价时域高通后 L2 范数）
+        // Recompute normalization denominator (post-filter energy; by Parseval
+        // equivalent to the L2 norm after time-domain high-pass)
         let ex2_f: f64 = x.iter().map(|c| c.norm_sqr()).sum::<f64>() / (n_fft as f64);
         let ey2_f: f64 = y.iter().map(|c| c.norm_sqr()).sum::<f64>() / (n_fft as f64);
         let denom_f = (ex2_f * ey2_f).sqrt();
         let denom = if denom_f > 1e-12 { denom_f } else { denom };
 
-        // 互谱 C = conj(X) * Y
-        //   IFFT(C)[k] = Σ_n est[n] * raw[n+k]  → k 为 raw 相对 est 滞后 k 个样本
+        // Cross-spectrum C = conj(X) * Y
+        //   IFFT(C)[k] = Σ_n est[n] * raw[n+k]  → k = raw lag behind est in samples
         let mut cross: Vec<Complex<f64>> = (0..n_fft).map(|i| x[i].conj() * y[i]).collect();
         ifft.process(&mut cross);
 
-        // rustfft 的 IFFT 无 1/N 缩放；每项除以 N
+        // rustfft's IFFT has no 1/N scaling; divide each element by N
         let scale = 1.0 / (n_fft as f64);
         let axis_ncc: Vec<f64> = cross.iter().map(|c| c.re * scale / denom).collect();
         let peak_val = axis_ncc
@@ -1128,20 +1145,21 @@ pub fn ncc_fft_align(
         ncc_per_axis[axis] = axis_ncc;
     }
 
-    // 三轴求和 NCC_total(k) = Σ axis NCC_axis(k)
-    // 注意：per-axis 都是归一化的，所以 total 的范围 ∈ [-3, 3]。我们除 3 还原到 [-1, 1]。
+    // Sum across axes: NCC_total(k) = Σ_axis NCC_axis(k)
+    // Note: per-axis values are normalized, so total ∈ [-3, 3]. Divide by 3 to
+    // restore to [-1, 1].
     let mut ncc_total: Vec<f64> = vec![0.0; n_fft];
     for k in 0..n_fft {
         ncc_total[k] =
             (ncc_per_axis[0][k] + ncc_per_axis[1][k] + ncc_per_axis[2][k]) / 3.0;
     }
 
-    // 把 k → τ_samples（正负），限制到 search_radius 内找 peak
-    // rustfft: k ∈ [0, N/2) 为 τ = +k；k ∈ [N/2, N) 为 τ = k - N（负）
-    // offset_ms 约定：est[t] ≈ raw[t - offset]
-    //   我们的互谱 cross[k] = Σ est[n] * raw[n+k]，
-    //   即当 raw 相对 est 滞后 k 样本时相关最大，
-    //   对应 raw[t - offset_ms] = est[t] 中 offset_ms = -τ_ms（τ 正，raw 滞后）
+    // Map k → τ_samples (with sign), confine peak search within search_radius.
+    // rustfft: k ∈ [0, N/2) means τ = +k; k ∈ [N/2, N) means τ = k - N (negative)
+    // offset_ms convention: est[t] ≈ raw[t - offset]
+    //   Our cross-spectrum cross[k] = Σ est[n] * raw[n+k] is maximal when raw
+    //   lags est by k samples, i.e. `raw[t - offset_ms] = est[t]` gives
+    //   offset_ms = -τ_ms (τ positive → raw lagging).
     //   → offset_ms = -τ_samples * dt_ms
     let half = n_fft / 2;
     let radius_samples = ((search_radius_ms / dt_ms).ceil() as isize).max(1) as usize;
@@ -1166,9 +1184,9 @@ pub fn ncc_fft_align(
         }
     }
     let peak_idx = peak_idx?;
-    let ncc_peak_idx = peak_idx; // 保持和后续 FWHM/次级 peak 计算的命名兼容
+    let ncc_peak_idx = peak_idx; // Alias to keep naming consistent with downstream FWHM / second-peak code
 
-    // 3 点抛物线拟合（以 k 索引为单位）
+    // Three-point parabolic fit (in units of k index)
     let prev_k = (peak_idx + n_fft - 1) % n_fft;
     let next_k = (peak_idx + 1) % n_fft;
     let y_m1 = ncc_total[prev_k];
@@ -1182,12 +1200,12 @@ pub fn ncc_fft_align(
     };
     let refined_tau = (tau_idx(peak_idx) as f64) + delta_samples;
     let refined_peak = y_0 - 0.25 * (y_m1 - y_p1) * delta_samples;
-    let peak_offset_ms = -refined_tau * dt_ms; // 约定见上
+    let peak_offset_ms = -refined_tau * dt_ms; // convention: see comment above
 
-    // FWHM（以 sample 为单位扫 peak 两侧）
+    // FWHM (scan both sides of the peak in sample units)
     let half_h = refined_peak / 2.0;
     let find_half = |start_k: usize, dir: isize| -> Option<f64> {
-        // 从 start_k 出发按 dir 步进，找 ncc 穿越 half_h 的位置（线性插值）
+        // Starting at start_k, step in direction `dir` and find where NCC crosses half_h (linear interp)
         let mut prev_k = start_k;
         let mut prev_y = ncc_total[prev_k];
         for step in 1..(radius_samples + 1) {
@@ -1217,8 +1235,8 @@ pub fn ncc_fft_align(
         _ => f64::NAN,
     };
 
-    // 次级 peak：排除主 peak ±min_sep 内的点，取最大
-    let min_sep_ms = (fwhm_ms.max(50.0)).min(500.0); // 自适应但限制在合理区间
+    // Secondary peak: max value excluding points within ±min_sep of the main peak
+    let min_sep_ms = (fwhm_ms.max(50.0)).min(500.0); // adaptive, clipped to a reasonable range
     let min_sep_samples = (min_sep_ms / dt_ms).ceil() as isize;
     let mut second_val = f64::NEG_INFINITY;
     for k in 0..n_fft {
@@ -1273,16 +1291,16 @@ mod tests {
         assert!(SESSION.lock().is_none());
     }
 
-    /// 合成已知时延（τ_true = -120ms，即 offset = +120ms）的信号，
-    /// 验证 ncc_fft_align 的 peak_offset_ms 在 ±1ms 内，peak_height 接近 1。
+    /// Synthesize signals with a known delay (τ_true = -120ms, i.e. offset = +120ms)
+    /// and verify ncc_fft_align's peak_offset_ms within ±1ms, peak_height close to 1.
     #[test]
     fn ncc_fft_align_recovers_synthetic_offset() {
         let dt_ms = 10.0; // 100 Hz
         let duration_ms = 6000.0;
         let n = (duration_ms / dt_ms) as usize;
-        let offset_ms = 120.0; // 真值：raw 比 est 早 120ms
+        let offset_ms = 120.0; // ground truth: raw leads est by 120ms
 
-        // est[t] = A*sin(2π f t + 相位 per axis)；raw[t] = est[t + offset]
+        // est[t] = A*sin(2π f t + phase per axis); raw[t] = est[t + offset]
         let mut est: Vec<(f64, [f64; 3])> = Vec::with_capacity(n);
         let mut raw: Vec<(f64, [f64; 3])> = Vec::with_capacity(n);
         let freqs = [1.3, 2.7, 0.8]; // Hz per axis
@@ -1294,7 +1312,7 @@ mod tests {
             for axis in 0..3 {
                 let w = 2.0 * std::f64::consts::PI * freqs[axis] / 1000.0;
                 est_xyz[axis] = (w * t + phases[axis]).sin();
-                // raw 超前 offset：即 raw 的当前值等于 est 在 (t + offset) 的值
+                // raw leads by `offset`: raw's current value equals est's value at (t + offset)
                 raw_xyz[axis] = (w * (t + offset_ms) + phases[axis]).sin();
             }
             est.push((t, est_xyz));
@@ -1317,7 +1335,8 @@ mod tests {
         assert!(r.fwhm_ms.is_finite() && r.fwhm_ms > 0.0);
     }
 
-    /// 合成无相关信号（est/raw 独立噪声），验证 peak_height 应 < 0.3（触发失败检测）。
+    /// Synthesize uncorrelated signals (independent noise for est/raw); verify
+    /// peak_height < 0.3 (would trigger failure detection).
     #[test]
     fn ncc_fft_align_rejects_uncorrelated_noise() {
         let dt_ms = 10.0;
@@ -1349,6 +1368,6 @@ mod tests {
                 res.peak_height
             );
         }
-        // None 也是合理结果
+        // None is also an acceptable result
     }
 }
