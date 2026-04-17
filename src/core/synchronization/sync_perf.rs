@@ -193,11 +193,17 @@ mod tests {
     }
 
     #[test]
-    fn dump_skips_zero_and_resets() {
+    fn dump_and_reset_handles_mixed_zero_nonzero() {
         reset();
+        // Stage::FeedFrame has data, others are zero — ensures the skip-zero branch
+        // is exercised alongside the non-zero render branch in the same call.
         record_ns(Stage::FeedFrame, 5_000_000);
         dump_and_reset();
-        let s = &STATS[Stage::FeedFrame as usize];
-        assert_eq!(s.count.load(Ordering::Relaxed), 0, "dump_and_reset should reset");
+        // After dump, all stages must be cleared.
+        for s in STATS.iter() {
+            assert_eq!(s.count.load(Ordering::Relaxed), 0);
+            assert_eq!(s.total_ns.load(Ordering::Relaxed), 0);
+            assert_eq!(s.max_ns.load(Ordering::Relaxed), 0);
+        }
     }
 }
