@@ -98,6 +98,9 @@ impl PoseEstimator {
         stride: usize,
         of_method: u32,
     ) {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::DetectFeatures,
+        );
         let frame_size = (width, height);
         let contains = self.sync_results.read().contains_key(&timestamp_us);
         if !contains {
@@ -140,6 +143,9 @@ impl PoseEstimator {
     }
 
     pub fn process_detected_frames(&self, fps: f64, scaled_fps: f64, params: &ComputeParams, cancel_flag: Option<Arc<AtomicBool>>) {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::ProcessDetected,
+        );
         let every_nth_frame = self.every_nth_frame.load(SeqCst) as f64;
         let mut frames_to_process = Vec::new();
         {
@@ -160,6 +166,9 @@ impl PoseEstimator {
         let mut pose = EstimatePoseMethod::from(self.pose_method.load(SeqCst));
         pose.init(params);
         frames_to_process.par_iter().for_each(move |(ts, next_ts)| {
+            let _g_pair = crate::synchronization::sync_perf::StageGuard::new(
+                crate::synchronization::sync_perf::Stage::PairOpticalFlow,
+            );
             // Early-exit for expensive optical flow methods (NeuFlow CUDA/Burn).
             // Without this, pressing "pause" during sync waits for all queued
             // frames to finish (can take tens of seconds with NeuFlow).
@@ -181,13 +190,23 @@ impl PoseEstimator {
                             // Unlock the mutex for estimate_pose
                             drop(l);
 
-                            if let Some(rot) = pose.estimate_pose(
-                                &curr_of.optical_flow_to(&next_of),
-                                curr_of.size(),
-                                params,
-                                *ts,
-                                *next_ts,
-                            ) {
+                            // optical_flow_to 内部的 NeuFlow preprocess/grid/infer 各阶段在 Task 4 单独插桩
+                            let of_result = curr_of.optical_flow_to(&next_of);
+
+                            let rot_opt = {
+                                let _g = crate::synchronization::sync_perf::StageGuard::new(
+                                    crate::synchronization::sync_perf::Stage::EstimatePose,
+                                );
+                                pose.estimate_pose(
+                                    &of_result,
+                                    curr_of.size(),
+                                    params,
+                                    *ts,
+                                    *next_ts,
+                                )
+                            };
+
+                            if let Some(rot) = rot_opt {
                                 let mut l = results.write();
                                 if let Some(x) = l.get_mut(ts) {
                                     x.rotation = Some(rot);
