@@ -59,15 +59,20 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
         }
     }
 
-    let offsets = FindOffsetsRssync::new(
-        ranges,
-        estimator.sync_results.clone(),
-        &sync_params,
-        params,
-        progress_cb,
-        cancel_flag,
-    )
-    .full_sync();
+    let offsets = {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::RsSyncFullSync,
+        );
+        FindOffsetsRssync::new(
+            ranges,
+            estimator.sync_results.clone(),
+            &sync_params,
+            params,
+            progress_cb,
+            cancel_flag,
+        )
+        .full_sync()
+    };
     offsets
 }
 
@@ -224,6 +229,9 @@ impl FindOffsetsRssync<'_> {
     }
 
     pub fn guess_orient(&mut self) -> Option<(String, f64)> {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::RsSyncPreSync,
+        );
         self.is_guess_orient.store(true, SeqCst);
 
         let mut clone_source = self.gyro_source.read().clone();

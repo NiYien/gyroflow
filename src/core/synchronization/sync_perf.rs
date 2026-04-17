@@ -33,8 +33,11 @@ pub enum Stage {
     FindOffPrep = 14,
     FindOffCoarse = 15,
     FindOffRefine = 16,
+    RsSyncFullSync = 17,
+    RsSyncPreSync = 18,
+    DecodeNv12Concat = 19,
 }
-const NUM_STAGES: usize = 17;
+const NUM_STAGES: usize = 20;
 
 const STAGE_NAMES: [&str; NUM_STAGES] = [
     "feed_frame",
@@ -54,6 +57,9 @@ const STAGE_NAMES: [&str; NUM_STAGES] = [
     "findoff.prep",
     "findoff.coarse",
     "findoff.refine",
+    "rssync.full_sync",
+    "rssync.pre_sync",
+    "decode.nv12_concat",
 ];
 
 struct StageStats {
@@ -77,7 +83,7 @@ static STATS: [StageStats; NUM_STAGES] = [
     StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
     StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
     StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(),
+    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
 ];
 
 pub struct StageGuard {

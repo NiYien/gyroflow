@@ -758,9 +758,15 @@ impl Controller {
                                                 // NV12: pass all planes (Y + UV)
                                                 let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
                                                               + small_frame.stride(1) * small_frame.plane_height(1) as usize;
-                                                let mut all_data = Vec::with_capacity(total_len);
-                                                all_data.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
-                                                all_data.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
+                                                let all_data = {
+                                                    let _g = gyroflow_core::synchronization::sync_perf::StageGuard::new(
+                                                        gyroflow_core::synchronization::sync_perf::Stage::DecodeNv12Concat,
+                                                    );
+                                                    let mut buf = Vec::with_capacity(total_len);
+                                                    buf.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
+                                                    buf.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
+                                                    buf
+                                                };
                                                 (
                                                     small_frame.plane_width(0),
                                                     small_frame.plane_height(0),
