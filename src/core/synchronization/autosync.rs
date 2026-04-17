@@ -203,6 +203,8 @@ impl AutosyncProcess {
             .build()
             .unwrap();
 
+        crate::synchronization::sync_perf::reset();
+
         Ok(Self {
             frame_count,
             org_fps,
@@ -497,6 +499,7 @@ impl AutosyncProcess {
             let len = self.total_detected_frames.load(SeqCst);
             cb(1.0, len, len);
         }
+        crate::synchronization::sync_perf::dump_and_reset();
     }
 
     pub fn on_progress<F>(&mut self, cb: F)
