@@ -767,28 +767,6 @@ impl FindOffsetsRssync<'_> {
                 );
             }
 
-            // periodic_ambiguity 特殊处理：NCC peak 可能被 ghost peak 误导（r2≈1
-            // 表示两个高度相近的 peak），rs-sync cost 通常能区分（几何约束）。
-            // 直接用 rs_argmin 作输出，confidence 打低（0.05-0.20）。
-            if quality_warn == Some("periodic_ambiguity") {
-                let confidence = peak_h.min(0.2).max(0.05);
-                offsets[i] = (mid_ms, rs_argmin_ms, cost_final_value, confidence);
-                log::info!(
-                    "[ncc-fuse] seg {}: periodic_ambiguity_use_rssync (rs_argmin={:.1}ms, NCC peak={:.1}ms ghost-suspect, conf={:.3})",
-                    i, rs_argmin_ms, ncc_peak_ms, confidence
-                );
-                crate::synchronization::sync_diag::record_fusion_decision(
-                    i,
-                    ncc_peak_ms, peak_h, fwhm_ms, w_ms, r2,
-                    cost_final_ext_ms,
-                    rs_argmin_ms, cost_final_value,
-                    rs_argmin_ms, rs_2nd_over_best, f64::NAN,
-                    "periodic_ambiguity_use_rssync",
-                    Some("periodic_ambiguity"),
-                );
-                continue;
-            }
-
             // ── Path A: rs-sync 可信（LBFGS 与 cost 扫描 argmin 一致）────────
             // 条件：
             //   A1. rs_argmin 在 NCC peak ± ncc_check_window 内（正确 basin）
@@ -798,12 +776,8 @@ impl FindOffsetsRssync<'_> {
             // 在 NCC window 内但 cost 不是全局最小。当 LBFGS argmin 与
             // 5ms 扫描 argmin 差距大，必须走精搜找真正 argmin。
             const RS_CONSISTENCY_TOL_MS: f64 = 10.0;
-            // ncc_check_window：Path A/B 一致性判断用的窗口半径。
-            // 用 w_ms (FWHM/2*1.5) 作为窗口大小（与精搜 radius 一致），保底 30ms。
-            // 不用 3σ — 对低 peak_h 样本 σ 膨胀到 100+ms，会把远离 NCC peak
-            // 的点误判"在 window 内"（3712ms 样本 σ=157，误判 379ms 偏离的点）。
-            let ncc_check_window = w_ms
-                .max(30.0)
+            let ncc_check_window = (3.0 * sigma_ncc_ms)
+                .max(w_ms)
                 .min(self.sync_params.search_size);
             let rs_in_window = (rs_argmin_ms - ncc_peak_ms).abs() <= ncc_check_window;
             let rs_lbfgs_consistent = rs_best_offs.is_finite()
@@ -845,23 +819,11 @@ impl FindOffsetsRssync<'_> {
                 );
             }
 
-            // ── Path B: 在 cost 5ms-scan argmin 附近精搜 ────────────────
-            // 精搜中心优先用 5ms-scan argmin（rs_best_offs，cost 曲线全局最低
-            // 的 5ms 分辨率位置）而非 NCC peak —— NCC peak 可能偏离 cost 最优
-            // 位置（4880ms 案例 NCC peak -1199.8 vs cost argmin -1210.4 差 10ms）。
-            // radius 收紧到 max(W, 20ms) 让精搜聚焦 cost argmin 的局部微调。
-            // 若 rs_best_offs 无效或在 NCC window 外，回退 NCC peak 作中心。
-            let refine_center_ms = if rs_best_offs.is_finite()
-                && (rs_best_offs - ncc_peak_ms).abs() <= ncc_check_window
-            {
-                rs_best_offs
-            } else {
-                ncc_peak_ms
-            };
-            let center_internal_s = -(refine_center_ms + frt_offset_ms) / 1000.0;
-            let fine_radius_s = (w_ms / 1000.0)
-                .max(FINE_STEP_S * 2.0)
-                .min(0.020); // 上限 20ms：避免跑远
+            // ── Path B: rs-sync 漂远 → NCC peak 附近精搜 ──────────────────
+            // (external_offset_ms = -internal_s * 1000 - frt_offset)
+            // → internal_s = -(external_ms + frt_offset) / 1000
+            let center_internal_s = -(ncc_peak_ms + frt_offset_ms) / 1000.0;
+            let fine_radius_s = (w_ms / 1000.0).max(FINE_STEP_S * 2.0);
             let refine = self.sync.pre_sync(
                 center_internal_s,
                 sp_from,
