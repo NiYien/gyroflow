@@ -344,8 +344,13 @@ impl AutosyncProcess {
     }
 
     pub fn finished_feeding_frames(&self) {
-        while self.total_detected_frames.load(SeqCst) < self.total_read_frames.load(SeqCst) - 1 {
-            std::thread::sleep(std::time::Duration::from_millis(100));
+        {
+            let _g = crate::synchronization::sync_perf::StageGuard::new(
+                crate::synchronization::sync_perf::Stage::SpinWait,
+            );
+            while self.total_detected_frames.load(SeqCst) < self.total_read_frames.load(SeqCst) - 1 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
         }
 
         let offset_method = self.sync_params.offset_method;

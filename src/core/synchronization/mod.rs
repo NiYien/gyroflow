@@ -275,6 +275,9 @@ impl PoseEstimator {
     }
 
     pub fn cache_optical_flow(&self, num_frames: usize) {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::CacheOpticalFlow,
+        );
         let l = self.sync_results.read();
         let keys: Vec<i64> = l.keys().copied().collect();
         for (i, k) in keys.iter().enumerate() {
@@ -312,6 +315,9 @@ impl PoseEstimator {
         }
     }
     pub fn cleanup(&self) {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::Cleanup,
+        );
         let mut l = self.sync_results.write();
         for (_, i) in l.iter_mut() {
             i.of_method.cleanup();
