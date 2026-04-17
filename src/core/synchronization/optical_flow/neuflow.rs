@@ -213,6 +213,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
         self.used.load(std::sync::atomic::Ordering::SeqCst) == 2
     }
 
+    fn has_data(&self) -> bool {
+        !self.nv12_frame.is_empty()
+    }
+
     fn cleanup(&mut self) {
         self.nv12_frame = Arc::new(Vec::new());
         // Note: preprocessed cache is intentionally kept — other threads in par_iter

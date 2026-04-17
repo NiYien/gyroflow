@@ -330,6 +330,7 @@ impl AutosyncProcess {
                             scaled_fps,
                             &compute_params.read(),
                             Some(cancel_flag.clone()),
+                            None,
                         );
                         estimator.recalculate_gyro_data(org_fps, false);
                     }
@@ -360,15 +361,31 @@ impl AutosyncProcess {
 
         let progress_cb = self.progress_cb.clone();
 
+        // Wait for any in-progress NeuFlow drain loop to finish before final sweep
+        while self.estimator.neuflow_processing.load(SeqCst) {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let t_final = std::time::Instant::now();
+        log::info!("[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames");
         self.estimator.process_detected_frames(
             self.org_fps,
             self.scaled_fps,
             &self.compute_params.read(),
             Some(self.cancel_flag.clone()),
+            None,
+        );
+        log::info!(
+            "[NeuFlow timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",
+            t_final.elapsed().as_secs_f64() * 1000.0
         );
         self.estimator.recalculate_gyro_data(self.org_fps, true);
+        let t_cache = std::time::Instant::now();
         self.estimator
             .cache_optical_flow(if offset_method == 1 { 2 } else { 1 });
+        log::info!(
+            "[NeuFlow timing] finished_feeding_frames: cache_optical_flow done in {:.1}ms",
+            t_cache.elapsed().as_secs_f64() * 1000.0
+        );
         self.estimator.cleanup();
 
         let mut scaled_ranges_us = Cow::Borrowed(&self.scaled_ranges_us);
