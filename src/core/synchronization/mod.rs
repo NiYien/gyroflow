@@ -27,6 +27,7 @@ use super::gyro_source::TimeIMU;
 
 mod autosync;
 pub mod optimsync;
+pub mod sync_perf;
 use crate::util::MapClosest;
 pub use autosync::{AutosyncProcess, describe_autosync_init_failure};
 
