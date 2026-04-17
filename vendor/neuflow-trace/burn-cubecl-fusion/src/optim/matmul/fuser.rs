@@ -34,7 +34,7 @@ impl<R: Runtime> MatmulFuser<R> {
         let props = client.properties();
         let max_bindings = props.hardware.max_bindings;
         let settings_matmul = FuseSettings {
-            output_shape_updates: false,
+            output_shape_updates: true,
             ..Default::default()
         };
         let settings_fallback = FuseSettings::default();
