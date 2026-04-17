@@ -239,7 +239,13 @@ impl AutosyncProcess {
         stride: usize,
         pixels: &[u8],
     ) {
-        let img = PoseEstimator::yuv_to_gray(width, height, stride as u32, pixels).map(Arc::new);
+        use crate::synchronization::sync_perf::{Stage, StageGuard};
+        let _feed_guard = StageGuard::new(Stage::FeedFrame);
+
+        let img = {
+            let _g = StageGuard::new(Stage::YuvToGray);
+            PoseEstimator::yuv_to_gray(width, height, stride as u32, pixels).map(Arc::new)
+        };
         if width > stride as u32 {
             width = stride as u32;
         }
@@ -250,6 +256,7 @@ impl AutosyncProcess {
         // The fused preprocess_frame_nv12 in neuflow.rs does NV12→CHW conversion
         // during resize, avoiding an intermediate full-frame RGB allocation.
         let frame_data: Option<Arc<Vec<u8>>> = if method == 3 || method == 4 {
+            let _g = StageGuard::new(Stage::Nv12Clone);
             let uv_start = stride * height as usize;
             let total_len = uv_start + stride * (height as usize / 2);
             if pixels.len() >= total_len {
@@ -299,7 +306,13 @@ impl AutosyncProcess {
         {
             self.total_read_frames.fetch_add(1, SeqCst);
 
+            let spawn_at = std::time::Instant::now();
             self.thread_pool.spawn(move || {
+                let queued_ns = spawn_at.elapsed().as_nanos() as u64;
+                crate::synchronization::sync_perf::record_ns(
+                    crate::synchronization::sync_perf::Stage::TaskQueueLatency,
+                    queued_ns,
+                );
                 if cancel_flag.load(Relaxed) {
                     total_detected_frames.fetch_add(1, SeqCst);
                     return;
