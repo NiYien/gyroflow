@@ -72,13 +72,6 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
             progress_cb,
             cancel_flag,
         );
-        // Temporal-alignment weight (0 = disabled, V4+V7 baseline behavior).
-        // Env var `GYROFLOW_SYNC_TEMPORAL_WEIGHT` enables it: typical 10-1000.
-        let temporal_weight = std::env::var("GYROFLOW_SYNC_TEMPORAL_WEIGHT")
-            .ok()
-            .and_then(|v| v.trim().parse::<f64>().ok())
-            .unwrap_or(0.0);
-        finder.install_temporal_alignment(estimator, temporal_weight);
         let mut offsets = finder.full_sync();
         let use_old_rerank = std::env::var("GYROFLOW_SYNC_OLD_RERANK")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
@@ -275,19 +268,6 @@ impl FindOffsetsRssync<'_> {
             ret.sync_points.push((from_ts, to_ts));
         }
         ret
-    }
-
-    /// Install estimated-gyro quaternion spline + set temporal weight.
-    /// Must be called before full_sync for temporal-alignment loss to take effect.
-    pub fn install_temporal_alignment(
-        &mut self,
-        estimator: &super::super::PoseEstimator,
-        weight: f64,
-    ) {
-        if weight > 0.0 {
-            set_est_quats_from_estimator(&mut self.sync, estimator);
-            self.sync.set_temporal_weight(weight);
-        }
     }
 
     pub fn full_sync(&mut self) -> Vec<(f64, f64, f64, f64)> {
@@ -674,30 +654,100 @@ impl FindOffsetsRssync<'_> {
                 continue;
             }
 
-            // Savitzky-Golay smoothing on est_gyro (window=5, order=2).
-            // Removes single-frame RANSAC outliers in rotation estimates
-            // without losing real motion bandwidth (quadratic polynomial
-            // fit over 5-frame window tracks up to 2nd derivatives).
-            // Coefficients: [-3, 12, 17, 12, -3] / 35 (standard SG).
-            // Boundary frames (first 2 / last 2) keep original values.
-            // Disabled via GYROFLOW_SYNC_NO_SAVGOL=1.
-            let savgol_enabled = std::env::var("GYROFLOW_SYNC_NO_SAVGOL")
+            // Compute max angular magnitude BEFORE smoothing (used for both
+            // adaptive Tikhonov λ and Path 0 motion-too-weak gate).
+            let max_axis_angle_deg = est
+                .iter()
+                .map(|(_, g)| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
+                .fold(0.0f64, f64::max);
+
+            // Tikhonov-regularized est_gyro smoothing (global joint optimization).
+            // Solves: min_ω Σ ||ω_i - ω̂_i||² + λ · Σ ||ω_{i+1} - 2ω_i + ω_{i-1}||²
+            // Equivalent to (I + λ·LᵀL) ω = ω̂, where L is 2nd-difference operator.
+            // Boundary-aware (all frames included). λ controls smoothness strength.
+            // Env: GYROFLOW_SYNC_NO_SMOOTH=1 disables (keeps original est_gyro);
+            //      GYROFLOW_SYNC_SMOOTH_LAMBDA=<f64> overrides adaptive λ.
+            let smooth_enabled = std::env::var("GYROFLOW_SYNC_NO_SMOOTH")
                 .map(|v| !matches!(v.trim(), "1" | "true" | "yes" | "on"))
                 .unwrap_or(true);
-            if savgol_enabled && est.len() >= 5 {
-                const COEFFS: [f64; 5] = [-3.0, 12.0, 17.0, 12.0, -3.0];
-                const NORM: f64 = 35.0;
-                let orig: Vec<[f64; 3]> = est.iter().map(|(_, g)| *g).collect();
-                for i in 2..orig.len() - 2 {
-                    let mut acc = [0.0f64; 3];
-                    for k in 0..5 {
-                        let src = orig[i + k - 2];
-                        let c = COEFFS[k];
-                        acc[0] += c * src[0];
-                        acc[1] += c * src[1];
-                        acc[2] += c * src[2];
+            if smooth_enabled && est.len() >= 5 {
+                // Adaptive λ: weaker motion → stronger smoothing (correct RANSAC
+                // outliers); stronger motion → weaker smoothing (preserve
+                // high-freq real motion). max_axis_angle_deg is per-frame angular
+                // magnitude max across the segment.
+                let lambda_default = (3.0 / max_axis_angle_deg.max(0.5)).clamp(0.1, 5.0);
+                let lambda = std::env::var("GYROFLOW_SYNC_SMOOTH_LAMBDA")
+                    .ok()
+                    .and_then(|v| v.trim().parse::<f64>().ok())
+                    .unwrap_or(lambda_default);
+                log::info!(
+                    "[tikhonov] seg {}: λ={:.3} (max_axis_angle={:.3}°)",
+                    i, lambda, max_axis_angle_deg
+                );
+                let n = est.len();
+                // A = I + λ·LᵀL is symmetric pentadiagonal (bandwidth 2):
+                //   interior row: (λ, -4λ, 1+6λ, -4λ, λ)
+                //   i=0,n-1 edge: diag = 1+λ
+                //   i=1,n-2 near-edge: diag = 1+5λ, off-by-1 = -2λ (toward the corner)
+                // Stored as three diagonals:
+                //   a0[i] = A[i][i],   a1[i] = A[i][i-1] (i≥1),   a2[i] = A[i][i-2] (i≥2).
+                let mut a0 = vec![1.0 + 6.0 * lambda; n];
+                let mut a1 = vec![-4.0 * lambda; n];
+                let a2 = vec![lambda; n];
+                a0[0] = 1.0 + lambda;
+                a0[n - 1] = 1.0 + lambda;
+                if n >= 3 {
+                    a0[1] = 1.0 + 5.0 * lambda;
+                    a0[n - 2] = 1.0 + 5.0 * lambda;
+                    a1[1] = -2.0 * lambda;
+                    a1[n - 1] = -2.0 * lambda;
+                }
+
+                // Symmetric pentadiagonal LDLᵀ factorization: A = L·D·Lᵀ,
+                // L unit lower-triangular with bandwidth 2, D diagonal.
+                //   l2[i] = L[i][i-2] = A[i][i-2] / D[i-2]
+                //   l1[i] = L[i][i-1] = (A[i][i-1] - l2[i]·l1[i-1]·D[i-2]) / D[i-1]
+                //   D[i]  = A[i][i] - l1[i]²·D[i-1] - l2[i]²·D[i-2]
+                let mut d = vec![0.0f64; n];
+                let mut l1f = vec![0.0f64; n];
+                let mut l2f = vec![0.0f64; n];
+                for ii in 0..n {
+                    let l2i = if ii >= 2 { a2[ii] / d[ii - 2] } else { 0.0 };
+                    let l1i = if ii >= 1 {
+                        let cross = if ii >= 2 { l2i * l1f[ii - 1] * d[ii - 2] } else { 0.0 };
+                        (a1[ii] - cross) / d[ii - 1]
+                    } else {
+                        0.0
+                    };
+                    let mut dii = a0[ii];
+                    if ii >= 1 { dii -= l1i * l1i * d[ii - 1]; }
+                    if ii >= 2 { dii -= l2i * l2i * d[ii - 2]; }
+                    l1f[ii] = l1i;
+                    l2f[ii] = l2i;
+                    d[ii] = dii;
+                }
+
+                // Solve A·x = b for each axis: L·z=b, then y = z/D, then Lᵀ·x = y.
+                let mut z = vec![0.0f64; n];
+                let mut y = vec![0.0f64; n];
+                let mut x = vec![0.0f64; n];
+                for axis in 0..3 {
+                    z[0] = est[0].1[axis];
+                    if n >= 2 { z[1] = est[1].1[axis] - l1f[1] * z[0]; }
+                    for ii in 2..n {
+                        z[ii] = est[ii].1[axis] - l1f[ii] * z[ii - 1] - l2f[ii] * z[ii - 2];
                     }
-                    est[i].1 = [acc[0] / NORM, acc[1] / NORM, acc[2] / NORM];
+                    for ii in 0..n { y[ii] = z[ii] / d[ii]; }
+                    x[n - 1] = y[n - 1];
+                    if n >= 2 { x[n - 2] = y[n - 2] - l1f[n - 1] * x[n - 1]; }
+                    if n >= 3 {
+                        for ii in (0..=n - 3).rev() {
+                            x[ii] = y[ii] - l1f[ii + 1] * x[ii + 1] - l2f[ii + 2] * x[ii + 2];
+                        }
+                    }
+                    for ii in 0..n {
+                        est[ii].1[axis] = x[ii];
+                    }
                 }
             }
             let win_lo = (from_us as f64 / 1000.0)
@@ -733,10 +783,7 @@ impl FindOffsetsRssync<'_> {
                 self.scan_cost_curve_per_seg(i, sp_from, sp_to, cost_final_ext_ms);
 
             // ── Path 0: Motion-too-weak early exit ──────────────────────
-            let max_axis_angle_deg = est
-                .iter()
-                .map(|(_, g)| (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt())
-                .fold(0.0f64, f64::max);
+            // (max_axis_angle_deg computed earlier, before smoothing)
             if max_axis_angle_deg < MIN_AXIS_ANGLE_DEG {
                 log::warn!(
                     "[ncc-fuse] seg {}: motion too weak (max |ω|={:.4} < {}), fallback initial",
@@ -1230,46 +1277,105 @@ fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {
     sync.set_gyro_quaternions(&timestamps, &quats);
 }
 
-/// Install estimated-gyro quaternion spline onto rs-sync for temporal-alignment
-/// loss. Integrates est angular velocity (from PoseEstimator) over time and
-/// applies the SAME coordinate-frame transform used by `set_quats` so that
-/// est_quats.rderiv and raw_quats.rderiv produce comparable angular velocity
-/// vectors inside rs-sync.
-fn set_est_quats_from_estimator(
-    sync: &mut SyncProblem,
-    estimator: &super::super::PoseEstimator,
-) {
-    let est_map = estimator.estimated_gyro.read();
-    if est_map.is_empty() {
-        return;
-    }
-    let rotation = *Quat64::from_scaled_axis(Vector3::new(PI, 0.0, 0.0)).quaternion();
-    let mut q_acc = Quat64::identity();
-    let mut ts_list: Vec<i64> = Vec::with_capacity(est_map.len());
-    let mut q_list: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(est_map.len());
-    let mut prev_ts_us: Option<i64> = None;
-
-    for (ts_us, imu) in est_map.iter() {
-        let omega = match imu.gyro {
-            Some(g) => g,
-            None => continue,
-        };
-        if let Some(prev) = prev_ts_us {
-            let dt_s = (*ts_us - prev) as f64 / 1_000_000.0;
-            if dt_s > 0.0 && dt_s < 1.0 {
-                let axis = Vector3::new(omega[0] * dt_s, omega[1] * dt_s, omega[2] * dt_s);
-                let dq = Quat64::from_scaled_axis(axis);
-                q_acc *= dq;
+#[cfg(test)]
+mod penta_solver_tests {
+    // Verify pentadiagonal LDLᵀ solver matches a reference dense Gauss solver
+    // on A = I + λ·LᵀL (same system used by Tikhonov est_gyro smoothing).
+    fn solve_penta(n: usize, lambda: f64, b: &[f64]) -> Vec<f64> {
+        let mut a0 = vec![1.0 + 6.0 * lambda; n];
+        let mut a1 = vec![-4.0 * lambda; n];
+        let a2 = vec![lambda; n];
+        a0[0] = 1.0 + lambda;
+        a0[n - 1] = 1.0 + lambda;
+        if n >= 3 {
+            a0[1] = 1.0 + 5.0 * lambda;
+            a0[n - 2] = 1.0 + 5.0 * lambda;
+            a1[1] = -2.0 * lambda;
+            a1[n - 1] = -2.0 * lambda;
+        }
+        let mut d = vec![0.0f64; n];
+        let mut l1f = vec![0.0f64; n];
+        let mut l2f = vec![0.0f64; n];
+        for i in 0..n {
+            let l2i = if i >= 2 { a2[i] / d[i - 2] } else { 0.0 };
+            let l1i = if i >= 1 {
+                let cross = if i >= 2 { l2i * l1f[i - 1] * d[i - 2] } else { 0.0 };
+                (a1[i] - cross) / d[i - 1]
+            } else { 0.0 };
+            let mut dii = a0[i];
+            if i >= 1 { dii -= l1i * l1i * d[i - 1]; }
+            if i >= 2 { dii -= l2i * l2i * d[i - 2]; }
+            l1f[i] = l1i; l2f[i] = l2i; d[i] = dii;
+        }
+        let mut z = vec![0.0f64; n];
+        z[0] = b[0];
+        if n >= 2 { z[1] = b[1] - l1f[1] * z[0]; }
+        for i in 2..n { z[i] = b[i] - l1f[i] * z[i - 1] - l2f[i] * z[i - 2]; }
+        let mut y = vec![0.0f64; n];
+        for i in 0..n { y[i] = z[i] / d[i]; }
+        let mut x = vec![0.0f64; n];
+        x[n - 1] = y[n - 1];
+        if n >= 2 { x[n - 2] = y[n - 2] - l1f[n - 1] * x[n - 1]; }
+        if n >= 3 {
+            for i in (0..=n - 3).rev() {
+                x[i] = y[i] - l1f[i + 1] * x[i + 1] - l2f[i + 2] * x[i + 2];
             }
         }
-        // Apply same coordinate-frame transform as set_quats() for consistency
-        let q = q_acc.quaternion() * rotation;
-        let qv = q.as_vector();
-        q_list.push((qv[3], -qv[0], -qv[1], -qv[2]));
-        ts_list.push(*ts_us);
-        prev_ts_us = Some(*ts_us);
+        x
     }
-    if ts_list.len() >= 2 {
-        sync.set_est_quaternions(&ts_list, &q_list);
+
+    fn solve_dense(n: usize, lambda: f64, b: &[f64]) -> Vec<f64> {
+        let mut a = vec![vec![0.0f64; n]; n];
+        for i in 0..n { a[i][i] = 1.0; }
+        for k in 1..n - 1 {
+            let idx = [k - 1, k, k + 1];
+            let val = [1.0, -2.0, 1.0];
+            for ii in 0..3 {
+                for jj in 0..3 {
+                    a[idx[ii]][idx[jj]] += lambda * val[ii] * val[jj];
+                }
+            }
+        }
+        let mut aug = a;
+        let mut rhs = b.to_vec();
+        for p in 0..n {
+            let mut mr = p;
+            let mut mv = aug[p][p].abs();
+            for r in p + 1..n {
+                if aug[r][p].abs() > mv { mv = aug[r][p].abs(); mr = r; }
+            }
+            if mr != p { aug.swap(p, mr); rhs.swap(p, mr); }
+            for r in p + 1..n {
+                let f = aug[r][p] / aug[p][p];
+                for c in p..n { aug[r][c] -= f * aug[p][c]; }
+                rhs[r] -= f * rhs[p];
+            }
+        }
+        let mut x = vec![0.0f64; n];
+        for i in (0..n).rev() {
+            let mut s = rhs[i];
+            for j in i + 1..n { s -= aug[i][j] * x[j]; }
+            x[i] = s / aug[i][i];
+        }
+        x
+    }
+
+    #[test]
+    fn penta_matches_dense() {
+        // Deterministic pseudo-random b across sizes and λ values.
+        for &n in &[5usize, 12, 60, 100] {
+            for &lambda in &[0.1f64, 1.0, 5.0] {
+                let mut b = Vec::with_capacity(n);
+                let mut s: u64 = 0x9E3779B97F4A7C15;
+                for _ in 0..n {
+                    s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    b.push(((s >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0);
+                }
+                let xp = solve_penta(n, lambda, &b);
+                let xd = solve_dense(n, lambda, &b);
+                let diff: f64 = xp.iter().zip(&xd).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+                assert!(diff < 1e-9, "n={} λ={} diff={}", n, lambda, diff);
+            }
+        }
     }
 }

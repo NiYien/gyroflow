@@ -8,6 +8,9 @@ run *param:
 test *param:
     just -f _scripts/{{BaseFile}}.just test {{param}}
 
+test-core *param:
+    just -f _scripts/{{BaseFile}}.just test-core {{param}}
+
 build *param:
     just -f _scripts/{{BaseFile}}.just build {{param}}
 

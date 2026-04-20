@@ -114,6 +114,10 @@ test *param:
     cargo test -- {{param}}
 
 [no-cd]
+test-core *param:
+    cargo test -p gyroflow-core --lib {{param}}
+
+[no-cd]
 clippy *param:
     cargo clippy {{param}}
 
