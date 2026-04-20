@@ -6389,6 +6389,7 @@ dependencies = [
 [[package]]
 name = "rs-sync"
 version = "0.1.0"
+source = "git+https://github.com/NiYien/rs-sync.git?rev=0644253#0644253446c1f3630860c51380d81e4b06c318a6"
 dependencies = [
  "argmin",
  "argmin-math",
@@ -9419,3 +9420,7 @@ dependencies = [
  "syn 2.0.117",
  "winnow 0.7.15",
 ]
+
+[[patch.unused]]
+name = "rs-sync"
+version = "0.1.0"

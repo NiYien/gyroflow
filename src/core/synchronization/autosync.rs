@@ -378,7 +378,17 @@ impl AutosyncProcess {
             "[NeuFlow timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",
             t_final.elapsed().as_secs_f64() * 1000.0
         );
-        self.estimator.recalculate_gyro_data(self.org_fps, true);
+        let t_recalc = std::time::Instant::now();
+        {
+            let _g = crate::synchronization::sync_perf::StageGuard::new(
+                crate::synchronization::sync_perf::Stage::RecalculateGyro,
+            );
+            self.estimator.recalculate_gyro_data(self.org_fps, true);
+        }
+        log::info!(
+            "[NeuFlow timing] finished_feeding_frames: recalculate_gyro_data done in {:.1}ms",
+            t_recalc.elapsed().as_secs_f64() * 1000.0
+        );
         let t_cache = std::time::Instant::now();
         self.estimator
             .cache_optical_flow(if offset_method == 1 { 2 } else { 1 });
@@ -451,6 +461,10 @@ impl AutosyncProcess {
             }
         };
 
+        let t_find = std::time::Instant::now();
+        let _g_find = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::FindOffsetsTotal,
+        );
         if let Some(cb) = &self.finished_cb {
             if self.mode == "estimate_rolling_shutter" {
                 use super::find_offset::visual_features::find_offsets;
@@ -517,6 +531,11 @@ impl AutosyncProcess {
             let len = self.total_detected_frames.load(SeqCst);
             cb(1.0, len, len);
         }
+        drop(_g_find);
+        log::info!(
+            "[NeuFlow timing] finished_feeding_frames: find_offsets total done in {:.1}ms",
+            t_find.elapsed().as_secs_f64() * 1000.0
+        );
         crate::synchronization::sync_perf::dump_and_reset();
         crate::synchronization::sync_diag::flush_and_close();
     }

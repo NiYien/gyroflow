@@ -1,5 +1,5 @@
 [target.x86_64-apple-darwin]
-rustflags = ["-C", "default-linker-libraries", "-C", "link-args=-Wl,-rpath,@loader_path/../Frameworks"]
+rustflags = ["-C", "default-linker-libraries", "-C", "link-args=-Wl,-rpath,@loader_path/../Frameworks", "-C", "target-feature=+avx2,+fma"]
 
 [target.aarch64-apple-darwin]
 rustflags = ["-C", "default-linker-libraries", "-C", "link-args=-Wl,-rpath,@loader_path/../Frameworks"]
@@ -8,4 +8,7 @@ rustflags = ["-C", "default-linker-libraries", "-C", "link-args=-Wl,-rpath,@load
 rustflags = ["-C", "default-linker-libraries", "-C", "link-args=-Wl,-rpath,@loader_path/Frameworks"]
 
 [target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "link-args=-Wl,-rpath,$ORIGIN,-rpath,$ORIGIN/lib"]
+rustflags = ["-C", "link-args=-Wl,-rpath,$ORIGIN,-rpath,$ORIGIN/lib", "-C", "target-feature=+avx2,+fma"]
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+avx2,+fma"]

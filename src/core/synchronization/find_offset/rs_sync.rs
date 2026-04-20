@@ -64,15 +64,36 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
         let _g = crate::synchronization::sync_perf::StageGuard::new(
             crate::synchronization::sync_perf::Stage::RsSyncFullSync,
         );
-        let mut finder = FindOffsetsRssync::new(
-            ranges,
-            estimator.sync_results.clone(),
-            &sync_params,
-            params,
-            progress_cb,
-            cancel_flag,
+        let finder_t0 = std::time::Instant::now();
+        let mut finder = {
+            let _g_new = crate::synchronization::sync_perf::StageGuard::new(
+                crate::synchronization::sync_perf::Stage::RsSyncFinderNew,
+            );
+            FindOffsetsRssync::new(
+                ranges,
+                estimator.sync_results.clone(),
+                &sync_params,
+                params,
+                progress_cb,
+                cancel_flag,
+            )
+        };
+        log::info!(
+            "[rssync-timing] FindOffsetsRssync::new done in {:.1}ms",
+            finder_t0.elapsed().as_secs_f64() * 1000.0
         );
-        let mut offsets = finder.full_sync();
+        let fs_t0 = std::time::Instant::now();
+        let mut offsets = {
+            let _g_fs = crate::synchronization::sync_perf::StageGuard::new(
+                crate::synchronization::sync_perf::Stage::RsSyncCoreFullSync,
+            );
+            finder.full_sync()
+        };
+        log::info!(
+            "[rssync-timing] full_sync() done in {:.1}ms ({} segments)",
+            fs_t0.elapsed().as_secs_f64() * 1000.0,
+            offsets.len()
+        );
         let use_old_rerank = std::env::var("GYROFLOW_SYNC_OLD_RERANK")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
@@ -169,6 +190,10 @@ pub struct FindOffsetsRssync<'a> {
     current_sync_point: Arc<AtomicUsize>,
     current_orientation: Arc<AtomicUsize>,
 
+    /// Per-range pre_sync grid cost curve produced during `full_sync()`.
+    /// Each inner Vec is `(cost, delay_s)` in scan order — reused by
+    /// `scan_cost_curve_per_seg` to avoid re-scanning the same grid.
+    presync_curves: Vec<Vec<(f64, f64)>>,
 }
 
 impl FindOffsetsRssync<'_> {
@@ -200,6 +225,7 @@ impl FindOffsetsRssync<'_> {
             is_guess_orient: Arc::new(AtomicBool::new(false)),
             current_sync_point: Arc::new(AtomicUsize::new(0)),
             current_orientation: Arc::new(AtomicUsize::new(0)),
+            presync_curves: Vec::new(),
         };
 
         {
@@ -281,19 +307,28 @@ impl FindOffsetsRssync<'_> {
             set_quats(&mut self.sync, &gyro.quaternions);
         }
 
-        for (range_idx, (from_ts, to_ts)) in self.sync_points.iter().enumerate() {
-            let presync_step = 3.0;
+        // Pre-size presync_curves so per-range indices align with sync_points order.
+        self.presync_curves.clear();
+        self.presync_curves.resize(self.sync_points.len(), Vec::new());
+        let sync_points = self.sync_points.clone();
+        for (range_idx, (from_ts, to_ts)) in sync_points.iter().enumerate() {
+            let range_t0 = std::time::Instant::now();
+            let presync_step = 5.0;
             let presync_radius = self.sync_params.search_size;
             let initial_delay = -self.sync_params.initial_offset;
 
-            if let Some(delay) = self.sync.full_sync(
+            let sync_call_t0 = std::time::Instant::now();
+            let delay_res = self.sync.full_sync_with_curve(
                 initial_delay / 1000.0,
                 *from_ts,
                 *to_ts,
                 presync_step / 1000.0,
                 presync_radius / 1000.0,
-                4,
-            ) {
+                2,
+            );
+            let sync_call_ms = sync_call_t0.elapsed().as_secs_f64() * 1000.0;
+            if let Some((delay, curve)) = delay_res {
+                self.presync_curves[range_idx] = curve;
                 let offset = delay.1 * 1000.0;
                 // Only accept offsets that are within 90% of search size range
                 let final_offset_external_ms;
@@ -324,37 +359,54 @@ impl FindOffsetsRssync<'_> {
                 let _ = final_offset_external_ms;
             }
             self.current_sync_point.fetch_add(1, SeqCst);
+            log::info!(
+                "[rssync-timing] range {}: sync.full_sync={:.1}ms total_range={:.1}ms ({}→{} us, radius={:.0}ms)",
+                range_idx,
+                sync_call_ms,
+                range_t0.elapsed().as_secs_f64() * 1000.0,
+                from_ts, to_ts,
+                presync_radius
+            );
         }
         offsets
     }
 
-    /// Scan rs-sync cost curve (5ms step) and return (best_external_ms, 2nd_best/best).
-    /// When diag is enabled, also writes sync_diag's cost_curves_rssync.csv / summary /
-    /// local_minima.
+    /// Read rs-sync cost curve cached from `full_sync_with_curve` and return
+    /// (best_external_ms, 2nd_best/best). Before Step 2 this used to scan the
+    /// grid itself via `self.sync.pre_sync(...)` ~1400 times (~1.9s); the grid
+    /// is now computed once inside `full_sync_with_curve` and reused here.
+    /// When diag is enabled, also writes sync_diag's cost_curves_rssync.csv /
+    /// summary / local_minima.
     fn scan_cost_curve_per_seg(
         &self,
         range_idx: usize,
-        from_ts: i64,
-        to_ts: i64,
+        _from_ts: i64,
+        _to_ts: i64,
         final_offset_external_ms: f64,
     ) -> (f64, f64) {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::NccCostScan,
+        );
         let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
-        let init_delay_s = -self.sync_params.initial_offset / 1000.0;
-        let presync_radius = self.sync_params.search_size;
-        let half_window_s = 2.5 / 1000.0;
-        let step_s = 5.0 / 1000.0;
-        let n_steps = (presync_radius * 2.0 / 5.0) as usize;
-        let mut curve = Vec::with_capacity(n_steps + 1);
-        for k in 0..=n_steps {
-            let center_delay_s =
-                init_delay_s - presync_radius / 1000.0 + (k as f64) * step_s;
-            let cost = self
-                .sync
-                .pre_sync(center_delay_s, from_ts, to_ts, step_s, half_window_s)
-                .map(|(c, _)| c)
-                .unwrap_or(f64::NAN);
-            let external_offset_ms = -center_delay_s * 1000.0 - frt_offset_ms;
-            curve.push((external_offset_ms, cost));
+        // Raw curve from rs-sync: Vec<(cost, delay_s)> in scan order.
+        // Convert to external (offset_ms, cost) for downstream consumers.
+        let raw = self
+            .presync_curves
+            .get(range_idx)
+            .cloned()
+            .unwrap_or_default();
+        let mut curve: Vec<(f64, f64)> = raw
+            .iter()
+            .map(|(cost, delay_s)| {
+                let external_offset_ms = -delay_s * 1000.0 - frt_offset_ms;
+                (external_offset_ms, *cost)
+            })
+            .collect();
+        if curve.is_empty() {
+            // Fallback: if for some reason full_sync_with_curve wasn't called
+            // (shouldn't happen in the normal flow), just signal no second-best
+            // information. `final_offset_external_ms` is used as argmin.
+            return (final_offset_external_ms, 1.0);
         }
         let (best_offs, best_cost) = curve
             .iter()
@@ -412,6 +464,9 @@ impl FindOffsetsRssync<'_> {
         ranges: &[(i64, i64)],
         params: &ComputeParams,
     ) {
+        let _g = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::CorrelationRerank,
+        );
         const CORR_OK: f64 = 0.30;
         const CORR_BAD: f64 = 0.20;
         const CORR_SWITCH_THRESHOLD: f64 = 0.30;
@@ -607,6 +662,10 @@ impl FindOffsetsRssync<'_> {
         ranges: &[(i64, i64)],
         params: &ComputeParams,
     ) {
+        let _g_fuse = crate::synchronization::sync_perf::StageGuard::new(
+            crate::synchronization::sync_perf::Stage::NccFusionDecide,
+        );
+        let fuse_t0 = std::time::Instant::now();
         // Suppress rs-sync progress callback during this post-processing phase.
         // Both cost-curve scan (600× pre_sync) and NCC-window refine (one pre_sync)
         // trigger the original callback, causing the outer progress bar to jump back.
@@ -626,6 +685,12 @@ impl FindOffsetsRssync<'_> {
         let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
 
         for i in 0..offsets.len() {
+            let seg_t0 = std::time::Instant::now();
+            let mut tik_ns: u64 = 0;
+            let mut cost_scan_ns: u64 = 0;
+            let mut ncc_fft_ns: u64 = 0;
+            let mut pearson_scan_ns: u64 = 0;
+            let mut output_pre_sync_ns: u64 = 0;
             let (mid_ms, cost_final_ext_ms, cost_final_value, _conf) = offsets[i];
             let mid_us = (mid_ms * 1000.0) as i64;
 
@@ -671,6 +736,10 @@ impl FindOffsetsRssync<'_> {
                 .map(|v| !matches!(v.trim(), "1" | "true" | "yes" | "on"))
                 .unwrap_or(true);
             if smooth_enabled && est.len() >= 5 {
+                let _g_tik = crate::synchronization::sync_perf::StageGuard::new(
+                    crate::synchronization::sync_perf::Stage::NccTikhonov,
+                );
+                let tik_t0 = std::time::Instant::now();
                 // Adaptive λ: weaker motion → stronger smoothing (correct RANSAC
                 // outliers); stronger motion → weaker smoothing (preserve
                 // high-freq real motion). max_axis_angle_deg is per-frame angular
@@ -749,6 +818,7 @@ impl FindOffsetsRssync<'_> {
                         est[ii].1[axis] = x[ii];
                     }
                 }
+                tik_ns = tik_t0.elapsed().as_nanos() as u64;
             }
             let win_lo = (from_us as f64 / 1000.0)
                 - self.sync_params.search_size
@@ -779,8 +849,10 @@ impl FindOffsetsRssync<'_> {
 
             // Scan rs-sync cost curve (5ms step) to get best_offs + ratio (local use;
             // also writes to sync_diag output when diag is enabled)
+            let cost_scan_t0 = std::time::Instant::now();
             let (rs_best_offs, rs_2nd_over_best) =
                 self.scan_cost_curve_per_seg(i, sp_from, sp_to, cost_final_ext_ms);
+            cost_scan_ns = cost_scan_t0.elapsed().as_nanos() as u64;
 
             // ── Path 0: Motion-too-weak early exit ──────────────────────
             // (max_axis_angle_deg computed earlier, before smoothing)
@@ -803,13 +875,21 @@ impl FindOffsetsRssync<'_> {
             }
 
             // ── Path 0: NCC FFT localization ────────────────────────────
-            let ncc = match crate::synchronization::sync_diag::ncc_fft_align(
-                &est,
-                &raw_pairs,
-                from_ms,
-                to_ms,
-                self.sync_params.search_size,
-            ) {
+            let ncc_fft_t0 = std::time::Instant::now();
+            let ncc_res = {
+                let _g_ncc = crate::synchronization::sync_perf::StageGuard::new(
+                    crate::synchronization::sync_perf::Stage::NccFftAlign,
+                );
+                crate::synchronization::sync_diag::ncc_fft_align(
+                    &est,
+                    &raw_pairs,
+                    from_ms,
+                    to_ms,
+                    self.sync_params.search_size,
+                )
+            };
+            ncc_fft_ns = ncc_fft_t0.elapsed().as_nanos() as u64;
+            let ncc = match ncc_res {
                 Some(r) => r,
                 None => {
                     log::warn!(
@@ -947,6 +1027,10 @@ impl FindOffsetsRssync<'_> {
             let mut w_pearson_peak = 0.0f64;
 
             if pearson_candidate_enabled {
+                let _g_ps = crate::synchronization::sync_perf::StageGuard::new(
+                    crate::synchronization::sync_perf::Stage::NccPearsonScan,
+                );
+                let pearson_t0 = std::time::Instant::now();
                 const PEARSON_SCAN_STEP_MS: f64 = 5.0;
                 // Second peak must be >= 200ms away to count as a real alternate
                 // basin (typical Pearson plateau around the true peak is 100-150ms
@@ -1066,6 +1150,7 @@ impl FindOffsetsRssync<'_> {
                     i, pearson_peak_ms, pearson_peak_r, pearson_second_r, pearson_prominence,
                     prom_f, mot_f, uni_f, max_axis_angle_deg, w_pearson_peak
                 );
+                pearson_scan_ns = pearson_t0.elapsed().as_nanos() as u64;
             }
 
             // 1D clustering (greedy, merge if gap to running cluster mean < threshold).
@@ -1155,11 +1240,17 @@ impl FindOffsetsRssync<'_> {
             // Diagnostic: cost at output position (pre_sync 0.1ms step in ±1ms)
             let center_internal_s = -(output_ms + frt_offset_ms) / 1000.0;
             let diag_radius_s = 0.001_f64.max(FINE_STEP_S * 2.0);
-            let output_cost = self
-                .sync
-                .pre_sync(center_internal_s, sp_from, sp_to, FINE_STEP_S, diag_radius_s)
-                .map(|(c, _)| c)
-                .unwrap_or(f64::NAN);
+            let output_pre_sync_t0 = std::time::Instant::now();
+            let output_cost = {
+                let _g_ops = crate::synchronization::sync_perf::StageGuard::new(
+                    crate::synchronization::sync_perf::Stage::NccOutputPreSync,
+                );
+                self.sync
+                    .pre_sync(center_internal_s, sp_from, sp_to, FINE_STEP_S, diag_radius_s)
+                    .map(|(c, _)| c)
+                    .unwrap_or(f64::NAN)
+            };
+            output_pre_sync_ns = output_pre_sync_t0.elapsed().as_nanos() as u64;
 
             // Confidence: cluster_fraction × max_pearson_in_cluster, with
             // quality_warn / refine_failed clamped to low confidence for UI filter.
@@ -1188,6 +1279,21 @@ impl FindOffsetsRssync<'_> {
                 cluster_frac, confidence
             );
 
+            let total_seg_ms = seg_t0.elapsed().as_secs_f64() * 1000.0;
+            let accounted_ms = (tik_ns + cost_scan_ns + ncc_fft_ns + pearson_scan_ns + output_pre_sync_ns) as f64 / 1_000_000.0;
+            let other_ms = (total_seg_ms - accounted_ms).max(0.0);
+            log::info!(
+                "[ncc-fuse-timing] seg {}: total={:.1}ms tikhonov={:.2}ms cost_scan={:.1}ms ncc_fft={:.2}ms pearson_scan={:.1}ms pre_sync={:.2}ms other={:.2}ms",
+                i,
+                total_seg_ms,
+                tik_ns as f64 / 1_000_000.0,
+                cost_scan_ns as f64 / 1_000_000.0,
+                ncc_fft_ns as f64 / 1_000_000.0,
+                pearson_scan_ns as f64 / 1_000_000.0,
+                output_pre_sync_ns as f64 / 1_000_000.0,
+                other_ms,
+            );
+
             let combined_fb: Option<String> = match (quality_warn, refine_ok) {
                 (Some(q), true) => Some(q.to_string()),
                 (Some(q), false) => Some(format!("{}|refine_failed", q)),
@@ -1204,6 +1310,12 @@ impl FindOffsetsRssync<'_> {
                 combined_fb.as_deref(),
             );
         }
+
+        log::info!(
+            "[ncc-fuse-timing] total: {} segments processed in {:.1}ms",
+            offsets.len(),
+            fuse_t0.elapsed().as_secs_f64() * 1000.0
+        );
     }
 
     pub fn guess_orient(&mut self) -> Option<(String, f64)> {

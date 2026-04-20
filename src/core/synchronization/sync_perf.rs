@@ -36,8 +36,19 @@ pub enum Stage {
     RsSyncFullSync = 17,
     RsSyncGuessOrient = 18,
     DecodeNv12Concat = 19,
+    RecalculateGyro = 20,
+    FindOffsetsTotal = 21,
+    NccFusionDecide = 22,
+    NccTikhonov = 23,
+    NccCostScan = 24,
+    NccFftAlign = 25,
+    NccPearsonScan = 26,
+    NccOutputPreSync = 27,
+    CorrelationRerank = 28,
+    RsSyncFinderNew = 29,
+    RsSyncCoreFullSync = 30,
 }
-const NUM_STAGES: usize = 20;
+const NUM_STAGES: usize = 31;
 
 const STAGE_NAMES: [&str; NUM_STAGES] = [
     "feed_frame",
@@ -60,6 +71,17 @@ const STAGE_NAMES: [&str; NUM_STAGES] = [
     "rssync.full_sync",
     "rssync.guess_orient",
     "decode.nv12_concat",
+    "recalculate_gyro",
+    "find_offsets.total",
+    "  ncc_fusion.decide",
+    "    ncc_fusion.tikhonov",
+    "    ncc_fusion.cost_scan",
+    "    ncc_fusion.fft_align",
+    "    ncc_fusion.pearson_scan",
+    "    ncc_fusion.output_pre_sync",
+    "  correlation_rerank",
+    "  rssync.finder_new",
+    "  rssync.core_full_sync",
 ];
 
 struct StageStats {
@@ -84,6 +106,9 @@ static STATS: [StageStats; NUM_STAGES] = [
     StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
     StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
     StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
+    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
+    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
+    StageStats::new(), StageStats::new(), StageStats::new(),
 ];
 
 pub struct StageGuard {
