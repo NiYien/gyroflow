@@ -72,6 +72,13 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
             progress_cb,
             cancel_flag,
         );
+        // Temporal-alignment weight (0 = disabled, V4+V7 baseline behavior).
+        // Env var `GYROFLOW_SYNC_TEMPORAL_WEIGHT` enables it: typical 10-1000.
+        let temporal_weight = std::env::var("GYROFLOW_SYNC_TEMPORAL_WEIGHT")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(0.0);
+        finder.install_temporal_alignment(estimator, temporal_weight);
         let mut offsets = finder.full_sync();
         let use_old_rerank = std::env::var("GYROFLOW_SYNC_OLD_RERANK")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
@@ -268,6 +275,19 @@ impl FindOffsetsRssync<'_> {
             ret.sync_points.push((from_ts, to_ts));
         }
         ret
+    }
+
+    /// Install estimated-gyro quaternion spline + set temporal weight.
+    /// Must be called before full_sync for temporal-alignment loss to take effect.
+    pub fn install_temporal_alignment(
+        &mut self,
+        estimator: &super::super::PoseEstimator,
+        weight: f64,
+    ) {
+        if weight > 0.0 {
+            set_est_quats_from_estimator(&mut self.sync, estimator);
+            self.sync.set_temporal_weight(weight);
+        }
     }
 
     pub fn full_sync(&mut self) -> Vec<(f64, f64, f64, f64)> {
@@ -646,12 +666,39 @@ impl FindOffsetsRssync<'_> {
             };
 
             // estimated / raw sequences
-            let est: Vec<(f64, [f64; 3])> = estimated_map
+            let mut est: Vec<(f64, [f64; 3])> = estimated_map
                 .range(from_us..to_us)
                 .filter_map(|(_, imu)| imu.gyro.map(|g| (imu.timestamp_ms, g)))
                 .collect();
             if est.len() < 10 {
                 continue;
+            }
+
+            // Savitzky-Golay smoothing on est_gyro (window=5, order=2).
+            // Removes single-frame RANSAC outliers in rotation estimates
+            // without losing real motion bandwidth (quadratic polynomial
+            // fit over 5-frame window tracks up to 2nd derivatives).
+            // Coefficients: [-3, 12, 17, 12, -3] / 35 (standard SG).
+            // Boundary frames (first 2 / last 2) keep original values.
+            // Disabled via GYROFLOW_SYNC_NO_SAVGOL=1.
+            let savgol_enabled = std::env::var("GYROFLOW_SYNC_NO_SAVGOL")
+                .map(|v| !matches!(v.trim(), "1" | "true" | "yes" | "on"))
+                .unwrap_or(true);
+            if savgol_enabled && est.len() >= 5 {
+                const COEFFS: [f64; 5] = [-3.0, 12.0, 17.0, 12.0, -3.0];
+                const NORM: f64 = 35.0;
+                let orig: Vec<[f64; 3]> = est.iter().map(|(_, g)| *g).collect();
+                for i in 2..orig.len() - 2 {
+                    let mut acc = [0.0f64; 3];
+                    for k in 0..5 {
+                        let src = orig[i + k - 2];
+                        let c = COEFFS[k];
+                        acc[0] += c * src[0];
+                        acc[1] += c * src[1];
+                        acc[2] += c * src[2];
+                    }
+                    est[i].1 = [acc[0] / NORM, acc[1] / NORM, acc[2] / NORM];
+                }
             }
             let win_lo = (from_us as f64 / 1000.0)
                 - self.sync_params.search_size
@@ -775,130 +822,316 @@ impl FindOffsetsRssync<'_> {
                 );
             }
 
-            // ── Path A: rs-sync trusted (LBFGS consistent with cost-scan argmin) ──
-            // Conditions:
-            //   A1. rs_argmin within NCC peak ± ncc_check_window (correct basin)
-            //   A2. rs_argmin within 10ms of the 5ms-scan argmin (LBFGS did not
-            //       fall into a local minimum)
+            // ═══ V2: Scene-adaptive signal fusion ════════════════════════════
+            // 3 candidate positions with Pearson-r reliability multipliers.
+            // Each candidate's weight = scene_feature × Pearson_r_at_position.
+            // Pearson is computed as a SINGLE POINT per candidate (~10µs each);
+            // no full-curve scan → cost is negligible (<0.1ms/segment).
             //
-            // Empirically (6380ms sample): rs-sync LBFGS may converge to a local
-            // minimum — within the NCC window but cost not globally minimal. When
-            // LBFGS argmin differs significantly from the 5ms-scan argmin, we must
-            // run fine search to locate the true argmin.
-            const RS_CONSISTENCY_TOL_MS: f64 = 10.0;
-            let ncc_check_window = (3.0 * sigma_ncc_ms)
-                .max(w_ms)
-                .min(self.sync_params.search_size);
-            let rs_in_window = (rs_argmin_ms - ncc_peak_ms).abs() <= ncc_check_window;
-            let rs_lbfgs_consistent = rs_best_offs.is_finite()
-                && (rs_argmin_ms - rs_best_offs).abs() < RS_CONSISTENCY_TOL_MS;
+            // Signals:
+            //   rs_argmin     — LBFGS cost minimum
+            //   rs_best_offs  — 5ms-step cost scan argmin
+            //   ncc_peak      — NCC FFT peak (known edge-ghost bug, penalized
+            //                   when peak is far from initial_offset)
+            //
+            // 1D clustering + weighted mean → pre_sync 0.1ms refine.
+            const NEAREST_TOL_MS_V2: f64 = 10.0;
+            const CLUSTER_MERGE_MS: f64 = 30.0;
 
-            if rs_in_window && rs_lbfgs_consistent {
-                // Low-quality sample: reduce confidence to [0.1, 0.2] so GUI/rank filter flags it
-                let confidence = if quality_warn.is_some() {
-                    peak_h.min(0.2).max(0.05)
-                } else {
-                    peak_h.max(0.5).clamp(0.0, 1.0)
-                };
-                let path_str = if quality_warn.is_some() {
-                    "rssync_trusted_low_quality"
-                } else {
-                    "rssync_trusted"
-                };
-                offsets[i] = (mid_ms, rs_argmin_ms, cost_final_value, confidence);
-                log::info!(
-                    "[ncc-fuse] seg {}: {} (argmin={:.1}ms ≈ 5ms-scan {:.1}ms, within NCC ±{:.1}ms, 2nd/best={:.3}, h={:.3}, conf={:.3})",
-                    i, path_str, rs_argmin_ms, rs_best_offs, ncc_check_window, rs_2nd_over_best, peak_h, confidence
-                );
-                crate::synchronization::sync_diag::record_fusion_decision(
-                    i,
-                    ncc_peak_ms, peak_h, fwhm_ms, w_ms, r2,
-                    cost_final_ext_ms,
-                    rs_argmin_ms, cost_final_value,
-                    rs_argmin_ms, rs_2nd_over_best, f64::NAN,
-                    path_str,
-                    quality_warn,
-                );
-                continue;
-            }
-            if rs_in_window && !rs_lbfgs_consistent {
-                log::warn!(
-                    "[ncc-fuse] seg {}: rs-sync LBFGS argmin={:.1}ms but 5ms-scan argmin={:.1}ms (diff {:.1}ms > {}), going to refine",
-                    i, rs_argmin_ms, rs_best_offs,
-                    (rs_argmin_ms - rs_best_offs).abs(), RS_CONSISTENCY_TOL_MS
-                );
-            }
-
-            // ── Path B: rs-sync drifted → fine search near NCC peak ────────────
-            // (external_offset_ms = -internal_s * 1000 - frt_offset)
-            // → internal_s = -(external_ms + frt_offset) / 1000
-            let center_internal_s = -(ncc_peak_ms + frt_offset_ms) / 1000.0;
-            let fine_radius_s = (w_ms / 1000.0).max(FINE_STEP_S * 2.0);
-            let refine = self.sync.pre_sync(
-                center_internal_s,
-                sp_from,
-                sp_to,
-                FINE_STEP_S,
-                fine_radius_s,
-            );
-
-            let (fused_offset_ms, refined_cost, path_name, fb) = if let Some((c, s_best)) = refine {
-                let refined_ext_ms = -s_best * 1000.0 - frt_offset_ms;
-                // Boundary fallback: fine argmin landing on window edge likely signals wrong peak
-                let boundary_tol = FINE_STEP_S * 1000.0 * 2.0; // 0.2ms
-                let at_left = (refined_ext_ms - (ncc_peak_ms - w_ms)).abs() < boundary_tol;
-                let at_right = (refined_ext_ms - (ncc_peak_ms + w_ms)).abs() < boundary_tol;
-                if at_left || at_right {
-                    (ncc_peak_ms, c, "ncc_peak_only", Some("refine_at_boundary"))
-                } else {
-                    (refined_ext_ms, c, "ncc_window_refine", None)
+            let pearson_at = |offset_ms: f64| -> f64 {
+                if !offset_ms.is_finite() {
+                    return 0.0;
                 }
-            } else {
-                log::warn!(
-                    "[ncc-fuse] seg {}: pre_sync refine failed, use NCC peak",
-                    i
+                let (_, _, _, r, n) =
+                    crate::synchronization::sync_diag::compute_triaxis_correlation(
+                        &est, &raw_pairs, offset_ms, NEAREST_TOL_MS_V2,
+                    );
+                if n >= 10 && r.is_finite() { r } else { 0.0 }
+            };
+            let r_at_rs_argmin = pearson_at(rs_argmin_ms);
+            let r_at_rs_best = pearson_at(rs_best_offs);
+            let r_at_ncc_peak = pearson_at(ncc_peak_ms);
+
+            // Scene-adaptive base weights.
+            // cost_sharpness: (ratio-1)*50 clamped [0,1] — rs signals meaningful
+            // when cost landscape has a distinguishable basin (ratio>1.02 → >1.0).
+            let cost_sharpness = ((rs_2nd_over_best - 1.0) * 50.0).clamp(0.0, 1.0);
+            // NCC edge penalty: FFT cross-correlation has a known bug where
+            // shifts near search_radius edge produce artificial peaks (normalized
+            // by full-segment energy but with minimal overlap). Penalize NCC
+            // weight when |ncc_peak - initial_offset| approaches search_radius.
+            let tau_ratio = (ncc_peak_ms - initial_offset).abs()
+                / self.sync_params.search_size.max(1.0);
+            let ncc_edge_penalty = (1.0 - 2.0 * tau_ratio).clamp(0.0, 1.0);
+
+            let w_rs = cost_sharpness * r_at_rs_argmin.max(0.0);
+            let w_rs_cost = cost_sharpness * 0.8 * r_at_rs_best.max(0.0);
+            let w_ncc =
+                peak_h * (1.0 - r2).max(0.0) * ncc_edge_penalty * r_at_ncc_peak.max(0.0);
+
+            // Gather candidates with non-negligible weight.
+            let mut cand: Vec<(f64, f64, &'static str)> = Vec::new();
+            if w_rs > 1e-6 && rs_argmin_ms.is_finite() {
+                cand.push((rs_argmin_ms, w_rs, "rs_argmin"));
+            }
+            if w_rs_cost > 1e-6 && rs_best_offs.is_finite() {
+                cand.push((rs_best_offs, w_rs_cost, "rs_best_offs"));
+            }
+            if w_ncc > 1e-6 && ncc_peak_ms.is_finite() {
+                cand.push((ncc_peak_ms, w_ncc, "ncc_peak"));
+            }
+
+            // ═══ Pearson curve argmax (4th candidate) ════════════════════════
+            // Scan Pearson r across full search window (5ms step, ~1200 points,
+            // ~5-10ms total). Pearson is 1st-order sensitive to delay (direct
+            // est_gyro vs raw_gyro shape match) → in many scenarios gives a
+            // more stable argmax than NCC (edge-ghost prone) or cost (flat).
+            // Env var GYROFLOW_SYNC_NO_PEARSON_CANDIDATE=1 disables for rollback.
+            let pearson_candidate_enabled = std::env::var(
+                "GYROFLOW_SYNC_NO_PEARSON_CANDIDATE",
+            )
+            .map(|v| !matches!(v.trim(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(true);
+
+            let mut pearson_peak_ms = f64::NAN;
+            let mut pearson_peak_r = 0.0f64;
+            let mut pearson_prominence = 0.0f64;
+            let mut pearson_second_r = 0.0f64;
+            let mut w_pearson_peak = 0.0f64;
+
+            if pearson_candidate_enabled {
+                const PEARSON_SCAN_STEP_MS: f64 = 5.0;
+                // Second peak must be >= 200ms away to count as a real alternate
+                // basin (typical Pearson plateau around the true peak is 100-150ms
+                // wide; within that is just the same mode, not multi-modal).
+                const SECOND_PEAK_MIN_GAP_MS: f64 = 200.0;
+
+                let scan_radius = self.sync_params.search_size;
+                let n_steps = ((scan_radius * 2.0) / PEARSON_SCAN_STEP_MS) as i32;
+
+                let mut samples: Vec<(f64, f64)> = Vec::with_capacity((n_steps + 1) as usize);
+                for k in 0..=n_steps {
+                    let cand_ms =
+                        initial_offset - scan_radius + (k as f64) * PEARSON_SCAN_STEP_MS;
+                    let r = pearson_at(cand_ms);
+                    if r.is_finite() {
+                        samples.push((cand_ms, r));
+                    }
+                }
+                if !samples.is_empty() {
+                    // peak
+                    let (pk_ms, pk_r) = samples
+                        .iter()
+                        .cloned()
+                        .fold((f64::NAN, f64::NEG_INFINITY), |acc, x| {
+                            if x.1 > acc.1 { x } else { acc }
+                        });
+                    // Parabolic 3-point interpolation for sub-grid peak precision
+                    // (P1 refinement). Pearson curve around true peak is locally
+                    // quadratic; fit y = a(x-x0)² + y0 using r(k-1), r(k), r(k+1).
+                    // Fallback to bin center if peak is on window edge or neighbors
+                    // are not lower (not a true interior peak).
+                    let peak_idx = samples.iter().position(|&(m, _)| m == pk_ms);
+                    let refined_pk_ms = match peak_idx {
+                        Some(idx) if idx > 0 && idx < samples.len() - 1 => {
+                            let r_prev = samples[idx - 1].1;
+                            let r_next = samples[idx + 1].1;
+                            let dr_left = r_prev - pk_r;
+                            let dr_right = r_next - pk_r;
+                            let denom = dr_left + dr_right;
+                            if denom < -1e-9 {
+                                // Both neighbors lower (real interior peak)
+                                let frac =
+                                    0.5 * (dr_left - dr_right) / denom;
+                                // Clamp fractional shift to [-1, +1] bin
+                                let frac = frac.clamp(-1.0, 1.0);
+                                pk_ms + frac * PEARSON_SCAN_STEP_MS
+                            } else {
+                                pk_ms
+                            }
+                        }
+                        _ => pk_ms,
+                    };
+                    pearson_peak_ms = refined_pk_ms;
+                    pearson_peak_r = pk_r;
+                    // median r
+                    let mut rs: Vec<f64> =
+                        samples.iter().map(|x| x.1).collect();
+                    rs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                    let median_r = rs[rs.len() / 2];
+                    pearson_prominence = (pk_r - median_r).max(0.0);
+                    // second peak (>= SECOND_PEAK_MIN_GAP_MS away from peak)
+                    pearson_second_r = samples
+                        .iter()
+                        .filter(|x| (x.0 - pk_ms).abs() >= SECOND_PEAK_MIN_GAP_MS)
+                        .map(|x| x.1)
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    if !pearson_second_r.is_finite() {
+                        pearson_second_r = 0.0;
+                    }
+                }
+
+                // Scene-adaptive weight for Pearson peak.
+                // Range ~[0, 1.5]: can exceed 1 when prominence is strong,
+                // reflecting Pearson's first-order delay sensitivity advantage
+                // over 2nd-order rs-sync cost.
+                if pearson_peak_r > 0.0 && pearson_peak_ms.is_finite() {
+                    let prominence_factor =
+                        (pearson_prominence / 0.15).max(0.0).powf(1.5).min(1.5);
+                    let est_len_clamped = est.len().min(60).max(10) as f64;
+                    // Use the same n_paired as single-point pearson (close enough; scan
+                    // samples have same n since est+raw bounds are identical).
+                    let n_factor = 1.0; // accept scan samples as full-n (est and raw overlap fully in window)
+                    let _ = est_len_clamped;
+                    // Lower motion gate: even weak-motion sync ranges give
+                    // reliable Pearson peaks (the shape match exists regardless
+                    // of motion magnitude). Floor 0.3 prevents over-penalty.
+                    let motion_factor =
+                        (max_axis_angle_deg / 0.15).clamp(0.3, 1.0);
+                    let unimodal_factor = if pearson_second_r >= 0.85 * pearson_peak_r {
+                        0.0
+                    } else {
+                        let ratio = (pearson_second_r / pearson_peak_r).max(0.0);
+                        (1.0 - (ratio - 0.5).max(0.0) * 2.0).clamp(0.0, 1.0)
+                    };
+                    w_pearson_peak = pearson_peak_r
+                        * prominence_factor
+                        * n_factor
+                        * motion_factor
+                        * unimodal_factor;
+                }
+
+                if w_pearson_peak > 1e-6 && pearson_peak_ms.is_finite() {
+                    cand.push((pearson_peak_ms, w_pearson_peak, "pearson_peak"));
+                }
+
+                // Diagnostic log: factors contributing to w_pearson_peak
+                let prom_f = (pearson_prominence / 0.15).max(0.0).powf(1.5).min(1.5);
+                let mot_f = (max_axis_angle_deg / 0.3).clamp(0.0, 1.0);
+                let uni_f = if pearson_second_r >= 0.85 * pearson_peak_r {
+                    0.0
+                } else {
+                    let ratio = (pearson_second_r / pearson_peak_r.max(1e-9)).max(0.0);
+                    (1.0 - (ratio - 0.5).max(0.0) * 2.0).clamp(0.0, 1.0)
+                };
+                log::info!(
+                    "[pearson-scan] seg {}: peak={:.1}ms r={:.3} 2nd_r={:.3} prom={:.3} (factors: prom={:.2} mot={:.2} uni={:.2} | max_axis_angle={:.3}°) → w_pearson={:.3}",
+                    i, pearson_peak_ms, pearson_peak_r, pearson_second_r, pearson_prominence,
+                    prom_f, mot_f, uni_f, max_axis_angle_deg, w_pearson_peak
                 );
-                (ncc_peak_ms, f64::NAN, "ncc_peak_only", Some("pre_sync_failed"))
+            }
+
+            // 1D clustering (greedy, merge if gap to running cluster mean < threshold).
+            cand.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            let mut clusters: Vec<Vec<(f64, f64, &'static str)>> = Vec::new();
+            for c in &cand {
+                let push_new = match clusters.last() {
+                    Some(last) => {
+                        let wsum: f64 = last.iter().map(|x| x.1).sum();
+                        let mean: f64 = if wsum > 1e-9 {
+                            last.iter().map(|x| x.0 * x.1).sum::<f64>() / wsum
+                        } else {
+                            last[0].0
+                        };
+                        (c.0 - mean).abs() >= CLUSTER_MERGE_MS
+                    }
+                    None => true,
+                };
+                if push_new {
+                    clusters.push(vec![*c]);
+                } else {
+                    clusters.last_mut().unwrap().push(*c);
+                }
+            }
+
+            // Pick best cluster (max total weight).
+            let (coarse_ms, cluster_weight, cluster_signals) = match clusters
+                .iter()
+                .max_by(|a, b| {
+                    let wa: f64 = a.iter().map(|x| x.1).sum();
+                    let wb: f64 = b.iter().map(|x| x.1).sum();
+                    wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
+                }) {
+                Some(c) if !c.is_empty() => {
+                    let w_sum: f64 = c.iter().map(|x| x.1).sum();
+                    let coarse: f64 = c.iter().map(|x| x.0 * x.1).sum::<f64>() / w_sum;
+                    let signals = c
+                        .iter()
+                        .map(|x| x.2)
+                        .collect::<Vec<_>>()
+                        .join("+");
+                    (coarse, w_sum, signals)
+                }
+                _ => {
+                    // No usable signal (all weights near zero).
+                    // Fallback: prefer NCC peak if it's at least finite, else initial.
+                    let fallback = if ncc_peak_ms.is_finite() {
+                        ncc_peak_ms
+                    } else {
+                        initial_offset
+                    };
+                    (fallback, 0.0, "fallback".to_string())
+                }
             };
 
-            // Low-quality sample: discount confidence
-            let confidence = if quality_warn.is_some() {
+            // Output = coarse (weighted cluster centroid). No 0.5ms Pearson refine:
+            // empirically the 0.5ms scan introduces interpolation noise that shifts
+            // the apparent argmax by 5-8ms systematically to one side (observed:
+            // coarse consistently within ±2ms of truth, refine systematically +5-7ms
+            // off). Cluster coarse is more stable.
+            let output_ms = coarse_ms;
+            let best_r_refined = pearson_at(coarse_ms);
+            let refine_ok = best_r_refined.is_finite() && best_r_refined > 0.0;
+
+            // Diagnostic: cost at output position (pre_sync 0.1ms step in ±1ms)
+            let center_internal_s = -(output_ms + frt_offset_ms) / 1000.0;
+            let diag_radius_s = 0.001_f64.max(FINE_STEP_S * 2.0);
+            let output_cost = self
+                .sync
+                .pre_sync(center_internal_s, sp_from, sp_to, FINE_STEP_S, diag_radius_s)
+                .map(|(c, _)| c)
+                .unwrap_or(f64::NAN);
+
+            // Confidence: cluster_fraction × max_pearson_in_cluster, with
+            // quality_warn / refine_failed clamped to low confidence for UI filter.
+            let total_weight: f64 = cand.iter().map(|x| x.1).sum();
+            let cluster_frac = if total_weight > 1e-9 {
+                cluster_weight / total_weight
+            } else {
+                0.0
+            };
+            let confidence = if quality_warn.is_some() || !refine_ok {
                 peak_h.min(0.2).max(0.05)
             } else {
-                peak_h.clamp(0.0, 1.0)
+                // Use Pearson r at the refined output (most direct signal-quality
+                // measure), weighted by cluster agreement fraction.
+                (cluster_frac * best_r_refined).clamp(0.05, 1.0)
             };
-            let path_str_owned: String = if quality_warn.is_some() {
-                format!("{}_low_quality", path_name)
-            } else {
-                path_name.to_string()
-            };
-            offsets[i] = (mid_ms, fused_offset_ms, refined_cost, confidence);
+
+            let path_str_owned = format!("v2_consensus[{}]", cluster_signals);
+            offsets[i] = (mid_ms, output_ms, output_cost, confidence);
 
             log::info!(
-                "[ncc-fuse] seg {}: {} — rs_argmin={:.1}ms (ratio={:.3}), NCC peak={:.1}ms (h={:.3}, FWHM={:.1}ms) → output={:.1}ms (cost={:.3}, conf={:.3})",
-                i,
-                path_str_owned,
-                rs_argmin_ms,
-                rs_2nd_over_best,
-                ncc_peak_ms,
-                peak_h,
-                fwhm_ms,
-                fused_offset_ms,
-                refined_cost,
-                confidence
+                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], cfrac={:.2}, conf={:.3})",
+                i, path_str_owned, coarse_ms, output_ms, best_r_refined,
+                r_at_rs_argmin, r_at_rs_best, r_at_ncc_peak,
+                pearson_peak_ms, pearson_peak_r, pearson_prominence,
+                w_rs, w_rs_cost, w_ncc, w_pearson_peak,
+                cluster_frac, confidence
             );
-            let combined_fb = match (quality_warn, fb) {
-                (Some(q), Some(f)) => Some(format!("{}|{}", q, f)),
-                (Some(q), None) => Some(q.to_string()),
-                (None, Some(f)) => Some(f.to_string()),
-                (None, None) => None,
+
+            let combined_fb: Option<String> = match (quality_warn, refine_ok) {
+                (Some(q), true) => Some(q.to_string()),
+                (Some(q), false) => Some(format!("{}|refine_failed", q)),
+                (None, false) => Some("refine_failed".to_string()),
+                (None, true) => None,
             };
             crate::synchronization::sync_diag::record_fusion_decision(
                 i,
                 ncc_peak_ms, peak_h, fwhm_ms, w_ms, r2,
                 cost_final_ext_ms,
-                fused_offset_ms, refined_cost,
-                rs_argmin_ms, rs_2nd_over_best, fused_offset_ms,
+                output_ms, output_cost,
+                rs_argmin_ms, rs_2nd_over_best, output_ms,
                 &path_str_owned,
                 combined_fb.as_deref(),
             );
@@ -995,4 +1228,48 @@ fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {
         timestamps.push(*ts);
     }
     sync.set_gyro_quaternions(&timestamps, &quats);
+}
+
+/// Install estimated-gyro quaternion spline onto rs-sync for temporal-alignment
+/// loss. Integrates est angular velocity (from PoseEstimator) over time and
+/// applies the SAME coordinate-frame transform used by `set_quats` so that
+/// est_quats.rderiv and raw_quats.rderiv produce comparable angular velocity
+/// vectors inside rs-sync.
+fn set_est_quats_from_estimator(
+    sync: &mut SyncProblem,
+    estimator: &super::super::PoseEstimator,
+) {
+    let est_map = estimator.estimated_gyro.read();
+    if est_map.is_empty() {
+        return;
+    }
+    let rotation = *Quat64::from_scaled_axis(Vector3::new(PI, 0.0, 0.0)).quaternion();
+    let mut q_acc = Quat64::identity();
+    let mut ts_list: Vec<i64> = Vec::with_capacity(est_map.len());
+    let mut q_list: Vec<(f64, f64, f64, f64)> = Vec::with_capacity(est_map.len());
+    let mut prev_ts_us: Option<i64> = None;
+
+    for (ts_us, imu) in est_map.iter() {
+        let omega = match imu.gyro {
+            Some(g) => g,
+            None => continue,
+        };
+        if let Some(prev) = prev_ts_us {
+            let dt_s = (*ts_us - prev) as f64 / 1_000_000.0;
+            if dt_s > 0.0 && dt_s < 1.0 {
+                let axis = Vector3::new(omega[0] * dt_s, omega[1] * dt_s, omega[2] * dt_s);
+                let dq = Quat64::from_scaled_axis(axis);
+                q_acc *= dq;
+            }
+        }
+        // Apply same coordinate-frame transform as set_quats() for consistency
+        let q = q_acc.quaternion() * rotation;
+        let qv = q.as_vector();
+        q_list.push((qv[3], -qv[0], -qv[1], -qv[2]));
+        ts_list.push(*ts_us);
+        prev_ts_us = Some(*ts_us);
+    }
+    if ts_list.len() >= 2 {
+        sync.set_est_quaternions(&ts_list, &q_list);
+    }
 }

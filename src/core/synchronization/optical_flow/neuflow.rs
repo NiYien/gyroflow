@@ -163,7 +163,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                     ) {
                         Ok(sampled) => {
                             if sampled.from_pts.len() >= 10 {
-                                Some(median_filter_points(sampled.from_pts, sampled.to_pts))
+                                Some((sampled.from_pts, sampled.to_pts))
                             } else {
                                 None
                             }
@@ -309,30 +309,6 @@ pub(super) fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride
     Ok((chw, gray, target_h, target_w))
 }
 
-/// Median-consistency filter: reject points whose flow deviates too far from the median.
-/// Shared by both ORT (via sample_from_dense_flow) and Burn (via GPU sparse sampling).
-fn median_filter_points(from_pts: Vec<(f32, f32)>, to_pts: Vec<(f32, f32)>) -> (Vec<(f32, f32)>, Vec<(f32, f32)>) {
-    let mut dxs: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.0 - f.0).collect();
-    let mut dys: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.1 - f.1).collect();
-    dxs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    dys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median_dx = dxs[dxs.len() / 2];
-    let median_dy = dys[dys.len() / 2];
-
-    let max_dev = 2.0f32;
-    let mut filtered_from = Vec::new();
-    let mut filtered_to = Vec::new();
-    for (f, t) in from_pts.iter().zip(to_pts.iter()) {
-        let dx = t.0 - f.0;
-        let dy = t.1 - f.1;
-        if (dx - median_dx).abs() <= max_dev && (dy - median_dy).abs() <= max_dev {
-            filtered_from.push(*f);
-            filtered_to.push(*t);
-        }
-    }
-    (filtered_from, filtered_to)
-}
-
 /// Sample sparse point correspondences from a dense optical flow field
 /// using texture-aware dense sampling for RANSAC-based pose estimation.
 ///
@@ -350,10 +326,10 @@ fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u3
         return None;
     }
 
-    // Grid step and texture window matching DIS (opencv_dis.rs)
-    let step = (w / 15).max(4);
+    // w/18 grid with loosened texture filter (threshold 1.0 vs 3.0)
+    let step = (w / 18).max(4);
     let window_size = ((w as f32 * 0.02).round() as usize).max(10);
-    let texture_threshold = 3.0;
+    let texture_threshold = 1.0;
 
     let mut from_pts = Vec::new();
     let mut to_pts = Vec::new();
@@ -386,34 +362,7 @@ fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u3
     if from_pts.len() < 10 {
         return None;
     }
-
-    // Median-consistency filter: reject points whose flow deviates too far
-    // from the median. This removes non-rigid motion (water, reflections)
-    // while preserving the dominant rigid camera motion.
-    let mut dxs: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.0 - f.0).collect();
-    let mut dys: Vec<f32> = from_pts.iter().zip(to_pts.iter()).map(|(f, t)| t.1 - f.1).collect();
-    dxs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    dys.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let median_dx = dxs[dxs.len() / 2];
-    let median_dy = dys[dys.len() / 2];
-
-    let max_dev = 2.0f32;
-    let mut filtered_from = Vec::new();
-    let mut filtered_to = Vec::new();
-    for (f, t) in from_pts.iter().zip(to_pts.iter()) {
-        let dx = t.0 - f.0;
-        let dy = t.1 - f.1;
-        if (dx - median_dx).abs() <= max_dev && (dy - median_dy).abs() <= max_dev {
-            filtered_from.push(*f);
-            filtered_to.push(*t);
-        }
-    }
-
-    if filtered_from.len() >= 10 {
-        Some((filtered_from, filtered_to))
-    } else {
-        None
-    }
+    Some((from_pts, to_pts))
 }
 
 /// Compute grayscale variance in a patch around (x, y).

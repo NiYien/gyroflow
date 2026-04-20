@@ -5,7 +5,7 @@
 //! time, diag measures quality).
 //!
 //! Enabled via env var `GYROFLOW_SYNC_DIAG=1`. When enabled, sync creates an
-//! output directory `<cwd>/sync_diag_<timestamp>/` at startup and dumps buffers
+//! output directory `<cwd>/sync_diag_output/<timestamp>/` at startup and dumps buffers
 //! as CSV on completion:
 //! - `pose_frames.csv`            per-frame R inliers + axis-angle
 //! - `estimated_vs_raw_gyro.csv`  paired curves of estimated_gyro vs raw_imu
@@ -170,8 +170,10 @@ pub fn init_session() {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
+    // Dump under <cwd>/sync_diag_output/<timestamp>/ so repo root stays clean.
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    dir.push(format!("sync_diag_{}", ts));
+    dir.push("sync_diag_output");
+    dir.push(format!("{}", ts));
     if let Err(e) = std::fs::create_dir_all(&dir) {
         log::warn!("[SyncDiag] failed to create {}: {}", dir.display(), e);
         return;

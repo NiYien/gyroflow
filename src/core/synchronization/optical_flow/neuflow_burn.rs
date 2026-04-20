@@ -65,9 +65,10 @@ pub(super) fn neuflow_inference_burn_sampled(
 
 /// Compute texture-aware grid points for GPU sparse sampling.
 fn compute_grid_points(gray: &[u8], w: usize, h: usize) -> (Vec<(usize, usize)>, Vec<i32>) {
-    let step = (w / 15).max(4);
+    // w/18 grid with loosened texture filter (threshold 1.0 vs 3.0)
+    let step = (w / 18).max(4);
     let window_size = ((w as f32 * 0.02).round() as usize).max(10);
-    let texture_threshold = 3.0;
+    let texture_threshold = 1.0;
 
     let mut grid_points = Vec::new();
     let mut linear_indices = Vec::new();
