@@ -1126,8 +1126,30 @@ impl FindOffsetsRssync<'_> {
             // the apparent argmax by 5-8ms systematically to one side (observed:
             // coarse consistently within ±2ms of truth, refine systematically +5-7ms
             // off). Cluster coarse is more stable.
-            let output_ms = coarse_ms;
-            let best_r_refined = pearson_at(coarse_ms);
+            let total_weight_pre: f64 = cand.iter().map(|x| x.1).sum();
+            let cluster_frac_pre = if total_weight_pre > 1e-9 {
+                cluster_weight / total_weight_pre
+            } else { 0.0 };
+            // Shortcut: when all 4 candidates unanimously cluster (cfrac≈1.0) and
+            // rs_argmin Pearson correlation is high, rs_argmin (LBFGS f64) is the
+            // highest-precision estimate — centroiding with grid-quantized
+            // candidates only dilutes it. Guard with a unimodality check: when
+            // Pearson's 2nd peak is close to the main peak (multi-basin cost
+            // surface), LBFGS may have converged to the wrong basin — V2 centroid
+            // is safer in that case. Fall back whenever unanimity breaks, signal
+            // is weak, or the cost surface is multi-modal.
+            let r_rs_for_shortcut = pearson_at(rs_argmin_ms);
+            let unimodal_ok = pearson_peak_r > 1e-9
+                && pearson_second_r < 0.7 * pearson_peak_r;
+            let use_rs_shortcut = quality_warn.is_none()
+                && cluster_frac_pre >= 0.999
+                && r_rs_for_shortcut.is_finite()
+                && r_rs_for_shortcut > 0.85
+                && rs_argmin_ms.is_finite()
+                && unimodal_ok
+                && (rs_argmin_ms - coarse_ms).abs() < CLUSTER_MERGE_MS;
+            let output_ms = if use_rs_shortcut { rs_argmin_ms } else { coarse_ms };
+            let best_r_refined = pearson_at(output_ms);
             let refine_ok = best_r_refined.is_finite() && best_r_refined > 0.0;
 
             // Diagnostic: cost at output position (pre_sync 0.1ms step in ±1ms)
@@ -1141,12 +1163,7 @@ impl FindOffsetsRssync<'_> {
 
             // Confidence: cluster_fraction × max_pearson_in_cluster, with
             // quality_warn / refine_failed clamped to low confidence for UI filter.
-            let total_weight: f64 = cand.iter().map(|x| x.1).sum();
-            let cluster_frac = if total_weight > 1e-9 {
-                cluster_weight / total_weight
-            } else {
-                0.0
-            };
+            let cluster_frac = cluster_frac_pre;
             let confidence = if quality_warn.is_some() || !refine_ok {
                 peak_h.min(0.2).max(0.05)
             } else {
@@ -1155,7 +1172,11 @@ impl FindOffsetsRssync<'_> {
                 (cluster_frac * best_r_refined).clamp(0.05, 1.0)
             };
 
-            let path_str_owned = format!("v2_consensus[{}]", cluster_signals);
+            let path_str_owned = if use_rs_shortcut {
+                format!("v2_consensus[{}]|rs_shortcut", cluster_signals)
+            } else {
+                format!("v2_consensus[{}]", cluster_signals)
+            };
             offsets[i] = (mid_ms, output_ms, output_cost, confidence);
 
             log::info!(
