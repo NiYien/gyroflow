@@ -63,6 +63,57 @@ lazy_static::lazy_static! {
     static ref THREAD_POOL: rayon::ThreadPool = rayon::ThreadPoolBuilder::new().build().unwrap();
 }
 
+fn constrained_output_size(
+    input_size: (usize, usize),
+    requested_size: (usize, usize),
+    video_rotation: f64,
+    input_stretch: (f64, f64),
+) -> Option<(usize, usize)> {
+    if requested_size.0 == 0 || requested_size.1 == 0 {
+        return None;
+    }
+
+    let stretch_h = if input_stretch.0 > 0.01 {
+        input_stretch.0
+    } else {
+        1.0
+    };
+    let stretch_v = if input_stretch.1 > 0.01 {
+        input_stretch.1
+    } else {
+        1.0
+    };
+
+    let r = video_rotation.abs();
+    let (ow, oh) = if r == 90.0 || r == 270.0 {
+        (
+            input_size.1 as f64 * stretch_v,
+            input_size.0 as f64 * stretch_h,
+        )
+    } else {
+        (
+            input_size.0 as f64 * stretch_h,
+            input_size.1 as f64 * stretch_v,
+        )
+    };
+
+    let wp = requested_size.0 as f64;
+    let hp = requested_size.1 as f64;
+    let scale = (ow / wp).min(oh / hp);
+
+    let mut nw = (wp * scale).round() as usize;
+    let mut nh = (hp * scale).round() as usize;
+
+    if nw % 2 != 0 {
+        nw -= 1;
+    }
+    if nh % 2 != 0 {
+        nh -= 1;
+    }
+
+    Some((nw, nh))
+}
+
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct InputFile {
@@ -233,7 +284,12 @@ fn populate_lens_metadata_fields(
         lens.calibrated_by = "NiYien".to_string();
     }
     let sanitized_readout_time = md.frame_readout_time.filter(|v| v.is_finite());
-    if lens.frame_readout_time.map(|v| v.is_finite()).unwrap_or(false) == false {
+    if lens
+        .frame_readout_time
+        .map(|v| v.is_finite())
+        .unwrap_or(false)
+        == false
+    {
         lens.frame_readout_time = sanitized_readout_time;
     }
     if lens.frame_readout_direction.is_none() && sanitized_readout_time.is_some() {
@@ -272,7 +328,8 @@ impl StabilizationManager {
             let p = self.params.read();
             p.size
         };
-        let can_build_synthetic = !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
+        let can_build_synthetic =
+            !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
         let mut should_build_synthetic = false;
 
         if let Some(ref lens) = md.lens_profile {
@@ -670,33 +727,18 @@ impl StabilizationManager {
     }
     pub fn set_output_size(&self, width: usize, height: usize) -> bool {
         if width > 0 && height > 0 {
-            let params = self.params.upgradable_read();
-
-            let r = (params.video_rotation as f64).abs();
-            let (ow, oh) = if r == 90.0 || r == 270.0 {
-                (params.size.1, params.size.0)
-            } else {
-                params.size
+            let input_stretch = {
+                let lens = self.lens.read();
+                (lens.input_horizontal_stretch, lens.input_vertical_stretch)
             };
-
-            let wp = width as f64;
-            let hp = height as f64;
-
-            let sw = ow as f64 / wp;
-            let sh = oh as f64 / hp;
-            let scale = sw.min(sh);
-
-            let mut nw = (wp * scale).round() as usize;
-            let mut nh = (hp * scale).round() as usize;
-
-            if nw % 2 != 0 {
-                nw -= 1;
-            }
-            if nh % 2 != 0 {
-                nh -= 1;
-            }
-
-            let output_size = (nw, nh);
+            let params = self.params.upgradable_read();
+            let output_size = constrained_output_size(
+                params.size,
+                (width, height),
+                params.video_rotation as f64,
+                input_stretch,
+            )
+            .unwrap_or_default();
 
             if params.output_size != output_size {
                 {
@@ -1099,7 +1141,11 @@ impl StabilizationManager {
                 frame_at_timestamp(timestamp_us as f64 / 1000.0, p.get_scaled_fps()) as usize; // used only to draw features and OF
 
             if p.show_optical_flow {
-                let num_frames = if p.of_method == 2 || p.of_method == 3 || p.of_method == 4 { 1 } else { 3 };
+                let num_frames = if p.of_method == 2 || p.of_method == 3 || p.of_method == 4 {
+                    1
+                } else {
+                    3
+                };
                 if let Some(pxs) = self.get_opticalflow_pixels(timestamp_us, num_frames, size) {
                     for (x, y, a) in pxs {
                         let a = Alpha::from(a as u8);
@@ -3255,5 +3301,21 @@ mod tests {
         assert_eq!(lens.focal_length, Some(24.0));
         assert_eq!(lens.fisheye_params.camera_matrix[0], [2400.0, 0.0, 960.0]);
         assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 2400.0, 540.0]);
+    }
+
+    #[test]
+    fn set_output_size_preserves_non_anamorphic_scaling_behavior() {
+        assert_eq!(
+            constrained_output_size((1920, 1080), (2554, 1080), 0.0, (1.0, 1.0)),
+            Some((1920, 812))
+        );
+    }
+
+    #[test]
+    fn set_output_size_uses_anamorphic_effective_input_size() {
+        assert_eq!(
+            constrained_output_size((1920, 1080), (2554, 1080), 0.0, (1.33, 1.0)),
+            Some((2554, 1080))
+        );
     }
 }

@@ -5,7 +5,7 @@ use super::background::*;
 use super::drawing::*;
 use super::lens::*;
 use super::types::*;
-use glam::{vec2, vec3, Vec2, Vec4};
+use glam::{Vec2, Vec4, vec2, vec3};
 
 #[inline(never)]
 fn get_mtrx_param(
@@ -21,7 +21,7 @@ fn get_mtrx_param(
     }
     #[cfg(feature = "for_qtrhi")]
     {
-        use spirv_std::image::{sample_with, ImageWithMethods};
+        use spirv_std::image::{ImageWithMethods, sample_with};
         matrices
             .sample_with(
                 *_sampler,
@@ -158,11 +158,16 @@ pub fn undistort(
     // Add lens distortion back
     if params.lens_correction_amount < 1.0 {
         let factor = (1.0 - params.lens_correction_amount).max(0.001); // FIXME: this is close but wrong
+        let stretch_h = if params.input_horizontal_stretch > 0.001 {
+            params.input_horizontal_stretch
+        } else {
+            1.0
+        };
         let out_c = vec2(
             params.output_width as f32 / 2.0,
             params.output_height as f32 / 2.0,
         );
-        let out_f = params.f / params.fov / factor;
+        let out_f = (params.f / stretch_h) / params.fov / factor;
         let mut new_out_pos = out_pos;
 
         if (flags & 2) == 2 {

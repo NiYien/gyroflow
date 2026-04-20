@@ -78,7 +78,7 @@ pub fn generate_stmaps(
 
         let bbox = fov_iterative::FovIterative::new(&compute_params, org_output_size)
             .points_around_rect(width as f32, height as f32, 31, 31);
-        let (camera_matrix, distortion_coeffs, _p, rotations, is, mesh) =
+        let (camera_matrix, distortion_coeffs, _output_projection, rotations, is, mesh) =
             FrameTransform::at_timestamp_for_points(
                 &compute_params,
                 &bbox,
@@ -93,6 +93,7 @@ pub fn generate_stmaps(
             rotations[0],
             None,
             Some(rotations),
+            None,
             &compute_params,
             1.0,
             timestamp,
@@ -184,7 +185,7 @@ pub fn generate_stmaps(
 
         let dist = parallel_exr(width, height, |x, y| {
             let distorted = [(x as f32, y as f32)];
-            let (camera_matrix, distortion_coeffs, _p, rotations, is, mesh) =
+            let (camera_matrix, distortion_coeffs, _output_projection, rotations, is, mesh) =
                 FrameTransform::at_timestamp_for_points(
                     &compute_params,
                     &distorted,
@@ -199,6 +200,7 @@ pub fn generate_stmaps(
                 rotations[0],
                 None,
                 Some(rotations),
+                None,
                 &compute_params,
                 1.0,
                 timestamp,

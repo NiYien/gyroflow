@@ -92,6 +92,7 @@ impl Camera {
             na::convert(rot),
             Some(camera_matrix),
             None,
+            None,
             &self.compute_params,
             1.0,
             timestamp_ms,

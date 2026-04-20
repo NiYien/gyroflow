@@ -86,6 +86,46 @@ pub const COEFFS: [f32; 64 + 128 + 256 + 9 * 4 + 4] = [
     1.0, 0.75, 0.50, 0.25,
 ];
 
+fn anamorphic_horizontal_stretch_from_kernel(params: &KernelParams) -> f32 {
+    if params.input_horizontal_stretch > 0.001 {
+        params.input_horizontal_stretch
+    } else {
+        1.0
+    }
+}
+
+fn add_back_output_projection_from_kernel(params: &KernelParams) -> (Vector2<f32>, Vector2<f32>) {
+    let factor = (1.0 - params.lens_correction_amount).max(0.001);
+    let stretch_h = anamorphic_horizontal_stretch_from_kernel(params);
+    (
+        Vector2::new(
+            params.output_width as f32 / 2.0,
+            params.output_height as f32 / 2.0,
+        ),
+        Vector2::new(
+            params.f[0] / stretch_h / params.fov / factor,
+            params.f[1] / stretch_h / params.fov / factor,
+        ),
+    )
+}
+
+fn add_back_output_projection_from_matrix(
+    output_projection: &Matrix3<f64>,
+    lens_correction_amount: f64,
+) -> ((f32, f32), (f32, f32)) {
+    let factor = (1.0 - lens_correction_amount as f32).max(0.001);
+    (
+        (
+            output_projection[(0, 2)] as f32,
+            output_projection[(1, 2)] as f32,
+        ),
+        (
+            output_projection[(0, 0)] as f32 / factor,
+            output_projection[(1, 1)] as f32 / factor,
+        ),
+    )
+}
+
 // const COLORS: [Vector4<f32>; 9] = [
 //     Vector4::new(0.0,   0.0,   0.0,     0.0), // None
 //     Vector4::new(255.0, 0.0,   0.0,   255.0), // Red
@@ -780,15 +820,7 @@ impl Stabilization {
                 ) * params.max_pixel_value;
                 let bg_t: T = PixelType::from_float(bg);
 
-                let factor = (1.0 - params.lens_correction_amount).max(0.001); // FIXME: this is close but wrong
-                let out_c = Vector2::new(
-                    params.output_width as f32 / 2.0,
-                    params.output_height as f32 / 2.0,
-                );
-                let out_f = Vector2::new(
-                    params.f[0] / params.fov / factor,
-                    params.f[1] / params.fov / factor,
-                );
+                let (out_c, out_f) = add_back_output_projection_from_kernel(params);
 
                 // let drawing_enabled = !drawing.is_empty() && (params.flags & 8) == 8;
                 let fill_bg = (params.flags & 4) == 4;
@@ -1032,7 +1064,7 @@ pub fn undistort_points_with_rolling_shutter(
     if distorted.is_empty() {
         return Vec::new();
     }
-    let (camera_matrix, distortion_coeffs, _p, rotations, is, mesh) =
+    let (camera_matrix, distortion_coeffs, output_projection, rotations, is, mesh) =
         FrameTransform::at_timestamp_for_points(params, distorted, timestamp_ms, frame, use_fovs);
 
     undistort_points(
@@ -1042,6 +1074,7 @@ pub fn undistort_points_with_rolling_shutter(
         rotations[0],
         Some(Matrix3::identity()),
         Some(rotations),
+        Some(output_projection),
         params,
         lens_correction_amount,
         timestamp_ms,
@@ -1069,6 +1102,7 @@ pub fn undistort_points_for_optical_flow(
         Matrix3::identity(),
         None,
         None,
+        None,
         params,
         1.0,
         timestamp_us as f64 / 1000.0,
@@ -1084,6 +1118,7 @@ pub fn undistort_points(
     rotation: Matrix3<f64>,
     p: Option<Matrix3<f64>>,
     rot_per_point: Option<Vec<Matrix3<f64>>>,
+    output_projection: Option<Matrix3<f64>>,
     params: &ComputeParams,
     lens_correction_amount: f64,
     timestamp_ms: f64,
@@ -1104,6 +1139,17 @@ pub fn undistort_points(
         .value_at_video_timestamp(&crate::KeyframeType::LightRefractionCoeff, timestamp_ms)
         .unwrap_or(params.light_refraction_coefficient)
         as f32;
+
+    let output_projection = output_projection.unwrap_or_else(|| {
+        let mut projection = Matrix3::<f64>::identity();
+        projection[(0, 0)] = camera_matrix[(0, 0)];
+        projection[(1, 1)] = camera_matrix[(1, 1)];
+        projection[(0, 2)] = params.output_width as f64 / 2.0;
+        projection[(1, 2)] = params.output_height as f64 / 2.0;
+        projection
+    });
+    let (output_c, output_f) =
+        add_back_output_projection_from_matrix(&output_projection, lens_correction_amount);
 
     // TODO more params
     let kernel_params = KernelParams {
@@ -1277,19 +1323,11 @@ pub fn undistort_points(
                 pt = (pr[0] / pr[2], pr[1] / pr[2]);
 
                 if lens_correction_amount < 1.0 {
-                    let mut out_c = (
-                        params.output_width as f32 / 2.0,
-                        params.output_height as f32 / 2.0,
-                    );
-                    if params.lens.input_horizontal_stretch > 0.001 {
-                        out_c.0 /= params.lens.input_horizontal_stretch as f32;
-                    }
-                    if params.lens.input_vertical_stretch > 0.001 {
-                        out_c.1 /= params.lens.input_vertical_stretch as f32;
-                    }
-
                     let mut new_pt = pt;
-                    new_pt = ((new_pt.0 - out_c.0) / f.0, (new_pt.1 - out_c.1) / f.1);
+                    new_pt = (
+                        (new_pt.0 - output_c.0) / output_f.0,
+                        (new_pt.1 - output_c.1) / output_f.1,
+                    );
                     let mut _w = 1.0;
                     if kernel_params.light_refraction_coefficient != 1.0
                         && kernel_params.light_refraction_coefficient > 0.0
@@ -1308,7 +1346,10 @@ pub fn undistort_points(
                         _w,
                         &kernel_params,
                     ); // TODO: z?
-                    new_pt = ((new_pt.0 * f.0) + out_c.0, (new_pt.1 * f.1) + out_c.1);
+                    new_pt = (
+                        (new_pt.0 * output_f.0) + output_c.0,
+                        (new_pt.1 * output_f.1) + output_c.1,
+                    );
 
                     if let Some(digital) = &params.digital_lens {
                         new_pt = digital.distort_point(new_pt.0, new_pt.1, 1.0, &kernel_params);
@@ -1343,4 +1384,51 @@ pub fn undistort_points(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn anamorphic_add_back_projection_scales_horizontal_focal_length() {
+        let params = KernelParams {
+            f: [2674.0, 2674.0],
+            fov: 1920.0 / 2554.0,
+            lens_correction_amount: 0.0,
+            input_horizontal_stretch: 1.33,
+            output_width: 2554,
+            output_height: 1080,
+            ..Default::default()
+        };
+
+        let (out_c, out_f) = add_back_output_projection_from_kernel(&params);
+
+        assert!((out_c.x - 1277.0).abs() < 0.001);
+        assert!((out_c.y - 540.0).abs() < 0.001);
+        assert!((out_f.x - 2674.4189).abs() < 0.01);
+        assert!((out_f.y - 2674.4189).abs() < 0.01);
+    }
+
+    #[test]
+    fn add_back_output_projection_from_matrix_uses_forward_projection_space() {
+        let output_projection = Matrix3::<f64>::new(
+            2674.4188596491226,
+            0.0,
+            1277.0,
+            0.0,
+            2674.4188596491226,
+            540.0,
+            0.0,
+            0.0,
+            1.0,
+        );
+
+        let (out_c, out_f) = add_back_output_projection_from_matrix(&output_projection, 0.0);
+
+        assert!((out_c.0 - 1277.0).abs() < 0.001);
+        assert!((out_c.1 - 540.0).abs() < 0.001);
+        assert!((out_f.0 - 2674.4189).abs() < 0.01);
+        assert!((out_f.1 - 2674.4189).abs() < 0.01);
+    }
 }
