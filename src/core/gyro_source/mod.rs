@@ -417,20 +417,37 @@ pub struct FileLoadOptions {
 }
 
 pub fn get_camera_db_path() -> Option<String> {
-    // 1. Updated package in writable app data directory
+    // 1. Updated package in writable app data directory (lens hot-update bundle)
     if let Some(path) = crate::distribution::resolve_package_subdir("lens", "camera_db") {
         return Some(path.to_string_lossy().into_owned());
     }
-    // 2. Next to executable
+    // 2. Bundled with the executable / app bundle
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
+            // 2a. Windows / Linux: camera_db sitting next to the executable
             let p = dir.join("camera_db");
             if p.is_dir() {
                 return Some(p.to_string_lossy().into_owned());
             }
+            // 2b. macOS .app bundle: Contents/MacOS/Gyroflow -> ../Resources/camera_db
+            let mac_p = dir.join("../Resources/camera_db");
+            if mac_p.is_dir() {
+                return Some(mac_p.to_string_lossy().into_owned());
+            }
+            // 2c. Dev layout: target/debug|release/camera_db copied by build.rs via resources/
+            let resources_p = dir.join("resources/camera_db");
+            if resources_p.is_dir() {
+                return Some(resources_p.to_string_lossy().into_owned());
+            }
         }
     }
-    // 3. Relative to source (development)
+    // 3. build.rs populated snapshot in the repo's resources/ directory (development)
+    let build_snapshot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../resources/camera_db");
+    if build_snapshot.is_dir() {
+        return Some(build_snapshot.to_string_lossy().into_owned());
+    }
+    // 4. Legacy: telemetry-parser sibling checkout (historical fallback)
     let dev_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../telemetry-parser/camera_db");
     if dev_path.is_dir() {

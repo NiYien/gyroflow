@@ -266,6 +266,9 @@ deploy:
     # xcopy /Y /E "$ProjectDir\resources\camera_presets\*"                 "$TargetDir\camera_presets\"
     mkdir "$TargetDir\camera_presets\" -Force
     echo F | xcopy /Y "$ProjectDir\resources\camera_presets\profiles.cbor.gz"  "$TargetDir\camera_presets\profiles.cbor.gz"
+    # Niyien: camera_db（由 src/core/build.rs 从 niyien-lens-data release 下载到 resources/）
+    mkdir "$TargetDir\camera_db\" -Force
+    xcopy /Y /E "$ProjectDir\resources\camera_db\*" "$TargetDir\camera_db\"
 
     # Other
     xcopy /Y "$QtDir\bin\d3dcompiler_47.dll"                             "$TargetDir\"

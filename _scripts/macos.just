@@ -200,6 +200,9 @@ deploy *param:
         # cp -Rf "$PROJECT_DIR/resources/camera_presets"        "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/"
         # rm -rf "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_presets/.git"
         cp -f "$PROJECT_DIR/resources/camera_presets/profiles.cbor.gz" "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_presets/profiles.cbor.gz"
+        # Niyien: camera_db (populated by src/core/build.rs from niyien-lens-data release)
+        mkdir -p "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_db/"
+        cp -f "$PROJECT_DIR/resources/camera_db/"*.json "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_db/"
     fi
 
     cp -af "$QT_DIR/lib/QtCore.framework"                     "$CARGO_TARGET/../Frameworks/"

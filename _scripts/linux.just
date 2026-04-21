@@ -347,6 +347,9 @@ deploy *param:
     # rm -rf "$TARGET/camera_presets/.git"
     mkdir -p "$TARGET/camera_presets/"
     cp -f "$PROJECT_DIR/resources/camera_presets/profiles.cbor.gz" "$TARGET/camera_presets/profiles.cbor.gz"
+    # Niyien: camera_db (populated by src/core/build.rs from niyien-lens-data release)
+    mkdir -p "$TARGET/camera_db/"
+    cp -f "$PROJECT_DIR/resources/camera_db/"*.json "$TARGET/camera_db/"
 
     pushd $TARGET/..
     tar -czf {{ArtifactPrefix}}-{{PackageSuffix}}.tar.gz --transform 's!{{PackageSuffix}}!Gyroflow!' {{PackageSuffix}}
