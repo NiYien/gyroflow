@@ -61,7 +61,10 @@ cpp! {{
 }}
 
 fn entry() {
-    let ui_live_reload = true; // TODO: revert to false before commit
+    // 本地 QML 开发调试时临时改为 true 可开启热重载（引擎从 CARGO_MANIFEST_DIR 读 QML 源文件）。
+    // Release / CI build 必须为 false，否则 QML 路径会硬编码为构建机磁盘路径，
+    // 导致用户运行时 UI 加载失败（见 gyroflow.log: "QQmlApplicationEngine failed to load component"）。
+    let ui_live_reload = false;
 
     #[cfg(target_os = "windows")]
     unsafe {
