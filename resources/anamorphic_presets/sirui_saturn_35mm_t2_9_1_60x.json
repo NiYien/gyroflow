@@ -1,6 +1,0 @@
-{
-  "name": "Sirui Saturn 35mm T2.9 1.60x",
-  "squeeze_ratio": 1.6,
-  "distortion_coeffs": [0.318887074923691, -0.670146528927197, 2.29214709103921, -2.23595420695684],
-  "distortion_model": "opencv_fisheye"
-}

@@ -1,6 +1,0 @@
-{
-  "name": "Sirui 35mm f/1.8 Anamorphic 1.33x",
-  "squeeze_ratio": 1.33,
-  "distortion_coeffs": [0.0820058676455962, 0.193730139649059, 5.90620613221047, -34.6915534918305],
-  "distortion_model": "opencv_fisheye"
-}

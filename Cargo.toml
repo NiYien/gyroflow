@@ -6,7 +6,7 @@ edition = "2024"
 build = "build.rs"
 
 [features]
-default = ["opencv", "niyien-serialport", "neuflow"]
+default = ["opencv", "niyien-serialport"]
 opencl = ["gyroflow-core/use-opencl"]
 opencv = ["gyroflow-core/use-opencv"]
 niyien-serialport = ["dep:serialport"]

@@ -89,7 +89,7 @@ struct PresetFile {
     distortion_model: String,
 }
 
-const BUILTIN_INDEX_JSON: &str = include_str!("../../resources/anamorphic_presets/index.json");
+const BUILTIN_INDEX_JSON: &str = include_str!("../../resources/lens_presets/index.json");
 const LEGACY_AIVASCOPE_PRESET_ID: &str = "aivascope_58mm_1_50x_vertical";
 const CANONICAL_AIVASCOPE_PRESET_ID: &str = "aivascope_58mm_1_50x";
 
@@ -103,34 +103,34 @@ fn normalize_preset_id(preset_id: &str) -> &str {
 fn builtin_preset_file(name: &str) -> Option<&'static str> {
     match name {
         "sirui_xingchen_50mm_1_33x.json" | "sirui_astra_50mm_1_33x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/sirui_astra_50mm_1_33x.json"
+            "../../resources/lens_presets/sirui_astra_50mm_1_33x.json"
         )),
         "blazar_mantis_25mm_1_33x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/blazar_mantis_25mm_1_33x.json"
+            "../../resources/lens_presets/blazar_mantis_25mm_1_33x.json"
         )),
         "blazar_remus_45mm_1_50x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/blazar_remus_45mm_1_50x.json"
+            "../../resources/lens_presets/blazar_remus_45mm_1_50x.json"
         )),
         "blazar_viper_35mm_1_50x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/blazar_viper_35mm_1_50x.json"
+            "../../resources/lens_presets/blazar_viper_35mm_1_50x.json"
         )),
         "blazar_viper_75mm_1_50x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/blazar_viper_75mm_1_50x.json"
+            "../../resources/lens_presets/blazar_viper_75mm_1_50x.json"
         )),
         "sirui_35mm_f1_8_1_33x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/sirui_35mm_f1_8_1_33x.json"
+            "../../resources/lens_presets/sirui_35mm_f1_8_1_33x.json"
         )),
         "sirui_saturn_35mm_t2_9_1_60x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/sirui_saturn_35mm_t2_9_1_60x.json"
+            "../../resources/lens_presets/sirui_saturn_35mm_t2_9_1_60x.json"
         )),
         "sirui_saturn_50mm_t2_9_1_60x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/sirui_saturn_50mm_t2_9_1_60x.json"
+            "../../resources/lens_presets/sirui_saturn_50mm_t2_9_1_60x.json"
         )),
         "laowa_nanomorph_35mm_t2_4_1_50x.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/laowa_nanomorph_35mm_t2_4_1_50x.json"
+            "../../resources/lens_presets/laowa_nanomorph_35mm_t2_4_1_50x.json"
         )),
         "aivascope_58mm_1_50x.json" | "aivascope_58mm_1_50x_vertical.json" => Some(include_str!(
-            "../../resources/anamorphic_presets/aivascope_58mm_1_50x.json"
+            "../../resources/lens_presets/aivascope_58mm_1_50x.json"
         )),
         _ => None,
     }
@@ -489,9 +489,43 @@ pub fn build_lens_profile(
     Some(profile)
 }
 
+/// Load lens presets with four-level priority:
+///   P1: lens 热更新包 `<data_dir>/lens/versions/<N>/lens_presets/` (整目录存在即完全覆盖)
+///   P2: `<data_dir>/lens_presets/`（用户本地覆盖层；同 id 覆盖 + 允许新增）
+///       + `<data_dir>/anamorphic_presets/`（legacy 路径，保留老用户文件）
+///   P3: `<exe>/lens_presets/`（便携版）
+///   P4: 编译期 `include_str!` 内置快照（fallback，保证离线可用）
+///
+/// 后三级合并顺序遵循"同 id 后者覆盖前者"，最终优先级为 P2(new) > P2(legacy) > P3 > P4。
 pub fn load_presets() -> Vec<AnamorphicPreset> {
+    // P1: lens 热更新包 —— 整目录覆盖语义
+    if let Some(pkg_presets) = load_from_lens_package() {
+        return pkg_presets;
+    }
+
+    // P4: 内置作为基底
     let mut presets = load_builtin_presets();
-    merge_presets(&mut presets, load_external_presets());
+
+    // P3: 便携版路径（exe 同目录 lens_presets/）
+    if let Some(exe_presets_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|e| e.parent().map(|p| p.join("lens_presets")))
+    {
+        merge_presets(&mut presets, load_from_user_dir(&exe_presets_dir));
+    }
+
+    // P2-legacy: <data_dir>/anamorphic_presets/（老路径，保留用户已有自定义文件）
+    merge_presets(
+        &mut presets,
+        load_from_user_dir(&settings_dir().join("anamorphic_presets")),
+    );
+
+    // P2-new: <data_dir>/lens_presets/（新路径；同 id 会覆盖 legacy）
+    merge_presets(
+        &mut presets,
+        load_from_user_dir(&settings_dir().join("lens_presets")),
+    );
+
     presets
 }
 
@@ -503,25 +537,62 @@ fn load_builtin_presets() -> Vec<AnamorphicPreset> {
     load_presets_from_index(BUILTIN_INDEX_JSON, None, true)
 }
 
-fn load_external_presets() -> Vec<AnamorphicPreset> {
-    let root = settings_dir().join("anamorphic_presets");
+/// P1: 从当前激活的 lens 热更新包加载。
+/// 目录存在且 `index.json` 有效 → Some(presets)（完全覆盖后续层级）
+/// 目录/索引缺失或解析失败 → None（退化到后续层级）
+fn load_from_lens_package() -> Option<Vec<AnamorphicPreset>> {
+    let dir = crate::distribution::resolve_package_subdir("lens", "lens_presets")?;
+    let index_path = dir.join("index.json");
+    if !index_path.is_file() {
+        log::debug!(
+            "lens package has lens_presets/ but no index.json at {}",
+            index_path.display()
+        );
+        return None;
+    }
+    match std::fs::read_to_string(&index_path) {
+        Ok(index_json) => {
+            log::info!("loading lens presets from lens package at {}", dir.display());
+            let presets = load_presets_from_index(&index_json, Some(&dir), false);
+            if presets.is_empty() {
+                log::warn!(
+                    "lens package lens_presets/index.json parsed but yielded 0 presets; \
+                     falling back to built-in"
+                );
+                None
+            } else {
+                Some(presets)
+            }
+        }
+        Err(err) => {
+            log::warn!(
+                "lens package lens_presets/index.json unreadable ({}): {err}; falling back to built-in",
+                index_path.display()
+            );
+            None
+        }
+    }
+}
+
+/// 通用用户目录加载（P2 / P3 共用）。优先用 index.json；无索引时扫描目录。
+fn load_from_user_dir(root: &Path) -> Vec<AnamorphicPreset> {
     if !root.exists() {
         return Vec::new();
     }
     let index_path = root.join("index.json");
     if index_path.is_file() {
         match std::fs::read_to_string(&index_path) {
-            Ok(index_json) => load_presets_from_index(&index_json, Some(&root), false),
+            Ok(index_json) => load_presets_from_index(&index_json, Some(root), false),
             Err(err) => {
                 log::warn!(
-                    "Failed to read anamorphic preset index {}: {err}",
+                    "Failed to read lens preset index {}: {err}",
                     index_path.display()
                 );
                 Vec::new()
             }
         }
     } else {
-        load_presets_from_dir_without_index(&root)
+        load_presets_from_dir_without_index(root)
     }
 }
 

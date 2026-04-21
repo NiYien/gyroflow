@@ -12,6 +12,11 @@ gyroflow.log
 *.provisionprofile
 *.pfx
 resources/camera_presets
+# niyien-lens-data build.rs 下载产物（不 commit）
+resources/lens_presets/
+resources/camera_db/
+# lens 数据已迁至 niyien-lens-data 独立仓库
+distribution/data/lens/
 *.exe
 .qmlls.ini
 /.claude
@@ -28,3 +33,4 @@ AGENTS.md
 /.npm-cache
 /.agents
 /sync_diag_output
+/_scripts/__pycache__

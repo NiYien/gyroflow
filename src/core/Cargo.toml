@@ -168,3 +168,5 @@ burn-cubecl = { path = "../../vendor/burn-compat/burn-cubecl" }
 
 [build-dependencies]
 ureq = "3.3"
+flate2 = "1.1"
+tar = "0.4"

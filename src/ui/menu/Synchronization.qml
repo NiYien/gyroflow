@@ -352,18 +352,29 @@ MenuItem {
 
             ComboBox {
                 id: syncMethod;
-                readonly property var ofMethodMap: [3, 4, 0, 1, 2]
-                readonly property var ofMethodReverseMap: ({0: 2, 1: 3, 2: 4, 3: 0, 4: 1})
-                model: [
+                // neuflow feature 关闭时隐藏 NeuFlow 两项；数组与 model 顺序一致。
+                // method 编号：0=AKAZE, 1=PyrLK, 2=DIS, 3=NeuFlow-ORT, 4=NeuFlow-Burn
+                readonly property bool hasNeuflow: controller.has_neuflow_support();
+                readonly property var ofMethodMap:
+                    hasNeuflow ? [3, 4, 0, 1, 2] : [0, 1, 2];
+                readonly property var ofMethodReverseMap:
+                    hasNeuflow ? ({0: 2, 1: 3, 2: 4, 3: 0, 4: 1})
+                               : ({0: 0, 1: 1, 2: 2});
+                model: hasNeuflow ? [
                     QT_TR_NOOP("NeuFlow v2 CUDA"),
                     QT_TR_NOOP("NeuFlow v2 Burn"),
+                    "AKAZE",
+                    "OpenCV (PyrLK)",
+                    "OpenCV (DIS)"
+                ] : [
                     "AKAZE",
                     "OpenCV (PyrLK)",
                     "OpenCV (DIS)"
                 ];
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
-                currentIndex: 0;
+                // 默认选中 "OpenCV (DIS)"：有 NeuFlow 时第 5 项(index 4)、无 NeuFlow 时第 3 项(index 2)
+                currentIndex: hasNeuflow ? 4 : 2;
                 onCurrentIndexChanged: controller.set_of_method(ofMethodMap[currentIndex]);
                 Component.onCompleted: currentIndexChanged();
             }

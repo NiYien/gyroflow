@@ -10,12 +10,11 @@ jobs:
   build:
     strategy:
       fail-fast: false
+      # 临时：仅 mac+win。linux/android 后续恢复（见 followup issue）。
       matrix:
         targets: [
-          { os: ubuntu-latest, type: linux },
           { os: macos-14,      type: macos },
-          { os: windows-2022,  type: windows },
-          { os: windows-2022,  type: android }
+          { os: windows-2022,  type: windows }
         ]
     name: Build gyroflow(niyien) for ${{ matrix.targets.type }}
     runs-on: ${{ matrix.targets.os }}
@@ -118,12 +117,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: false
+          # 临时：仅 windows + mac，linux/android 后续恢复
           files: |
             ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip
             ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg
-            ./gyroflow-niyien-linux/gyroflow-niyien-linux64.AppImage
-            ./gyroflow-niyien-linux/gyroflow-niyien-linux64.tar.gz
-            ./gyroflow-niyien-android/gyroflow-niyien.apk
 
   mirror_sync:
     name: Sync app assets to download.niyien.com
@@ -135,12 +132,10 @@ jobs:
         uses: actions/download-artifact@v4
       - name: Prepare sync bundle
         run: |
+          # 临时：仅 windows + mac，linux/android 后续恢复
           mkdir -p mirror
           cp ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip mirror/ || true
           cp ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg mirror/ || true
-          cp ./gyroflow-niyien-linux/gyroflow-niyien-linux64.AppImage mirror/ || true
-          cp ./gyroflow-niyien-linux/gyroflow-niyien-linux64.tar.gz mirror/ || true
-          cp ./gyroflow-niyien-android/gyroflow-niyien.apk mirror/ || true
       - name: Upload to domestic mirror
         uses: appleboy/scp-action@v0.1.7
         with:

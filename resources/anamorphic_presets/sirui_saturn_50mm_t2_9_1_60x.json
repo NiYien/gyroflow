@@ -1,6 +1,0 @@
-{
-  "name": "Sirui Saturn 50mm T2.9 1.60x",
-  "squeeze_ratio": 1.6,
-  "distortion_coeffs": [0.466384573425197, -2.62176638082414, 12.1835449955474, -19.7782239536802],
-  "distortion_model": "opencv_fisheye"
-}

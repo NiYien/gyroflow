@@ -1,6 +1,0 @@
-{
-  "name": "Laowa Nanomorph 35mm T2.4 1.50x",
-  "squeeze_ratio": 1.5,
-  "distortion_coeffs": [0.454301419347566, -2.18546945559132, 33.6336166714646, -125.280889848855],
-  "distortion_model": "opencv_fisheye"
-}

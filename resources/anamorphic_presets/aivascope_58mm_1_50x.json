@@ -1,6 +1,0 @@
-{
-  "name": "Biotar 58mm + Aivascope 1.50x",
-  "squeeze_ratio": 1.5,
-  "distortion_coeffs": [0.453265023386744, -1.40699170570079, 6.68443177852337, -16.2016150951207],
-  "distortion_model": "opencv_fisheye"
-}

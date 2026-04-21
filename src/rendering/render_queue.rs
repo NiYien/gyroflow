@@ -5,7 +5,7 @@ use qmetaobject::*;
 
 use crate::core::StabilizationManager;
 use crate::{core, rendering, util};
-use core::anamorphic_presets;
+use core::niyien_lens_presets;
 use core::camera_identifier::CameraIdentifier;
 use core::filesystem;
 use core::gyro_source::GyroSource;
@@ -80,7 +80,7 @@ struct Job {
 
 #[derive(Clone, Debug, Default)]
 struct JobLensGroupOverride {
-    configs: Vec<anamorphic_presets::LensGroupConfig>,
+    configs: Vec<niyien_lens_presets::LensGroupConfig>,
     enabled_groups: Vec<bool>,
 }
 impl JobLensGroupOverride {
@@ -389,18 +389,18 @@ fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
 
 fn resolve_lens_group_focal_length(
     auto_focus_length_mm: Option<f64>,
-    group_config: Option<&anamorphic_presets::LensGroupConfig>,
-) -> Option<(f64, anamorphic_presets::FocalLengthSource)> {
-    anamorphic_presets::select_focal_length(auto_focus_length_mm, group_config)
+    group_config: Option<&niyien_lens_presets::LensGroupConfig>,
+) -> Option<(f64, niyien_lens_presets::FocalLengthSource)> {
+    niyien_lens_presets::select_focal_length(auto_focus_length_mm, group_config)
 }
 
 fn effective_lens_group_configs(
     job: &Job,
-    global_configs: &[anamorphic_presets::LensGroupConfig],
-) -> Vec<anamorphic_presets::LensGroupConfig> {
-    let mut configs = anamorphic_presets::normalize_lens_group_configs(global_configs);
+    global_configs: &[niyien_lens_presets::LensGroupConfig],
+) -> Vec<niyien_lens_presets::LensGroupConfig> {
+    let mut configs = niyien_lens_presets::normalize_lens_group_configs(global_configs);
     if let Some(local_override) = job.lens_group_config_override.as_ref() {
-        for lens_index in 0..anamorphic_presets::LENS_GROUP_COUNT {
+        for lens_index in 0..niyien_lens_presets::LENS_GROUP_COUNT {
             if local_override.is_group_enabled(lens_index) {
                 if let Some(config) = local_override.configs.get(lens_index) {
                     configs[lens_index] = config.clone();
@@ -413,9 +413,9 @@ fn effective_lens_group_configs(
 
 fn effective_lens_group_config_for_group<'a>(
     job: &'a Job,
-    global_configs: &'a [anamorphic_presets::LensGroupConfig],
+    global_configs: &'a [niyien_lens_presets::LensGroupConfig],
     lens_index: usize,
-) -> Option<(&'a anamorphic_presets::LensGroupConfig, bool)> {
+) -> Option<(&'a niyien_lens_presets::LensGroupConfig, bool)> {
     if let Some(local_override) = job.lens_group_config_override.as_ref() {
         if local_override.is_group_enabled(lens_index) {
             return local_override
@@ -439,15 +439,15 @@ fn metadata_snapshot_for_job(job: &Job) -> Option<core::gyro_source::FileMetadat
 }
 
 fn build_job_lens_group_override(
-    requested_configs: &[anamorphic_presets::LensGroupConfig],
-    global_configs: &[anamorphic_presets::LensGroupConfig],
+    requested_configs: &[niyien_lens_presets::LensGroupConfig],
+    global_configs: &[niyien_lens_presets::LensGroupConfig],
     existing_override: Option<&JobLensGroupOverride>,
 ) -> Option<JobLensGroupOverride> {
-    let requested_configs = anamorphic_presets::normalize_lens_group_configs(requested_configs);
-    let global_configs = anamorphic_presets::normalize_lens_group_configs(global_configs);
-    let mut enabled_groups = vec![false; anamorphic_presets::LENS_GROUP_COUNT];
+    let requested_configs = niyien_lens_presets::normalize_lens_group_configs(requested_configs);
+    let global_configs = niyien_lens_presets::normalize_lens_group_configs(global_configs);
+    let mut enabled_groups = vec![false; niyien_lens_presets::LENS_GROUP_COUNT];
 
-    for lens_index in 0..anamorphic_presets::LENS_GROUP_COUNT {
+    for lens_index in 0..niyien_lens_presets::LENS_GROUP_COUNT {
         let keep_existing_override = existing_override
             .map(|existing| {
                 existing.is_group_enabled(lens_index)
@@ -885,7 +885,7 @@ impl RenderQueue {
         let lens_group_index = {
             let gyro = stab.gyro.read();
             let md = gyro.file_metadata.read();
-            anamorphic_presets::extract_lens_index(&md.additional_data)
+            niyien_lens_presets::extract_lens_index(&md.additional_data)
         };
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
@@ -1332,11 +1332,11 @@ impl RenderQueue {
             let lens_group_index = job.lens_group_index.or_else(|| {
                 metadata_snapshot
                     .as_ref()
-                    .and_then(|md| anamorphic_presets::extract_lens_index(&md.additional_data))
+                    .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
             });
             let metadata_focal_length = metadata_snapshot
                 .as_ref()
-                .and_then(anamorphic_presets::extract_video_focus_length_mm)
+                .and_then(niyien_lens_presets::extract_video_focus_length_mm)
                 .unwrap_or(0.0);
             let mut lens_group_mode = "auto";
             let mut lens_group_number = 0usize;
@@ -1356,8 +1356,8 @@ impl RenderQueue {
                         lens_group_focal_length = config.focal_length_mm.unwrap_or_default();
                         lens_group_ratio = config.squeeze_ratio.unwrap_or_default();
                         lens_group_direction = match config.squeeze_direction.unwrap_or_default() {
-                            anamorphic_presets::SqueezeDirection::Horizontal => "H".to_owned(),
-                            anamorphic_presets::SqueezeDirection::Vertical => "V".to_owned(),
+                            niyien_lens_presets::SqueezeDirection::Horizontal => "H".to_owned(),
+                            niyien_lens_presets::SqueezeDirection::Vertical => "V".to_owned(),
                         };
                         if lens_group_focal_length <= 0.0 {
                             lens_group_focal_length = metadata_focal_length;
@@ -1460,15 +1460,15 @@ impl RenderQueue {
             return QString::from("[]");
         }
 
-        let mut statuses = anamorphic_presets::default_lens_group_statuses();
+        let mut statuses = niyien_lens_presets::default_lens_group_statuses();
         for job_id in job_ids {
             if let Some(job) = self.jobs.get(&job_id) {
                 if let Some(metadata) = metadata_snapshot_for_job(job) {
-                    anamorphic_presets::update_status_from_metadata(&mut statuses, &metadata);
+                    niyien_lens_presets::update_status_from_metadata(&mut statuses, &metadata);
                 }
             }
         }
-        QString::from(anamorphic_presets::lens_group_status_to_json(&statuses))
+        QString::from(niyien_lens_presets::lens_group_status_to_json(&statuses))
     }
 
     fn get_selected_lens_group_config_json(&self, job_ids_json: String) -> QString {
@@ -1478,17 +1478,17 @@ impl RenderQueue {
         }
 
         let global_configs = self.stabilizer.lens_group_config.read().clone();
-        let default_configs = anamorphic_presets::default_lens_group_configs();
-        let mut aggregated = Vec::with_capacity(anamorphic_presets::LENS_GROUP_COUNT);
+        let default_configs = niyien_lens_presets::default_lens_group_configs();
+        let mut aggregated = Vec::with_capacity(niyien_lens_presets::LENS_GROUP_COUNT);
 
-        for lens_index in 0..anamorphic_presets::LENS_GROUP_COUNT {
+        for lens_index in 0..niyien_lens_presets::LENS_GROUP_COUNT {
             let mut effective_configs = Vec::new();
             for job_id in &job_ids {
                 if let Some(job) = self.jobs.get(job_id) {
                     let metadata = metadata_snapshot_for_job(job);
                     let current_lens_index = metadata
                         .as_ref()
-                        .and_then(|md| anamorphic_presets::extract_lens_index(&md.additional_data))
+                        .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
                         .or(job.lens_group_index);
                     if current_lens_index == Some(lens_index) {
                         effective_configs.push(
@@ -1579,7 +1579,7 @@ impl RenderQueue {
             return;
         }
 
-        let requested_configs = anamorphic_presets::lens_group_configs_from_json(&config_json);
+        let requested_configs = niyien_lens_presets::lens_group_configs_from_json(&config_json);
         let global_configs = self.stabilizer.lens_group_config.read().clone();
 
         for job_id in &job_ids {
@@ -1602,7 +1602,7 @@ impl RenderQueue {
 
     fn clear_selected_lens_group_config(&mut self, job_ids_json: String, lens_index: usize) {
         let job_ids = parse_job_ids_json(&job_ids_json);
-        if job_ids.is_empty() || lens_index >= anamorphic_presets::LENS_GROUP_COUNT {
+        if job_ids.is_empty() || lens_index >= niyien_lens_presets::LENS_GROUP_COUNT {
             return;
         }
 
@@ -3712,7 +3712,7 @@ impl RenderQueue {
             (usize, usize),
             JobLensMetadataBackup,
             String,
-            Vec<anamorphic_presets::LensGroupConfig>,
+            Vec<niyien_lens_presets::LensGroupConfig>,
         )> = self
             .jobs
             .iter()
@@ -3810,7 +3810,7 @@ impl RenderQueue {
                             let (lens_index, size) = {
                                 let gyro = stab.gyro.read();
                                 let md = gyro.file_metadata.read();
-                                let li = anamorphic_presets::extract_lens_index(&md.additional_data);
+                                let li = niyien_lens_presets::extract_lens_index(&md.additional_data);
                                 let sz = stab.params.read().size;
                                 (li, sz)
                             };
@@ -3828,7 +3828,7 @@ impl RenderQueue {
                                 snapshot
                             };
                             let auto_focus =
-                                anamorphic_presets::extract_video_focus_length_mm(&base_metadata);
+                                niyien_lens_presets::extract_video_focus_length_mm(&base_metadata);
 
                             // Preserve sync_settings across lens profile replacement
                             let saved_sync_settings = stab.lens.read().sync_settings.clone();
@@ -3855,20 +3855,20 @@ impl RenderQueue {
                                         resolve_lens_group_focal_length(auto_focus, Some(group_config));
                                     let manual_focus_length_mm = selected_focal_length.and_then(
                                         |(focal_length_mm, source)| {
-                                            (source == anamorphic_presets::FocalLengthSource::Manual)
+                                            (source == niyien_lens_presets::FocalLengthSource::Manual)
                                                 .then_some(focal_length_mm)
                                         },
                                     );
 
                                     if let Some(focal_length_mm) = manual_focus_length_mm {
-                                        anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                        niyien_lens_presets::apply_focal_length_fallback_to_metadata(
                                             &mut base_metadata,
                                             focal_length_mm,
                                         );
                                         {
                                             let gyro = stab.gyro.read();
                                             let mut md = gyro.file_metadata.write();
-                                            anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                                            niyien_lens_presets::apply_focal_length_fallback_to_metadata(
                                                 &mut md,
                                                 focal_length_mm,
                                             );
@@ -3883,7 +3883,7 @@ impl RenderQueue {
 
                                     if group_config.anamorphic_enabled {
                                         let existing_lens = stab.lens.read().clone();
-                                        let profile = anamorphic_presets::build_lens_profile(
+                                        let profile = niyien_lens_presets::build_lens_profile(
                                             &base_metadata,
                                             size,
                                             Some(group_config),
@@ -3970,7 +3970,7 @@ impl RenderQueue {
             original_video_rotation: f64,
             original_output_size: (usize, usize),
             base_lens_metadata: Option<JobLensMetadataBackup>,
-            effective_lens_group_configs: Vec<anamorphic_presets::LensGroupConfig>,
+            effective_lens_group_configs: Vec<niyien_lens_presets::LensGroupConfig>,
             stab: Arc<StabilizationManager>,
         }
         #[derive(Clone)]
@@ -4109,7 +4109,7 @@ impl RenderQueue {
                     Option<usize>,
                 )>,
                 Vec<(usize, Vec<CachedGyroMetadataRange>)>,
-                Vec<anamorphic_presets::LensGroupStatus>,
+                Vec<niyien_lens_presets::LensGroupStatus>,
                 std::time::Instant,
             )| {
                 let t_cb = std::time::Instant::now();
@@ -4248,20 +4248,14 @@ impl RenderQueue {
             },
         );
 
-        // Simple mode defaults to NeuFlow v2 Burn (method=4); Advanced stays on
-        // NeuFlow v2 CUDA/ORT (method=3). Falls back to AKAZE if neither backend
-        // is compiled in. Must be read outside run_threaded since RenderQueue
-        // contains QObjectCppWrapper and is not Send.
-        let default_of_method: u64 = if self.simple_mode && cfg!(feature = "neuflow-burn") {
-            4
-        } else {
-            3
-        };
+        // Default optical flow: OpenCV DIS (method=2). neuflow feature 关闭时
+        // 依然可用；开启时用户可在 Advanced 下拉手动切到 NeuFlow。
+        let default_of_method: u64 = 2;
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();
             let lens_group_status = Arc::new(ParkingMutex::new(
-                anamorphic_presets::default_lens_group_statuses(),
+                niyien_lens_presets::default_lens_group_statuses(),
             ));
 
             // 按区间缓存 telemetry 数据，避免超大 gyro 文件被整段解析
@@ -4535,30 +4529,30 @@ impl RenderQueue {
                         item.base_lens_metadata = Some(JobLensMetadataBackup::from_metadata(&md));
                         {
                             let mut statuses = lens_group_status.lock();
-                            anamorphic_presets::update_status_from_metadata(&mut statuses, &md);
+                            niyien_lens_presets::update_status_from_metadata(&mut statuses, &md);
                         }
 
                         let lens_index =
-                            anamorphic_presets::extract_lens_index(&md.additional_data);
+                            niyien_lens_presets::extract_lens_index(&md.additional_data);
                         item.lens_group_index = lens_index;
                         let group_config = lens_index
                             .and_then(|index| item.effective_lens_group_configs.get(index))
                             .cloned();
                         let auto_focus_length_mm =
-                            anamorphic_presets::extract_video_focus_length_mm(&md);
+                            niyien_lens_presets::extract_video_focus_length_mm(&md);
                         let selected_focal_length = resolve_lens_group_focal_length(
                             auto_focus_length_mm,
                             group_config.as_ref(),
                         );
                         let manual_focus_length_mm = selected_focal_length.and_then(
                             |(focal_length_mm, source)| {
-                                (source == anamorphic_presets::FocalLengthSource::Manual)
+                                (source == niyien_lens_presets::FocalLengthSource::Manual)
                                     .then_some(focal_length_mm)
                             },
                         );
 
                         if let Some(focal_length_mm) = manual_focus_length_mm {
-                            anamorphic_presets::apply_focal_length_fallback_to_metadata(
+                            niyien_lens_presets::apply_focal_length_fallback_to_metadata(
                                 &mut md,
                                 focal_length_mm,
                             );
@@ -4621,7 +4615,7 @@ impl RenderQueue {
                             .as_ref()
                             .filter(|cfg| cfg.anamorphic_enabled)
                             .and_then(|cfg| {
-                                anamorphic_presets::build_lens_profile(
+                                niyien_lens_presets::build_lens_profile(
                                     &md,
                                     size,
                                     Some(cfg),
@@ -5743,7 +5737,7 @@ mod tests {
 
     #[test]
     fn resolve_lens_group_focal_length_prefers_manual_override() {
-        let config = anamorphic_presets::LensGroupConfig {
+        let config = niyien_lens_presets::LensGroupConfig {
             lens_index: 0,
             focal_length_mm: Some(50.0),
             ..Default::default()
@@ -5751,24 +5745,24 @@ mod tests {
 
         let selected = resolve_lens_group_focal_length(Some(35.0), Some(&config)).unwrap();
         assert_eq!(selected.0, 50.0);
-        assert_eq!(selected.1, anamorphic_presets::FocalLengthSource::Manual);
+        assert_eq!(selected.1, niyien_lens_presets::FocalLengthSource::Manual);
     }
 
     #[test]
     fn resolve_lens_group_focal_length_keeps_auto_when_manual_empty() {
-        let config = anamorphic_presets::LensGroupConfig {
+        let config = niyien_lens_presets::LensGroupConfig {
             lens_index: 0,
             ..Default::default()
         };
 
         let selected = resolve_lens_group_focal_length(Some(35.0), Some(&config)).unwrap();
         assert_eq!(selected.0, 35.0);
-        assert_eq!(selected.1, anamorphic_presets::FocalLengthSource::Auto);
+        assert_eq!(selected.1, niyien_lens_presets::FocalLengthSource::Auto);
     }
 
     #[test]
     fn resolve_lens_group_focal_length_falls_back_to_manual_when_auto_missing() {
-        let config = anamorphic_presets::LensGroupConfig {
+        let config = niyien_lens_presets::LensGroupConfig {
             lens_index: 0,
             focal_length_mm: Some(24.0),
             ..Default::default()
@@ -5776,15 +5770,15 @@ mod tests {
 
         let selected = resolve_lens_group_focal_length(None, Some(&config)).unwrap();
         assert_eq!(selected.0, 24.0);
-        assert_eq!(selected.1, anamorphic_presets::FocalLengthSource::Manual);
+        assert_eq!(selected.1, niyien_lens_presets::FocalLengthSource::Manual);
     }
 
     #[test]
     fn build_job_lens_group_override_keeps_local_auto_detect_against_global_manual() {
-        let mut global = anamorphic_presets::default_lens_group_configs();
+        let mut global = niyien_lens_presets::default_lens_group_configs();
         global[0].focal_length_mm = Some(35.0);
 
-        let requested = anamorphic_presets::default_lens_group_configs();
+        let requested = niyien_lens_presets::default_lens_group_configs();
         let local_override = build_job_lens_group_override(&requested, &global, None).unwrap();
 
         assert!(local_override.is_group_enabled(0));
@@ -5793,11 +5787,11 @@ mod tests {
 
     #[test]
     fn effective_lens_group_configs_only_override_enabled_groups() {
-        let mut global = anamorphic_presets::default_lens_group_configs();
+        let mut global = niyien_lens_presets::default_lens_group_configs();
         global[0].focal_length_mm = Some(35.0);
         global[1].focal_length_mm = Some(50.0);
 
-        let mut local_configs = anamorphic_presets::default_lens_group_configs();
+        let mut local_configs = niyien_lens_presets::default_lens_group_configs();
         local_configs[0].focal_length_mm = Some(24.0);
 
         let job = Job {

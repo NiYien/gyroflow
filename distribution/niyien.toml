@@ -16,6 +16,8 @@ firmware_manifest = "https://www.niyien.com/Update/update.json"
 firmware_base = "https://www.niyien.com/Update/firmware/A1/"
 
 [data.lens]
+# deprecated: 数据源已迁至 niyien-lens-data 独立仓库 (https://github.com/NiYien/niyien-lens-data)
+# 此字段客户端已弃用，仅为反序列化兼容保留
 source_dir = "distribution/data/lens"
 asset_name = "gyroflow-niyien-lens.cbor.gz"
 install_dir = "lens"

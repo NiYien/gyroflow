@@ -3674,6 +3674,7 @@ dependencies = [
  "simple-easing",
  "space",
  "stabilize_spirv",
+ "tar",
  "telemetry-parser",
  "thiserror 2.0.18",
  "time",

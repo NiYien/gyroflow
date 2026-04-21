@@ -78,7 +78,8 @@ pub struct Controller {
     lens_group_status_changed: qt_signal!(),
     get_lens_group_status: qt_method!(fn(&self) -> QString),
     refresh_lens_group_status: qt_method!(fn(&self)),
-    get_anamorphic_presets: qt_method!(fn(&self) -> QString),
+    get_lens_presets: qt_method!(fn(&self) -> QString),
+    has_neuflow_support: qt_method!(fn(&self) -> bool),
     export_lens_profile: qt_method!(fn(&mut self, url: QUrl, info: QJsonObject, upload: bool)),
     export_lens_profile_filename: qt_method!(fn(&mut self, info: QJsonObject) -> QString),
 
@@ -1427,8 +1428,11 @@ impl Controller {
     fn refresh_lens_group_status(&self) {
         self.lens_group_status_changed();
     }
-    fn get_anamorphic_presets(&self) -> QString {
-        QString::from(self.stabilizer.get_anamorphic_presets_json())
+    fn get_lens_presets(&self) -> QString {
+        QString::from(self.stabilizer.get_lens_presets_json())
+    }
+    fn has_neuflow_support(&self) -> bool {
+        cfg!(any(feature = "neuflow-ort", feature = "neuflow-burn"))
     }
 
     fn set_preview_resolution(&mut self, target_height: i32, player: QJSValue) {

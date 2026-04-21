@@ -91,8 +91,13 @@ impl OpticalFlowMethod {
                 4,
             )),
             _ => {
-                log::error!("Unknown OF method {method}",);
-                Self::OFAkaze(OFAkaze::detect_features(timestamp_us, img, width, height))
+                log::error!("Unknown OF method {method}, falling back to OpenCV DIS");
+                Self::OFOpenCVDis(OFOpenCVDis::detect_features(
+                    timestamp_us,
+                    img,
+                    width,
+                    height,
+                ))
             }
         }
     }

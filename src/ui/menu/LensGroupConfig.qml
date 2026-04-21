@@ -154,7 +154,7 @@ MenuItem {
         syncing = false
     }
     function loadPresets(): void {
-        presets = parseJson(controller.get_anamorphic_presets(), [])
+        presets = parseJson(controller.get_lens_presets(), [])
         if (!Array.isArray(presets))
             presets = []
     }

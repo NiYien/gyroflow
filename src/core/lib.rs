@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-pub mod anamorphic_presets;
+pub mod niyien_lens_presets;
 #[cfg(feature = "opencv")]
 pub mod calibration;
 pub mod camera_identifier;
@@ -32,7 +32,7 @@ pub mod neuflow_burn;
 pub mod stabilization_params;
 pub mod util;
 
-use anamorphic_presets::{LensGroupConfig, LensGroupStatus};
+use niyien_lens_presets::{LensGroupConfig, LensGroupStatus};
 use camera_identifier::CameraIdentifier;
 use gpu::Buffers;
 use gpu::drawing::*;
@@ -203,10 +203,10 @@ impl Default for StabilizationManager {
 
             input_file: Arc::new(RwLock::new(InputFile::default())),
             lens_group_config: Arc::new(RwLock::new(
-                anamorphic_presets::default_lens_group_configs(),
+                niyien_lens_presets::default_lens_group_configs(),
             )),
             lens_group_status: Arc::new(RwLock::new(
-                anamorphic_presets::default_lens_group_statuses(),
+                niyien_lens_presets::default_lens_group_statuses(),
             )),
 
             #[cfg(feature = "opencv")]
@@ -1642,25 +1642,25 @@ impl StabilizationManager {
     }
 
     pub fn set_lens_group_config_json(&self, json: &str) {
-        *self.lens_group_config.write() = anamorphic_presets::lens_group_configs_from_json(json);
+        *self.lens_group_config.write() = niyien_lens_presets::lens_group_configs_from_json(json);
     }
     pub fn get_lens_group_config_json(&self) -> String {
-        anamorphic_presets::lens_group_config_to_json(&self.lens_group_config.read())
+        niyien_lens_presets::lens_group_config_to_json(&self.lens_group_config.read())
     }
     pub fn clear_lens_group_config(&self) {
-        *self.lens_group_config.write() = anamorphic_presets::default_lens_group_configs();
+        *self.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
     }
     pub fn set_lens_group_status(&self, statuses: Vec<LensGroupStatus>) {
         *self.lens_group_status.write() = statuses;
     }
     pub fn clear_lens_group_status(&self) {
-        *self.lens_group_status.write() = anamorphic_presets::default_lens_group_statuses();
+        *self.lens_group_status.write() = niyien_lens_presets::default_lens_group_statuses();
     }
     pub fn get_lens_group_status_json(&self) -> String {
-        anamorphic_presets::lens_group_status_to_json(&self.lens_group_status.read())
+        niyien_lens_presets::lens_group_status_to_json(&self.lens_group_status.read())
     }
-    pub fn get_anamorphic_presets_json(&self) -> String {
-        anamorphic_presets::load_presets_json()
+    pub fn get_lens_presets_json(&self) -> String {
+        niyien_lens_presets::load_presets_json()
     }
 
     pub fn set_gpu_decoding(&self, v: bool) {
