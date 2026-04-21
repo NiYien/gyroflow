@@ -32,12 +32,15 @@ jobs:
           path: '${{ github.workspace }}/ext/'
           key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-0
 
-      - name: Prepare Vulkan SDK
-        uses: johnnynunez/setup-vulkan-sdk@v1
-        with:
-          vulkan-query-version: 1.4.304.1
-          vulkan-components: Vulkan-Headers
-          vulkan-use-cache: true
+      # Vulkan SDK 仅在 neuflow feature 开启时需要（burn wgpu 后端）。
+      # 本次 release default feature 已去掉 "neuflow"，无需装 Vulkan。
+      # TODO: neuflow feature 恢复时把此步骤加回来。
+      # - name: Prepare Vulkan SDK
+      #   uses: johnnynunez/setup-vulkan-sdk@v1
+      #   with:
+      #     vulkan-query-version: 1.4.304.1
+      #     vulkan-components: Vulkan-Headers
+      #     vulkan-use-cache: true
 
       - name: Force qml-video-rs rebuild (UNIX)
         if: ${{ matrix.targets.os != 'windows-2022' }}
