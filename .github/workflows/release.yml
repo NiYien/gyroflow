@@ -125,18 +125,28 @@ jobs:
   mirror_sync:
     name: Sync app assets to download.niyien.com
     needs: build
-    if: ${{ secrets.NIYIEN_MIRROR_HOST != '' && secrets.NIYIEN_MIRROR_USER != '' && secrets.NIYIEN_MIRROR_KEY != '' && secrets.NIYIEN_MIRROR_PATH != '' }}
     runs-on: ubuntu-latest
+    # 无 job-level if（GitHub 不允许 secrets 出现在此处）。
+    # Secrets 缺失时各 step 通过 env.MIRROR_HOST 检查自行 skip。
     steps:
       - name: Download artifacts
+        env:
+          MIRROR_HOST: ${{ secrets.NIYIEN_MIRROR_HOST }}
+        if: env.MIRROR_HOST != ''
         uses: actions/download-artifact@v4
       - name: Prepare sync bundle
+        env:
+          MIRROR_HOST: ${{ secrets.NIYIEN_MIRROR_HOST }}
+        if: env.MIRROR_HOST != ''
         run: |
           # 临时：仅 windows + mac，linux/android 后续恢复
           mkdir -p mirror
           cp ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip mirror/ || true
           cp ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg mirror/ || true
       - name: Upload to domestic mirror
+        env:
+          MIRROR_HOST: ${{ secrets.NIYIEN_MIRROR_HOST }}
+        if: env.MIRROR_HOST != ''
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.NIYIEN_MIRROR_HOST }}
