@@ -4851,16 +4851,6 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Open file</source>
         <translation>打开文件</translation>
     </message>
-    <message>
-        <location filename="../../src/ui/menu/VideoInformation.qml" line="199"/>
-        <source>On</source>
-        <translation>开</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/VideoInformation.qml" line="199"/>
-        <source>Off</source>
-        <translation>关</translation>
-    </message>
 </context>
 <context>
     <name>main_window</name>

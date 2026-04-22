@@ -1881,6 +1881,10 @@ impl StabilizationManager {
         *self.gyro.write() = GyroSource::new();
         self.keyframes.write().clear();
 
+        // Drop the anamorphic baseline snapshot so a new project doesn't inherit the
+        // previous video's distortion coefficients when the user toggles anamorphic on.
+        *self.pre_anamorphic_backup.write() = None;
+
         self.pose_estimator.clear();
     }
 

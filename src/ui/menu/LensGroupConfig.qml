@@ -531,6 +531,10 @@ MenuItem {
                                 config.preset_id = null
                                 config.squeeze_direction = "horizontal"
                                 config.squeeze_ratio = null
+                                // Reset the lens-correction override so the next anamorphic
+                                // enable starts fresh at the 100% default instead of
+                                // inheriting the previous session's slider value.
+                                config.lens_correction_amount = null
                             } else if (!config.squeeze_direction) {
                                 config.squeeze_direction = "horizontal"
                             }

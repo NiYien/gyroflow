@@ -3998,6 +3998,21 @@ impl RenderQueue {
                                             );
                                         }
                                     }
+
+                                    // Mirror apply_lens_group_to_main: anamorphic ON honors the
+                                    // per-group slider value (default 100 when unset); anamorphic
+                                    // OFF always reverts to 100%. Without this the queue renders
+                                    // differ from the live preview.
+                                    let correction_percent = if group_config.anamorphic_enabled {
+                                        group_config
+                                            .lens_correction_amount
+                                            .filter(|v| v.is_finite())
+                                            .map(|v| v.clamp(0.0, 100.0) as f64)
+                                            .unwrap_or(100.0)
+                                    } else {
+                                        100.0
+                                    };
+                                    stab.set_lens_correction_amount(correction_percent / 100.0);
                                 }
                             }
 
