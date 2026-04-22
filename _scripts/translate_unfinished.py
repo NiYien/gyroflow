@@ -1,0 +1,816 @@
+#!/usr/bin/env python3
+"""
+One-shot batch translator for unfinished TS entries.
+
+Policy:
+- Only replace entries with `<translation type="unfinished"></translation>`
+- Leave already-translated entries untouched
+- Match by <source> text (after XML entity decode), replace with language-specific translation
+- Preserve surrounding whitespace / location / context blocks
+
+Triggered by openspec change: niyien-ui-branding-i18n-pass (task 2.4).
+"""
+import re
+import sys
+from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Translation table. Key = English source; value = dict of {lang_code: translation}.
+# Languages: cs, da, de, el, es, fi, fr, gl, id, it, ja, ko, no, pl, pt, pt_BR,
+#            ru, sk, tr, uk, zh_CN, zh_TW
+# ---------------------------------------------------------------------------
+
+T = {
+    "Failed to fetch available versions: %1": {
+        "cs": "Nepodařilo se načíst dostupné verze: %1",
+        "da": "Kunne ikke hente tilgængelige versioner: %1",
+        "de": "Verfügbare Versionen konnten nicht abgerufen werden: %1",
+        "el": "Αποτυχία λήψης διαθέσιμων εκδόσεων: %1",
+        "es": "Error al obtener las versiones disponibles: %1",
+        "fi": "Saatavilla olevien versioiden haku epäonnistui: %1",
+        "fr": "Impossible de récupérer les versions disponibles : %1",
+        "gl": "Non se puideron obter as versións dispoñibles: %1",
+        "id": "Gagal mengambil versi yang tersedia: %1",
+        "it": "Impossibile recuperare le versioni disponibili: %1",
+        "ja": "利用可能なバージョンの取得に失敗しました: %1",
+        "ko": "사용 가능한 버전을 가져오지 못했습니다: %1",
+        "no": "Kunne ikke hente tilgjengelige versjoner: %1",
+        "pl": "Nie udało się pobrać dostępnych wersji: %1",
+        "pt": "Falha ao obter as versões disponíveis: %1",
+        "pt_BR": "Falha ao obter versões disponíveis: %1",
+        "ru": "Не удалось получить доступные версии: %1",
+        "sk": "Nepodarilo sa načítať dostupné verzie: %1",
+        "tr": "Kullanılabilir sürümler alınamadı: %1",
+        "uk": "Не вдалося отримати доступні версії: %1",
+        "zh_CN": "获取可用版本失败：%1",
+        "zh_TW": "取得可用版本失敗：%1",
+    },
+    "No optional versions are currently available.": {
+        "cs": "V tuto chvíli nejsou k dispozici žádné volitelné verze.",
+        "da": "Der er ingen valgfrie versioner tilgængelige.",
+        "de": "Derzeit sind keine optionalen Versionen verfügbar.",
+        "el": "Δεν υπάρχουν προαιρετικές εκδόσεις αυτή τη στιγμή.",
+        "es": "Actualmente no hay versiones opcionales disponibles.",
+        "fi": "Valinnaisia versioita ei ole tällä hetkellä saatavilla.",
+        "fr": "Aucune version optionnelle n'est disponible pour le moment.",
+        "gl": "Non hai versións opcionais dispoñibles neste momento.",
+        "id": "Tidak ada versi opsional yang tersedia saat ini.",
+        "it": "Al momento non sono disponibili versioni opzionali.",
+        "ja": "現在、利用可能なオプションバージョンはありません。",
+        "ko": "현재 사용 가능한 선택적 버전이 없습니다.",
+        "no": "Ingen valgfrie versjoner er tilgjengelige for øyeblikket.",
+        "pl": "Obecnie nie są dostępne żadne opcjonalne wersje.",
+        "pt": "Não há versões opcionais disponíveis no momento.",
+        "pt_BR": "No momento não há versões opcionais disponíveis.",
+        "ru": "В настоящее время дополнительные версии недоступны.",
+        "sk": "Momentálne nie sú dostupné žiadne voliteľné verzie.",
+        "tr": "Şu anda isteğe bağlı sürüm yok.",
+        "uk": "Наразі немає доступних необов'язкових версій.",
+        "zh_CN": "当前没有可选版本。",
+        "zh_TW": "目前沒有可用的選用版本。",
+    },
+    "Available versions": {
+        "cs": "Dostupné verze", "da": "Tilgængelige versioner", "de": "Verfügbare Versionen",
+        "el": "Διαθέσιμες εκδόσεις", "es": "Versiones disponibles", "fi": "Saatavilla olevat versiot",
+        "fr": "Versions disponibles", "gl": "Versións dispoñibles", "id": "Versi tersedia",
+        "it": "Versioni disponibili", "ja": "利用可能なバージョン", "ko": "사용 가능한 버전",
+        "no": "Tilgjengelige versjoner", "pl": "Dostępne wersje", "pt": "Versões disponíveis",
+        "pt_BR": "Versões disponíveis", "ru": "Доступные версии", "sk": "Dostupné verzie",
+        "tr": "Kullanılabilir sürümler", "uk": "Доступні версії", "zh_CN": "可用版本", "zh_TW": "可用版本",
+    },
+    "Recommended": {
+        "cs": "Doporučeno", "da": "Anbefalet", "de": "Empfohlen", "el": "Συνιστώμενο",
+        "es": "Recomendado", "fi": "Suositeltu", "fr": "Recommandé", "gl": "Recomendado",
+        "id": "Direkomendasikan", "it": "Consigliato", "ja": "推奨", "ko": "권장",
+        "no": "Anbefalt", "pl": "Zalecane", "pt": "Recomendado", "pt_BR": "Recomendado",
+        "ru": "Рекомендуется", "sk": "Odporúčané", "tr": "Önerilen", "uk": "Рекомендовано",
+        "zh_CN": "推荐", "zh_TW": "推薦",
+    },
+    "Close": {
+        "cs": "Zavřít", "da": "Luk", "de": "Schließen", "el": "Κλείσιμο",
+        "es": "Cerrar", "fi": "Sulje", "fr": "Fermer", "gl": "Pechar",
+        "id": "Tutup", "it": "Chiudi", "ja": "閉じる", "ko": "닫기",
+        "no": "Lukk", "pl": "Zamknij", "pt": "Fechar", "pt_BR": "Fechar",
+        "ru": "Закрыть", "sk": "Zavrieť", "tr": "Kapat", "uk": "Закрити",
+        "zh_CN": "关闭", "zh_TW": "關閉",
+    },
+    "View available app versions": {
+        "cs": "Zobrazit dostupné verze aplikace",
+        "da": "Vis tilgængelige app-versioner",
+        "de": "Verfügbare App-Versionen anzeigen",
+        "el": "Προβολή διαθέσιμων εκδόσεων εφαρμογής",
+        "es": "Ver versiones disponibles de la app",
+        "fi": "Näytä saatavilla olevat sovellusversiot",
+        "fr": "Voir les versions disponibles de l'application",
+        "gl": "Ver versións dispoñibles da aplicación",
+        "id": "Lihat versi aplikasi yang tersedia",
+        "it": "Visualizza le versioni app disponibili",
+        "ja": "利用可能なアプリバージョンを表示",
+        "ko": "사용 가능한 앱 버전 보기",
+        "no": "Vis tilgjengelige app-versjoner",
+        "pl": "Wyświetl dostępne wersje aplikacji",
+        "pt": "Ver versões disponíveis da aplicação",
+        "pt_BR": "Ver versões disponíveis do app",
+        "ru": "Просмотр доступных версий приложения",
+        "sk": "Zobraziť dostupné verzie aplikácie",
+        "tr": "Kullanılabilir uygulama sürümlerini görüntüle",
+        "uk": "Переглянути доступні версії додатка",
+        "zh_CN": "查看可用的应用版本",
+        "zh_TW": "檢視可用的應用程式版本",
+    },
+    "Auto sync": {
+        "cs": "Automatická synchronizace", "da": "Autosynk", "de": "Auto-Synchronisierung",
+        "el": "Αυτόματος συγχρονισμός", "es": "Sincronización automática", "fi": "Automaattinen synkronointi",
+        "fr": "Synchronisation auto", "gl": "Sincronización automática", "id": "Sinkronisasi otomatis",
+        "it": "Sincronizzazione auto", "ja": "自動同期", "ko": "자동 동기화",
+        "no": "Autosynk", "pl": "Automatyczna synchronizacja", "pt": "Sincronização automática",
+        "pt_BR": "Sincronização automática", "ru": "Авто-синхронизация", "sk": "Automatická synchronizácia",
+        "tr": "Otomatik senkronizasyon", "uk": "Автосинхронізація", "zh_CN": "自动同步", "zh_TW": "自動同步",
+    },
+    "Stop": {
+        "cs": "Zastavit", "da": "Stop", "de": "Stopp", "el": "Διακοπή",
+        "es": "Detener", "fi": "Pysäytä", "fr": "Arrêter", "gl": "Deter",
+        "id": "Berhenti", "it": "Ferma", "ja": "停止", "ko": "정지",
+        "no": "Stopp", "pl": "Zatrzymaj", "pt": "Parar", "pt_BR": "Parar",
+        "ru": "Стоп", "sk": "Zastaviť", "tr": "Durdur", "uk": "Зупинити",
+        "zh_CN": "停止", "zh_TW": "停止",
+    },
+    "Export stabilized video": {
+        "cs": "Exportovat stabilizované video", "da": "Eksportér stabiliseret video",
+        "de": "Stabilisiertes Video exportieren", "el": "Εξαγωγή σταθεροποιημένου βίντεο",
+        "es": "Exportar vídeo estabilizado", "fi": "Vie vakautettu video",
+        "fr": "Exporter la vidéo stabilisée", "gl": "Exportar vídeo estabilizado",
+        "id": "Ekspor video yang distabilkan", "it": "Esporta video stabilizzato",
+        "ja": "手ブレ補正動画を書き出し", "ko": "안정화된 영상 내보내기",
+        "no": "Eksporter stabilisert video", "pl": "Eksportuj ustabilizowane wideo",
+        "pt": "Exportar vídeo estabilizado", "pt_BR": "Exportar vídeo estabilizado",
+        "ru": "Экспорт стабилизированного видео", "sk": "Exportovať stabilizované video",
+        "tr": "Sabitlenmiş videoyu dışa aktar", "uk": "Експортувати стабілізоване відео",
+        "zh_CN": "导出稳定后的视频", "zh_TW": "匯出穩定後的影片",
+    },
+    "Clear render queue": {
+        "cs": "Vymazat frontu", "da": "Ryd gengivelseskø", "de": "Renderqueue leeren",
+        "el": "Εκκαθάριση ουράς απόδοσης", "es": "Vaciar cola de renderizado", "fi": "Tyhjennä renderöintijono",
+        "fr": "Vider la file de rendu", "gl": "Limpar a cola de renderizado",
+        "id": "Bersihkan antrean render", "it": "Svuota coda di rendering",
+        "ja": "レンダリングキューをクリア", "ko": "렌더 대기열 비우기",
+        "no": "Tøm gjengivelseskø", "pl": "Wyczyść kolejkę renderowania",
+        "pt": "Limpar fila de renderização", "pt_BR": "Limpar fila de renderização",
+        "ru": "Очистить очередь рендера", "sk": "Vyprázdniť frontu renderovania",
+        "tr": "Render kuyruğunu temizle", "uk": "Очистити чергу рендера",
+        "zh_CN": "清空渲染队列", "zh_TW": "清除渲染佇列",
+    },
+    "Are you sure you want to remove all items from the render queue?": {
+        "cs": "Opravdu chcete odstranit všechny položky z fronty?",
+        "da": "Er du sikker på, at du vil fjerne alle elementer fra gengivelseskøen?",
+        "de": "Möchten Sie wirklich alle Elemente aus der Renderqueue entfernen?",
+        "el": "Είστε βέβαιοι ότι θέλετε να αφαιρέσετε όλα τα στοιχεία από την ουρά απόδοσης;",
+        "es": "¿Seguro que quieres eliminar todos los elementos de la cola de renderizado?",
+        "fi": "Haluatko varmasti poistaa kaikki kohteet renderöintijonosta?",
+        "fr": "Êtes-vous sûr de vouloir supprimer tous les éléments de la file de rendu ?",
+        "gl": "Está seguro de que quere eliminar todos os elementos da cola de renderizado?",
+        "id": "Apakah Anda yakin ingin menghapus semua item dari antrean render?",
+        "it": "Sei sicuro di voler rimuovere tutti gli elementi dalla coda di rendering?",
+        "ja": "レンダリングキューからすべての項目を削除してもよろしいですか?",
+        "ko": "렌더 대기열의 모든 항목을 제거하시겠습니까?",
+        "no": "Er du sikker på at du vil fjerne alle elementer fra gjengivelseskøen?",
+        "pl": "Czy na pewno chcesz usunąć wszystkie elementy z kolejki renderowania?",
+        "pt": "Tem a certeza de que pretende remover todos os itens da fila de renderização?",
+        "pt_BR": "Tem certeza de que deseja remover todos os itens da fila de renderização?",
+        "ru": "Удалить все элементы из очереди рендера?",
+        "sk": "Naozaj chcete odstrániť všetky položky z frontu renderovania?",
+        "tr": "Render kuyruğundaki tüm öğeleri kaldırmak istediğinizden emin misiniz?",
+        "uk": "Видалити всі елементи з черги рендера?",
+        "zh_CN": "确定要从渲染队列中移除所有项目吗？",
+        "zh_TW": "確定要從渲染佇列中移除所有項目嗎？",
+    },
+    "Sensor && Lens": {
+        "cs": "Senzor && Objektiv", "da": "Sensor && Objektiv", "de": "Sensor && Objektiv",
+        "el": "Αισθητήρας && Φακός", "es": "Sensor && Objetivo", "fi": "Kenno && Objektiivi",
+        "fr": "Capteur && Objectif", "gl": "Sensor && Obxectivo", "id": "Sensor && Lensa",
+        "it": "Sensore && Obiettivo", "ja": "センサーとレンズ", "ko": "센서 및 렌즈",
+        "no": "Sensor && Objektiv", "pl": "Matryca && Obiektyw", "pt": "Sensor && Objetiva",
+        "pt_BR": "Sensor && Lente", "ru": "Сенсор && Объектив", "sk": "Snímač && Objektív",
+        "tr": "Sensör && Lens", "uk": "Сенсор && Об'єктив", "zh_CN": "传感器和镜头", "zh_TW": "感光元件與鏡頭",
+    },
+    "Settings": {
+        "cs": "Nastavení", "da": "Indstillinger", "de": "Einstellungen", "el": "Ρυθμίσεις",
+        "es": "Ajustes", "fi": "Asetukset", "fr": "Paramètres", "gl": "Axustes",
+        "id": "Pengaturan", "it": "Impostazioni", "ja": "設定", "ko": "설정",
+        "no": "Innstillinger", "pl": "Ustawienia", "pt": "Definições", "pt_BR": "Configurações",
+        "ru": "Настройки", "sk": "Nastavenia", "tr": "Ayarlar", "uk": "Налаштування",
+        "zh_CN": "设置", "zh_TW": "設定",
+    },
+    "Lens groups": {
+        "cs": "Skupiny objektivů", "da": "Objektivgrupper", "de": "Objektivgruppen",
+        "el": "Ομάδες φακών", "es": "Grupos de objetivos", "fi": "Objektiiviryhmät",
+        "fr": "Groupes d'objectifs", "gl": "Grupos de obxectivos", "id": "Grup lensa",
+        "it": "Gruppi di obiettivi", "ja": "レンズグループ", "ko": "렌즈 그룹",
+        "no": "Objektivgrupper", "pl": "Grupy obiektywów", "pt": "Grupos de objetivas",
+        "pt_BR": "Grupos de lentes", "ru": "Группы объективов", "sk": "Skupiny objektívov",
+        "tr": "Lens grupları", "uk": "Групи об'єктивів", "zh_CN": "镜头组", "zh_TW": "鏡頭群組",
+    },
+    "Local": {
+        "cs": "Místní", "da": "Lokal", "de": "Lokal", "el": "Τοπικό",
+        "es": "Local", "fi": "Paikallinen", "fr": "Local", "gl": "Local",
+        "id": "Lokal", "it": "Locale", "ja": "ローカル", "ko": "로컬",
+        "no": "Lokal", "pl": "Lokalne", "pt": "Local", "pt_BR": "Local",
+        "ru": "Локально", "sk": "Lokálne", "tr": "Yerel", "uk": "Локально",
+        "zh_CN": "局部", "zh_TW": "本機",
+    },
+    "Global": {
+        "cs": "Globální", "da": "Global", "de": "Global", "el": "Καθολικό",
+        "es": "Global", "fi": "Yleinen", "fr": "Global", "gl": "Global",
+        "id": "Global", "it": "Globale", "ja": "全体", "ko": "전역",
+        "no": "Global", "pl": "Globalne", "pt": "Global", "pt_BR": "Global",
+        "ru": "Глобально", "sk": "Globálne", "tr": "Genel", "uk": "Глобально",
+        "zh_CN": "全局", "zh_TW": "全域",
+    },
+    "Unused": {
+        "cs": "Nepoužito", "da": "Ubrugt", "de": "Ungenutzt", "el": "Μη χρησιμοποιημένο",
+        "es": "Sin usar", "fi": "Käyttämätön", "fr": "Inutilisé", "gl": "Sen uso",
+        "id": "Tidak digunakan", "it": "Inutilizzato", "ja": "未使用", "ko": "미사용",
+        "no": "Ubrukt", "pl": "Nieużywane", "pt": "Não utilizado", "pt_BR": "Não utilizado",
+        "ru": "Не используется", "sk": "Nepoužité", "tr": "Kullanılmıyor", "uk": "Не використано",
+        "zh_CN": "未使用", "zh_TW": "未使用",
+    },
+    "Mixed": {
+        "cs": "Smíšené", "da": "Blandet", "de": "Gemischt", "el": "Μεικτό",
+        "es": "Mixto", "fi": "Sekoitettu", "fr": "Mixte", "gl": "Mixto",
+        "id": "Campuran", "it": "Misto", "ja": "混在", "ko": "혼합",
+        "no": "Blandet", "pl": "Mieszane", "pt": "Misto", "pt_BR": "Misto",
+        "ru": "Смешанно", "sk": "Zmiešané", "tr": "Karışık", "uk": "Змішано",
+        "zh_CN": "混合", "zh_TW": "混合",
+    },
+    "No focus": {
+        "cs": "Bez ohniska", "da": "Intet fokus", "de": "Kein Fokus", "el": "Χωρίς εστίαση",
+        "es": "Sin foco", "fi": "Ei tarkennusta", "fr": "Sans focale", "gl": "Sen foco",
+        "id": "Tanpa fokus", "it": "Nessuna focale", "ja": "焦点距離なし", "ko": "초점 없음",
+        "no": "Intet fokus", "pl": "Brak ogniskowej", "pt": "Sem foco", "pt_BR": "Sem foco",
+        "ru": "Без фокуса", "sk": "Bez zaostrenia", "tr": "Odak yok", "uk": "Без фокуса",
+        "zh_CN": "无焦距", "zh_TW": "無焦距",
+    },
+    "Manual setup": {
+        "cs": "Ruční nastavení", "da": "Manuel opsætning", "de": "Manuelle Einrichtung",
+        "el": "Χειροκίνητη ρύθμιση", "es": "Configuración manual", "fi": "Manuaalinen määritys",
+        "fr": "Configuration manuelle", "gl": "Configuración manual", "id": "Penyetelan manual",
+        "it": "Configurazione manuale", "ja": "手動設定", "ko": "수동 설정",
+        "no": "Manuell oppsett", "pl": "Ręczna konfiguracja", "pt": "Configuração manual",
+        "pt_BR": "Configuração manual", "ru": "Ручная настройка", "sk": "Manuálne nastavenie",
+        "tr": "Manuel kurulum", "uk": "Ручне налаштування", "zh_CN": "手动设置", "zh_TW": "手動設定",
+    },
+    "Manually set lens focal length or anamorphic info.": {
+        "cs": "Ručně nastavte ohniskovou vzdálenost nebo anamorfní informace.",
+        "da": "Indstil objektivets brændvidde eller anamorf-information manuelt.",
+        "de": "Brennweite oder Anamorph-Infos manuell festlegen.",
+        "el": "Ορίστε χειροκίνητα την εστιακή απόσταση ή τις πληροφορίες αναμορφικού φακού.",
+        "es": "Ajusta manualmente la distancia focal o la información anamórfica.",
+        "fi": "Aseta polttoväli tai anamorfiset tiedot manuaalisesti.",
+        "fr": "Définissez manuellement la focale ou les informations anamorphiques.",
+        "gl": "Estableza manualmente a distancia focal ou a información anamórfica.",
+        "id": "Atur panjang fokus lensa atau info anamorfik secara manual.",
+        "it": "Imposta manualmente la lunghezza focale o le info anamorfiche.",
+        "ja": "焦点距離やアナモフィック情報を手動で設定します。",
+        "ko": "초점 거리 또는 아나모픽 정보를 수동으로 설정합니다.",
+        "no": "Still inn brennvidde eller anamorf-info manuelt.",
+        "pl": "Ręcznie ustaw ogniskową lub informacje anamorficzne.",
+        "pt": "Defina manualmente a distância focal ou informação anamórfica.",
+        "pt_BR": "Defina manualmente a distância focal ou informação anamórfica.",
+        "ru": "Задайте фокусное расстояние или анаморфные параметры вручную.",
+        "sk": "Manuálne nastavte ohniskovú vzdialenosť alebo anamorfné informácie.",
+        "tr": "Odak uzaklığını veya anamorfik bilgiyi manuel olarak ayarlayın.",
+        "uk": "Встановіть вручну фокусну відстань або анаморфні параметри.",
+        "zh_CN": "手动设置镜头焦距或变形信息。",
+        "zh_TW": "手動設定鏡頭焦距或變形資訊。",
+    },
+    "Auto detect": {
+        "cs": "Automaticky detekovat", "da": "Auto-detekter", "de": "Automatisch erkennen",
+        "el": "Αυτόματη ανίχνευση", "es": "Detección automática", "fi": "Automaattinen tunnistus",
+        "fr": "Détection auto", "gl": "Detección automática", "id": "Deteksi otomatis",
+        "it": "Rilevamento automatico", "ja": "自動検出", "ko": "자동 감지",
+        "no": "Automatisk gjenkjenning", "pl": "Wykryj automatycznie", "pt": "Deteção automática",
+        "pt_BR": "Detecção automática", "ru": "Автоопределение", "sk": "Automatické rozpoznanie",
+        "tr": "Otomatik algıla", "uk": "Автовизначення", "zh_CN": "自动检测", "zh_TW": "自動偵測",
+    },
+    "Manual edit": {
+        "cs": "Ruční úpravy", "da": "Manuel redigering", "de": "Manuell bearbeiten",
+        "el": "Χειροκίνητη επεξεργασία", "es": "Edición manual", "fi": "Muokkaa käsin",
+        "fr": "Édition manuelle", "gl": "Edición manual", "id": "Edit manual",
+        "it": "Modifica manuale", "ja": "手動編集", "ko": "수동 편집",
+        "no": "Manuell redigering", "pl": "Edycja ręczna", "pt": "Edição manual",
+        "pt_BR": "Edição manual", "ru": "Ручное редактирование", "sk": "Manuálna úprava",
+        "tr": "Manuel düzenle", "uk": "Ручне редагування", "zh_CN": "手动编辑", "zh_TW": "手動編輯",
+    },
+    "Lens group": {
+        "cs": "Skupina objektivů", "da": "Objektivgruppe", "de": "Objektivgruppe",
+        "el": "Ομάδα φακών", "es": "Grupo de objetivos", "fi": "Objektiiviryhmä",
+        "fr": "Groupe d'objectifs", "gl": "Grupo de obxectivos", "id": "Grup lensa",
+        "it": "Gruppo di obiettivi", "ja": "レンズグループ", "ko": "렌즈 그룹",
+        "no": "Objektivgruppe", "pl": "Grupa obiektywów", "pt": "Grupo de objetivas",
+        "pt_BR": "Grupo de lentes", "ru": "Группа объективов", "sk": "Skupina objektívov",
+        "tr": "Lens grubu", "uk": "Група об'єктивів", "zh_CN": "镜头组", "zh_TW": "鏡頭群組",
+    },
+    "Focal length": {
+        "cs": "Ohnisková vzdálenost", "da": "Brændvidde", "de": "Brennweite", "el": "Εστιακή απόσταση",
+        "es": "Distancia focal", "fi": "Polttoväli", "fr": "Focale", "gl": "Distancia focal",
+        "id": "Panjang fokus", "it": "Lunghezza focale", "ja": "焦点距離", "ko": "초점 거리",
+        "no": "Brennvidde", "pl": "Ogniskowa", "pt": "Distância focal", "pt_BR": "Distância focal",
+        "ru": "Фокусное расстояние", "sk": "Ohnisková vzdialenosť", "tr": "Odak uzaklığı",
+        "uk": "Фокусна відстань", "zh_CN": "焦距", "zh_TW": "焦距",
+    },
+    "mm": {
+        "cs": "mm", "da": "mm", "de": "mm", "el": "χλστ.",
+        "es": "mm", "fi": "mm", "fr": "mm", "gl": "mm",
+        "id": "mm", "it": "mm", "ja": "mm", "ko": "mm",
+        "no": "mm", "pl": "mm", "pt": "mm", "pt_BR": "mm",
+        "ru": "мм", "sk": "mm", "tr": "mm", "uk": "мм",
+        "zh_CN": "毫米", "zh_TW": "毫米",
+    },
+    "Anamorphic lens": {
+        "cs": "Anamorfní objektiv", "da": "Anamorf-objektiv", "de": "Anamorphes Objektiv",
+        "el": "Αναμορφικός φακός", "es": "Objetivo anamórfico", "fi": "Anamorfinen objektiivi",
+        "fr": "Objectif anamorphique", "gl": "Obxectivo anamórfico", "id": "Lensa anamorfik",
+        "it": "Obiettivo anamorfico", "ja": "アナモルフィックレンズ", "ko": "아나모픽 렌즈",
+        "no": "Anamorf-objektiv", "pl": "Obiektyw anamorficzny", "pt": "Objetiva anamórfica",
+        "pt_BR": "Lente anamórfica", "ru": "Анаморфный объектив", "sk": "Anamorfný objektív",
+        "tr": "Anamorfik lens", "uk": "Анаморфний об'єктив", "zh_CN": "变形镜头", "zh_TW": "變形鏡頭",
+    },
+    "Preset": {
+        "cs": "Předvolba", "da": "Forindstilling", "de": "Vorgabe", "el": "Προεπιλογή",
+        "es": "Preajuste", "fi": "Esiasetus", "fr": "Préréglage", "gl": "Preaxuste",
+        "id": "Praset", "it": "Predefinito", "ja": "プリセット", "ko": "프리셋",
+        "no": "Forhåndsinnstilling", "pl": "Ustawienie", "pt": "Predefinição", "pt_BR": "Preset",
+        "ru": "Предустановка", "sk": "Predvoľba", "tr": "Hazır ayar", "uk": "Пресет",
+        "zh_CN": "预设", "zh_TW": "預設",
+    },
+    "Horizontal": {
+        "cs": "Vodorovně", "da": "Vandret", "de": "Horizontal", "el": "Οριζόντιο",
+        "es": "Horizontal", "fi": "Vaakasuora", "fr": "Horizontal", "gl": "Horizontal",
+        "id": "Horizontal", "it": "Orizzontale", "ja": "水平", "ko": "가로",
+        "no": "Vannrett", "pl": "Poziomo", "pt": "Horizontal", "pt_BR": "Horizontal",
+        "ru": "Горизонтально", "sk": "Vodorovne", "tr": "Yatay", "uk": "Горизонтально",
+        "zh_CN": "水平", "zh_TW": "水平",
+    },
+    "Vertical": {
+        "cs": "Svisle", "da": "Lodret", "de": "Vertikal", "el": "Κατακόρυφο",
+        "es": "Vertical", "fi": "Pystysuora", "fr": "Vertical", "gl": "Vertical",
+        "id": "Vertikal", "it": "Verticale", "ja": "垂直", "ko": "세로",
+        "no": "Loddrett", "pl": "Pionowo", "pt": "Vertical", "pt_BR": "Vertical",
+        "ru": "Вертикально", "sk": "Zvisle", "tr": "Dikey", "uk": "Вертикально",
+        "zh_CN": "垂直", "zh_TW": "垂直",
+    },
+    "Squeeze ratio": {
+        "cs": "Poměr stlačení", "da": "Squeeze-forhold", "de": "Squeeze-Faktor",
+        "el": "Λόγος συμπίεσης", "es": "Relación de compresión", "fi": "Puristussuhde",
+        "fr": "Taux de compression", "gl": "Relación de compresión", "id": "Rasio squeeze",
+        "it": "Rapporto di compressione", "ja": "スクイーズ比", "ko": "스퀴즈 비율",
+        "no": "Squeeze-forhold", "pl": "Współczynnik ściśnięcia", "pt": "Rácio de compressão",
+        "pt_BR": "Razão de squeeze", "ru": "Коэффициент сжатия", "sk": "Pomer stlačenia",
+        "tr": "Sıkıştırma oranı", "uk": "Коефіцієнт стиснення", "zh_CN": "变形比", "zh_TW": "變形比",
+    },
+    "Mounting position": {
+        "cs": "Poloha upevnění", "da": "Monteringsposition", "de": "Montageposition",
+        "el": "Θέση τοποθέτησης", "es": "Posición de montaje", "fi": "Kiinnitysasento",
+        "fr": "Position de montage", "gl": "Posición de montaxe", "id": "Posisi pemasangan",
+        "it": "Posizione di montaggio", "ja": "取り付け位置", "ko": "장착 위치",
+        "no": "Monteringsposisjon", "pl": "Pozycja mocowania", "pt": "Posição de montagem",
+        "pt_BR": "Posição de montagem", "ru": "Положение крепления", "sk": "Poloha uchytenia",
+        "tr": "Montaj pozisyonu", "uk": "Положення кріплення", "zh_CN": "安装位置", "zh_TW": "安裝位置",
+    },
+    "Top": {
+        "cs": "Nahoře", "da": "Top", "de": "Oben", "el": "Επάνω",
+        "es": "Arriba", "fi": "Ylhäällä", "fr": "Haut", "gl": "Arriba",
+        "id": "Atas", "it": "Alto", "ja": "上", "ko": "위",
+        "no": "Topp", "pl": "Góra", "pt": "Topo", "pt_BR": "Topo",
+        "ru": "Сверху", "sk": "Hore", "tr": "Üst", "uk": "Зверху",
+        "zh_CN": "顶部", "zh_TW": "頂部",
+    },
+    "Bottom": {
+        "cs": "Dole", "da": "Bund", "de": "Unten", "el": "Κάτω",
+        "es": "Abajo", "fi": "Alhaalla", "fr": "Bas", "gl": "Abaixo",
+        "id": "Bawah", "it": "Basso", "ja": "下", "ko": "아래",
+        "no": "Bunn", "pl": "Dół", "pt": "Fundo", "pt_BR": "Base",
+        "ru": "Снизу", "sk": "Dole", "tr": "Alt", "uk": "Знизу",
+        "zh_CN": "底部", "zh_TW": "底部",
+    },
+    "Left": {
+        "cs": "Vlevo", "da": "Venstre", "de": "Links", "el": "Αριστερά",
+        "es": "Izquierda", "fi": "Vasen", "fr": "Gauche", "gl": "Esquerda",
+        "id": "Kiri", "it": "Sinistra", "ja": "左", "ko": "왼쪽",
+        "no": "Venstre", "pl": "Lewo", "pt": "Esquerda", "pt_BR": "Esquerda",
+        "ru": "Слева", "sk": "Vľavo", "tr": "Sol", "uk": "Ліворуч",
+        "zh_CN": "左", "zh_TW": "左",
+    },
+    "Right": {
+        "cs": "Vpravo", "da": "Højre", "de": "Rechts", "el": "Δεξιά",
+        "es": "Derecha", "fi": "Oikea", "fr": "Droite", "gl": "Dereita",
+        "id": "Kanan", "it": "Destra", "ja": "右", "ko": "오른쪽",
+        "no": "Høyre", "pl": "Prawo", "pt": "Direita", "pt_BR": "Direita",
+        "ru": "Справа", "sk": "Vpravo", "tr": "Sağ", "uk": "Праворуч",
+        "zh_CN": "右", "zh_TW": "右",
+    },
+    "Custom": {
+        "cs": "Vlastní", "da": "Brugerdefineret", "de": "Benutzerdefiniert", "el": "Προσαρμοσμένο",
+        "es": "Personalizado", "fi": "Mukautettu", "fr": "Personnalisé", "gl": "Personalizado",
+        "id": "Kustom", "it": "Personalizzato", "ja": "カスタム", "ko": "사용자 지정",
+        "no": "Egendefinert", "pl": "Niestandardowe", "pt": "Personalizado", "pt_BR": "Personalizado",
+        "ru": "Произвольно", "sk": "Vlastné", "tr": "Özel", "uk": "Власне",
+        "zh_CN": "自定义", "zh_TW": "自訂",
+    },
+    "Pitch": {
+        "cs": "Náklon", "da": "Pitch", "de": "Nicken", "el": "Πρόνευση",
+        "es": "Pitch", "fi": "Kallistus (pitch)", "fr": "Tangage", "gl": "Pitch",
+        "id": "Pitch", "it": "Pitch", "ja": "ピッチ", "ko": "피치",
+        "no": "Pitch", "pl": "Pochylenie", "pt": "Pitch", "pt_BR": "Pitch",
+        "ru": "Наклон (Pitch)", "sk": "Pitch", "tr": "Pitch", "uk": "Нахил (Pitch)",
+        "zh_CN": "俯仰", "zh_TW": "俯仰",
+    },
+    "Roll": {
+        "cs": "Klonění", "da": "Roll", "de": "Rollen", "el": "Περιστροφή",
+        "es": "Roll", "fi": "Kierto (roll)", "fr": "Roulis", "gl": "Roll",
+        "id": "Roll", "it": "Roll", "ja": "ロール", "ko": "롤",
+        "no": "Roll", "pl": "Przechylenie", "pt": "Roll", "pt_BR": "Roll",
+        "ru": "Крен (Roll)", "sk": "Roll", "tr": "Roll", "uk": "Крен (Roll)",
+        "zh_CN": "翻滚", "zh_TW": "翻滾",
+    },
+    "Yaw": {
+        "cs": "Vybočení", "da": "Yaw", "de": "Gieren", "el": "Εκτροπή",
+        "es": "Yaw", "fi": "Käännös (yaw)", "fr": "Lacet", "gl": "Yaw",
+        "id": "Yaw", "it": "Yaw", "ja": "ヨー", "ko": "요",
+        "no": "Yaw", "pl": "Odchylenie", "pt": "Yaw", "pt_BR": "Yaw",
+        "ru": "Рыскание (Yaw)", "sk": "Yaw", "tr": "Yaw", "uk": "Рискання (Yaw)",
+        "zh_CN": "偏航", "zh_TW": "偏航",
+    },
+    "Selected: %1": {
+        "cs": "Vybráno: %1", "da": "Valgt: %1", "de": "Ausgewählt: %1", "el": "Επιλεγμένο: %1",
+        "es": "Seleccionado: %1", "fi": "Valittu: %1", "fr": "Sélectionné : %1", "gl": "Seleccionado: %1",
+        "id": "Dipilih: %1", "it": "Selezionato: %1", "ja": "選択済み: %1", "ko": "선택됨: %1",
+        "no": "Valgt: %1", "pl": "Wybrano: %1", "pt": "Selecionado: %1", "pt_BR": "Selecionado: %1",
+        "ru": "Выбрано: %1", "sk": "Vybrané: %1", "tr": "Seçildi: %1", "uk": "Вибрано: %1",
+        "zh_CN": "已选择：%1", "zh_TW": "已選取：%1",
+    },
+    "Select all": {
+        "cs": "Vybrat vše", "da": "Vælg alle", "de": "Alle auswählen", "el": "Επιλογή όλων",
+        "es": "Seleccionar todo", "fi": "Valitse kaikki", "fr": "Tout sélectionner", "gl": "Seleccionar todo",
+        "id": "Pilih semua", "it": "Seleziona tutto", "ja": "すべて選択", "ko": "모두 선택",
+        "no": "Velg alle", "pl": "Zaznacz wszystko", "pt": "Selecionar tudo", "pt_BR": "Selecionar tudo",
+        "ru": "Выбрать все", "sk": "Vybrať všetko", "tr": "Tümünü seç", "uk": "Вибрати все",
+        "zh_CN": "全选", "zh_TW": "全選",
+    },
+    "Deselect": {
+        "cs": "Zrušit výběr", "da": "Fravælg", "de": "Auswahl aufheben", "el": "Αποεπιλογή",
+        "es": "Deseleccionar", "fi": "Poista valinta", "fr": "Désélectionner", "gl": "Deseleccionar",
+        "id": "Batalkan pilihan", "it": "Deseleziona", "ja": "選択解除", "ko": "선택 해제",
+        "no": "Fjern valg", "pl": "Odznacz", "pt": "Desselecionar", "pt_BR": "Desmarcar",
+        "ru": "Снять выбор", "sk": "Zrušiť výber", "tr": "Seçimi kaldır", "uk": "Зняти вибір",
+        "zh_CN": "取消选择", "zh_TW": "取消選取",
+    },
+    "Done": {
+        "cs": "Hotovo", "da": "Udført", "de": "Fertig", "el": "Ολοκληρώθηκε",
+        "es": "Hecho", "fi": "Valmis", "fr": "Terminé", "gl": "Feito",
+        "id": "Selesai", "it": "Fatto", "ja": "完了", "ko": "완료",
+        "no": "Ferdig", "pl": "Gotowe", "pt": "Concluído", "pt_BR": "Concluído",
+        "ru": "Готово", "sk": "Hotovo", "tr": "Tamam", "uk": "Готово",
+        "zh_CN": "完成", "zh_TW": "完成",
+    },
+    "Applying pixel format: %1": {
+        "cs": "Používá se formát pixelů: %1",
+        "da": "Anvender pixelformat: %1",
+        "de": "Pixelformat wird angewendet: %1",
+        "el": "Εφαρμογή μορφής pixel: %1",
+        "es": "Aplicando formato de píxel: %1",
+        "fi": "Käytetään pikseliformaattia: %1",
+        "fr": "Application du format de pixel : %1",
+        "gl": "Aplicando formato de píxel: %1",
+        "id": "Menerapkan format piksel: %1",
+        "it": "Applicazione formato pixel: %1",
+        "ja": "ピクセル形式を適用中: %1",
+        "ko": "픽셀 형식 적용 중: %1",
+        "no": "Bruker pikselformat: %1",
+        "pl": "Stosowanie formatu piksela: %1",
+        "pt": "A aplicar formato de pixel: %1",
+        "pt_BR": "Aplicando formato de pixel: %1",
+        "ru": "Применение формата пикселей: %1",
+        "sk": "Aplikuje sa formát pixelov: %1",
+        "tr": "Piksel formatı uygulanıyor: %1",
+        "uk": "Застосування формату пікселів: %1",
+        "zh_CN": "正在应用像素格式：%1",
+        "zh_TW": "正在套用像素格式：%1",
+    },
+    "Selected encoder does not support the source pixel format.\nChoose a target pixel format or render on CPU.\nThis choice applies to all remaining jobs in this batch.": {
+        "cs": "Vybraný enkodér nepodporuje zdrojový formát pixelů.\nVyberte cílový formát nebo renderujte na CPU.\nVolba se použije na všechny zbývající úlohy v této dávce.",
+        "da": "Den valgte encoder understøtter ikke kildens pixelformat.\nVælg et målpixelformat eller gengiv på CPU.\nValget gælder alle resterende jobs i denne batch.",
+        "de": "Der gewählte Encoder unterstützt das Quell-Pixelformat nicht.\nWählen Sie ein Zielformat oder rendern Sie auf der CPU.\nDie Auswahl gilt für alle verbleibenden Jobs in diesem Batch.",
+        "el": "Ο επιλεγμένος κωδικοποιητής δεν υποστηρίζει τη μορφή pixel της πηγής.\nΕπιλέξτε μορφή pixel προορισμού ή αποτυπώστε με CPU.\nΗ επιλογή ισχύει για όλες τις υπόλοιπες εργασίες σε αυτή τη δέσμη.",
+        "es": "El codificador seleccionado no admite el formato de píxel de origen.\nElige un formato de píxel de destino o renderiza con la CPU.\nEsta elección se aplicará a todos los trabajos restantes de este lote.",
+        "fi": "Valittu enkooderi ei tue lähteen pikseliformaattia.\nValitse kohdeformaatti tai renderöi CPU:lla.\nValinta koskee kaikkia jäljellä olevia tämän erän töitä.",
+        "fr": "L'encodeur sélectionné ne prend pas en charge le format de pixel source.\nChoisissez un format cible ou effectuez le rendu sur le CPU.\nCe choix s'applique à tous les travaux restants de ce lot.",
+        "gl": "O codificador seleccionado non admite o formato de píxel da fonte.\nEscolla un formato de píxel destino ou renderice con CPU.\nA escolla aplicarase a todos os traballos restantes desta lote.",
+        "id": "Encoder yang dipilih tidak mendukung format piksel sumber.\nPilih format piksel target atau render dengan CPU.\nPilihan ini berlaku untuk semua pekerjaan tersisa dalam batch ini.",
+        "it": "L'encoder selezionato non supporta il formato pixel sorgente.\nScegli un formato pixel di destinazione o rendering con CPU.\nLa scelta si applica a tutti i lavori rimanenti di questo batch.",
+        "ja": "選択中のエンコーダーはソースのピクセル形式に対応していません。\n対象のピクセル形式を選ぶか、CPUでレンダリングしてください。\nこの選択はこのバッチの残りのジョブすべてに適用されます。",
+        "ko": "선택된 인코더가 소스 픽셀 형식을 지원하지 않습니다.\n대상 픽셀 형식을 선택하거나 CPU로 렌더링하세요.\n이 선택은 이 배치의 남은 모든 작업에 적용됩니다.",
+        "no": "Valgt encoder støtter ikke kildens pikselformat.\nVelg et målpikselformat eller gjengi på CPU.\nValget gjelder alle gjenværende jobber i denne batchen.",
+        "pl": "Wybrany koder nie obsługuje źródłowego formatu piksela.\nWybierz docelowy format lub renderuj na CPU.\nWybór zostanie zastosowany do wszystkich pozostałych zadań w tej partii.",
+        "pt": "O codificador selecionado não suporta o formato de pixel de origem.\nEscolha um formato de pixel de destino ou renderize no CPU.\nEsta escolha aplica-se a todas as tarefas restantes deste lote.",
+        "pt_BR": "O codificador selecionado não suporta o formato de pixel de origem.\nEscolha um formato de pixel de destino ou renderize na CPU.\nEsta escolha se aplica a todas as tarefas restantes deste lote.",
+        "ru": "Выбранный кодер не поддерживает формат пикселей источника.\nВыберите целевой формат или рендерьте на CPU.\nВыбор применится ко всем оставшимся задачам в этом пакете.",
+        "sk": "Vybraný enkodér nepodporuje zdrojový formát pixelov.\nVyberte cieľový formát alebo renderujte na CPU.\nVoľba sa použije na všetky zostávajúce úlohy v tejto dávke.",
+        "tr": "Seçili kodlayıcı kaynak piksel formatını desteklemiyor.\nHedef bir piksel formatı seçin veya CPU ile işleyin.\nBu seçim bu toplu işteki tüm kalan işlere uygulanır.",
+        "uk": "Вибраний кодек не підтримує формат пікселів джерела.\nВиберіть цільовий формат або рендерте на CPU.\nВибір застосується до всіх решти завдань у цій партії.",
+        "zh_CN": "所选编码器不支持源像素格式。\n请选择目标像素格式或使用 CPU 渲染。\n此选择将应用到本批次剩余所有任务。",
+        "zh_TW": "所選編碼器不支援來源像素格式。\n請選擇目標像素格式或使用 CPU 渲染。\n此選擇將套用到本批次剩餘所有工作。",
+    },
+    "Waiting for pixel format selection…": {
+        "cs": "Čeká se na výběr formátu pixelů…",
+        "da": "Venter på valg af pixelformat…",
+        "de": "Warte auf Pixelformat-Auswahl…",
+        "el": "Αναμονή για επιλογή μορφής pixel…",
+        "es": "Esperando selección de formato de píxel…",
+        "fi": "Odotetaan pikseliformaatin valintaa…",
+        "fr": "En attente du choix du format de pixel…",
+        "gl": "Agardando pola selección do formato de píxel…",
+        "id": "Menunggu pemilihan format piksel…",
+        "it": "In attesa della selezione del formato pixel…",
+        "ja": "ピクセル形式の選択を待っています…",
+        "ko": "픽셀 형식 선택 대기 중…",
+        "no": "Venter på valg av pikselformat…",
+        "pl": "Oczekiwanie na wybór formatu piksela…",
+        "pt": "A aguardar seleção do formato de pixel…",
+        "pt_BR": "Aguardando seleção do formato de pixel…",
+        "ru": "Ожидание выбора формата пикселей…",
+        "sk": "Čaká sa na výber formátu pixelov…",
+        "tr": "Piksel formatı seçimi bekleniyor…",
+        "uk": "Очікування вибору формату пікселів…",
+        "zh_CN": "等待选择像素格式…",
+        "zh_TW": "等待選擇像素格式…",
+    },
+    "Mode": {
+        "cs": "Režim", "da": "Tilstand", "de": "Modus", "el": "Λειτουργία",
+        "es": "Modo", "fi": "Tila", "fr": "Mode", "gl": "Modo",
+        "id": "Mode", "it": "Modalità", "ja": "モード", "ko": "모드",
+        "no": "Modus", "pl": "Tryb", "pt": "Modo", "pt_BR": "Modo",
+        "ru": "Режим", "sk": "Režim", "tr": "Mod", "uk": "Режим",
+        "zh_CN": "模式", "zh_TW": "模式",
+    },
+    "Lens": {
+        "cs": "Objektiv", "da": "Objektiv", "de": "Objektiv", "el": "Φακός",
+        "es": "Objetivo", "fi": "Objektiivi", "fr": "Objectif", "gl": "Obxectivo",
+        "id": "Lensa", "it": "Obiettivo", "ja": "レンズ", "ko": "렌즈",
+        "no": "Objektiv", "pl": "Obiektyw", "pt": "Objetiva", "pt_BR": "Lente",
+        "ru": "Объектив", "sk": "Objektív", "tr": "Lens", "uk": "Об'єктив",
+        "zh_CN": "镜头", "zh_TW": "鏡頭",
+    },
+    "Focal": {
+        "cs": "Ohnisko", "da": "Fokus", "de": "Fokus", "el": "Εστίαση",
+        "es": "Focal", "fi": "Polttoväli", "fr": "Focale", "gl": "Focal",
+        "id": "Fokus", "it": "Focale", "ja": "焦点", "ko": "초점",
+        "no": "Fokus", "pl": "Ognisko", "pt": "Focal", "pt_BR": "Focal",
+        "ru": "Фокус", "sk": "Ohnisko", "tr": "Odak", "uk": "Фокус",
+        "zh_CN": "焦距", "zh_TW": "焦距",
+    },
+    "Anamorphic": {
+        "cs": "Anamorfní", "da": "Anamorf", "de": "Anamorph", "el": "Αναμορφικό",
+        "es": "Anamórfico", "fi": "Anamorfinen", "fr": "Anamorphique", "gl": "Anamórfico",
+        "id": "Anamorfik", "it": "Anamorfico", "ja": "アナモルフィック", "ko": "아나모픽",
+        "no": "Anamorf", "pl": "Anamorficzny", "pt": "Anamórfico", "pt_BR": "Anamórfico",
+        "ru": "Анаморф", "sk": "Anamorfný", "tr": "Anamorfik", "uk": "Анаморф",
+        "zh_CN": "变形", "zh_TW": "變形",
+    },
+    "Re-matching will clear lens group settings. Continue?": {
+        "cs": "Opětovné porovnání vymaže nastavení skupin objektivů. Pokračovat?",
+        "da": "Ny-matchning rydder indstillinger for objektivgrupper. Fortsæt?",
+        "de": "Erneutes Matching löscht die Objektivgruppen-Einstellungen. Fortfahren?",
+        "el": "Η εκ νέου αντιστοίχιση θα διαγράψει τις ρυθμίσεις ομάδων φακών. Συνέχεια;",
+        "es": "Volver a emparejar borrará los ajustes de grupos de objetivos. ¿Continuar?",
+        "fi": "Uudelleensovitus tyhjentää objektiiviryhmien asetukset. Jatketaanko?",
+        "fr": "Un nouvel appariement effacera les paramètres des groupes d'objectifs. Continuer ?",
+        "gl": "Volver a emparellar limpará os axustes dos grupos de obxectivos. Continuar?",
+        "id": "Pencocokan ulang akan menghapus pengaturan grup lensa. Lanjutkan?",
+        "it": "Il re-matching cancellerà le impostazioni dei gruppi di obiettivi. Continuare?",
+        "ja": "再マッチングするとレンズグループ設定がクリアされます。続行しますか？",
+        "ko": "재매칭 시 렌즈 그룹 설정이 초기화됩니다. 계속하시겠습니까?",
+        "no": "Ny-matching vil nullstille objektivgruppe-innstillingene. Fortsette?",
+        "pl": "Ponowne dopasowanie wyczyści ustawienia grup obiektywów. Kontynuować?",
+        "pt": "O novo emparelhamento irá limpar as configurações de grupos de objetivas. Continuar?",
+        "pt_BR": "O re-pareamento limpará as configurações de grupos de lentes. Continuar?",
+        "ru": "Повторный матчинг сбросит настройки групп объективов. Продолжить?",
+        "sk": "Opätovné priradenie vymaže nastavenia skupín objektívov. Pokračovať?",
+        "tr": "Yeniden eşleştirme lens grubu ayarlarını siler. Devam edilsin mi?",
+        "uk": "Повторний матчинг скине налаштування груп об'єктивів. Продовжити?",
+        "zh_CN": "重新匹配将清空镜头组设置。是否继续？",
+        "zh_TW": "重新對應將清除鏡頭群組設定。是否繼續？",
+    },
+    "Auto rotate": {
+        "cs": "Automatické otočení", "da": "Automatisk rotation", "de": "Auto-Rotation",
+        "el": "Αυτόματη περιστροφή", "es": "Rotación automática", "fi": "Automaattinen kierto",
+        "fr": "Rotation auto", "gl": "Rotación automática", "id": "Rotasi otomatis",
+        "it": "Rotazione automatica", "ja": "自動回転", "ko": "자동 회전",
+        "no": "Automatisk rotasjon", "pl": "Automatyczne obracanie", "pt": "Rotação automática",
+        "pt_BR": "Rotação automática", "ru": "Авто-поворот", "sk": "Automatické otočenie",
+        "tr": "Otomatik döndür", "uk": "Автоповорот", "zh_CN": "自动旋转", "zh_TW": "自動旋轉",
+    },
+    "NeuFlow v2 CUDA": {
+        # Model name — keep as-is except where Cyrillic etc. naming conventions dictate
+        "cs": "NeuFlow v2 CUDA", "da": "NeuFlow v2 CUDA", "de": "NeuFlow v2 CUDA",
+        "el": "NeuFlow v2 CUDA", "es": "NeuFlow v2 CUDA", "fi": "NeuFlow v2 CUDA",
+        "fr": "NeuFlow v2 CUDA", "gl": "NeuFlow v2 CUDA", "id": "NeuFlow v2 CUDA",
+        "it": "NeuFlow v2 CUDA", "ja": "NeuFlow v2 CUDA", "ko": "NeuFlow v2 CUDA",
+        "no": "NeuFlow v2 CUDA", "pl": "NeuFlow v2 CUDA", "pt": "NeuFlow v2 CUDA",
+        "pt_BR": "NeuFlow v2 CUDA", "ru": "NeuFlow v2 CUDA", "sk": "NeuFlow v2 CUDA",
+        "tr": "NeuFlow v2 CUDA", "uk": "NeuFlow v2 CUDA",
+        "zh_CN": "NeuFlow v2 CUDA", "zh_TW": "NeuFlow v2 CUDA",
+    },
+    "NeuFlow v2 Burn": {
+        "cs": "NeuFlow v2 Burn", "da": "NeuFlow v2 Burn", "de": "NeuFlow v2 Burn",
+        "el": "NeuFlow v2 Burn", "es": "NeuFlow v2 Burn", "fi": "NeuFlow v2 Burn",
+        "fr": "NeuFlow v2 Burn", "gl": "NeuFlow v2 Burn", "id": "NeuFlow v2 Burn",
+        "it": "NeuFlow v2 Burn", "ja": "NeuFlow v2 Burn", "ko": "NeuFlow v2 Burn",
+        "no": "NeuFlow v2 Burn", "pl": "NeuFlow v2 Burn", "pt": "NeuFlow v2 Burn",
+        "pt_BR": "NeuFlow v2 Burn", "ru": "NeuFlow v2 Burn", "sk": "NeuFlow v2 Burn",
+        "tr": "NeuFlow v2 Burn", "uk": "NeuFlow v2 Burn",
+        "zh_CN": "NeuFlow v2 Burn", "zh_TW": "NeuFlow v2 Burn",
+    },
+    "When rendering is finished: %1": {
+        "cs": "Po dokončení renderování: %1",
+        "da": "Når gengivelse er færdig: %1",
+        "de": "Wenn das Rendern abgeschlossen ist: %1",
+        "el": "Όταν ολοκληρωθεί η απόδοση: %1",
+        "es": "Cuando termine el renderizado: %1",
+        "fi": "Kun renderöinti on valmis: %1",
+        "fr": "Lorsque le rendu est terminé : %1",
+        "gl": "Cando remate a renderización: %1",
+        "id": "Saat render selesai: %1",
+        "it": "Quando il rendering è terminato: %1",
+        "ja": "レンダリング完了時: %1",
+        "ko": "렌더링이 끝나면: %1",
+        "no": "Når gjengivelsen er ferdig: %1",
+        "pl": "Po zakończeniu renderowania: %1",
+        "pt": "Quando a renderização terminar: %1",
+        "pt_BR": "Quando a renderização terminar: %1",
+        "ru": "По завершении рендера: %1",
+        "sk": "Po dokončení renderovania: %1",
+        "tr": "Render bittiğinde: %1",
+        "uk": "Після завершення рендера: %1",
+        "zh_CN": "渲染完成后：%1",
+        "zh_TW": "渲染完成後：%1",
+    },
+    "Advanced": {
+        # Already translated in most files; appears as duplicate because lupdate
+        # captured a new (qsTr "Advanced") site in App.qml line 916. Treat as-is.
+        "cs": "Pokročilé", "da": "Avanceret", "de": "Erweitert", "el": "Για προχωρημένους",
+        "es": "Avanzado", "fi": "Lisäasetukset", "fr": "Avancé", "gl": "Avanzado",
+        "id": "Lanjutan", "it": "Avanzato", "ja": "詳細", "ko": "고급",
+        "no": "Avansert", "pl": "Zaawansowane", "pt": "Avançado", "pt_BR": "Avançado",
+        "ru": "Расширенные", "sk": "Pokročilé", "tr": "Gelişmiş", "uk": "Розширені",
+        "zh_CN": "高级", "zh_TW": "進階",
+    },
+    "Added to queue": {
+        "cs": "Přidáno do fronty", "da": "Tilføjet til kø", "de": "Zur Warteschlange hinzugefügt",
+        "el": "Προστέθηκε στην ουρά", "es": "Añadido a la cola", "fi": "Lisätty jonoon",
+        "fr": "Ajouté à la file", "gl": "Engadido á cola", "id": "Ditambahkan ke antrean",
+        "it": "Aggiunto alla coda", "ja": "キューに追加しました", "ko": "대기열에 추가됨",
+        "no": "Lagt til i kø", "pl": "Dodano do kolejki", "pt": "Adicionado à fila",
+        "pt_BR": "Adicionado à fila", "ru": "Добавлено в очередь", "sk": "Pridané do frontu",
+        "tr": "Kuyruğa eklendi", "uk": "Додано до черги",
+        "zh_CN": "已加入队列", "zh_TW": "已加入佇列",
+    },
+    "Reset all settings to default": {
+        "cs": "Obnovit všechna nastavení na výchozí",
+        "da": "Nulstil alle indstillinger til standard",
+        "de": "Alle Einstellungen auf Standard zurücksetzen",
+        "el": "Επαναφορά όλων των ρυθμίσεων στις προεπιλογές",
+        "es": "Restablecer todos los ajustes a los valores por defecto",
+        "fi": "Palauta kaikki asetukset oletuksiin",
+        "fr": "Réinitialiser tous les paramètres par défaut",
+        "gl": "Restablecer todos os axustes aos predeterminados",
+        "id": "Reset semua pengaturan ke default",
+        "it": "Ripristina tutte le impostazioni predefinite",
+        "ja": "すべての設定を既定値にリセット",
+        "ko": "모든 설정을 기본값으로 재설정",
+        "no": "Tilbakestill alle innstillinger til standard",
+        "pl": "Zresetuj wszystkie ustawienia do domyślnych",
+        "pt": "Repor todas as definições para os padrões",
+        "pt_BR": "Redefinir todas as configurações para o padrão",
+        "ru": "Сбросить все настройки к значениям по умолчанию",
+        "sk": "Obnoviť všetky nastavenia na predvolené",
+        "tr": "Tüm ayarları varsayılanlara sıfırla",
+        "uk": "Скинути всі налаштування до стандартних",
+        "zh_CN": "将所有设置重置为默认",
+        "zh_TW": "將所有設定重設為預設",
+    },
+    "Full mode": {
+        "cs": "Plný režim", "da": "Fuld tilstand", "de": "Vollmodus", "el": "Πλήρης λειτουργία",
+        "es": "Modo completo", "fi": "Täysi tila", "fr": "Mode complet", "gl": "Modo completo",
+        "id": "Mode penuh", "it": "Modalità completa", "ja": "フルモード", "ko": "전체 모드",
+        "no": "Full modus", "pl": "Tryb pełny", "pt": "Modo completo", "pt_BR": "Modo completo",
+        "ru": "Полный режим", "sk": "Plný režim", "tr": "Tam mod", "uk": "Повний режим",
+        "zh_CN": "完整模式", "zh_TW": "完整模式",
+    },
+    "Yes": {
+        # Already translated in most files; extra context captured
+        "cs": "Ano", "da": "Ja", "de": "Ja", "el": "Ναι",
+        "es": "Sí", "fi": "Kyllä", "fr": "Oui", "gl": "Si",
+        "id": "Ya", "it": "Sì", "ja": "はい", "ko": "예",
+        "no": "Ja", "pl": "Tak", "pt": "Sim", "pt_BR": "Sim",
+        "ru": "Да", "sk": "Áno", "tr": "Evet", "uk": "Так",
+        "zh_CN": "是", "zh_TW": "是",
+    },
+    "Manual": {
+        "cs": "Ručně", "da": "Manuel", "de": "Manuell", "el": "Χειροκίνητο",
+        "es": "Manual", "fi": "Manuaalinen", "fr": "Manuel", "gl": "Manual",
+        "id": "Manual", "it": "Manuale", "ja": "手動", "ko": "수동",
+        "no": "Manuell", "pl": "Ręczne", "pt": "Manual", "pt_BR": "Manual",
+        "ru": "Вручную", "sk": "Manuálne", "tr": "Manuel", "uk": "Вручну",
+        "zh_CN": "手动", "zh_TW": "手動",
+    },
+    "Clear": {
+        "cs": "Vymazat", "da": "Ryd", "de": "Leeren", "el": "Εκκαθάριση",
+        "es": "Borrar", "fi": "Tyhjennä", "fr": "Effacer", "gl": "Limpar",
+        "id": "Bersihkan", "it": "Svuota", "ja": "クリア", "ko": "지우기",
+        "no": "Tøm", "pl": "Wyczyść", "pt": "Limpar", "pt_BR": "Limpar",
+        "ru": "Очистить", "sk": "Vyčistiť", "tr": "Temizle", "uk": "Очистити",
+        "zh_CN": "清除", "zh_TW": "清除",
+    },
+    "%": {
+        "cs": "%", "da": "%", "de": "%", "el": "%",
+        "es": "%", "fi": "%", "fr": "%", "gl": "%",
+        "id": "%", "it": "%", "ja": "%", "ko": "%",
+        "no": "%", "pl": "%", "pt": "%", "pt_BR": "%",
+        "ru": "%", "sk": "%", "tr": "%", "uk": "%",
+        "zh_CN": "%", "zh_TW": "%",
+    },
+}
+
+
+def xml_escape(s: str) -> str:
+    """Escape &, <, >, but preserve \\n as actual newline (TS stores newlines literally)."""
+    return s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def process_ts(path: Path, lang: str) -> int:
+    """Replace unfinished translations in a .ts file. Returns count of replacements.
+
+    Processes message-by-message to avoid catastrophic regex backtracking.
+    Handles two forms of `type="unfinished"` left by lupdate:
+      1. Empty body — `<translation type="unfinished"></translation>`: fill from table
+      2. Heuristic-filled body — `<translation type="unfinished">X</translation>`:
+         drop the `type="unfinished"` attribute (confirm the heuristic match)
+    """
+    content = path.read_text(encoding='utf-8')
+    replaced = 0
+
+    msg_pattern = re.compile(r'<message>.*?</message>', re.DOTALL)
+    src_pattern = re.compile(r'<source>(.*?)</source>', re.DOTALL)
+    tr_empty_pattern = re.compile(r'<translation type="unfinished"></translation>')
+    tr_heuristic_pattern = re.compile(r'<translation type="unfinished">([^<]+)</translation>')
+
+    def process_message(msg_text: str) -> str:
+        nonlocal replaced
+        src_m = src_pattern.search(msg_text)
+        if not src_m:
+            return msg_text
+        src_raw = src_m.group(1)
+        src_decoded = src_raw.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+
+        # Form 1: empty unfinished
+        if tr_empty_pattern.search(msg_text):
+            translation_map = T.get(src_decoded)
+            if translation_map is not None:
+                tr = translation_map.get(lang)
+                if tr is not None:
+                    replaced += 1
+                    return tr_empty_pattern.sub(
+                        f'<translation>{xml_escape(tr)}</translation>',
+                        msg_text, count=1
+                    )
+
+        # Form 2: heuristic-filled unfinished → drop attribute only
+        m2 = tr_heuristic_pattern.search(msg_text)
+        if m2:
+            body = m2.group(1)
+            replaced += 1
+            return tr_heuristic_pattern.sub(
+                lambda mm: f'<translation>{mm.group(1)}</translation>',
+                msg_text, count=1
+            )
+
+        return msg_text
+
+    new_content = msg_pattern.sub(lambda m: process_message(m.group(0)), content)
+    if new_content != content:
+        path.write_text(new_content, encoding='utf-8')
+    return replaced
+
+
+def main():
+    ts_dir = Path(__file__).resolve().parent.parent / 'resources' / 'translations'
+    lang_files = sorted(p for p in ts_dir.glob('*.ts') if p.stem != 'gyroflow')
+    for ts_file in lang_files:
+        lang = ts_file.stem
+        count = process_ts(ts_file, lang)
+        print(f'{ts_file.name}: replaced {count} entries')
+
+
+if __name__ == '__main__':
+    main()
