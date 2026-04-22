@@ -21,8 +21,13 @@ Row {
     function updateEntry(key: string, value: string): void {
         model[key] = value;
         let index = Object.keys(tl.model).indexOf(key);
-        if (index !== -1) {
-            col2.children[index].children[0].text = value;
+        // Guard against partially-constructed children (Repeater rebuild can
+        // race with external signals like VideoInformation.entryUpdated)
+        if (index !== -1 && index < col2.children.length) {
+            const row = col2.children[index];
+            if (row && row.children && row.children.length > 0 && row.children[0]) {
+                row.children[0].text = value;
+            }
         }
     }
     function updateEntryWithTrigger(key: string, value: string): void {

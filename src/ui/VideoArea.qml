@@ -133,6 +133,7 @@ Item {
                     }
                     if (info.hasOwnProperty("duration_ms")) {
                         duration_ms = info.duration_ms;
+                        vidInfo.updateEntry("Duration", vidInfo.getDuration({"stream.video[0].duration": duration_ms}));
                     }
                 }
 
@@ -262,9 +263,6 @@ Item {
                 vidInfo.updateEntry("Contains gyro", additional_data.contains_motion? "Yes" : "No");
                 // If source was detected, but gyro data is empty
                 if (camera) {
-                    if (!additional_data.contains_motion && !additional_data.contains_quats && !additional_data.has_lens_params && !additional_data.hasOwnProperty("unit_pixel_focal_length")) {
-                        messageBox(Modal.Warning, qsTr("File format was detected, but no motion data was found.\nThe camera probably doesn't record motion data in this particular shooting mode."), [ { "text": qsTr("Ok") } ]);
-                    }
                     if (additional_data.unsupported_lens) {
                         messageBox(Modal.Warning, qsTr("This video cannot be stabilized, because this lens doesn't support OSS metadata.\nDisable lens stabilization (Optical SteadyShot) in order to use Gyroflow."), [ { "text": qsTr("Ok") } ]);
                     }

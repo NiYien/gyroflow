@@ -70,6 +70,8 @@ MenuItem {
     }
 
     signal selectFileRequest();
+    // [simple-mode] Emitted after list.updateEntry so external TableList mirrors (e.g. simpleInfoList) can stay in sync
+    signal entryUpdated(string key, string value);
 
     function loadFromVideoMetadata(md: var, org_w: int, org_h: int): void {
         const framerate = +md["stream.video[0].codec.frame_rate"] || 0;
@@ -128,9 +130,11 @@ MenuItem {
     function updateEntry(key: string, value: string): void {
         if (key == "File name") root.filename = value;
         list.updateEntry(key, value);
+        root.entryUpdated(key, value);
     }
     function updateEntryWithTrigger(key: string, value: string): void {
         list.updateEntryWithTrigger(key, value);
+        root.entryUpdated(key, value);
     }
 
     function getDuration(md): string {

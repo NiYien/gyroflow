@@ -22,6 +22,10 @@ Rectangle {
     onIsSimpleModeChanged: {
         settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
         render_queue.simple_mode = isSimpleMode;
+        // [parallel-mode] Simple forces 3; Full honors user setting (defaults to 3)
+        render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
+        // [simple-overwrite] Simple forces silent overwrite (1); Full honors user setting
+        render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
     }
 
     function _isSenseFlow(s) { return (s || "").indexOf("SenseFlow") >= 0; }
@@ -416,6 +420,7 @@ Rectangle {
                 Label {
                     x: 10 * dpiScale;
                     id: outputPathLabel;
+                    visible: !window.isSimpleMode;
                     anchors.verticalCenter: (isMobileLayout? undefined : parent.verticalCenter);
                     anchors.verticalCenterOffset: -1 * dpiScale;
                     text: qsTr("Output path:");
@@ -432,6 +437,114 @@ Rectangle {
                     }
                 }
 
+                // [simple-mode] Bottom two-button row: Auto sync (export .gyroflow with gyro data) + Export stabilized video
+                // Both act on the entire render queue — same scope as the old RenderQueue top-right Start button
+                Row {
+                    id: simpleExportBtnRow;
+                    visible: window.isSimpleMode;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    anchors.horizontalCenter: parent.horizontalCenter;
+                    anchors.horizontalCenterOffset: -(queueBtn.width + spacing) / 2;
+                    spacing: 10 * dpiScale;
+                    property int queueRowCount: 0;
+                    Connections {
+                        target: render_queue;
+                        function onQueue_changed(): void {
+                            simpleExportBtnRow.queueRowCount = render_queue.queue.rowCount();
+                        }
+                    }
+                    Button {
+                        text: qsTr("Auto sync");
+                        iconName: "spinner";
+                        height: 36 * dpiScale;
+                        leftPadding: 16 * dpiScale;
+                        rightPadding: 16 * dpiScale;
+                        // Single-video only (current video on the main canvas). Batch operations
+                        // on the queue are handled inside the render queue panel itself.
+                        enabled: window.videoArea.vid.loaded && !controller.sync_in_progress;
+                        onClicked: {
+                            if (window.sync) window.sync.runAutosync();
+                        }
+                    }
+                    Button {
+                        id: simpleExportStabilizedBtn;
+                        // [simple-mode] Dual-path Export:
+                        //   - render_queue active     → Stop
+                        //   - queue panel open + jobs → batch start (entire queue)
+                        //   - else (main canvas)      → single video; if no sync points, run
+                        //                                autosync first then auto-continue the render
+                        text: render_queue.status === "active" ? qsTr("Stop") : qsTr("Export stabilized video");
+                        accent: true;
+                        iconName: render_queue.status === "active" ? "close" : "video";
+                        height: 36 * dpiScale;
+                        leftPadding: 16 * dpiScale;
+                        rightPadding: 16 * dpiScale;
+                        enabled: render_queue.status === "active"
+                              || (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
+                              || window.videoArea.vid.loaded;
+
+                        // Set when we kicked off autosync and are waiting to resume render.
+                        property bool pendingRenderAfterSync: false;
+
+                        function doSingleRender(): void {
+                            window.videoArea.vid.pause();
+                            renderBtn.allowFile = false;
+                            renderBtn.allowLens = false;
+                            // Already auto-synced (or sync not applicable) — skip the Full-mode
+                            // "no sync points" warning that would otherwise block the silent flow.
+                            renderBtn.allowSync = true;
+                            render_queue.export_project = 0;
+                            renderBtn.render();
+                        }
+
+                        Connections {
+                            target: controller;
+                            function onSync_in_progress_changed(): void {
+                                if (simpleExportStabilizedBtn.pendingRenderAfterSync && !controller.sync_in_progress) {
+                                    simpleExportStabilizedBtn.pendingRenderAfterSync = false;
+                                    // Defer one tick so sync's own tail-callbacks settle first
+                                    Qt.callLater(simpleExportStabilizedBtn.doSingleRender);
+                                }
+                            }
+                        }
+
+                        onClicked: {
+                            if (render_queue.status === "active") {
+                                render_queue.stop();
+                                return;
+                            }
+                            // Batch path — render queue panel is open with pending jobs
+                            if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
+                                render_queue.export_project = 0;
+                                render_queue.start();
+                                return;
+                            }
+                            // Single-video path — auto-sync first if needed, then render
+                            if (!window.videoArea.vid.loaded) return;
+                            const md = motionData.item;
+                            const vi = vidInfo.item;
+                            // Require filename match (same as Full mode Line ~624): motionData may
+                            // be left over from a previous video after the user loads a new one.
+                            const syncedByMd = md && vi && md.filename == vi.filename
+                                && (md.hasAccurateTimestamps || (md.hasQuaternions && md.integrationMethod === 0));
+                            const hasSync = controller.offsets_model.rowCount() > 0 || syncedByMd;
+                            if (hasSync) {
+                                simpleExportStabilizedBtn.doSingleRender();
+                            } else if (window.sync && !controller.sync_in_progress) {
+                                // Short-circuit runAutosync's early-return paths (no lens_loaded pops
+                                // a "Continue without lens?" dialog; cancelling it won't fire
+                                // sync_in_progress_changed and pendingRenderAfterSync would leak).
+                                if (!controller.lens_loaded) {
+                                    simpleExportStabilizedBtn.doSingleRender();
+                                } else {
+                                    simpleExportStabilizedBtn.pendingRenderAfterSync = true;
+                                    window.sync.runAutosync();
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Row {
                     id: renderBtnRow;
                     anchors.right: (isMobileLayout? undefined : parent.right);
@@ -442,6 +555,7 @@ Rectangle {
                     anchors.horizontalCenterOffset: (queueBtn.width + spacing) / 2;
                     SplitButton {
                         id: renderBtn;
+                        visible: !window.isSimpleMode;
                         btn.accent: true;
                         text: {
                             if (addQueueDelayed) {
@@ -536,12 +650,18 @@ Rectangle {
                                     renderBtn.render();
                                 }
 
-                                if ((renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue) && render_queue.overwrite_mode === 1) {
+                                // [overwrite-mode] Full mode keeps the original prompt unless the user is
+                                // explicitly adding to queue; Simple mode is opted in as a whole so its
+                                // one-shot flow stays silent (onIsSimpleModeChanged forces overwrite_mode=1).
+                                const silentOverwriteOk = window.isSimpleMode || renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue;
+                                if (silentOverwriteOk && render_queue.overwrite_mode === 1) {
                                     overwrite();
-                                    showNotification(Modal.Info, qsTr("Added to queue") + ", " + qsTr("file %1 will be overwritten").arg(outputFile.filename))
-                                } else if ((renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue) && render_queue.overwrite_mode === 2) {
+                                    if (renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue)
+                                        showNotification(Modal.Info, qsTr("Added to queue") + ", " + qsTr("file %1 will be overwritten").arg(outputFile.filename))
+                                } else if (silentOverwriteOk && render_queue.overwrite_mode === 2) {
                                     rename();
-                                    showNotification(Modal.Info, qsTr("Added to queue") + ", " + qsTr("file will be rendered to %1").arg(outputFile.filename))
+                                    if (renderBtn.isAddToQueue || renderBtn.tempIsAddToQueue)
+                                        showNotification(Modal.Info, qsTr("Added to queue") + ", " + qsTr("file will be rendered to %1").arg(outputFile.filename))
                                 } else {
                                     messageBox(Modal.Question, qsTr("Output file already exists, do you want to overwrite it?"), [
                                         { text: qsTr("Yes"), clicked: overwrite },
@@ -673,6 +793,32 @@ Rectangle {
                                     window.saveProject(action.substring(12));
                                 break;
                                 case "save": window.saveProject(""); break;
+                            }
+                        }
+                    }
+                    // [clear-queue] Clear render queue shortcut — visible only when the queue panel is open
+                    Item {
+                        id: clearQueueBtn;
+                        width: 36 * dpiScale;
+                        height: 44 * dpiScale;
+                        anchors.verticalCenter: parent.verticalCenter;
+                        visible: videoArea.queue.shown;
+                        LinkButton {
+                            anchors.centerIn: parent;
+                            leftPadding: 8 * dpiScale;
+                            rightPadding: 8 * dpiScale;
+                            icon.width: 22 * dpiScale;
+                            icon.height: 22 * dpiScale;
+                            iconName: "bin";
+                            tooltip: qsTr("Clear render queue");
+                            onClicked: {
+                                messageBox(Modal.Warning, qsTr("Are you sure you want to remove all items from the render queue?"), [
+                                    { text: qsTr("Yes"), clicked: function() {
+                                        render_queue.clear();
+                                        render_queue.clear_gyro_files();
+                                    }},
+                                    { text: qsTr("No"), accent: true },
+                                ]);
                             }
                         }
                     }
@@ -842,47 +988,8 @@ Rectangle {
                 visible: window.isSimpleMode;
                 spacing: 0;
 
-                // ── Batch Banner (Simple mode) ──
-                Rectangle {
-                    id: simpleBatchBanner;
-                    visible: batchState.active && window.isSimpleMode;
-                    width: parent.width;
-                    height: visible ? 40 * dpiScale : 0;
-                    color: styleAccentColor;
-                    radius: 4 * dpiScale;
-                    Ease on height { }
-
-                    Row {
-                        anchors.centerIn: parent;
-                        spacing: 10 * dpiScale;
-                        BasicText {
-                            text: qsTr("Batch settings (%1)").arg(
-                                videoArea.queue ? videoArea.queue.selectedCount : 0)
-                            color: "#ffffff";
-                            font.bold: true;
-                            font.pixelSize: 13 * dpiScale;
-                            anchors.verticalCenter: parent.verticalCenter;
-                            leftPadding: 0;
-                        }
-                        Button {
-                            text: qsTr("Apply");
-                            accent: true;
-                            height: 30 * dpiScale;
-                            leftPadding: 16 * dpiScale;
-                            rightPadding: 16 * dpiScale;
-                            onClicked: window.applyBatchParams();
-                        }
-                        Button {
-                            text: qsTr("Exit");
-                            height: 30 * dpiScale;
-                            leftPadding: 16 * dpiScale;
-                            rightPadding: 16 * dpiScale;
-                            onClicked: {
-                                if (videoArea.queue) videoArea.queue.deselectAllJobs();
-                            }
-                        }
-                    }
-                }
+                // Batch banner removed — RenderQueue.qml multi-select toolbar "Done" button
+                // now applies batch params and deselects, replacing the Apply/Exit controls.
 
                 // ── 1. Video information + Export ──
                 MenuItem {
@@ -901,6 +1008,13 @@ Rectangle {
                         id: simpleInfoList;
                         width: parent.width;
                         model: window.vidInfo ? window.vidInfo.infoList.model : ({});
+                        // [simple-mode] Mirror incremental updates emitted by VideoInformation.updateEntry
+                        Connections {
+                            target: window.vidInfo;
+                            function onEntryUpdated(key: string, value: string): void {
+                                simpleInfoList.updateEntry(key, value);
+                            }
+                        }
                     }
                     SectionDivider { label: qsTranslate("Export", "Export settings"); }
                     Menu.SimpleExport {
@@ -969,10 +1083,11 @@ Rectangle {
                         }
                     }
 
-                    SectionDivider { visible: lensGroupConfig.active; }
+                    SectionDivider { }
                     ItemLoader {
                         id: lensGroupConfig;
-                        active: window.lensGroupPanelActive;
+                        // Always visible in Simple mode so users can configure lens groups without hunting for a trigger
+                        active: true;
                         width: parent.width;
                         sourceComponent: Component { Menu.LensGroupConfig { } }
                     }
@@ -1043,20 +1158,7 @@ Rectangle {
                             if (window.advanced) window.advanced.gpudecode.checked = checked;
                         }
                     }
-                    Label {
-                        position: Label.LeftPosition;
-                        text: qsTranslate("Advanced", "Default file suffix");
-                        width: parent.width;
-                        TextField {
-                            id: simpleSuffix;
-                            width: parent.width;
-                            text: window.advanced ? window.advanced.defaultSuffix.text : "_stabilized";
-                            onTextChanged: {
-                                if (window.advanced) window.advanced.defaultSuffix.text = text;
-                                render_queue.default_suffix = text;
-                            }
-                        }
-                    }
+                    // Default file suffix moved to Video information panel (menu/VideoInformation.qml)
                     Label {
                         position: Label.LeftPosition;
                         text: qsTranslate("Advanced", "Device for video processing");
@@ -1264,6 +1366,10 @@ Rectangle {
         controller.check_updates();
         updateLensGroupPanelState();
         render_queue.simple_mode = isSimpleMode;
+        // [parallel-mode] Initialize parallel_renders per current mode
+        render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
+        // [simple-overwrite] Initialize overwrite mode per current mode — Simple forces silent overwrite
+        render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
 
         QT_TRANSLATE_NOOP("App", "An error occured: %1");
         QT_TRANSLATE_NOOP("App", "Gyroflow file exported to %1.");

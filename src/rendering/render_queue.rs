@@ -17,7 +17,7 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
     Arc,
 };
 
@@ -67,6 +67,11 @@ struct Job {
     auto_rotate: bool,
     additional_data: String,
     cancel_flag: Arc<AtomicBool>,
+    // [cancel-epoch] Monotonically bumped whenever a render is started, paused or stopped.
+    // progress/err callbacks capture the epoch they were created under and early-return when
+    // it no longer matches Job.render_epoch, killing stale cross-thread callbacks that would
+    // otherwise mark the job Finished/Error during a fast Stop→Start restart.
+    render_epoch: Arc<AtomicU64>,
     project_data: Option<String>,
     stab: Option<Arc<StabilizationManager>>,
     base_lens_metadata: Option<JobLensMetadataBackup>,
@@ -900,6 +905,7 @@ impl RenderQueue {
                 auto_rotate: false,
                 additional_data,
                 cancel_flag: Default::default(),
+                render_epoch: Default::default(),
                 project_data,
                 stab: Some(stab.clone()),
                 base_lens_metadata,
@@ -1012,11 +1018,13 @@ impl RenderQueue {
 
             let mut job_id = None;
             for v in self.queue.borrow().iter() {
-                if v.current_frame == 0
-                    && v.total_frames > 0
-                    && v.status == JobStatus::Queued
-                    && (v.processing_progress == 0.0 || v.processing_progress == 1.0)
-                {
+                // [stop-restart] Queue selection only needs status==Queued + known frame count.
+                // Previous tighter predicate (current_frame==0 && processing_progress∈{0,1}) was
+                // necessary when Rendering→Queued reset also wiped those counters; now that reset
+                // preserves them (see reset_rendering_jobs_to_queued), a Stopped job still has
+                // current_frame>0 and must remain selectable. render_job has its own entry guard
+                // against double-scheduling (status == Rendering/Finished/Skipped → return).
+                if v.total_frames > 0 && v.status == JobStatus::Queued {
                     job_id = Some(v.job_id);
                     break;
                 }
@@ -1075,7 +1083,15 @@ impl RenderQueue {
         // NeuFlow inference keeps running. resume() resets cancel_flag back to false.
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(true, SeqCst);
+            // [cancel-epoch] Invalidate any in-flight progress/err callbacks; the new
+            // render (after resume) will capture a fresh epoch.
+            job.render_epoch.fetch_add(1, SeqCst);
         }
+
+        // Proactively flip Rendering → Queued so a concurrent resume()/start()
+        // can find the jobs to schedule. Otherwise the late callback races with
+        // start()'s Queued scan and either side can lose.
+        self.reset_rendering_jobs_to_queued();
 
         self.status = QString::from("paused");
         self.status_changed();
@@ -1084,9 +1100,34 @@ impl RenderQueue {
         self.pause_flag.store(false, SeqCst);
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(true, SeqCst);
+            job.render_epoch.fetch_add(1, SeqCst);
         }
+
+        self.reset_rendering_jobs_to_queued();
+
         self.status = QString::from("stopped");
         self.status_changed();
+    }
+
+    // Proactively flip every Rendering job back to Queued so a follow-up start() can
+    // re-schedule them without waiting for the (now stale) render callback to land.
+    //
+    // We intentionally keep current_frame / processing_progress / frame_times /
+    // timestamps intact. The follow-up render_job always starts ffmpeg encoding from
+    // frame 0 (ffmpeg does not support partial resume), and the very first progress
+    // callback will overwrite current_frame back to 0 — so the UI briefly shows the
+    // prior progress before re-ticking. Clearing these fields here was rejected in
+    // code review: it made pause/resume semantics lossy for Full mode's mainBtn.
+    fn reset_rendering_jobs_to_queued(&self) {
+        if let Ok(mut q) = self.queue.try_borrow_mut() {
+            for i in 0..q.row_count() as usize {
+                let mut v = q[i].clone();
+                if v.status == JobStatus::Rendering {
+                    v.status = JobStatus::Queued;
+                    q.change_line(i, v);
+                }
+            }
+        }
     }
 
     fn post_render_action(&self) {
@@ -1755,6 +1796,10 @@ impl RenderQueue {
                 }
             }
             job.cancel_flag.store(false, SeqCst);
+            // [cancel-epoch] Bump epoch so any pending callbacks from a previous render cycle
+            // for this job are ignored; capture_epoch is moved into both the progress and
+            // err closures to compare on every callback invocation.
+            let capture_epoch = job.render_epoch.fetch_add(1, SeqCst) + 1;
 
             let stab = match job.stab.clone() {
                 Some(s) => s,
@@ -1781,6 +1826,19 @@ impl RenderQueue {
                     bool,
                     bool,
                 )| {
+                    // [cancel-epoch] Ignore any callback whose epoch has been superseded by
+                    // pause()/stop()/new render_job. This is the critical guard that prevents
+                    // a cancelled render's trailing finished=true callback from flipping the
+                    // job to Finished and releasing stab after the user restarts.
+                    let current_epoch = this
+                        .jobs
+                        .get(&job_id)
+                        .map(|j| j.render_epoch.load(SeqCst))
+                        .unwrap_or(0);
+                    if current_epoch != capture_epoch {
+                        return;
+                    }
+
                     rendered_frames2.store(current_frame, SeqCst);
 
                     let mut start_time = 0;
@@ -1877,6 +1935,18 @@ impl RenderQueue {
             let err = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, (msg, mut arg): (String, String)| {
+                    // [cancel-epoch] Same guard as progress — a cancelled render may surface
+                    // as an Err from ffmpeg; we must not mark the job Error after the user
+                    // has already requested a restart (which bumped the epoch).
+                    let current_epoch = this
+                        .jobs
+                        .get(&job_id)
+                        .map(|j| j.render_epoch.load(SeqCst))
+                        .unwrap_or(0);
+                    if current_epoch != capture_epoch {
+                        return;
+                    }
+
                     arg.push_str("\n\n");
                     arg.push_str(&rendering::get_log());
 
@@ -3583,9 +3653,18 @@ impl RenderQueue {
                         job_id,
                         created_at
                     );
+                    // [match-regression] Use a sentinel duration ABOVE the 10s calibration
+                    // threshold so find_calibration_videos skips this Finished job. A real
+                    // duration is not recoverable here (stab released), and the prior 0.0
+                    // wrongly qualified every already-rendered job as a calibration candidate,
+                    // which polluted global_offset and caused every *subsequent* video in the
+                    // queue to fall outside the resulting gyro time range and be marked
+                    // Skipped ("no_gyro"). Reported symptom: "after rendering one video on
+                    // the main canvas, adding more to the queue then auto-matching skips
+                    // everything past that video."
                     videos.push(core::gyro_match::VideoMatchInfo {
                         path: job.render_options.input_url.clone(),
-                        duration_ms: 0.0,
+                        duration_ms: 10_001.0,
                         created_at_ms: created_at,
                         pre_recording_ms: 0.0,
                     });
@@ -5801,6 +5880,7 @@ mod tests {
             auto_rotate: false,
             additional_data: String::new(),
             cancel_flag: Default::default(),
+            render_epoch: Default::default(),
             project_data: None,
             stab: None,
             base_lens_metadata: None,

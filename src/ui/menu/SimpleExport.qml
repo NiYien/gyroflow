@@ -53,6 +53,22 @@ Column {
         }
     }
 
+    // ── Default file suffix (applied to output filename by render_queue) ──
+    Label {
+        position: Label.LeftPosition;
+        text: qsTranslate("Advanced", "Default file suffix");
+        width: parent.width;
+        TextField {
+            id: simpleDefaultSuffix;
+            width: parent.width;
+            text: window.advanced ? window.advanced.defaultSuffix.text : "_stabilized";
+            onTextChanged: {
+                if (window.advanced) window.advanced.defaultSuffix.text = text;
+                render_queue.default_suffix = text;
+            }
+        }
+    }
+
     // ── Codec ──
     ComboBox {
         id: codec;

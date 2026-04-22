@@ -41,9 +41,11 @@ Item {
     // [T19] match 版本计数器，每次 match 结果变化时递增，触发 delegate 属性重新求值
     property int matchVersion: 0
     // ── Batch selection ──
+    // CheckBox column is always visible on every row. Tap a checkbox (mouse or touch)
+    // to toggle selection; drag across checkboxes with mouse button held to add a range.
+    // Touch drag is intentionally NOT hooked into drag-select — it scrolls the list instead.
     property var selectedJobs: ({})
     property int selectedCount: Object.keys(selectedJobs).length
-    property bool _dragSelecting: false
     property int _lastClickedIndex: -1
     function toggleJobSelection(jobId) {
         let s = Object.assign({}, selectedJobs);
@@ -339,6 +341,7 @@ Item {
         Button {
             id: mainBtn;
             accent: true;
+            visible: !window.isSimpleMode;
             property string status: render_queue.status;
             property var statuses: ({
                 "stopped": [qsTr("Start exporting"), "play",  styleAccentColor, "start"],
@@ -443,8 +446,8 @@ Item {
         anchors.rightMargin: 10 * dpiScale;
         anchors.top: matchWarningBar.bottom;
         anchors.topMargin: 5 * dpiScale;
-        anchors.bottom: batchStatusText.visible ? batchStatusText.top : (topGyroButtons.visible ? topGyroButtons.top : parent.bottom);
-        anchors.bottomMargin: (batchStatusText.visible || topGyroButtons.visible) ? 5 * dpiScale : 30 * dpiScale;
+        anchors.bottom: multiSelectBar.visible ? multiSelectBar.top : (topGyroButtons.visible ? topGyroButtons.top : parent.bottom);
+        anchors.bottomMargin: (multiSelectBar.visible || topGyroButtons.visible) ? 5 * dpiScale : 30 * dpiScale;
         clip: true;
         model: render_queue.queue;
         // [queue-lifecycle T1] 移除了历史恢复 Timer 和 save Connections
@@ -540,12 +543,14 @@ Item {
                         root.pairingGyroFilename = "";
                         return;
                     }
-                    // Batch selection
+                    // Selection — mirrors the always-visible CheckBox column:
+                    //   plain tap  → toggle (consistent with tapping the checkbox)
+                    //   Shift+tap  → range select from the last-clicked row
+                    //   Ctrl+tap   → toggle (explicit alias)
+                    // Drag-select is driven only by the CheckBox column's DragHandler (mouse only).
                     if (mouse.button === Qt.LeftButton) {
-                        root._dragSelecting = true;
                         const currentIndex = index;
                         if (mouse.modifiers & Qt.ShiftModifier && root._lastClickedIndex >= 0) {
-                            // Range select
                             const from = Math.min(root._lastClickedIndex, currentIndex);
                             const to = Math.max(root._lastClickedIndex, currentIndex);
                             let s = Object.assign({}, root.selectedJobs);
@@ -554,25 +559,10 @@ Item {
                                 if (item && item.jobId) s[item.jobId] = true;
                             }
                             root.selectedJobs = s;
-                        } else if (mouse.modifiers & Qt.ControlModifier) {
-                            root.toggleJobSelection(job_id);
                         } else {
-                            let s = {};
-                            s[job_id] = true;
-                            root.selectedJobs = s;
+                            root.toggleJobSelection(job_id);
                         }
                         root._lastClickedIndex = currentIndex;
-                    }
-                }
-                onReleased: {
-                    root._dragSelecting = false;
-                }
-                onEntered: {
-                    // Drag/swipe selection: when mouse enters while dragging, add to selection
-                    if (root._dragSelecting) {
-                        let s = Object.assign({}, root.selectedJobs);
-                        s[job_id] = true;
-                        root.selectedJobs = s;
                     }
                 }
             }
@@ -613,7 +603,17 @@ Item {
                     iconName: isInProgress? "close" : "spinner";
                     text: isInProgress? qsTr("Stop") : qsTr("Reset status");
                     enabled: isError || isFinished || isQuestion || isInProgress || isSkipped;
-                    onTriggered: render_queue.reset_job(job_id);
+                    // [batch-reset] If the right-clicked row is part of a multi-selection, reset every selected job
+                    onTriggered: {
+                        if (root.selectedCount > 1 && root.selectedJobs[job_id]) {
+                            const ids = Object.keys(root.selectedJobs).map(Number);
+                            for (const id of ids) {
+                                render_queue.reset_job(id);
+                            }
+                        } else {
+                            render_queue.reset_job(job_id);
+                        }
+                    }
                 }
                 // T14: Manual gyro pairing sub-menu
                 Menu {
@@ -667,13 +667,90 @@ Item {
                 border.width: window.isMobileLayout && !statusBg.shown? 1 * dpiScale : 0;
                 border.color: root.queueOutlineColor;
             }
+            // Always-visible selection column. TapHandler handles tap (both mouse and touch);
+            // DragHandler is restricted to PointerDevice.Mouse so touch drags fall through to
+            // the ListView's Flickable and scroll the list instead of hijacking into drag-select.
+            Item {
+                id: checkboxCol;
+                width: 32 * dpiScale;
+                anchors.left: parent.left;
+                anchors.top: parent.top;
+                anchors.bottom: parent.bottom;
+                z: 10;
+
+                CheckBox {
+                    anchors.verticalCenter: parent.verticalCenter;
+                    anchors.horizontalCenter: parent.horizontalCenter;
+                    checked: dlg.isSelected;
+                    // Input goes through TapHandler/DragHandler; checkbox is a visual indicator only
+                    enabled: false;
+                    opacity: 1.0;
+                    scale: 0.85;
+                }
+
+                TapHandler {
+                    onTapped: {
+                        root.toggleJobSelection(dlg.jobId);
+                        root._lastClickedIndex = index;
+                    }
+                }
+
+                DragHandler {
+                    id: dragSelectHandler;
+                    acceptedDevices: PointerDevice.Mouse;
+                    target: null;
+                    // iOS Photos-style "laser brush", driven entirely by cursor position:
+                    //   - Drag activation records the anchor row, snapshots the selection and
+                    //     picks a paint mode (add / remove) based on the anchor's prior state.
+                    //     It does NOT toggle the anchor — TapHandler handles short clicks,
+                    //     and leaving the anchor untouched lets reverse-drag back to the anchor
+                    //     fully restore the original selection (including the anchor itself).
+                    //   - Each centroid change rebuilds selection from snapshot:
+                    //       idx === startIndex → no rows painted (selection == snapshot)
+                    //       idx !== startIndex → [min,max] painted with paint mode (anchor included)
+                    //   Dragging forward paints outward; dragging back to the anchor fully
+                    //   reverses; crossing the anchor paints the other side.
+                    property int _startIndex: -1;
+                    property bool _addMode: true;
+                    property var _snapshot: ({});
+                    onActiveChanged: {
+                        if (active) {
+                            _startIndex = index;
+                            _addMode = !dlg.isSelected;
+                            _snapshot = Object.assign({}, root.selectedJobs);
+                            root._lastClickedIndex = index;
+                        } else {
+                            _startIndex = -1;
+                            _snapshot = ({});
+                        }
+                    }
+                    onCentroidChanged: {
+                        if (!active || _startIndex < 0) return;
+                        const pt = dragSelectHandler.parent.mapToItem(lv.contentItem, centroid.position.x, centroid.position.y);
+                        const idx = lv.indexAt(pt.x, pt.y);
+                        if (idx < 0) return;
+                        let s = Object.assign({}, _snapshot);
+                        if (idx !== _startIndex) {
+                            const from = Math.min(_startIndex, idx);
+                            const to = Math.max(_startIndex, idx);
+                            for (let i = from; i <= to; i++) {
+                                const it = lv.itemAtIndex(i);
+                                if (!it || !it.jobId) continue;
+                                if (_addMode) s[it.jobId] = true;
+                                else delete s[it.jobId];
+                            }
+                        }
+                        root.selectedJobs = s;
+                    }
+                }
+            }
             // [queue-gyro-column] 左列 gyro 区域（从 gyroColorBar 改造而来）
             // [queue-gyro-column T8] 双模式：已匹配时按 matchGyroIndex 对齐，未匹配时按行 index 填入
             Item {
                 id: gyroArea;
                 visible: width > 0;
                 width: root.gyroColumnWidth;
-                anchors.left: parent.left;
+                anchors.left: checkboxCol.right;
                 anchors.top: parent.top;
                 // [T22] 颜色条填满整个 delegate 高度（含 spacing 区域），
                 // 同组时 delegateSpacing=0 自然无间隙，不同组时 spacing 区域也着色避免视觉断裂
@@ -904,8 +981,8 @@ Item {
             }
             Item {
                 id: innerItm;
-                // [T20] x 考虑隔离列宽度
-                x: 5 * dpiScale + gyroArea.width + separatorCol.width;
+                // [T20] x accounts for optional multi-select column, gyro column and separator
+                x: 5 * dpiScale + checkboxCol.width + gyroArea.width + separatorCol.width;
                 width: parent.width - x - 5 * dpiScale;
                 height: textColumn.height + 20 * dpiScale;
                 Image {
@@ -1146,18 +1223,47 @@ Item {
         }
     }
 
-    // Task 4: 批量模式提示文本
-    BasicText {
-        id: batchStatusText;
+    // Multi-select toolbar — shown whenever at least one job is selected.
+    // "Done" applies the current batch-edit params to all selected jobs and clears the selection.
+    Row {
+        id: multiSelectBar;
         visible: root.selectedCount > 0;
-        text: qsTr("Batch mode — %1 item(s) selected (edit in sidebar)").arg(root.selectedCount);
         anchors.horizontalCenter: parent.horizontalCenter;
         anchors.bottom: topGyroButtons.visible ? topGyroButtons.top : parent.bottom;
         anchors.bottomMargin: topGyroButtons.visible ? 5 * dpiScale : 30 * dpiScale;
-        color: styleAccentColor;
-        font.pixelSize: 12 * dpiScale;
-        font.bold: true;
-        leftPadding: 0;
+        spacing: 10 * dpiScale;
+
+        BasicText {
+            text: qsTr("Selected: %1").arg(root.selectedCount);
+            color: styleAccentColor;
+            font.pixelSize: 12 * dpiScale;
+            font.bold: true;
+            anchors.verticalCenter: parent.verticalCenter;
+            leftPadding: 0;
+        }
+        LinkButton {
+            text: qsTr("Select all");
+            font.pixelSize: 12 * dpiScale;
+            anchors.verticalCenter: parent.verticalCenter;
+            onClicked: root.selectAllJobs();
+        }
+        LinkButton {
+            text: qsTr("Deselect");
+            font.pixelSize: 12 * dpiScale;
+            anchors.verticalCenter: parent.verticalCenter;
+            onClicked: root.deselectAllJobs();
+        }
+        LinkButton {
+            text: qsTr("Done");
+            font.pixelSize: 12 * dpiScale;
+            anchors.verticalCenter: parent.verticalCenter;
+            onClicked: {
+                if (typeof window !== "undefined" && window.applyBatchParams) {
+                    window.applyBatchParams();
+                }
+                root.deselectAllJobs();
+            }
+        }
     }
 
     // Auto match / Clear 按钮（从标题下方移至 ListView 下方居中）
@@ -1381,6 +1487,7 @@ Item {
         anchors.bottom: parent.bottom;
         anchors.margins: 5 * dpiScale;
         leftPadding: 5 * dpiScale; rightPadding: 5 * dpiScale;
+        visible: !window.isSimpleMode;
         text: qsTr("Queue settings");
         onClicked: if (queueSettingsMenu.visible) { queueSettingsMenu.dismiss(); } else { queueSettingsMenu.popup(queueSettings, 0, height); }
 
@@ -1388,7 +1495,9 @@ Item {
             v = Math.min(6, Math.max(v, 1));
 
             render_queue.parallel_renders = v;
-            settings.setValue("parallelRenders", v);
+            // [parallel-default-3] Bumped default from 1 to 3; use a new setting key
+            // so legacy stored values don't override the new default on upgrade
+            settings.setValue("parallelRenders_v2", v);
 
             if (!menuItem || typeof menuItem.count !== "number") return;
             for (let i = 0; i < menuItem.count; ++i) {
@@ -1442,7 +1551,7 @@ Item {
                 Action { text: "4"; onTriggered: queueSettings.setParallelRenders(4, parallelRendersMenu);  }
                 Action { text: "5"; onTriggered: queueSettings.setParallelRenders(5, parallelRendersMenu);  }
                 Action { text: "6"; onTriggered: queueSettings.setParallelRenders(6, parallelRendersMenu);  }
-                Component.onCompleted: queueSettings.setParallelRenders(+settings.value("parallelRenders", 1), parallelRendersMenu);
+                Component.onCompleted: queueSettings.setParallelRenders(+settings.value("parallelRenders_v2", 3), parallelRendersMenu);
             }
             Menu {
                 id: overwriteActionMenu;
