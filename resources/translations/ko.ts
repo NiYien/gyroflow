@@ -4151,6 +4151,21 @@ Make sure you have proper rolling shutter value set before syncing.</source>
         <source>Average pattern sharpness</source>
         <translation>평균 패턴 선명도</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>이미지 안정화</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>켜짐</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>꺼짐</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

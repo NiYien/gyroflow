@@ -167,6 +167,10 @@ pub struct StabilizationManager {
 
     pub lens_group_config: Arc<RwLock<Vec<LensGroupConfig>>>,
     pub lens_group_status: Arc<RwLock<Vec<LensGroupStatus>>>,
+    // Snapshot of the lens profile taken the first time anamorphic is enabled, used to
+    // restore the original fx/fy/cx/cy/distortion when anamorphic is switched off again.
+    // Not serialized — purely runtime UI state.
+    pub pre_anamorphic_backup: Arc<RwLock<Option<LensProfile>>>,
 
     pub keyframes: Arc<RwLock<KeyframeManager>>,
 
@@ -208,6 +212,7 @@ impl Default for StabilizationManager {
             lens_group_status: Arc::new(RwLock::new(
                 niyien_lens_presets::default_lens_group_statuses(),
             )),
+            pre_anamorphic_backup: Arc::new(RwLock::new(None)),
 
             #[cfg(feature = "opencv")]
             lens_calibrator: Arc::new(RwLock::new(None)),
@@ -711,8 +716,17 @@ impl StabilizationManager {
         };
 
         if w > 0 && ow > 0 && h > 0 && oh > 0 {
-            self.stabilization.write().init_size((w, h), (ow, oh));
+            {
+                let mut stab = self.stabilization.write();
+                stab.init_size((w, h), (ow, oh));
+            }
             self.lens.write().optimal_fov = None;
+
+            // Refresh compute_params so FrameTransform uses the new output_size /
+            // lens.camera_matrix when sampling (otherwise the preview keeps sampling
+            // against stale cx/cy after anamorphic squeezes the output dimension).
+            let compute_params = stabilization::ComputeParams::from_manager(self);
+            self.stabilization.write().set_compute_params(compute_params);
 
             self.invalidate_smoothing();
         }
@@ -1643,6 +1657,100 @@ impl StabilizationManager {
 
     pub fn set_lens_group_config_json(&self, json: &str) {
         *self.lens_group_config.write() = niyien_lens_presets::lens_group_configs_from_json(json);
+    }
+
+    /// Apply one lens group config (focal length + anamorphic squeeze) to the main
+    /// stabilizer so the live canvas preview reflects the edit. This mirrors the
+    /// per-job reapply path in render_queue.rs (reapply_lens_group_config) but
+    /// targets the main `self.lens` instead of a queue job's stab.
+    ///
+    /// Returns the new output dimension if one was pushed (so the UI can sync the
+    /// Export settings' output width/height NumberFields).
+    pub fn apply_lens_group_to_main(&self, lens_index: usize) -> Option<(usize, usize)> {
+        let cfg = {
+            let all = self.lens_group_config.read();
+            all.get(lens_index).cloned()
+        };
+        let cfg = cfg?;
+
+        // 1. Focal length — reuses set_user_focal_length so file_metadata.lens_params
+        //    and lens.camera_matrix / fisheye_params.camera_matrix all get updated.
+        if let Some(fl) = cfg
+            .focal_length_mm
+            .filter(|v| v.is_finite() && *v > 0.0)
+        {
+            self.set_user_focal_length(fl);
+        }
+
+        // 2. Resolve the baseline lens that build_lens_profile should use as fallback:
+        //    - Entering anamorphic for the first time: snapshot current lens → backup,
+        //      baseline = that snapshot. Subsequent anamorphic edits also start from it
+        //      so different presets don't stack on top of each other.
+        //    - Exiting anamorphic (cfg.anamorphic_enabled=false and a backup exists):
+        //      baseline = the backup, and clear the backup. This ensures fx/fy/cx/cy +
+        //      distortion_coeffs + distortion_model all revert to their pre-anamorphic
+        //      values rather than keeping the previous preset's distortion parameters.
+        //    - No anamorphic state ever (cfg=false, backup=None): baseline = current.
+        let baseline = {
+            let mut backup = self.pre_anamorphic_backup.write();
+            if cfg.anamorphic_enabled {
+                if backup.is_none() {
+                    *backup = Some(self.lens.read().clone());
+                }
+                backup.clone().unwrap_or_else(|| self.lens.read().clone())
+            } else if let Some(b) = backup.take() {
+                b
+            } else {
+                self.lens.read().clone()
+            }
+        };
+
+        // 3. Rebuild the lens profile from baseline + cfg.
+        //    build_lens_profile already has the correct distortion semantics:
+        //    - anamorphic preset WITH distortion_coeffs → use preset's
+        //    - anamorphic preset WITHOUT distortion_coeffs → keep baseline's
+        //    - no anamorphic (cfg.anamorphic_enabled=false) → keep baseline's
+        //    (baseline = the lens captured before the first anamorphic edit, restored
+        //    from pre_anamorphic_backup when exiting anamorphic.)
+        let (metadata_snapshot, size) = {
+            let gyro = self.gyro.read();
+            let md = gyro.file_metadata.read().clone();
+            let p = self.params.read();
+            (md, (p.size.0, p.size.1))
+        };
+        if let Some(profile) = niyien_lens_presets::build_lens_profile(
+            &metadata_snapshot,
+            size,
+            Some(&cfg),
+            Some(&baseline),
+        ) {
+            let out_dim = profile.output_dimension.clone();
+            *self.lens.write() = profile;
+
+            // Per-group lens correction: anamorphic ON uses the slider value (default 100),
+            // anamorphic OFF always reverts to 100. This matches the user expectation that
+            // turning off anamorphic fully clears the group-specific correction override.
+            let correction_percent = if cfg.anamorphic_enabled {
+                cfg.lens_correction_amount
+                    .filter(|v| v.is_finite())
+                    .map(|v| v.clamp(0.0, 100.0) as f64)
+                    .unwrap_or(100.0)
+            } else {
+                100.0
+            };
+            self.set_lens_correction_amount(correction_percent / 100.0);
+
+            if let Some(od) = out_dim {
+                self.set_output_size(od.w, od.h);
+                return Some((od.w, od.h));
+            } else {
+                // Revert to the source video's dimensions when the config has no
+                // anamorphic output dim.
+                self.set_output_size(size.0, size.1);
+                return Some((size.0, size.1));
+            }
+        }
+        None
     }
     pub fn get_lens_group_config_json(&self) -> String {
         niyien_lens_presets::lens_group_config_to_json(&self.lens_group_config.read())

@@ -4152,6 +4152,21 @@ Setzt voraus, dass vor dem Synchronisieren ein korrekter Wert für Rolling-Shutt
         <source>Average pattern sharpness</source>
         <translation>Durchschnittliche Bildschärfe des Musters</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Bildstabilisierung</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Ein</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Aus</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

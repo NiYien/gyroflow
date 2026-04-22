@@ -227,17 +227,7 @@ Column {
         }
     }
 
-    // ── GPU Encoding ──
-    CheckBox {
-        id: simpleGpuEncoding;
-        text: qsTranslate("Export", "Use GPU encoding");
-        checked: exportSettings ? exportSettings.outGpu : true;
-        onCheckedChanged: {
-            if (exportSettings) {
-                exportSettings.outGpu = checked;
-            }
-        }
-    }
+    // GPU encoding toggle lives in the Settings section next to GPU decoding (App.qml).
 
     // ── Sync from Full mode ──
     Connections {

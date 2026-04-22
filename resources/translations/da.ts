@@ -4152,6 +4152,21 @@ Sørg for at du har en ordentlig rolling shutter værdi før synkronisering.</tr
         <source>Average pattern sharpness</source>
         <translation>Gennemsnitlig mønster skarphed</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Billedstabilisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Til</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Fra</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

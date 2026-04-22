@@ -64,7 +64,9 @@ Row {
                 objectName: "right";
                 BasicText {
                     id: t2;
-                    text: modelData;
+                    // Translate values too so short toggles like "On" / "Off" show up in
+                    // the user's language (same context as the key column).
+                    text: modelData? qsTr(modelData) : "";
                     onTextChanged: Qt.callLater(updateHeights);
                     font.bold: true;
                     MouseArea {

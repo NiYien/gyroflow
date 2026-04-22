@@ -13,6 +13,7 @@ MenuItem {
     iconName: "axes";
     objectName: "simple-mounting";
     opened: true;
+    btnHeight: 28 * dpiScale;
 
     property string currentMode: ""
     property real customPitch: 0

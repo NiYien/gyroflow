@@ -4152,6 +4152,21 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
         <source>Average pattern sharpness</source>
         <translation>Průměrný vzor ostrosti</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Stabilizace obrazu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Zapnuto</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Vypnuto</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

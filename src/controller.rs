@@ -74,6 +74,7 @@ pub struct Controller {
     lens_group_config: qt_property!(QString; READ get_lens_group_config NOTIFY lens_group_config_changed),
     lens_group_config_changed: qt_signal!(),
     set_lens_group_config: qt_method!(fn(&self, json: String)),
+    apply_lens_group_to_main: qt_method!(fn(&self, lens_index: usize) -> QString),
     lens_group_status: qt_property!(QString; READ get_lens_group_status NOTIFY lens_group_status_changed),
     lens_group_status_changed: qt_signal!(),
     get_lens_group_status: qt_method!(fn(&self) -> QString),
@@ -1421,6 +1422,33 @@ impl Controller {
     fn set_lens_group_config(&self, json: String) {
         self.stabilizer.set_lens_group_config_json(&json);
         self.lens_group_config_changed();
+        // Keep timeline + main-canvas preview in sync when the user edits focal length /
+        // anamorphic squeeze / preset in the Lens groups panel. Mirrors set_smoothing_param.
+        self.chart_data_changed();
+        self.request_recompute();
+    }
+    fn apply_lens_group_to_main(&self, lens_index: usize) -> QString {
+        // Push the focal length / anamorphic squeeze from the selected lens group into
+        // the main stabilizer's camera_matrix so fx/fy update in the live preview.
+        // Returns a JSON object with the new output dimension when anamorphic pushes
+        // one, so the QML caller can sync Export settings' output width/height fields.
+        let out_dim = self.stabilizer.apply_lens_group_to_main(lens_index);
+        self.lens_group_config_changed();
+        self.chart_data_changed();
+        // Emit lens_profile_loaded so Full-mode LensProfile.qml re-reads k1-k4 / camera
+        // matrix from the rebuilt lens profile.
+        let lens_json = self.stabilizer.lens.read().get_json().unwrap_or_default();
+        self.lens_profile_loaded(
+            QString::from(lens_json),
+            QString::default(),
+            QString::default(),
+        );
+        self.lens_changed();
+        self.request_recompute();
+        match out_dim {
+            Some((w, h)) => QString::from(format!("{{\"w\":{},\"h\":{}}}", w, h)),
+            None => QString::default(),
+        }
     }
     fn get_lens_group_status(&self) -> QString {
         QString::from(self.stabilizer.get_lens_group_status_json())

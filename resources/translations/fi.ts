@@ -4151,6 +4151,21 @@ Varmista, että olet asettanut oikean rullasulkimen arvon ennen synkronointia.</
         <source>Average pattern sharpness</source>
         <translation>Keskimääräinen kuvion terävyys</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Kuvan vakautus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Päällä</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Pois</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

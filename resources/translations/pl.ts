@@ -4152,6 +4152,21 @@ Upewnij się, że masz ustawiony poprawny czas odczytu klatki.</translation>
         <source>Average pattern sharpness</source>
         <translation>Średnia ostrość wzoru</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Stabilizacja obrazu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Wł.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Wył.</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

@@ -4153,6 +4153,21 @@ Make sure you have proper rolling shutter value set before syncing.</source>
         <source>Average pattern sharpness</source>
         <translation>Μέση ευκρίνεια μοτίβου</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Σταθεροποίηση εικόνας</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Ενεργό</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Ανενεργό</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

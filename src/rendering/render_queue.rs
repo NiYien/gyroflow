@@ -2410,24 +2410,28 @@ impl RenderQueue {
         let processing_done = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this, _: ()| {
-                if let Some(job) = this.jobs.get(&job_id) {
-                    if is_rendering
-                        && filesystem::exists_in_folder(
-                            &job.render_options.output_folder,
-                            &job.render_options
-                                .output_filename
-                                .replace("_%05d", "_00001"),
-                        )
-                    {
-                        let msg = QString::from(format!(
-                            "file_exists:{}",
-                            serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })
-                        ));
-                        update_model!(this, job_id, itm {
-                            itm.error_string = msg.clone();
-                            itm.status = JobStatus::Error;
-                        });
-                        this.error(job_id, msg, QString::default(), QString::default());
+                // overwrite_mode == 1 means silent overwrite (Simple mode default). Skip the
+                // file-exists check entirely so no prompt/inline message is emitted.
+                if this.overwrite_mode != 1 {
+                    if let Some(job) = this.jobs.get(&job_id) {
+                        if is_rendering
+                            && filesystem::exists_in_folder(
+                                &job.render_options.output_folder,
+                                &job.render_options
+                                    .output_filename
+                                    .replace("_%05d", "_00001"),
+                            )
+                        {
+                            let msg = QString::from(format!(
+                                "file_exists:{}",
+                                serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })
+                            ));
+                            update_model!(this, job_id, itm {
+                                itm.error_string = msg.clone();
+                                itm.status = JobStatus::Error;
+                            });
+                            this.error(job_id, msg, QString::default(), QString::default());
+                        }
                     }
                 }
 
@@ -2881,7 +2885,15 @@ impl RenderQueue {
         if force_autosync && has_accurate_timestamps {
             ::log::info!("do_autosync overriding has_accurate_timestamps for {}", url);
         }
-        if !has_sync_points && (!has_accurate_timestamps || force_autosync) {
+        // force_autosync takes precedence over stale offsets: a reset + re-queue from the
+        // render queue's Auto sync button must rerun the full sync even if the previous
+        // pass left offsets on stab.gyro. Clear them so the pipeline recomputes fresh.
+        if force_autosync && has_sync_points {
+            let stale = stab.gyro.read().get_offsets().len();
+            stab.gyro.write().clear_offsets();
+            ::log::info!("do_autosync clearing {} stale sync point(s) for {}", stale, url);
+        }
+        if force_autosync || (!has_sync_points && !has_accurate_timestamps) {
             // ----------------------------------------------------------------------------
             // --------------------------------- Autosync ---------------------------------
             processing_cb(0.01);
@@ -3173,6 +3185,8 @@ impl RenderQueue {
         ::log::debug!("new_output_options: {:?}", &new_output_options);
         let data = data.as_bytes();
         let data_vec = data.to_vec();
+        // Snapshot overwrite_mode before taking the mutable borrow of self.jobs.
+        let overwrite_mode = self.overwrite_mode;
         let mut q = self.queue.borrow_mut();
         for (job_id, job) in self.jobs.iter_mut() {
             if to_job_id > 0 && *job_id != to_job_id {
@@ -3224,12 +3238,15 @@ impl RenderQueue {
                                 job.render_options.output_folder.as_str(),
                                 job.render_options.output_filename.as_str(),
                             ));
-                        if filesystem::exists_in_folder(
-                            &job.render_options.output_folder,
-                            &job.render_options
-                                .output_filename
-                                .replace("_%05d", "_00001"),
-                        ) {
+                        // overwrite_mode == 1 (Simple silent overwrite) skips the file-exists check.
+                        if overwrite_mode != 1
+                            && filesystem::exists_in_folder(
+                                &job.render_options.output_folder,
+                                &job.render_options
+                                    .output_filename
+                                    .replace("_%05d", "_00001"),
+                            )
+                        {
                             let msg = QString::from(format!(
                                 "file_exists:{}",
                                 serde_json::json!({ "filename": job.render_options.output_filename, "folder": job.render_options.output_folder })

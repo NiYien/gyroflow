@@ -4151,6 +4151,21 @@ Assurez-vous d&apos;avoir une valeur d&apos;e mouvement d&apos;obturateur correc
         <source>Average pattern sharpness</source>
         <translation>Netteté moyenne de la mire</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Stabilisation d'image</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Activé</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Désactivé</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

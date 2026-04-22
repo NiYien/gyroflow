@@ -38,6 +38,8 @@ pub struct LensGroupConfig {
     pub preset_id: Option<String>,
     pub squeeze_direction: Option<SqueezeDirection>,
     pub squeeze_ratio: Option<f64>,
+    // Per-group lens correction amount in percent (0-100). None => no override, default 100.
+    pub lens_correction_amount: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

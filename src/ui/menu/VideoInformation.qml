@@ -57,6 +57,10 @@ MenuItem {
         QT_TRANSLATE_NOOP("TableList", "Iris");
         QT_TRANSLATE_NOOP("TableList", "Focal length");
         QT_TRANSLATE_NOOP("TableList", "Focus mode");
+        QT_TRANSLATE_NOOP("TableList", "Image stabilization");
+        // Image stabilization value toggles — translated by TableList's qsTr at display time.
+        QT_TRANSLATE_NOOP("TableList", "On");
+        QT_TRANSLATE_NOOP("TableList", "Off");
     }
 
     function cleanupModel() {
@@ -196,6 +200,8 @@ MenuItem {
                 root.org_fps = telFps;
             }
             if (is_main_video && additional_data.image_stabilizer !== undefined) {
+                // TableList's BOTH columns go through qsTr(context="TableList") — store raw
+                // English values here and let TableList translate at display time.
                 list.model["Image stabilization"] = additional_data.image_stabilizer ? "On" : "Off";
             }
             list.modelChanged();

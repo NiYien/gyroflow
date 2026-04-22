@@ -271,11 +271,26 @@ MenuItem {
         onCheckedChanged: controller.show_safe_area = checked;
         Component.onCompleted: Qt.callLater(checkedChanged);
     }
-    CheckBox {
-        id: gpudecode;
-        text: qsTr("Use GPU decoding");
-        checked: true;
-        onCheckedChanged: controller.set_gpu_decoding(checked);
+    // GPU decode + GPU encode side-by-side (same row). Encode mirrors Export.qml's `gpu` CheckBox.
+    Row {
+        width: parent.width;
+        spacing: 8 * dpiScale;
+        CheckBox {
+            id: gpudecode;
+            text: qsTr("Use GPU decoding");
+            width: (parent.width - parent.spacing) / 2;
+            checked: true;
+            onCheckedChanged: controller.set_gpu_decoding(checked);
+        }
+        CheckBox {
+            id: gpuencodeMirror;
+            text: qsTr("Use GPU encoding");
+            width: (parent.width - parent.spacing) / 2;
+            checked: window.exportSettings ? window.exportSettings.outGpu : true;
+            onCheckedChanged: {
+                if (window.exportSettings) window.exportSettings.outGpu = checked;
+            }
+        }
     }
     Label {
         id: r3dConvertFormatLabel;

@@ -13,6 +13,7 @@ MenuItem {
     iconName: "lens"
     objectName: "lens-group-config"
     opened: true
+    btnHeight: 28 * dpiScale
 
     property var statuses: []
     property var configs: []
@@ -89,11 +90,13 @@ MenuItem {
             preset_id: null,
             squeeze_direction: "horizontal",
             squeeze_ratio: null,
+            lens_correction_amount: null,
             mixed_focal_length: false,
             mixed_anamorphic_enabled: false,
             mixed_preset_id: false,
             mixed_squeeze_direction: false,
-            mixed_squeeze_ratio: false
+            mixed_squeeze_ratio: false,
+            mixed_lens_correction_amount: false
         }
     }
     function normalizeStatuses(raw: var): var {
@@ -286,6 +289,13 @@ MenuItem {
             verticalDirection.checked = direction === "vertical"
         if (squeezeRatioField.value !== currentSqueezeRatio())
             squeezeRatioField.value = currentSqueezeRatio()
+        if (lensCorrectionSlider) {
+            const correctionVal = config.lens_correction_amount !== null && config.lens_correction_amount !== undefined
+                ? +config.lens_correction_amount
+                : 100
+            if (lensCorrectionSlider.value !== correctionVal)
+                lensCorrectionSlider.value = correctionVal
+        }
         syncing = previousSyncing
     }
     function persistConfigs(next: var): void {
@@ -294,6 +304,21 @@ MenuItem {
             Qt.callLater(loadConfigs)
         } else {
             controller.set_lens_group_config(JSON.stringify(next))
+            // Push focal length + anamorphic squeeze of the currently-edited group into the
+            // main stabilizer so the live canvas preview actually reflects new fx/fy.
+            // Returns JSON {"w":W,"h":H} when anamorphic pushes an output dimension so we
+            // can propagate it to Export settings' output width/height NumberFields too.
+            const outJson = controller.apply_lens_group_to_main(selectedLensIndex) + ""
+            if (outJson.length > 0 && window.exportSettings && window.exportSettings.lensProfileLoaded) {
+                try {
+                    const dim = JSON.parse(outJson)
+                    if (dim && dim.w > 0 && dim.h > 0) {
+                        Qt.callLater(window.exportSettings.lensProfileLoaded, dim.w, dim.h)
+                    }
+                } catch (e) {
+                    console.warn("apply_lens_group_to_main parse error:", e, outJson)
+                }
+            }
             if (typeof render_queue !== "undefined" && render_queue.has_match_results())
                 render_queue.reapply_lens_group_config()
         }
@@ -309,6 +334,7 @@ MenuItem {
         config.mixed_preset_id = false
         config.mixed_squeeze_direction = false
         config.mixed_squeeze_ratio = false
+        config.mixed_lens_correction_amount = false
         next[selectedLensIndex] = config
         configs = next
         refreshUiFromSelection()
@@ -476,7 +502,10 @@ MenuItem {
                         precision: 1
                         unit: qsTr("mm")
                         placeholderText: root.currentConfig().mixed_focal_length ? qsTr("Mixed") : ""
-                        enabled: !!root.currentStatus().used
+                        // In batch mode the metadata-derived "used" flag may be false for every group
+                        // (videos without lens_index metadata), but the user still needs to set a
+                        // focal length manually for the selected queue jobs — so allow edits.
+                        enabled: root.batchScope || !!root.currentStatus().used
                         opacity: enabled ? 1.0 : 0.6
                         onValueChanged: {
                             if (root.syncing) return
@@ -490,7 +519,9 @@ MenuItem {
                 CheckBoxWithContent {
                     id: anamorphicBox
                     text: qsTr("Anamorphic lens")
-                    cb.enabled: !!root.currentStatus().used
+                    // Same rationale as focalLengthField: batch mode needs manual edits even when
+                    // no selected job has a metadata-derived "used" lens group yet.
+                    cb.enabled: root.batchScope || !!root.currentStatus().used
                     cb.opacity: cb.enabled ? 1.0 : 0.6
                     cb.onCheckedChanged: {
                         if (root.syncing) return
@@ -593,6 +624,31 @@ MenuItem {
                                 if (root.syncing || readOnly) return
                                 root.updateCurrentConfig(config => {
                                     config.squeeze_ratio = value > 1.0 ? value : null
+                                })
+                            }
+                        }
+                    }
+
+                    Label {
+                        position: Label.LeftPosition
+                        // Reuse the existing "Lens correction" translation from the Stabilization
+                        // context (all 22 languages have it) instead of creating a new context.
+                        text: qsTranslate("Stabilization", "Lens correction")
+                        width: parent.width
+
+                        SliderWithField {
+                            id: lensCorrectionSlider
+                            width: parent.width
+                            from: 0
+                            to: 100
+                            value: 100
+                            defaultValue: 100
+                            unit: qsTr("%")
+                            precision: 0
+                            onValueChanged: {
+                                if (root.syncing) return
+                                root.updateCurrentConfig(config => {
+                                    config.lens_correction_amount = value
                                 })
                             }
                         }

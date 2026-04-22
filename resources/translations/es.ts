@@ -4149,6 +4149,21 @@ Asegúrese de que el valor de barrido del obturador es el adecuado antes de sinc
         <source>Average pattern sharpness</source>
         <translation>Promedio de patrón de nitidez</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Estabilización de imagen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Activado</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Desactivado</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

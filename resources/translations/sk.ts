@@ -4152,6 +4152,21 @@ Pred synchronizáciou sa uisti, že je nastavená správna hodnota rolling-shutt
         <source>Average pattern sharpness</source>
         <translation>Priemerná ostrosť vzorku</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Stabilizácia obrazu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Zapnuté</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Vypnuté</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

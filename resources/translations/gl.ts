@@ -4151,6 +4151,21 @@ Asegúrese de ter configurado o valor do efecto xelatina adecuado antes de sincr
         <source>Average pattern sharpness</source>
         <translation>Nitidez media do patrón</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Estabilización de imaxe</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Activado</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Desactivado</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

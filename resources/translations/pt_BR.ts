@@ -4151,6 +4151,21 @@ Certifique-se de ter definido o valor adequado do obturador antes de sincronizar
         <source>Average pattern sharpness</source>
         <translation>Nitidez média do padrão</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Estabilização de imagem</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Ativado</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Desativado</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

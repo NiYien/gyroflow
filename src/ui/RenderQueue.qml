@@ -154,9 +154,15 @@ Item {
     Ease on anchors.bottomMargin { }
     Ease on anchors.topMargin { }
 
+    // Consume pointer events over the render-queue panel so clicks, right-clicks, hover and
+    // wheel gestures do not leak to the video preview / timeline underneath.
     MouseArea {
         anchors.fill: parent;
         preventStealing: true;
+        acceptedButtons: Qt.AllButtons;
+        hoverEnabled: true;
+        onWheel: (wheel) => { wheel.accepted = true; }
+        onPressed: (mouse) => { mouse.accepted = true; }
     }
 
     Rectangle {
@@ -1604,7 +1610,21 @@ Item {
                 Action { text: qsTr("Overwrite file"); onTriggered: queueSettings.setOverwriteAction(1, overwriteActionMenu); }
                 Action { text: qsTr("Rename file");    onTriggered: queueSettings.setOverwriteAction(2, overwriteActionMenu); }
                 Action { text: qsTr("Skip file");      onTriggered: queueSettings.setOverwriteAction(3, overwriteActionMenu); }
-                Component.onCompleted: queueSettings.setOverwriteAction(+settings.value("defaultOverwriteAction", 0), overwriteActionMenu);
+                // Simple mode always uses silent overwrite (1) and must NOT read the Full-mode
+                // QSettings "defaultOverwriteAction" — otherwise the RenderQueue loader
+                // overwrites App.qml's Component.onCompleted setting and the "file exists"
+                // inline prompt reappears for Simple users.
+                Component.onCompleted: {
+                    if (window && window.isSimpleMode) {
+                        render_queue.overwrite_mode = 1;
+                        for (let i = 0; i < overwriteActionMenu.count; ++i) {
+                            const action = overwriteActionMenu.actionAt(i);
+                            if (action) action.checked = false;
+                        }
+                    } else {
+                        queueSettings.setOverwriteAction(+settings.value("defaultOverwriteAction", 0), overwriteActionMenu);
+                    }
+                }
             }
             Menu {
                 id: exportModeMenu;

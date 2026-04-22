@@ -4152,6 +4152,21 @@ Sørg for at du har angitt riktig rullende lukkerverdi før synkronisering.</tra
         <source>Average pattern sharpness</source>
         <translation>Gjennomsnittlig mønsterskarphet</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Bildestabilisering</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>På</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Av</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

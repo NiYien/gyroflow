@@ -18,14 +18,25 @@ Rectangle {
 
     property QtObject controller: main_controller;
 
-    property bool isSimpleMode: settings.value("simpleMode", "false") == "true";
+    // Simple mode is session-scoped: always starts true, never persisted to QSettings.
+    property bool isSimpleMode: true;
+    // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
+    readonly property int defaultSmoothingIndex: 1;
+    function applySimpleModeDefaults(): void {
+        // Hide sync-time feature/flow overlays in the video preview.
+        controller.show_detected_features = false;
+        controller.show_optical_flow = false;
+        // Force smoothing method back to "Default" so Simple mode never inherits a
+        // method the user picked while temporarily in Full mode.
+        controller.set_smoothing_method(window.defaultSmoothingIndex);
+    }
     onIsSimpleModeChanged: {
-        settings.setValue("simpleMode", isSimpleMode ? "true" : "false");
         render_queue.simple_mode = isSimpleMode;
         // [parallel-mode] Simple forces 3; Full honors user setting (defaults to 3)
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Simple forces silent overwrite (1); Full honors user setting
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
+        if (isSimpleMode) applySimpleModeDefaults();
     }
 
     function _isSenseFlow(s) { return (s || "").indexOf("SenseFlow") >= 0; }
@@ -159,6 +170,7 @@ Rectangle {
         property real lensCorrection: 1.0;     // 0.0-1.0
         property real framerate: 0;            // 0=don't override
     }
+
 
     property bool _queueBatchActive: videoArea.queue
         && videoArea.queue.shown
@@ -454,15 +466,26 @@ Rectangle {
                         }
                     }
                     Button {
+                        id: simpleAutoSyncBtn;
                         text: qsTr("Auto sync");
                         iconName: "spinner";
                         height: 36 * dpiScale;
                         leftPadding: 16 * dpiScale;
                         rightPadding: 16 * dpiScale;
-                        // Single-video only (current video on the main canvas). Batch operations
-                        // on the queue are handled inside the render queue panel itself.
-                        enabled: window.videoArea.vid.loaded && !controller.sync_in_progress;
+                        // Queue path: when the render queue is visible with pending jobs, run the
+                        // queue with export_project=2 so each job performs autosync and writes a
+                        // .gyroflow project file — no video encode. Uses the queue's built-in
+                        // parallel_renders for concurrency. Otherwise falls back to main-canvas sync.
+                        readonly property bool _queueMode: videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
+                        enabled: _queueMode
+                            ? (render_queue.status !== "active")
+                            : (window.videoArea.vid.loaded && !controller.sync_in_progress);
                         onClicked: {
+                            if (simpleAutoSyncBtn._queueMode) {
+                                render_queue.export_project = 2;
+                                render_queue.start();
+                                return;
+                            }
                             if (window.sync) window.sync.runAutosync();
                         }
                     }
@@ -1018,23 +1041,22 @@ Rectangle {
                             }
                         }
                     }
-                    SectionDivider { label: qsTranslate("Export", "Export settings"); }
-                    Menu.SimpleExport {
-                        width: parent.width;
-                    }
                 }
                 Hr { }
 
                 // ── 2. Sensor & Lens ──
+                // Outer MenuItem stays fully enabled in batch mode so LensGroupConfig can
+                // handle the multi-selected queue jobs via its own batchScope path.
+                // Individual children opt in to disable when a batch edit is active.
                 MenuItem {
                     text: qsTr("Sensor && Lens");
                     iconName: "chart";
                     objectName: "simple-sensor-lens";
-                    opacity: batchState.active ? 0.4 : 1.0;
-                    innerItem.enabled: !batchState.active;
                     Row {
                         width: parent.width;
                         spacing: 8 * dpiScale;
+                        opacity: batchState.active ? 0.4 : 1.0;
+                        enabled: !batchState.active;
                         Button {
                             text: qsTranslate("Synchronization", "Auto sync");
                             iconName: "spinner";
@@ -1069,6 +1091,8 @@ Rectangle {
                         id: simpleDevice;
                         active: controller.device_connected || controller.ota_state !== "none";
                         width: parent.width;
+                        opacity: batchState.active ? 0.4 : 1.0;
+                        enabled: !batchState.active;
                         sourceComponent: Component { Menu.SimpleDevice { } }
                     }
 
@@ -1088,7 +1112,8 @@ Rectangle {
                     SectionDivider { }
                     ItemLoader {
                         id: lensGroupConfig;
-                        // Always visible in Simple mode so users can configure lens groups without hunting for a trigger
+                        // Always visible + interactive in Simple mode so users can configure
+                        // lens groups for the multi-selected queue jobs (batchScope path).
                         active: true;
                         width: parent.width;
                         sourceComponent: Component { Menu.LensGroupConfig { } }
@@ -1114,9 +1139,16 @@ Rectangle {
                     text: qsTr("Settings");
                     iconName: "settings";
                     objectName: "simple-settings";
-                    opened: false;
+                    // Open by default so Export settings (now the first child) is visible.
+                    opened: true;
                     opacity: batchState.active ? 0.4 : 1.0;
                     innerItem.enabled: !batchState.active;
+                    // Export settings — moved here from the Video information section.
+                    SectionDivider { label: qsTranslate("Export", "Export settings"); }
+                    Menu.SimpleExport {
+                        width: parent.width;
+                    }
+                    SectionDivider { }
                     Label {
                         position: Label.LeftPosition;
                         text: qsTranslate("Advanced", "Language");
@@ -1152,12 +1184,28 @@ Rectangle {
                             }
                         }
                     }
-                    CheckBox {
-                        id: simpleGpuDecode;
-                        text: qsTranslate("Advanced", "Use GPU decoding");
-                        checked: window.advanced ? window.advanced.gpudecode.checked : true;
-                        onCheckedChanged: {
-                            if (window.advanced) window.advanced.gpudecode.checked = checked;
+                    // GPU decode + GPU encode side-by-side. Both mirror the Full-mode sources:
+                    // decode -> window.advanced.gpudecode, encode -> window.exportSettings.outGpu.
+                    Row {
+                        width: parent.width;
+                        spacing: 8 * dpiScale;
+                        CheckBox {
+                            id: simpleGpuDecode;
+                            text: qsTranslate("Advanced", "Use GPU decoding");
+                            width: (parent.width - parent.spacing) / 2;
+                            checked: window.advanced ? window.advanced.gpudecode.checked : true;
+                            onCheckedChanged: {
+                                if (window.advanced) window.advanced.gpudecode.checked = checked;
+                            }
+                        }
+                        CheckBox {
+                            id: simpleGpuEncodeMirror;
+                            text: qsTranslate("Export", "Use GPU encoding");
+                            width: (parent.width - parent.spacing) / 2;
+                            checked: window.exportSettings ? window.exportSettings.outGpu : true;
+                            onCheckedChanged: {
+                                if (window.exportSettings) window.exportSettings.outGpu = checked;
+                            }
                         }
                     }
                     // Default file suffix moved to Video information panel (menu/VideoInformation.qml)
@@ -1372,6 +1420,11 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Initialize overwrite mode per current mode — Simple forces silent overwrite
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
+        // NOTE: do NOT call applySimpleModeDefaults() at startup. The controller defaults are already
+        // Simple-friendly (smoothing index 1 = DefaultAlgo, feature/flow overlays are only drawn while
+        // sync runs). Invoking set_smoothing_method here races with queue-edit reload and blanks the
+        // gyro chart on the main canvas. The reset only matters when the user actively flips
+        // Full → Simple, which is handled in onIsSimpleModeChanged above.
 
         QT_TRANSLATE_NOOP("App", "An error occured: %1");
         QT_TRANSLATE_NOOP("App", "Gyroflow file exported to %1.");

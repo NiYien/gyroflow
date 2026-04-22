@@ -4152,6 +4152,21 @@ Make sure you have proper rolling shutter value set before syncing.</source>
         <source>Average pattern sharpness</source>
         <translation>图案平均清晰度</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>图像稳定</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>开</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>关</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>
@@ -4835,6 +4850,16 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/menu/VideoInformation.qml" line="206"/>
         <source>Open file</source>
         <translation>打开文件</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="199"/>
+        <source>On</source>
+        <translation>开</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="199"/>
+        <source>Off</source>
+        <translation>关</translation>
     </message>
 </context>
 <context>

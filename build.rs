@@ -142,6 +142,9 @@ fn main() {
     }
     // config.define("QT_QML_DEBUG", None);
     println!("cargo:rerun-if-changed=src/qt_gpu/qrhi_undistort.cpp");
+    // Translations are embedded via the qrc! macro in src/resources.rs; if any .qm file
+    // changes after lrelease, cargo needs to recompile resources.rs to re-embed them.
+    println!("cargo:rerun-if-changed=resources/translations");
 
     if target_os == "ios" {
         println!("cargo:rerun-if-changed=_deployment/ios/qml_plugins.cpp");

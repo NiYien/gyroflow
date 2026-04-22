@@ -19,6 +19,9 @@ Item {
     default property alias data: col.data;
     property string iconName;
     property bool canEnsureVisible: false;
+    // Subclasses may override to shrink the collapsed header (e.g. MountingPresetSelector,
+    // LensGroupConfig use 28 px for a tighter Sensor & Lens section).
+    property real btnHeight: 36 * dpiScale;
 
     Component.onCompleted: {
         const val = settings.value(root.objectName + "-opened", root.opened);
@@ -54,11 +57,16 @@ Item {
 
         icon.name: iconName || "";
         icon.source: iconName ? "qrc:/resources/icons/svg/" + iconName + ".svg" : "";
-        icon.width: 24 * dpiScale;
-        icon.height: 24 * dpiScale;
+        // Icon scales with the title-bar height (36 -> ~24, 28 -> ~19) so subclasses
+        // that shrink btnHeight stay visually balanced.
+        icon.width: root.btnHeight * 0.67;
+        icon.height: root.btnHeight * 0.67;
 
         width: parent.width;
-        height: 36 * dpiScale;
+        height: root.btnHeight;
+        // Override the default implicit height so the contentItem layout respects
+        // btnHeight when a subclass sets 28.
+        implicitHeight: root.btnHeight;
         hoverEnabled: true;
 
         leftPadding: 8 * dpiScale;

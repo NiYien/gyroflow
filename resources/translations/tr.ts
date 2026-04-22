@@ -4143,6 +4143,21 @@ Senkronize etmeden önce uygun jöle etkisi değerini ayarladığınızdan emin 
         <source>Average pattern sharpness</source>
         <translation>Ortalama patern keskinliği</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Görüntü sabitleme</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Açık</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Kapalı</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>

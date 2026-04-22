@@ -4149,6 +4149,21 @@ Assicurati di avere un corretto valore impostato per il rolling shutter prima de
         <source>Average pattern sharpness</source>
         <translation>Nitidezza media dello schema</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Image stabilization</source>
+        <translation>Stabilizzazione dell'immagine</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>On</source>
+        <translation>Attivo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="60"/>
+        <source>Off</source>
+        <translation>Disattivo</translation>
+    </message>
 </context>
 <context>
     <name>Tabs</name>
