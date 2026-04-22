@@ -485,11 +485,11 @@ pub fn qt_graphics_api() -> QString {
 pub fn get_version() -> String {
     let ver = env!("CARGO_PKG_VERSION");
     if option_env!("GITHUB_REF").map_or(false, |x| x.contains("tags")) {
-        ver.to_string() // Official, tagged version
+        ver.to_string() // Official, tagged version (niyien branding added via brandDisplayName)
     } else if let Some(gh_run) = option_env!("GITHUB_RUN_NUMBER") {
-        format!("{} (gh{})", ver, gh_run)
+        format!("{}(ni{})", ver, gh_run)
     } else if let Some(time) = option_env!("BUILD_TIME") {
-        format!("{} (dev{})", ver, time)
+        format!("{}(dev{})", ver, time)
     } else {
         ver.to_string()
     }

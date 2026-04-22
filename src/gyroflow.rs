@@ -235,6 +235,7 @@ fn entry() {
     engine.set_property("screenSize".into(), QVariant::from(screen_size_inch));
     engine.set_property("dpiScale".into(), QVariant::from(dpi));
     engine.set_property("version".into(), QString::from(util::get_version()).into());
+    engine.set_property("brandDisplayName".into(), QString::from(gyroflow_core::distribution::config().brand.display_name.as_str()).into());
     engine.set_property("graphics_api".into(), util::qt_graphics_api().into());
     engine.set_object_property("main_controller".into(), ctlpinned);
     engine.set_object_property("ui_tools".into(), ui_tools_pinned);

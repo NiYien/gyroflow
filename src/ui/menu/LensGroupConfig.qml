@@ -61,7 +61,7 @@ MenuItem {
     readonly property color cardColor: root.lightTheme ? "#ffffff" : styleButtonColor
     readonly property color sectionColor: root.lightTheme ? "#f7f9fc" : styleBackground2
     readonly property color borderColor: root.lightTheme ? "#d6dee8" : stylePopupBorder
-    readonly property color mutedTextColor: root.lightTheme ? "#516171" : Qt.rgba(styleTextColor.r, styleTextColor.g, styleTextColor.b, 0.72)
+    readonly property color mutedTextColor: root.lightTheme ? "#516171" : "#b8ffffff"
 
     function selectedJobIds(): var {
         if (!batchScope || !window.videoArea || !window.videoArea.queue)

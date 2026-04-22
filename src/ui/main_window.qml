@@ -25,7 +25,7 @@ Window {
         onTriggered: main_window.safeAreaMargins = ui_tools.get_safe_area_margins(main_window);
     }
 
-    title: "Gyroflow v" + version;
+    title: brandDisplayName + " " + version;
 
     onVisibilityChanged: {
         Qt.callLater(() => {

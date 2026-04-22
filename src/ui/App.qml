@@ -511,6 +511,7 @@ Rectangle {
                         onClicked: {
                             if (render_queue.status === "active") {
                                 render_queue.stop();
+                                if (videoArea.queue) videoArea.queue.pendingConvertFormatChoice = "";
                                 return;
                             }
                             // Batch path — render queue panel is open with pending jobs
@@ -816,6 +817,7 @@ Rectangle {
                                     { text: qsTr("Yes"), clicked: function() {
                                         render_queue.clear();
                                         render_queue.clear_gyro_files();
+                                        if (videoArea.queue) videoArea.queue.pendingConvertFormatChoice = "";
                                     }},
                                     { text: qsTr("No"), accent: true },
                                 ]);

@@ -26,8 +26,8 @@ MenuItem {
     property var timezoneCatalog: DeviceTimezones.timezoneRegions
 
     readonly property bool lightTheme: style === "light"
-    readonly property color cardColor: root.lightTheme ? "#ffffff" : Qt.rgba(styleButtonColor.r, styleButtonColor.g, styleButtonColor.b, 0.94)
-    readonly property color sectionColor: root.lightTheme ? "#f6f8fb" : Qt.rgba(styleBackground2.r, styleBackground2.g, styleBackground2.b, 0.92)
+    readonly property color cardColor: root.lightTheme ? "#ffffff" : "#f0282828"
+    readonly property color sectionColor: root.lightTheme ? "#f6f8fb" : "#eb191919"
     readonly property color borderColor: root.lightTheme ? "#d8dde6" : Qt.rgba(1, 1, 1, 0.14)
     readonly property color mutedTextColor: root.lightTheme ? "#57677a" : Qt.rgba(1, 1, 1, 0.72)
     readonly property color popupColor: root.lightTheme ? "#ffffff" : styleBackground2
@@ -338,9 +338,9 @@ MenuItem {
                             width: 40 * dpiScale
                             height: width
                             radius: 11 * dpiScale
-                            color: Qt.rgba(styleAccentColor.r, styleAccentColor.g, styleAccentColor.b, root.lightTheme ? 0.12 : 0.18)
+                            color: root.lightTheme ? "#1f116cad" : "#2e76baed"
                             border.width: 1 * dpiScale
-                            border.color: Qt.rgba(styleAccentColor.r, styleAccentColor.g, styleAccentColor.b, root.lightTheme ? 0.26 : 0.38)
+                            border.color: root.lightTheme ? "#42116cad" : "#6176baed"
 
                             BasicText {
                                 anchors.centerIn: parent

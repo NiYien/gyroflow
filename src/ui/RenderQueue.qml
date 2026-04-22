@@ -15,6 +15,15 @@ Item {
     property bool shown: false;
     readonly property bool lightTheme: style === "light"
 
+    // Session-scoped choice applied to all remaining convert_format errors in the current batch
+    // (simple-mode only). Cleared on queue_finished / clear / stop so the next batch re-asks.
+    property string pendingConvertFormatChoice: ""
+
+    Connections {
+        target: render_queue;
+        function onQueue_finished(): void { root.pendingConvertFormatChoice = ""; }
+    }
+
     // --- Batch gyro match state ---
     property var gyroFilesInfo: []
     readonly property var darkGyroColors:  ["#76baed", "#70e574", "#f6a00b", "#e87de8", "#ed7676", "#5ce0d8"]
@@ -27,7 +36,7 @@ Item {
     readonly property color skippedStatusColor: lightTheme ? "#5b6470" : "#888888"
     readonly property color finishedStatusColor: lightTheme ? "#2a8a4c" : "#70e574"
     readonly property color errorStatusColor: lightTheme ? "#d16b6b" : "#ed7676"
-    readonly property color queueOutlineColor: lightTheme ? Qt.rgba(styleTextColor.r, styleTextColor.g, styleTextColor.b, 0.12) : "#70ffffff"
+    readonly property color queueOutlineColor: lightTheme ? "#1f111111" : "#70ffffff"
     readonly property real matchedGyroOpacity: lightTheme ? 0.28 : 0.30
     readonly property real unmatchedGyroOpacity: lightTheme ? 0.18 : 0.15
     property bool hasGyroFiles: render_queue.has_gyro_files()
@@ -912,6 +921,40 @@ Item {
                                     const params = errorString.split(":")[1].split(";");
                                     const candidate = params[2];
                                     const supported = params[1].split(",");
+
+                                    // Simple-mode path: single modal per batch, then auto-apply to the rest
+                                    if (window.isSimpleMode) {
+                                        if (root.pendingConvertFormatChoice !== "") {
+                                            Qt.callLater(render_queue.set_pixel_format, job_id, root.pendingConvertFormatChoice);
+                                            btns.model = [];
+                                            messageAreaText.text = qsTr("Applying pixel format: %1").arg(root.pendingConvertFormatChoice);
+                                            return;
+                                        }
+                                        let modalBtns = supported.map(f => ({
+                                            text: f,
+                                            accent: f.toLowerCase() == candidate,
+                                            clicked: () => {
+                                                root.pendingConvertFormatChoice = f;
+                                                render_queue.set_pixel_format(job_id, f);
+                                            }
+                                        }));
+                                        modalBtns.push({
+                                            text: qsTr("Render using CPU"),
+                                            accent: candidate == '',
+                                            clicked: () => {
+                                                root.pendingConvertFormatChoice = "cpu";
+                                                render_queue.set_pixel_format(job_id, "cpu");
+                                            }
+                                        });
+                                        messageBox(Modal.Question,
+                                            qsTr("Selected encoder does not support the source pixel format.\nChoose a target pixel format or render on CPU.\nThis choice applies to all remaining jobs in this batch."),
+                                            modalBtns);
+                                        btns.model = [];
+                                        messageAreaText.text = qsTr("Waiting for pixel format selection…");
+                                        return;
+                                    }
+
+                                    // Full-mode path: original inline buttons, one decision per job
                                     let buttons = supported.map(f => ({
                                         text: f,
                                         accent: f.toLowerCase() == candidate,
@@ -1582,6 +1625,7 @@ Item {
                         // [queue-lifecycle T5] 清空队列时同时清空陀螺仪和 match 警告
                         render_queue.clear_gyro_files();
                         root.matchWarning = "";
+                        root.pendingConvertFormatChoice = "";
                     }},
                     { text: qsTr("No"), accent: true },
                 ]);
