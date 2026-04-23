@@ -335,8 +335,8 @@ class Pan123Client:
         if not servers:
             raise RuntimeError(f"123 did not return any upload server for {remote_name}")
 
-        upload_base = str(servers[0]).rstrip("/")
-        self._upload_slices(upload_base, local_path, preupload_id, slice_size)
+        upload_bases = [str(item).rstrip("/") for item in servers if str(item).strip()]
+        self._upload_slices(upload_bases, local_path, preupload_id, slice_size)
 
         for _ in range(120):
             complete_data = self.request(
@@ -460,8 +460,9 @@ class Pan123Client:
         self._token_expires_at = expires_ts or now + 300
         return self._token
 
-    def _upload_slices(self, upload_base: str, local_path: Path, preupload_id: str, slice_size: int) -> None:
-        url = f"{upload_base}/upload/v2/file/slice"
+    def _upload_slices(self, upload_bases: list[str], local_path: Path, preupload_id: str, slice_size: int) -> None:
+        if not upload_bases:
+            raise RuntimeError(f"No upload server available for {local_path.name}")
         with local_path.open("rb") as fh:
             slice_no = 1
             while True:
@@ -481,22 +482,37 @@ class Pan123Client:
                     "sliceNo": str(slice_no),
                     "sliceMD5": hashlib.md5(chunk).hexdigest(),
                 }
-                response = self.session.post(
-                    url,
-                    data=data,
-                    files=files,
-                    headers={
-                        "Authorization": f"Bearer {self.get_access_token()}",
-                        "Platform": DEFAULT_PLATFORM,
-                    },
-                    timeout=300,
-                )
-                response.raise_for_status()
-                payload = response.json()
-                if int(payload.get("code", -1)) != 0:
-                    raise RuntimeError(
-                        f"123 slice upload failed for {local_path.name}: {payload.get('message', 'unknown error')}"
-                    )
+                last_error = ""
+                for attempt in range(1, 6):
+                    upload_base = upload_bases[(slice_no + attempt - 2) % len(upload_bases)]
+                    url = f"{upload_base}/upload/v2/file/slice"
+                    try:
+                        response = self.session.post(
+                            url,
+                            data=data,
+                            files=files,
+                            headers={
+                                "Authorization": f"Bearer {self.get_access_token()}",
+                                "Platform": DEFAULT_PLATFORM,
+                            },
+                            timeout=900,
+                        )
+                        response.raise_for_status()
+                        payload = response.json()
+                        if int(payload.get("code", -1)) != 0:
+                            raise RuntimeError(
+                                f"123 slice upload failed for {local_path.name}: "
+                                f"{payload.get('message', 'unknown error')}"
+                            )
+                        last_error = ""
+                        break
+                    except (requests.Timeout, requests.ConnectionError, requests.HTTPError, RuntimeError) as err:
+                        last_error = f"slice {slice_no}, attempt {attempt}, server {upload_base}: {err}"
+                        if attempt >= 5:
+                            raise RuntimeError(
+                                f"123 slice upload failed for {local_path.name}: {last_error}"
+                            ) from err
+                        time.sleep(min(2 * attempt, 10))
                 slice_no += 1
 
 
