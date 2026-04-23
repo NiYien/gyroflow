@@ -89,6 +89,13 @@ class VercelClient:
         return {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
 
     def list_envs(self) -> dict:
+        records = self.list_env_records()
+        result = {}
+        for key, env in records.items():
+            result[key] = env.get("value", "")
+        return result
+
+    def list_env_records(self) -> dict:
         self._ensure_ready()
         url = f"https://api.vercel.com/v10/projects/{self.project}/env"
         response = requests.get(
@@ -108,9 +115,9 @@ class VercelClient:
             if isinstance(target, str):
                 target = [target]
             if key and "production" in target:
-                result[key] = value
+                result[key] = dict(env)
             elif key and key not in result:
-                result[key] = value
+                result[key] = dict(env)
         return result
 
     def upsert_envs(self, mapping: dict):
@@ -239,6 +246,7 @@ class ControlCenter(tk.Tk):
         self.config_data = load_json_file(CONFIG_FILE, DEFAULT_CONFIG)
         self.distribution_config = self.load_distribution_config()
         self.current_envs = {}
+        self.current_env_records = {}
         self.current_repo_variables = {}
         self.current_policy = self.default_policy()
         self.current_releases = []
@@ -1655,11 +1663,17 @@ class ControlCenter(tk.Tk):
     def refresh_runtime_state(self):
         vercel_ok = False
         github_ok = False
+        github_variables_ok = False
+        github_variables_error = ""
         try:
-            self.current_envs = self.vercel().list_envs()
+            self.current_env_records = self.vercel().list_env_records()
+            self.current_envs = {
+                key: env.get("value", "") for key, env in self.current_env_records.items()
+            }
             vercel_ok = True
         except Exception as err:
             self.current_envs = {}
+            self.current_env_records = {}
             self.env_snapshot_text.delete("1.0", tk.END)
             self.env_snapshot_text.insert("1.0", f"Failed to load Vercel envs:\n{err}\n")
             self.policy_text.delete("1.0", tk.END)
@@ -1670,15 +1684,17 @@ class ControlCenter(tk.Tk):
 
         try:
             self.current_repo_variables = self.github().list_actions_variables()
+            github_variables_ok = True
+        except Exception as err:
+            self.current_repo_variables = {}
+            github_variables_error = str(err)
+
+        try:
+            if not self.current_releases:
+                self.current_releases = self.github().list_releases()
             github_ok = True
         except Exception:
-            self.current_repo_variables = {}
-
-        if github_ok and not self.current_releases:
-            try:
-                self.current_releases = self.github().list_releases()
-            except Exception:
-                pass
+            github_ok = False
 
         self.current_policy = self.load_policy_from_env()
         self.policy_text.delete("1.0", tk.END)
@@ -1696,7 +1712,12 @@ class ControlCenter(tk.Tk):
         self.update_data_status_text()
         self.load_resource_source_state()
         self.refresh_dashboard_releases()
-        self.refresh_visual_summaries(vercel_ok=vercel_ok, github_ok=github_ok)
+        self.refresh_visual_summaries(
+            vercel_ok=vercel_ok,
+            github_ok=github_ok,
+            github_variables_ok=github_variables_ok,
+            github_variables_error=github_variables_error,
+        )
 
     def refresh_dashboard_releases(self):
         if not hasattr(self, "dashboard_release_list"):
@@ -1710,7 +1731,13 @@ class ControlCenter(tk.Tk):
             suffix = " [pre]" if item.get("prerelease") else ""
             self.dashboard_release_list.insert(tk.END, f"{item.get('tag_name', '')}{suffix}")
 
-    def refresh_visual_summaries(self, vercel_ok: bool | None = None, github_ok: bool | None = None):
+    def refresh_visual_summaries(
+        self,
+        vercel_ok: bool | None = None,
+        github_ok: bool | None = None,
+        github_variables_ok: bool | None = None,
+        github_variables_error: str = "",
+    ):
         auto_version = self.current_policy.get("auto_version", "") or "-"
         manual_count = len(
             [item for item in self.current_policy.get("versions", []) if "manual" in item.get("channels", [])]
@@ -1757,13 +1784,21 @@ class ControlCenter(tk.Tk):
         if vercel_ok is None:
             vercel_ok = bool(self.current_envs)
         if github_ok is None:
-            github_ok = bool(self.current_repo_variables)
-        pan123_ok = all(
-            bool(str(self.current_envs.get(key, "")).strip())
-            for key in ("PAN123_CLIENT_ID", "PAN123_CLIENT_SECRET", "PAN123_RELEASES_ROOT_ID")
-        )
+            github_ok = bool(self.current_releases)
+        if github_variables_ok is None:
+            github_variables_ok = bool(self.current_repo_variables)
+        pan123_ok = all(self.is_vercel_env_configured(key) for key in ("PAN123_CLIENT_ID", "PAN123_CLIENT_SECRET", "PAN123_RELEASES_ROOT_ID"))
         self.set_status_badge(getattr(self, "vercel_status_badge", None), f"Vercel：{'已连接' if vercel_ok else '未连接'}", vercel_ok)
-        self.set_status_badge(getattr(self, "github_status_badge", None), f"GitHub：{'已连接' if github_ok else '未连接'}", github_ok)
+        if github_ok and github_variables_ok:
+            github_label = "GitHub：已连接"
+            github_state = True
+        elif github_ok and not github_variables_ok:
+            github_label = "GitHub：Variables 权限不足"
+            github_state = False
+        else:
+            github_label = "GitHub：未连接"
+            github_state = False
+        self.set_status_badge(getattr(self, "github_status_badge", None), github_label, github_state)
         self.set_status_badge(getattr(self, "pan123_status_badge", None), f"123：{'已配置' if pan123_ok else '未配置'}", pan123_ok)
         self.set_status_badge(
             getattr(self, "global_auto_badge", None),
@@ -1781,6 +1816,14 @@ class ControlCenter(tk.Tk):
             "控制面：已就绪" if overall_ok else "控制面：待配置",
             overall_ok,
         )
+
+    def is_vercel_env_configured(self, key: str) -> bool:
+        record = self.current_env_records.get(key)
+        if not record:
+            return False
+        if str(record.get("value", "")).strip():
+            return True
+        return str(record.get("type", "")).strip().lower() == "sensitive"
 
     def load_resource_source_state(self):
         self.resource_lens_tag_var.set(
