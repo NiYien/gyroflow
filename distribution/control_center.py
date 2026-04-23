@@ -100,6 +100,15 @@ def build_proxy_mapping(proxy_url: str) -> dict | None:
     return {"http": proxy, "https": proxy}
 
 
+def parse_csv_list(value: str) -> list[str]:
+    results: list[str] = []
+    for raw in str(value or "").split(","):
+        item = raw.strip()
+        if item and item not in results:
+            results.append(item)
+    return results
+
+
 def action_artifact_aliases(platform: str) -> set[str]:
     aliases = {
         "windows": {
@@ -287,6 +296,13 @@ class GitHubClient:
         response.raise_for_status()
         return response.json()
 
+    def get_repository(self, owner: str, repo: str):
+        self._ensure_ready()
+        url = f"https://api.github.com/repos/{owner}/{repo}"
+        response = self._get(url, timeout=30)
+        response.raise_for_status()
+        return response.json()
+
     def download_text_asset(self, url: str) -> str:
         response = self._get(url, timeout=30)
         response.raise_for_status()
@@ -325,6 +341,41 @@ class GitHubClient:
         payload = response.json()
         return payload.get("workflow_runs", []) if isinstance(payload, dict) else []
 
+    def list_repo_workflow_runs(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        branch: str = "",
+        per_page: int = 20,
+    ):
+        self._ensure_ready()
+        params = {
+            "per_page": max(1, min(int(per_page), 100)),
+            "exclude_pull_requests": "true",
+            "status": "completed",
+        }
+        if branch:
+            params["branch"] = branch
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs"
+        response = requests.get(
+            url,
+            headers=self._headers(),
+            params=params,
+            **self._request_kwargs(timeout=30),
+        )
+        if response.status_code in {403, 404} and self.token:
+            response.close()
+            response = requests.get(
+                url,
+                headers=self._public_headers(),
+                params=params,
+                **self._request_kwargs(timeout=30),
+            )
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("workflow_runs", []) if isinstance(payload, dict) else []
+
     def dispatch_workflow(self, workflow: str, ref: str, inputs: dict | None = None):
         self._ensure_ready()
         if not self.token:
@@ -342,6 +393,27 @@ class GitHubClient:
     def list_run_artifacts(self, run_id: int):
         self._ensure_ready()
         url = f"https://api.github.com/repos/{self.owner}/{self.repo}/actions/runs/{int(run_id)}/artifacts"
+        response = requests.get(
+            url,
+            headers=self._headers(),
+            params={"per_page": 100},
+            **self._request_kwargs(timeout=30),
+        )
+        if response.status_code in {403, 404} and self.token:
+            response.close()
+            response = requests.get(
+                url,
+                headers=self._public_headers(),
+                params={"per_page": 100},
+                **self._request_kwargs(timeout=30),
+            )
+        response.raise_for_status()
+        payload = response.json()
+        return payload.get("artifacts", []) if isinstance(payload, dict) else []
+
+    def list_repo_run_artifacts(self, owner: str, repo: str, run_id: int):
+        self._ensure_ready()
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{int(run_id)}/artifacts"
         response = requests.get(
             url,
             headers=self._headers(),
@@ -421,6 +493,9 @@ class GitHubClient:
         self._ensure_ready()
         owner = (owner or self.owner).strip()
         repo = (repo or self.repo).strip()
+        value = str(value)
+        if not value:
+            raise RuntimeError(f"GitHub Actions Variable {name} 不能为空")
         existing = self.get_actions_variable(name, owner, repo)
         payload = {"name": name, "value": value}
         if existing:
@@ -439,6 +514,21 @@ class GitHubClient:
                 json=payload,
                 **self._request_kwargs(timeout=30),
             )
+        response.raise_for_status()
+        return True
+
+    def delete_actions_variable(self, name: str, owner: str | None = None, repo: str | None = None):
+        self._ensure_ready()
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/variables/{name}"
+        response = requests.delete(
+            url,
+            headers=self._headers(),
+            **self._request_kwargs(timeout=30),
+        )
+        if response.status_code == 404:
+            return False
         response.raise_for_status()
         return True
 
@@ -1960,6 +2050,9 @@ class ControlCenter(tk.Tk):
         self.resource_plugins_tag_var = tk.StringVar()
         self.resource_plugins_artifact_name_var = tk.StringVar()
         self.resource_sdk_base_var = tk.StringVar(value=DEFAULT_GLOBAL_SDK_BASE)
+        self.resource_saved_snapshot = {}
+        self.resource_latest_snapshot = {}
+        self.resource_selection_label_var = tk.StringVar(value="当前表单：未选择")
         for watched_var in (
             self.resource_lens_tag_var,
             self.resource_plugins_source_mode_var,
@@ -1975,7 +2068,7 @@ class ControlCenter(tk.Tk):
         self.content_tag_chip.pack(side="left", fill="x", expand=True, padx=(0, 6))
         self.lens_version_chip = self.create_stat_block(stats_row, "当前 Lens 版本", "-", "orange")
         self.lens_version_chip.pack(side="left", fill="x", expand=True, padx=6)
-        self.sdk_source_chip = self.create_stat_block(stats_row, "当前 SDK 源", "api.gyroflow.xyz", "slate")
+        self.sdk_source_chip = self.create_stat_block(stats_row, "下次发版 SDK 源", "api.gyroflow.xyz", "slate")
         self.sdk_source_chip.pack(side="left", fill="x", expand=True, padx=(6, 0))
 
         top = tk.Frame(wrapper, bg=self.palette["bg"])
@@ -2044,7 +2137,7 @@ class ControlCenter(tk.Tk):
         source_frame, source_body = self.create_card(
             top,
             "下次发版资源源",
-            "这里决定下一次应用发版时，将自动使用哪些 Lens/CameraDB、Plugin 和 SDK 来源。Plugin 可切换为 Release 或 Action artifact。",
+            "这里决定下一次应用发版时，将自动使用哪些 Lens/CameraDB、Plugin 和 SDK 下载源。Plugin 可切换为 Release 或 Action artifact。",
             "next",
         )
         self.data_source_card = source_frame
@@ -2056,6 +2149,8 @@ class ControlCenter(tk.Tk):
             [
                 "这里保存的是下一次应用发版要自动使用的资源源。",
                 "不会改变当前线上用户下载到的内容。",
+                "这里的 SDK 字段写入的是 GitHub Actions Variable：NIYIEN_SDK_BASE。",
+                "它用于发版脚本下载 SDK，并进入发版摘要；不是当前线上全局运行时变量 NIYIEN_GLOBAL_SDK_BASE。",
                 "Plugin 选择 Action artifact 时，Artifact 名称可留空，留空会自动取插件仓库默认分支最近成功 run。",
             ],
             tone="blue",
@@ -2077,25 +2172,45 @@ class ControlCenter(tk.Tk):
         self.plugins_source_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self.on_plugin_source_mode_change())
         self.add_labeled_entry(source_form, "Plugin Release Tag", self.resource_plugins_tag_var, 2, width=46)
         self.add_labeled_entry(source_form, "Plugin Artifact 名称", self.resource_plugins_artifact_name_var, 3, width=46)
-        self.add_labeled_entry(source_form, "SDK 基础地址", self.resource_sdk_base_var, 4, width=58)
+        self.add_labeled_entry(source_form, "发版用 SDK 下载源 (NIYIEN_SDK_BASE)", self.resource_sdk_base_var, 4, width=58)
+        selection_label = tk.Label(
+            source_body,
+            textvariable=self.resource_selection_label_var,
+            bg=self.palette["surface"],
+            fg=self.palette["muted"],
+            justify="left",
+            anchor="w",
+            font=self.fonts["body"],
+        )
+        selection_label.pack(fill="x", pady=(10, 0))
         source_actions = tk.Frame(source_body, bg=self.palette["surface"])
         source_actions.pack(fill="x", pady=(12, 10))
         source_tiles = tk.Frame(source_actions, bg=self.palette["surface"])
         source_tiles.pack(fill="x")
         for cfg in [
             (
-                "读取当前默认源",
-                "从 GitHub Actions Variables 读取当前保存的下次发版默认资源源。",
+                "使用上次默认源",
+                "从 GitHub Actions Variables 读取上一次保存、下次发版会实际使用的资源源。",
                 [("只读", "readonly")],
-                "读取当前默认源",
+                "切换到上次默认源",
                 self.load_resource_source_state,
                 "Secondary.TButton",
                 "只读辅助动作",
                 "readonly",
             ),
             (
-                "Lens/CameraDB 最新 Release",
-                "自动把 Lens/CameraDB Tag 填成当前最新 release 的 tag。",
+                "使用最新推荐",
+                "自动查询最新 Lens/CameraDB Release，并按当前 Plugin 来源模式填入最新推荐值；artifact 模式会自动定位最近成功的 Action run。",
+                [("自动查询", "guide"), ("不会立即生效", "next")],
+                "切换到最新推荐",
+                self.load_latest_resource_sources,
+                "Secondary.TButton",
+                "预填充动作",
+                "guide",
+            ),
+            (
+                "只刷新 Lens 最新",
+                "仅自动把 Lens/CameraDB Tag 填成当前最新 release 的 tag。",
                 [("预填充", "guide"), ("不会立即生效", "next")],
                 "填入最新 Lens/CameraDB Tag",
                 self.load_latest_lens_tag,
@@ -2104,10 +2219,10 @@ class ControlCenter(tk.Tk):
                 "guide",
             ),
             (
-                "Plugin 最新 Release",
-                "自动把 Plugin Tag 填成当前最新 release 的 tag。",
+                "只刷新 Plugin 最新",
+                "仅刷新 Plugin 源；release 模式会填最新 tag，artifact 模式会定位最近成功且可用的 Action run。",
                 [("预填充", "guide"), ("不会立即生效", "next")],
-                "填入最新 Plugin Tag",
+                "填入最新 Plugin 源",
                 self.load_latest_plugin_tag,
                 "Secondary.TButton",
                 "预填充动作",
@@ -2540,8 +2655,297 @@ class ControlCenter(tk.Tk):
         tag = self.get_string_var_value("resource_plugins_tag_var")
         return f"release / {tag or 'latest'}"
 
+    def get_next_release_sdk_base(self) -> str:
+        value = (
+            self.get_string_var_value("resource_sdk_base_var")
+            or str(self.current_repo_variables.get("NIYIEN_SDK_BASE", "")).strip()
+            or DEFAULT_GLOBAL_SDK_BASE
+        )
+        return value.rstrip("/") + "/"
+
+    def get_preview_global_sdk_base(self, auto_entry: dict | None) -> str:
+        value = (
+            str((auto_entry or {}).get("global_sdk_base", "")).strip()
+            or str(self.current_repo_variables.get("NIYIEN_SDK_BASE", "")).strip()
+            or str(self.current_envs.get("NIYIEN_GLOBAL_SDK_BASE", "")).strip()
+            or DEFAULT_GLOBAL_SDK_BASE
+        )
+        return value.rstrip("/") + "/"
+
+    def get_preview_global_plugins_base(self, auto_entry: dict | None) -> str:
+        value = (
+            str((auto_entry or {}).get("global_plugins_base", "")).strip()
+            or str(self.current_envs.get("NIYIEN_GLOBAL_PLUGINS_BASE", "")).strip()
+            or DEFAULT_GLOBAL_PLUGINS_BASE
+        )
+        return value.rstrip("/") + "/"
+
+    def collect_resource_source_values(self) -> dict:
+        return {
+            "NIYIEN_LENS_DATA_TAG": self.resource_lens_tag_var.get().strip(),
+            "NIYIEN_PLUGINS_SOURCE_MODE": self.get_plugin_source_mode(),
+            "NIYIEN_PLUGINS_TAG": self.resource_plugins_tag_var.get().strip(),
+            "NIYIEN_PLUGINS_ARTIFACT_NAME": self.resource_plugins_artifact_name_var.get().strip(),
+            "NIYIEN_SDK_BASE": self.resource_sdk_base_var.get().strip() or DEFAULT_GLOBAL_SDK_BASE,
+        }
+
+    def snapshot_resource_source_values_from_repo_vars(self) -> dict:
+        plugin_source_mode = str(
+            self.current_repo_variables.get("NIYIEN_PLUGINS_SOURCE_MODE", DEFAULT_PLUGINS_SOURCE_MODE)
+        ).strip().lower()
+        if plugin_source_mode not in PLUGINS_SOURCE_MODE_VALUES:
+            plugin_source_mode = DEFAULT_PLUGINS_SOURCE_MODE
+        return {
+            "NIYIEN_LENS_DATA_TAG": str(self.current_repo_variables.get("NIYIEN_LENS_DATA_TAG", "")).strip(),
+            "NIYIEN_PLUGINS_SOURCE_MODE": plugin_source_mode,
+            "NIYIEN_PLUGINS_TAG": str(self.current_repo_variables.get("NIYIEN_PLUGINS_TAG", "")).strip(),
+            "NIYIEN_PLUGINS_ARTIFACT_NAME": str(self.current_repo_variables.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip(),
+            "NIYIEN_SDK_BASE": str(self.current_repo_variables.get("NIYIEN_SDK_BASE", DEFAULT_GLOBAL_SDK_BASE)).strip() or DEFAULT_GLOBAL_SDK_BASE,
+        }
+
+    def apply_resource_source_values(self, values: dict, *, selection_label: str = ""):
+        self.resource_lens_tag_var.set(str(values.get("NIYIEN_LENS_DATA_TAG", "")).strip())
+        plugin_source_mode = str(
+            values.get("NIYIEN_PLUGINS_SOURCE_MODE", DEFAULT_PLUGINS_SOURCE_MODE)
+        ).strip().lower()
+        if plugin_source_mode not in PLUGINS_SOURCE_MODE_VALUES:
+            plugin_source_mode = DEFAULT_PLUGINS_SOURCE_MODE
+        self.resource_plugins_source_mode_var.set(plugin_source_mode)
+        self.resource_plugins_tag_var.set(str(values.get("NIYIEN_PLUGINS_TAG", "")).strip())
+        self.resource_plugins_artifact_name_var.set(
+            str(values.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip()
+        )
+        self.resource_sdk_base_var.set(
+            str(values.get("NIYIEN_SDK_BASE", DEFAULT_GLOBAL_SDK_BASE)).strip() or DEFAULT_GLOBAL_SDK_BASE
+        )
+        if selection_label:
+            self.resource_selection_label_var.set(selection_label)
+        self.on_plugin_source_mode_change()
+        self.update_resource_status_text()
+
+    def is_resource_source_incomplete(self, values: dict | None = None) -> bool:
+        payload = values or self.collect_resource_source_values()
+        if not str(payload.get("NIYIEN_LENS_DATA_TAG", "")).strip():
+            return True
+        mode = str(payload.get("NIYIEN_PLUGINS_SOURCE_MODE", DEFAULT_PLUGINS_SOURCE_MODE)).strip().lower()
+        if mode == "artifact":
+            return False
+        return not str(payload.get("NIYIEN_PLUGINS_TAG", "")).strip()
+
+    def fetch_latest_resource_source_values(self) -> dict:
+        latest_values, _meta = self.fetch_latest_resource_source_values_with_meta()
+        return latest_values
+
+    def fetch_latest_resource_source_values_with_meta(self) -> tuple[dict, dict]:
+        lens_release, _lens_ref = self.get_latest_release_with_fallback(
+            owner=self.config_data.get("lens_data_owner", DEFAULT_LENS_DATA_OWNER),
+            repo=self.config_data.get("lens_data_repo", DEFAULT_LENS_DATA_REPO),
+            fallback_owner=DEFAULT_LENS_DATA_OWNER,
+            fallback_repo=DEFAULT_LENS_DATA_REPO,
+            label="Lens/CameraDB",
+        )
+        plugin_values, plugin_meta = self.resolve_latest_plugin_source_values()
+        latest_values = {
+            "NIYIEN_LENS_DATA_TAG": str(lens_release.get("tag_name", "")).strip(),
+            "NIYIEN_PLUGINS_SOURCE_MODE": plugin_values["NIYIEN_PLUGINS_SOURCE_MODE"],
+            "NIYIEN_PLUGINS_TAG": plugin_values["NIYIEN_PLUGINS_TAG"],
+            "NIYIEN_PLUGINS_ARTIFACT_NAME": plugin_values["NIYIEN_PLUGINS_ARTIFACT_NAME"],
+            "NIYIEN_SDK_BASE": DEFAULT_GLOBAL_SDK_BASE,
+        }
+        return latest_values, {
+            "plugin": plugin_meta,
+        }
+
+    def resolve_latest_plugin_source_values(
+        self,
+        *,
+        source_mode: str | None = None,
+        artifact_name: str | None = None,
+    ) -> tuple[dict, dict]:
+        mode = str(source_mode or self.get_plugin_source_mode()).strip().lower()
+        if mode not in PLUGINS_SOURCE_MODE_VALUES:
+            mode = DEFAULT_PLUGINS_SOURCE_MODE
+
+        requested_artifact_name = (
+            self.get_string_var_value("resource_plugins_artifact_name_var")
+            if artifact_name is None
+            else str(artifact_name or "").strip()
+        )
+        if mode == "artifact":
+            artifact_source, source_ref = self.get_latest_plugin_artifact_source_with_fallback(
+                owner=self.config_data.get("plugins_owner", DEFAULT_PLUGINS_OWNER),
+                repo=self.config_data.get("plugins_repo", DEFAULT_PLUGINS_REPO),
+                fallback_owner=DEFAULT_PLUGINS_OWNER,
+                fallback_repo=DEFAULT_PLUGINS_REPO,
+                artifact_name=requested_artifact_name,
+            )
+            run_id = int(artifact_source.get("run_id", 0) or 0)
+            source_label = f"{source_ref} run #{run_id}"
+            branch = str(artifact_source.get("branch", "")).strip()
+            artifact_names = [
+                str(item).strip()
+                for item in (artifact_source.get("artifact_names") or [])
+                if str(item).strip()
+            ]
+            effective_artifact_name = requested_artifact_name or ", ".join(artifact_names)
+            if branch:
+                source_label = f"{source_label} ({branch})"
+            return {
+                "NIYIEN_PLUGINS_SOURCE_MODE": "artifact",
+                "NIYIEN_PLUGINS_TAG": "",
+                "NIYIEN_PLUGINS_ARTIFACT_NAME": effective_artifact_name,
+            }, {
+                "mode": "artifact",
+                "source_ref": source_ref,
+                "source_label": source_label,
+                "run_id": run_id,
+                "branch": branch,
+                "url": str(artifact_source.get("html_url", "")).strip(),
+                "artifact_names": artifact_names,
+                "effective_artifact_name": effective_artifact_name,
+            }
+
+        plugin_release, source_ref = self.get_latest_release_with_fallback(
+            owner=self.config_data.get("plugins_owner", DEFAULT_PLUGINS_OWNER),
+            repo=self.config_data.get("plugins_repo", DEFAULT_PLUGINS_REPO),
+            fallback_owner=DEFAULT_PLUGINS_OWNER,
+            fallback_repo=DEFAULT_PLUGINS_REPO,
+            label="Plugin",
+        )
+        tag = str(plugin_release.get("tag_name", "")).strip()
+        return {
+            "NIYIEN_PLUGINS_SOURCE_MODE": "release",
+            "NIYIEN_PLUGINS_TAG": tag,
+            "NIYIEN_PLUGINS_ARTIFACT_NAME": "",
+        }, {
+            "mode": "release",
+            "source_ref": source_ref,
+            "source_label": source_ref,
+            "tag": tag,
+            "url": str(plugin_release.get("html_url", "")).strip(),
+        }
+
     def on_plugin_source_mode_change(self):
         self.update_resource_status_text()
+
+    def get_latest_release_with_fallback(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        fallback_owner: str,
+        fallback_repo: str,
+        label: str,
+    ) -> tuple[dict, str]:
+        primary_owner = str(owner or "").strip() or fallback_owner
+        primary_repo = str(repo or "").strip() or fallback_repo
+        candidates = [(primary_owner, primary_repo)]
+        if (primary_owner, primary_repo) != (fallback_owner, fallback_repo):
+            candidates.append((fallback_owner, fallback_repo))
+
+        errors = []
+        for candidate_owner, candidate_repo in candidates:
+            try:
+                release = self.github().get_latest_release(candidate_owner, candidate_repo)
+                return release, f"{candidate_owner}/{candidate_repo}"
+            except Exception as err:
+                errors.append(f"{candidate_owner}/{candidate_repo}: {err}")
+
+        raise RuntimeError(
+            f"无法读取 {label} 最新 Release。\n" + "\n".join(errors)
+        )
+
+    def get_latest_plugin_artifact_source_with_fallback(
+        self,
+        *,
+        owner: str,
+        repo: str,
+        fallback_owner: str,
+        fallback_repo: str,
+        artifact_name: str = "",
+    ) -> tuple[dict, str]:
+        primary_owner = str(owner or "").strip() or fallback_owner
+        primary_repo = str(repo or "").strip() or fallback_repo
+        candidates = [(primary_owner, primary_repo)]
+        if (primary_owner, primary_repo) != (fallback_owner, fallback_repo):
+            candidates.append((fallback_owner, fallback_repo))
+
+        requested_artifacts = parse_csv_list(artifact_name)
+        requested_set = set(requested_artifacts)
+        github = self.github()
+        errors = []
+        for candidate_owner, candidate_repo in candidates:
+            try:
+                repository = github.get_repository(candidate_owner, candidate_repo)
+                branch = str(repository.get("default_branch", "")).strip()
+                if not branch:
+                    raise RuntimeError(f"无法确定默认分支：{candidate_owner}/{candidate_repo}")
+                runs = github.list_repo_workflow_runs(
+                    candidate_owner,
+                    candidate_repo,
+                    branch=branch,
+                    per_page=20,
+                )
+                if not runs:
+                    raise RuntimeError(f"{candidate_owner}/{candidate_repo} 的 {branch} 分支没有 workflow runs")
+
+                rejected: list[str] = []
+                for run in runs:
+                    if str(run.get("conclusion", "")).strip().lower() != "success":
+                        continue
+                    run_id = int(run.get("id", 0) or 0)
+                    if run_id <= 0:
+                        continue
+                    artifacts = github.list_repo_run_artifacts(candidate_owner, candidate_repo, run_id)
+                    valid_artifacts = [
+                        item
+                        for item in artifacts
+                        if not bool(item.get("expired"))
+                        and (
+                            not requested_set
+                            or str(item.get("name", "")).strip() in requested_set
+                        )
+                    ]
+                    if requested_artifacts:
+                        matched_names = {
+                            str(item.get("name", "")).strip()
+                            for item in valid_artifacts
+                        }
+                        missing = [name for name in requested_artifacts if name not in matched_names]
+                        if missing:
+                            rejected.append(f"run {run_id} 缺少 artifact：{', '.join(missing)}")
+                            continue
+                    elif not valid_artifacts:
+                        rejected.append(f"run {run_id} 没有可用 artifact")
+                        continue
+
+                    return {
+                        "run_id": run_id,
+                        "branch": branch,
+                        "artifact_names": [
+                            str(item.get("name", "")).strip()
+                            for item in valid_artifacts
+                            if str(item.get("name", "")).strip()
+                        ],
+                        "html_url": str(run.get("html_url", "")).strip()
+                        or f"https://github.com/{candidate_owner}/{candidate_repo}/actions/runs/{run_id}",
+                    }, f"{candidate_owner}/{candidate_repo}"
+
+                if rejected:
+                    raise RuntimeError(
+                        "最近成功构建里没有匹配的 artifact。"
+                        + "；".join(rejected[:3])
+                    )
+                raise RuntimeError("最近 20 次 completed runs 中没有成功且可用的 artifact run")
+            except Exception as err:
+                errors.append(f"{candidate_owner}/{candidate_repo}: {err}")
+
+        requested_text = ", ".join(requested_artifacts) if requested_artifacts else "自动最新"
+        raise RuntimeError(
+            "无法读取 Plugin 最新 Artifact。\n"
+            f"当前 artifact 过滤：{requested_text}\n"
+            + "\n".join(errors)
+        )
 
     def refresh_visual_summaries(
         self,
@@ -2556,7 +2960,7 @@ class ControlCenter(tk.Tk):
         )
         content_tag_value = self.get_string_var_value("content_tag_var")
         lens_version_value = self.get_string_var_value("lens_version_var")
-        sdk_base_value = self.get_string_var_value("resource_sdk_base_var", DEFAULT_GLOBAL_SDK_BASE) or DEFAULT_GLOBAL_SDK_BASE
+        sdk_base_value = self.get_next_release_sdk_base()
         resource_lens_tag_value = self.get_string_var_value("resource_lens_tag_var")
         self.set_stat_value(getattr(self, "auto_version_chip", None), auto_version)
         self.set_stat_value(getattr(self, "manual_count_chip", None), manual_count)
@@ -3069,37 +3473,28 @@ class ControlCenter(tk.Tk):
         return str(record.get("type", "")).strip().lower() == "sensitive"
 
     def load_resource_source_state(self):
-        plugin_source_mode = str(
-            self.current_repo_variables.get("NIYIEN_PLUGINS_SOURCE_MODE", DEFAULT_PLUGINS_SOURCE_MODE)
-        ).strip().lower()
-        if plugin_source_mode not in PLUGINS_SOURCE_MODE_VALUES:
-            plugin_source_mode = DEFAULT_PLUGINS_SOURCE_MODE
-        self.resource_lens_tag_var.set(
-            self.current_repo_variables.get("NIYIEN_LENS_DATA_TAG", "")
+        saved_values = self.snapshot_resource_source_values_from_repo_vars()
+        self.resource_saved_snapshot = dict(saved_values)
+        self.apply_resource_source_values(
+            saved_values,
+            selection_label="当前表单：上次默认源",
         )
-        self.resource_plugins_source_mode_var.set(
-            plugin_source_mode
-        )
-        self.resource_plugins_tag_var.set(
-            self.current_repo_variables.get("NIYIEN_PLUGINS_TAG", "")
-        )
-        self.resource_plugins_artifact_name_var.set(
-            self.current_repo_variables.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")
-        )
-        self.resource_sdk_base_var.set(
-            self.current_repo_variables.get("NIYIEN_SDK_BASE", DEFAULT_GLOBAL_SDK_BASE)
-        )
-        self.on_plugin_source_mode_change()
-        self.update_resource_status_text()
+        if self.is_resource_source_incomplete(saved_values):
+            try:
+                self.load_latest_resource_sources(
+                    silent=True,
+                    selection_label="当前表单：最新推荐（因为上次默认源不完整，已自动填入）",
+                )
+            except Exception:
+                pass
         self.refresh_visual_summaries()
 
     def update_resource_status_text(self):
         payload = {
-            "NIYIEN_LENS_DATA_TAG": self.resource_lens_tag_var.get().strip(),
-            "NIYIEN_PLUGINS_SOURCE_MODE": self.get_plugin_source_mode(),
-            "NIYIEN_PLUGINS_TAG": self.resource_plugins_tag_var.get().strip(),
-            "NIYIEN_PLUGINS_ARTIFACT_NAME": self.resource_plugins_artifact_name_var.get().strip(),
-            "NIYIEN_SDK_BASE": self.resource_sdk_base_var.get().strip(),
+            "current_form": self.collect_resource_source_values(),
+            "saved_default": self.resource_saved_snapshot,
+            "latest_candidate": self.resource_latest_snapshot,
+            "NIYIEN_GLOBAL_SDK_BASE(只读参考)": self.current_envs.get("NIYIEN_GLOBAL_SDK_BASE", ""),
             "lens_repo": f"{self.config_data.get('lens_data_owner', DEFAULT_LENS_DATA_OWNER)}/{self.config_data.get('lens_data_repo', DEFAULT_LENS_DATA_REPO)}",
             "plugins_repo": f"{self.config_data.get('plugins_owner', DEFAULT_PLUGINS_OWNER)}/{self.config_data.get('plugins_repo', DEFAULT_PLUGINS_REPO)}",
         }
@@ -3112,27 +3507,67 @@ class ControlCenter(tk.Tk):
 
     def load_latest_lens_tag(self):
         try:
-            release = self.github().get_latest_release(
-                self.config_data.get("lens_data_owner", DEFAULT_LENS_DATA_OWNER),
-                self.config_data.get("lens_data_repo", DEFAULT_LENS_DATA_REPO),
+            release, source_ref = self.get_latest_release_with_fallback(
+                owner=self.config_data.get("lens_data_owner", DEFAULT_LENS_DATA_OWNER),
+                repo=self.config_data.get("lens_data_repo", DEFAULT_LENS_DATA_REPO),
+                fallback_owner=DEFAULT_LENS_DATA_OWNER,
+                fallback_repo=DEFAULT_LENS_DATA_REPO,
+                label="Lens/CameraDB",
             )
             self.resource_lens_tag_var.set(str(release.get("tag_name", "")).strip())
+            self.resource_selection_label_var.set(f"当前表单：手动调整（已刷新 Lens 最新，来源 {source_ref}）")
             self.update_resource_status_text()
         except Exception as err:
             messagebox.showerror("读取失败", str(err))
 
     def load_latest_plugin_tag(self):
         try:
-            release = self.github().get_latest_release(
-                self.config_data.get("plugins_owner", DEFAULT_PLUGINS_OWNER),
-                self.config_data.get("plugins_repo", DEFAULT_PLUGINS_REPO),
+            plugin_values, plugin_meta = self.resolve_latest_plugin_source_values()
+            self.resource_plugins_source_mode_var.set(plugin_values["NIYIEN_PLUGINS_SOURCE_MODE"])
+            self.resource_plugins_tag_var.set(plugin_values["NIYIEN_PLUGINS_TAG"])
+            self.resource_plugins_artifact_name_var.set(plugin_values["NIYIEN_PLUGINS_ARTIFACT_NAME"])
+            refresh_target = "Plugin 最新 Artifact" if plugin_meta.get("mode") == "artifact" else "Plugin 最新 Release"
+            self.resource_selection_label_var.set(
+                f"当前表单：手动调整（已刷新 {refresh_target}，来源 {plugin_meta.get('source_label', '')}）"
             )
-            self.resource_plugins_source_mode_var.set("release")
-            self.resource_plugins_tag_var.set(str(release.get("tag_name", "")).strip())
             self.on_plugin_source_mode_change()
             self.update_resource_status_text()
         except Exception as err:
             messagebox.showerror("读取失败", str(err))
+
+    def load_latest_resource_sources(self, silent: bool = False, selection_label: str = "当前表单：最新推荐"):
+        try:
+            latest_values, meta = self.fetch_latest_resource_source_values_with_meta()
+            self.resource_latest_snapshot = dict(latest_values)
+            self.apply_resource_source_values(latest_values, selection_label=selection_label)
+            if not silent:
+                plugin_meta = meta.get("plugin") or {}
+                if plugin_meta.get("mode") == "artifact":
+                    plugin_line = (
+                        f"Plugin Artifact：{latest_values['NIYIEN_PLUGINS_ARTIFACT_NAME'] or '自动最新'}"
+                        f"（来源 {plugin_meta.get('source_label', '-')}）"
+                    )
+                    action_url = str(plugin_meta.get("url", "")).strip()
+                else:
+                    plugin_line = (
+                        f"Plugin Release：{latest_values['NIYIEN_PLUGINS_TAG'] or '-'}"
+                        f"（来源 {plugin_meta.get('source_label', '-')}）"
+                    )
+                    action_url = ""
+                lines = [
+                    f"Lens/CameraDB：{latest_values['NIYIEN_LENS_DATA_TAG'] or '-'}",
+                    plugin_line,
+                    f"SDK 下载源：{latest_values['NIYIEN_SDK_BASE'] or '-'}",
+                ]
+                if action_url:
+                    lines.append(f"Action URL：{action_url}")
+                messagebox.showinfo(
+                    "已填入最新推荐",
+                    "\n".join(lines),
+                )
+        except Exception as err:
+            if not silent:
+                messagebox.showerror("读取失败", str(err))
 
     def action_save_resource_sources(self):
         mapping = {
@@ -3155,9 +3590,20 @@ class ControlCenter(tk.Tk):
                 ],
             ):
                 return
+            optional_empty_allowed = {
+                "NIYIEN_PLUGINS_TAG",
+                "NIYIEN_PLUGINS_ARTIFACT_NAME",
+            }
+            github = self.github()
             for key, value in mapping.items():
-                self.github().upsert_actions_variable(key, value)
-            self.current_repo_variables.update(mapping)
+                if key in optional_empty_allowed and not str(value).strip():
+                    github.delete_actions_variable(key)
+                    self.current_repo_variables.pop(key, None)
+                    continue
+                github.upsert_actions_variable(key, value)
+                self.current_repo_variables[key] = value
+            self.resource_saved_snapshot = dict(mapping)
+            self.resource_selection_label_var.set("当前表单：上次默认源（刚保存）")
             self.update_resource_status_text()
             messagebox.showinfo("完成", "下次发版默认资源源已保存到 GitHub Actions Variables")
         except Exception as err:
@@ -3379,6 +3825,10 @@ class ControlCenter(tk.Tk):
             entry["lens_version"] = summary["lens_version"]
         if summary.get("lens_sha256"):
             entry["lens_sha256"] = str(summary["lens_sha256"]).strip()
+        if summary.get("global_sdk_base"):
+            entry["global_sdk_base"] = str(summary["global_sdk_base"]).strip()
+        if summary.get("global_plugins_base"):
+            entry["global_plugins_base"] = str(summary["global_plugins_base"]).strip()
         return entry
 
     def build_content_env_mapping_from_entry(self, entry: dict | None) -> dict:
@@ -3711,8 +4161,8 @@ class ControlCenter(tk.Tk):
             or self.current_envs.get("NIYIEN_CONTENT_RELEASE_TAG", "")
         )
         auto_source_mode = str((auto_entry or {}).get("app_source_mode", "release")).strip().lower()
-        sdk_base = self.current_envs.get("NIYIEN_GLOBAL_SDK_BASE", DEFAULT_GLOBAL_SDK_BASE).rstrip("/") + "/"
-        plugins_base = self.current_envs.get("NIYIEN_GLOBAL_PLUGINS_BASE", DEFAULT_GLOBAL_PLUGINS_BASE).rstrip("/") + "/"
+        sdk_base = self.get_preview_global_sdk_base(auto_entry)
+        plugins_base = self.get_preview_global_plugins_base(auto_entry)
         preview = {
             "country": country,
             "region": "cn" if is_cn else "global",

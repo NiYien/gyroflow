@@ -138,36 +138,67 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
 - `Plugin 来源模式`
 - `Plugin Release Tag`
 - `Plugin Artifact 名称`
-- `SDK 基础地址`
+- `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
+
+你也会看到 2 个最常用按钮：
+
+- `使用上次默认源`
+  - 把 GitHub Actions Variables 里现在保存的值重新读回来
+- `使用最新推荐`
+  - 自动查询最新 Lens/CameraDB Release
+  - 自动查询最新 Plugin Release
+  - 自动填入默认 SDK 下载源
+
+如果“上次默认源”里关键字段是空的，控制中心会自动先帮你切到“最新推荐”。
+
+这里最容易混的是 SDK：
+
+- `NIYIEN_SDK_BASE`
+  - 在 `资源编排` 里设置
+  - 用于下一次应用发版时，发布脚本去哪里下载 SDK
+  - 也会写进这次发版产出的 release summary
+- `NIYIEN_GLOBAL_SDK_BASE`
+  - 不在这里设置
+  - 它是线上全局运行时分发用的环境变量
+  - 主要给 manifest / 全球访问链路参考
+
+所以如果你要改“下一次发版会用哪个 SDK 下载源”，要改的是：
+
+- `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
 
 #### 方式 A：直接用最新版本
 
-1. 点 `Lens/CameraDB 最新 Release`
-2. 如果 plugin 想跟 GitHub Release，保持 `Plugin 来源模式 = release`
-3. 点 `Plugin 最新 Release`
-4. 如果 SDK 地址不用改，就保持默认
-5. 点 `保存为下次发版默认源`
+1. 点 `使用最新推荐`
+2. 检查自动填出来的：
+   - `Lens/CameraDB Tag`
+   - `Plugin 来源模式`
+   - `Plugin Release Tag`
+   - `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
+3. 如果不用改，直接点 `保存为下次发版默认源`
 
 #### 方式 B：手动指定版本
 
-1. 手动填写 `Lens/CameraDB Tag`
-2. 选择 `Plugin 来源模式`
-3. 如果是 `release`，填写 `Plugin Release Tag`
-4. 如果是 `artifact`，填写 `Plugin Artifact 名称`
-5. `Plugin Artifact 名称` 可以留空
-6. 留空时会自动取插件仓库默认分支最近成功的 Action run
-7. 手动填写 `SDK 基础地址`
-8. 点 `保存为下次发版默认源`
+1. 先点 `使用上次默认源` 或 `使用最新推荐` 作为起点
+2. 手动修改 `Lens/CameraDB Tag`
+3. 选择 `Plugin 来源模式`
+4. 如果是 `release`，填写 `Plugin Release Tag`
+5. 如果是 `artifact`，填写 `Plugin Artifact 名称`
+6. `Plugin Artifact 名称` 可以留空
+7. 留空时会自动取插件仓库默认分支最近成功的 Action run
+8. 手动填写 `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
+9. 点 `保存为下次发版默认源`
 
 结果：
 
 - 这些值会保存成“下次发版默认资源源”
 - 下次你打应用 tag 时，GitHub Actions 会自动使用这些值
+- 其中 SDK 用的是 `NIYIEN_SDK_BASE`，不是 `NIYIEN_GLOBAL_SDK_BASE`
 
 注意：
 
 - `Lens` 和 `CameraDB` 当前共用同一个 Tag
 - `SDK` 不是单独 Tag，而是一个基础地址
+- `资源编排` 页面里的 SDK 字段，指的是“发版脚本下载 SDK 的来源”
 - `Plugin` 可以走 `Release` 或 `Action artifact`
 - `Plugin Artifact 名称` 支持留空，留空表示自动取最新成功 run
 

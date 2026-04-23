@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 import time
 import zipfile
 from urllib.parse import quote, urlparse
@@ -66,11 +67,25 @@ DEFAULT_NIGHTLY_LINK_BASE = "https://nightly.link"
 
 
 def normalize_base_url(value: str, fallback: str, name: str) -> str:
-    base = str(value or "").strip() or fallback
-    parsed = urlparse(base)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise RuntimeError(f"Invalid {name}: {base!r}")
-    return base.rstrip("/")
+    fallback_base = str(fallback or "").strip().rstrip("/")
+    raw_value = str(value or "").strip()
+    candidate_values = [raw_value] if raw_value else []
+    if raw_value and "://" not in raw_value and not raw_value.startswith("/"):
+        candidate_values.append(f"https://{raw_value}")
+    candidate_values.append(fallback_base)
+
+    for candidate in candidate_values:
+        parsed = urlparse(candidate)
+        if parsed.scheme in {"http", "https"} and parsed.netloc:
+            normalized = candidate.rstrip("/")
+            if raw_value and normalized != raw_value.rstrip("/"):
+                print(
+                    f"[publish_pan123_release] Invalid {name} {raw_value!r}, fallback to {normalized!r}",
+                    file=sys.stderr,
+                )
+            return normalized
+
+    raise RuntimeError(f"Invalid {name}: {raw_value or fallback_base!r}")
 
 
 def normalize_choice(value: str, *, default: str, name: str, allowed: set[str]) -> str:
@@ -997,6 +1012,9 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 
 def download_to_path(session: requests.Session, url: str, destination: Path) -> None:
+    parsed = urlparse(str(url or "").strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(f"Invalid download URL: {url!r}")
     with session.get(url, timeout=300, stream=True) as response:
         response.raise_for_status()
         destination.parent.mkdir(parents=True, exist_ok=True)
