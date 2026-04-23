@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
@@ -125,35 +128,47 @@ jobs:
             ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip
             ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg
 
-  mirror_sync:
-    name: Sync app assets to download.niyien.com
-    needs: build
+  publish_123:
+    name: Publish CN assets to 123
+    needs:
+      - build
+      - github_release
+    if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
-    # 无 job-level if（GitHub 不允许 secrets 出现在此处）。
-    # Secrets 缺失时各 step 通过 env.MIRROR_HOST 检查自行 skip。
     steps:
+      - uses: actions/checkout@v4
+
       - name: Download artifacts
-        env:
-          MIRROR_HOST: ${{ secrets.NIYIEN_MIRROR_HOST }}
-        if: env.MIRROR_HOST != ''
         uses: actions/download-artifact@v4
-      - name: Prepare sync bundle
-        env:
-          MIRROR_HOST: ${{ secrets.NIYIEN_MIRROR_HOST }}
-        if: env.MIRROR_HOST != ''
-        run: |
-          # 临时：仅 windows + mac，linux/android 后续恢复
-          mkdir -p mirror
-          cp ./gyroflow-niyien-windows/gyroflow-niyien-windows64.zip mirror/ || true
-          cp ./gyroflow-niyien-macos/gyroflow-niyien-mac-universal.dmg mirror/ || true
-      - name: Upload to domestic mirror
-        env:
-          MIRROR_HOST: ${{ secrets.NIYIEN_MIRROR_HOST }}
-        if: env.MIRROR_HOST != ''
-        uses: appleboy/scp-action@v0.1.7
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          host: ${{ secrets.NIYIEN_MIRROR_HOST }}
-          username: ${{ secrets.NIYIEN_MIRROR_USER }}
-          key: ${{ secrets.NIYIEN_MIRROR_KEY }}
-          source: "mirror/*"
-          target: "${{ secrets.NIYIEN_MIRROR_PATH }}/${{ github.ref_name }}/"
+          python-version: '3.11'
+
+      - name: Install publish dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Publish release bundle to 123
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAN123_CLIENT_ID: ${{ secrets.PAN123_CLIENT_ID }}
+          PAN123_CLIENT_SECRET: ${{ secrets.PAN123_CLIENT_SECRET }}
+          PAN123_RELEASES_ROOT_ID: ${{ secrets.PAN123_RELEASES_ROOT_ID }}
+          NIYIEN_LENS_DATA_TAG: ${{ vars.NIYIEN_LENS_DATA_TAG }}
+          NIYIEN_PLUGINS_TAG: ${{ vars.NIYIEN_PLUGINS_TAG }}
+          NIYIEN_SDK_BASE: ${{ vars.NIYIEN_SDK_BASE }}
+        run: |
+          python _scripts/publish_pan123_release.py --app-tag "${{ github.ref_name }}"
+
+      - name: Attach release summary assets
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: false
+          files: |
+            _deployment/_publish/gyroflow-niyien-release-summary.json
+            _deployment/_publish/gyroflow-niyien-content-manifest.json
+            _deployment/_publish/gyroflow-niyien-lens.cbor.gz
+            _deployment/_publish/gyroflow-niyien-lens.cbor.gz.json

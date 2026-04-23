@@ -157,7 +157,7 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
         .spawn(move || {
             if std::env::var_os("CUBECL_AUTOTUNE_LEVEL").is_none() {
                 unsafe {
-                    std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0");
+                    std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "2");
                 }
             }
 
