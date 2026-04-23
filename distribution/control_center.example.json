@@ -5,6 +5,7 @@
   "github_token": "",
   "github_owner": "NiYien",
   "github_repo": "gyroflow",
+  "network_proxy": "127.0.0.1:6063",
   "lens_data_owner": "NiYien",
   "lens_data_repo": "niyien-lens-data",
   "plugins_owner": "gyroflow",

@@ -7,6 +7,8 @@ import json
 import os
 import shutil
 import time
+import zipfile
+from urllib.parse import quote, urlparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +23,12 @@ APP_ASSET_NAMES = (
     "gyroflow-niyien-linux64.AppImage",
     "gyroflow-niyien.apk",
 )
+APP_ASSET_PLATFORM_BY_NAME = {
+    "gyroflow-niyien-windows64.zip": "windows",
+    "gyroflow-niyien-mac-universal.dmg": "macos",
+    "gyroflow-niyien-linux64.AppImage": "linux",
+    "gyroflow-niyien.apk": "android",
+}
 
 PLUGIN_ASSET_NAMES = (
     "Gyroflow-OpenFX-windows.zip",
@@ -50,6 +58,30 @@ DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/gyroflow/gyroflow-plugins/rele
 DEFAULT_GITHUB_API = "https://api.github.com"
 DEFAULT_123_API = "https://open-api.123pan.com"
 DEFAULT_PLATFORM = "open_platform"
+DEFAULT_PLUGINS_SOURCE_MODE = "release"
+PLUGIN_SOURCE_MODES = {"release", "artifact"}
+DEFAULT_APP_SOURCE_MODE = "release"
+APP_SOURCE_MODES = {"release", "artifact"}
+DEFAULT_NIGHTLY_LINK_BASE = "https://nightly.link"
+
+
+def normalize_base_url(value: str, fallback: str, name: str) -> str:
+    base = str(value or "").strip() or fallback
+    parsed = urlparse(base)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise RuntimeError(f"Invalid {name}: {base!r}")
+    return base.rstrip("/")
+
+
+def normalize_choice(value: str, *, default: str, name: str, allowed: set[str]) -> str:
+    choice = str(value or "").strip().lower() or default
+    if choice not in allowed:
+        raise RuntimeError(f"Invalid {name}: {choice!r}. Allowed: {', '.join(sorted(allowed))}")
+    return choice
+
+
+def parse_csv_list(value: str) -> list[str]:
+    return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
 def parse_args() -> argparse.Namespace:
@@ -57,13 +89,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--app-tag", required=True)
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--output-dir", default="_deployment/_publish")
+    parser.add_argument(
+        "--app-source-mode",
+        default=(os.environ.get("NIYIEN_APP_SOURCE_MODE", "") or DEFAULT_APP_SOURCE_MODE),
+    )
+    parser.add_argument("--app-owner", default=os.environ.get("NIYIEN_APP_OWNER", "").strip())
+    parser.add_argument("--app-repo", default=os.environ.get("NIYIEN_APP_REPO", "").strip())
+    parser.add_argument("--app-run-id", type=int, default=int(os.environ.get("NIYIEN_APP_RUN_ID", "0") or "0"))
     parser.add_argument("--lens-owner", default=os.environ.get("NIYIEN_LENS_DATA_OWNER", "NiYien"))
     parser.add_argument("--lens-repo", default=os.environ.get("NIYIEN_LENS_DATA_REPO", "niyien-lens-data"))
     parser.add_argument("--lens-tag", default=os.environ.get("NIYIEN_LENS_DATA_TAG", "").strip())
     parser.add_argument("--plugins-owner", default=os.environ.get("NIYIEN_PLUGINS_OWNER", "gyroflow"))
     parser.add_argument("--plugins-repo", default=os.environ.get("NIYIEN_PLUGINS_REPO", "gyroflow-plugins"))
     parser.add_argument("--plugins-tag", default=os.environ.get("NIYIEN_PLUGINS_TAG", "").strip())
-    parser.add_argument("--sdk-base", default=os.environ.get("NIYIEN_SDK_BASE", DEFAULT_SDK_BASE))
+    parser.add_argument(
+        "--plugins-source-mode",
+        default=(os.environ.get("NIYIEN_PLUGINS_SOURCE_MODE", "") or DEFAULT_PLUGINS_SOURCE_MODE),
+    )
+    parser.add_argument(
+        "--plugins-artifact-name",
+        default=os.environ.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "").strip(),
+    )
+    parser.add_argument(
+        "--sdk-base",
+        default=(os.environ.get("NIYIEN_SDK_BASE", "") or DEFAULT_SDK_BASE),
+    )
     return parser.parse_args()
 
 
@@ -77,29 +127,100 @@ class DownloadedFile:
     sha256: str
 
 
+@dataclass
+class PluginSource:
+    mode: str
+    source_ref: str
+    display_name: str
+    owner: str
+    repo: str
+    release: dict[str, Any] | None = None
+    run_id: int = 0
+    artifact_names: tuple[str, ...] = ()
+    branch: str = ""
+    resolved_files: dict[str, Path] | None = None
+
+
 class GitHubClient:
     def __init__(self, token: str = "") -> None:
+        self.base_headers = {
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "niyien-pan123-publisher",
+        }
         self.session = requests.Session()
-        self.session.headers.update(
-            {
-                "Accept": "application/vnd.github+json",
-                "User-Agent": "niyien-pan123-publisher",
-            }
-        )
+        self.session.headers.update(self.base_headers)
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
+
+    def _get(self, url: str, *, params: dict[str, Any] | None = None, stream: bool = False, timeout: int = 60):
+        response = self.session.get(url, params=params, timeout=timeout, stream=stream)
+        if response.status_code in {403, 404} and "Authorization" in self.session.headers:
+            response.close()
+            response = requests.get(
+                url,
+                params=params,
+                timeout=timeout,
+                stream=stream,
+                headers=self.base_headers,
+            )
+        return response
 
     def get_release(self, owner: str, repo: str, tag: str = "") -> dict[str, Any]:
         if tag:
             url = f"{DEFAULT_GITHUB_API}/repos/{owner}/{repo}/releases/tags/{tag}"
         else:
             url = f"{DEFAULT_GITHUB_API}/repos/{owner}/{repo}/releases/latest"
-        response = self.session.get(url, timeout=60)
+        response = self._get(url, timeout=60)
         response.raise_for_status()
         return response.json()
 
     def download_asset(self, asset_url: str, destination: Path) -> None:
-        with self.session.get(asset_url, timeout=300, stream=True) as response:
+        with self._get(asset_url, timeout=300, stream=True) as response:
+            response.raise_for_status()
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with destination.open("wb") as fh:
+                for chunk in response.iter_content(chunk_size=1024 * 1024):
+                    if chunk:
+                        fh.write(chunk)
+
+    def get_repository(self, owner: str, repo: str) -> dict[str, Any]:
+        url = f"{DEFAULT_GITHUB_API}/repos/{owner}/{repo}"
+        response = self._get(url, timeout=60)
+        response.raise_for_status()
+        return response.json()
+
+    def list_workflow_runs(
+        self,
+        owner: str,
+        repo: str,
+        *,
+        branch: str = "",
+        per_page: int = 20,
+    ) -> list[dict[str, Any]]:
+        url = f"{DEFAULT_GITHUB_API}/repos/{owner}/{repo}/actions/runs"
+        params: dict[str, Any] = {
+            "per_page": max(1, min(int(per_page), 100)),
+            "exclude_pull_requests": "true",
+            "status": "completed",
+        }
+        if branch:
+            params["branch"] = branch
+        response = self._get(url, params=params, timeout=60)
+        response.raise_for_status()
+        payload = response.json()
+        runs = payload.get("workflow_runs") if isinstance(payload, dict) else []
+        return [item for item in runs or [] if isinstance(item, dict)]
+
+    def list_workflow_run_artifacts(self, owner: str, repo: str, run_id: int) -> list[dict[str, Any]]:
+        url = f"{DEFAULT_GITHUB_API}/repos/{owner}/{repo}/actions/runs/{int(run_id)}/artifacts"
+        response = self._get(url, params={"per_page": 100}, timeout=60)
+        response.raise_for_status()
+        payload = response.json()
+        artifacts = payload.get("artifacts") if isinstance(payload, dict) else []
+        return [item for item in artifacts or [] if isinstance(item, dict)]
+
+    def download_artifact_archive(self, archive_url: str, destination: Path) -> None:
+        with self._get(archive_url, timeout=300, stream=True) as response:
             response.raise_for_status()
             destination.parent.mkdir(parents=True, exist_ok=True)
             with destination.open("wb") as fh:
@@ -341,6 +462,19 @@ class Pan123Client:
 
 def main() -> int:
     args = parse_args()
+    args.sdk_base = normalize_base_url(args.sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
+    args.app_source_mode = normalize_choice(
+        args.app_source_mode,
+        default=DEFAULT_APP_SOURCE_MODE,
+        name="app source mode",
+        allowed=APP_SOURCE_MODES,
+    )
+    args.plugins_source_mode = normalize_choice(
+        args.plugins_source_mode,
+        default=DEFAULT_PLUGINS_SOURCE_MODE,
+        name="plugin source mode",
+        allowed=PLUGIN_SOURCE_MODES,
+    )
     workspace = Path(args.workspace).resolve()
     output_dir = (workspace / args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -355,6 +489,14 @@ def main() -> int:
     app_assets = discover_app_assets(workspace)
     if not app_assets:
         raise RuntimeError("No app artifacts were found after downloading build outputs")
+    app_source_ref, global_app_urls = resolve_app_source(
+        app_source_mode=args.app_source_mode,
+        app_tag=args.app_tag,
+        app_owner=args.app_owner,
+        app_repo=args.app_repo,
+        app_run_id=args.app_run_id,
+        app_assets=app_assets,
+    )
 
     with requests.Session() as session:
         session.headers["User-Agent"] = "niyien-pan123-publisher"
@@ -364,14 +506,22 @@ def main() -> int:
         temp_root.mkdir(parents=True, exist_ok=True)
 
         lens_release = github.get_release(args.lens_owner, args.lens_repo, args.lens_tag)
-        plugins_release = github.get_release(args.plugins_owner, args.plugins_repo, args.plugins_tag)
+        plugin_source = resolve_plugin_source(
+            github=github,
+            temp_root=temp_root,
+            owner=args.plugins_owner,
+            repo=args.plugins_repo,
+            source_mode=args.plugins_source_mode,
+            tag=args.plugins_tag,
+            artifact_name=args.plugins_artifact_name,
+        )
 
         downloaded_content = download_content_assets(
             github=github,
             session=session,
             temp_root=temp_root,
             lens_release=lens_release,
-            plugins_release=plugins_release,
+            plugin_source=plugin_source,
             sdk_base=args.sdk_base,
         )
 
@@ -385,8 +535,10 @@ def main() -> int:
 
         content_manifest, content_tag = build_content_manifest(
             app_tag=args.app_tag,
+            app_source_mode=args.app_source_mode,
+            app_source_ref=app_source_ref,
             lens_release=lens_release,
-            plugins_release=plugins_release,
+            plugin_source=plugin_source,
             downloaded_files=downloaded_content,
         )
         content_manifest_path = output_dir / CONTENT_MANIFEST_ASSET_NAME
@@ -401,9 +553,12 @@ def main() -> int:
 
         summary = build_release_summary(
             app_tag=args.app_tag,
+            app_source_mode=args.app_source_mode,
+            app_source_ref=app_source_ref,
+            global_app_urls=global_app_urls,
             content_tag=content_tag,
             lens_release=lens_release,
-            plugins_release=plugins_release,
+            plugin_source=plugin_source,
             lens_metadata=lens_metadata,
             sdk_base=args.sdk_base,
         )
@@ -439,13 +594,57 @@ def discover_app_assets(workspace: Path) -> dict[str, Path]:
     return found
 
 
+def resolve_app_source(
+    *,
+    app_source_mode: str,
+    app_tag: str,
+    app_owner: str,
+    app_repo: str,
+    app_run_id: int,
+    app_assets: dict[str, Path],
+) -> tuple[str, dict[str, str]]:
+    mode = normalize_choice(
+        app_source_mode,
+        default=DEFAULT_APP_SOURCE_MODE,
+        name="app source mode",
+        allowed=APP_SOURCE_MODES,
+    )
+    if mode == "release":
+        return app_tag, {}
+    if not app_owner or not app_repo or app_run_id <= 0:
+        raise RuntimeError("Artifact app source requires app owner, repo, and run id")
+    return (
+        f"actions-run-{app_run_id}",
+        build_global_artifact_app_urls(app_owner, app_repo, app_run_id, app_assets),
+    )
+    
+    
+def build_global_artifact_app_urls(
+    owner: str,
+    repo: str,
+    run_id: int,
+    app_assets: dict[str, Path],
+) -> dict[str, str]:
+    urls: dict[str, str] = {}
+    for asset_name in sorted(app_assets.keys()):
+        platform = APP_ASSET_PLATFORM_BY_NAME.get(asset_name)
+        if not platform:
+            continue
+        encoded_name = quote(asset_name, safe="")
+        urls[platform] = (
+            f"{DEFAULT_NIGHTLY_LINK_BASE}/{quote(owner, safe='')}/{quote(repo, safe='')}"
+            f"/actions/runs/{int(run_id)}/{encoded_name}.zip"
+        )
+    return urls
+
+
 def download_content_assets(
     *,
     github: GitHubClient,
     session: requests.Session,
     temp_root: Path,
     lens_release: dict[str, Any],
-    plugins_release: dict[str, Any],
+    plugin_source: PluginSource,
     sdk_base: str,
 ) -> list[DownloadedFile]:
     downloads: list[DownloadedFile] = []
@@ -460,17 +659,21 @@ def download_content_assets(
         github.download_asset(asset["browser_download_url"], destination)
         downloads.append(build_downloaded_file(asset_name, destination, "lens", lens_tag))
 
-    plugin_assets = map_assets(plugins_release)
-    plugin_tag = str(plugins_release.get("tag_name", "")).strip()
-    for asset_name in PLUGIN_ASSET_NAMES:
-        asset = plugin_assets.get(asset_name)
-        if not asset:
-            raise RuntimeError(f"Missing plugin asset {asset_name} in {plugin_tag}")
-        destination = temp_root / "plugins" / asset_name
-        github.download_asset(asset["browser_download_url"], destination)
-        downloads.append(build_downloaded_file(f"plugins/{asset_name}", destination, "plugin", plugin_tag))
+    for asset_name, local_path in resolve_plugin_asset_files(
+        github=github,
+        temp_root=temp_root,
+        plugin_source=plugin_source,
+    ).items():
+        downloads.append(
+            build_downloaded_file(
+                f"plugins/{asset_name}",
+                local_path,
+                "plugin",
+                plugin_source.source_ref,
+            )
+        )
 
-    sdk_base = sdk_base.rstrip("/")
+    sdk_base = normalize_base_url(sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
     for filename in SDK_FILENAMES:
         destination = temp_root / "sdk" / filename
         download_url = f"{sdk_base}/{filename}"
@@ -478,6 +681,195 @@ def download_content_assets(
         downloads.append(build_downloaded_file(f"sdk/{filename}", destination, "sdk", sdk_base))
 
     return downloads
+
+
+def resolve_plugin_source(
+    *,
+    github: GitHubClient,
+    temp_root: Path,
+    owner: str,
+    repo: str,
+    source_mode: str,
+    tag: str,
+    artifact_name: str,
+) -> PluginSource:
+    mode = normalize_choice(
+        source_mode,
+        default=DEFAULT_PLUGINS_SOURCE_MODE,
+        name="plugin source mode",
+        allowed=PLUGIN_SOURCE_MODES,
+    )
+    if mode == "release":
+        release = github.get_release(owner, repo, tag)
+        release_tag = str(release.get("tag_name", "")).strip() or (tag.strip() if tag else "latest")
+        return PluginSource(
+            mode="release",
+            source_ref=release_tag,
+            display_name=release_tag,
+            owner=owner,
+            repo=repo,
+            release=release,
+        )
+
+    requested_artifacts = parse_csv_list(artifact_name)
+    repository = github.get_repository(owner, repo)
+    branch = str(repository.get("default_branch", "")).strip()
+    if not branch:
+        raise RuntimeError(f"Unable to determine default branch for {owner}/{repo}")
+
+    runs = github.list_workflow_runs(owner, repo, branch=branch, per_page=20)
+    if not runs:
+        raise RuntimeError(f"No workflow runs found for {owner}/{repo} on branch {branch}")
+
+    errors: list[str] = []
+    for run in runs:
+        if str(run.get("conclusion", "")).lower() != "success":
+            continue
+        run_id = int(run.get("id", 0) or 0)
+        if run_id <= 0:
+            continue
+        artifacts = github.list_workflow_run_artifacts(owner, repo, run_id)
+        valid_artifacts = [
+            item
+            for item in artifacts
+            if not bool(item.get("expired"))
+            and (
+                not requested_artifacts
+                or str(item.get("name", "")).strip() in set(requested_artifacts)
+            )
+        ]
+        if requested_artifacts:
+            matched_names = {str(item.get("name", "")).strip() for item in valid_artifacts}
+            if not all(name in matched_names for name in requested_artifacts):
+                continue
+        elif not valid_artifacts:
+            continue
+
+        try:
+            resolved_files = resolve_plugin_assets_from_artifacts(
+                github=github,
+                temp_root=temp_root,
+                run_id=run_id,
+                artifacts=valid_artifacts,
+                source_ref=f"actions-run-{run_id}",
+            )
+            display_name = ", ".join(requested_artifacts) if requested_artifacts else "latest successful run"
+            return PluginSource(
+                mode="artifact",
+                source_ref=f"actions-run-{run_id}",
+                display_name=display_name,
+                owner=owner,
+                repo=repo,
+                run_id=run_id,
+                artifact_names=tuple(str(item.get("name", "")).strip() for item in valid_artifacts),
+                branch=branch,
+                resolved_files=resolved_files,
+            )
+        except RuntimeError as err:
+            errors.append(f"run {run_id}: {err}")
+
+    message = (
+        f"Unable to resolve plugin artifacts from {owner}/{repo} on branch {branch}. "
+        f"Requested artifact names: {', '.join(requested_artifacts) or 'auto'}."
+    )
+    if errors:
+        message = f"{message} Attempts: {' | '.join(errors[:3])}"
+    raise RuntimeError(message)
+
+
+def resolve_plugin_asset_files(
+    *,
+    github: GitHubClient,
+    temp_root: Path,
+    plugin_source: PluginSource,
+) -> dict[str, Path]:
+    if plugin_source.resolved_files:
+        return plugin_source.resolved_files
+
+    if plugin_source.mode == "release":
+        if not plugin_source.release:
+            raise RuntimeError("Plugin release metadata is missing")
+        plugin_assets = map_assets(plugin_source.release)
+        result: dict[str, Path] = {}
+        for asset_name in PLUGIN_ASSET_NAMES:
+            asset = plugin_assets.get(asset_name)
+            if not asset:
+                raise RuntimeError(f"Missing plugin asset {asset_name} in {plugin_source.source_ref}")
+            destination = temp_root / "plugins" / asset_name
+            github.download_asset(asset["browser_download_url"], destination)
+            result[asset_name] = destination
+        return result
+
+    if plugin_source.mode == "artifact":
+        artifacts = github.list_workflow_run_artifacts(
+            plugin_source.owner,
+            plugin_source.repo,
+            plugin_source.run_id,
+        )
+        if plugin_source.artifact_names:
+            allowed = set(plugin_source.artifact_names)
+            artifacts = [item for item in artifacts if str(item.get("name", "")).strip() in allowed]
+        else:
+            artifacts = [item for item in artifacts if not bool(item.get("expired"))]
+        if not artifacts:
+            raise RuntimeError(f"No plugin artifacts available for run {plugin_source.run_id}")
+        return resolve_plugin_assets_from_artifacts(
+            github=github,
+            temp_root=temp_root,
+            run_id=plugin_source.run_id,
+            artifacts=artifacts,
+            source_ref=plugin_source.source_ref,
+        )
+
+    raise RuntimeError(f"Unsupported plugin source mode: {plugin_source.mode}")
+
+
+def resolve_plugin_assets_from_artifacts(
+    *,
+    github: GitHubClient,
+    temp_root: Path,
+    run_id: int,
+    artifacts: list[dict[str, Any]],
+    source_ref: str,
+) -> dict[str, Path]:
+    archives_root = temp_root / "plugin_artifacts" / str(run_id)
+    extract_root = temp_root / "plugin_extract" / str(run_id)
+    shutil.rmtree(archives_root, ignore_errors=True)
+    shutil.rmtree(extract_root, ignore_errors=True)
+    archives_root.mkdir(parents=True, exist_ok=True)
+    extract_root.mkdir(parents=True, exist_ok=True)
+
+    for index, artifact in enumerate(artifacts, start=1):
+        archive_url = str(artifact.get("archive_download_url", "")).strip()
+        artifact_name = str(artifact.get("name", "")).strip() or f"artifact-{index}"
+        if not archive_url:
+            continue
+        archive_path = archives_root / f"{index:02d}-{artifact_name}.zip"
+        github.download_artifact_archive(archive_url, archive_path)
+        artifact_extract_dir = extract_root / f"{index:02d}-{artifact_name}"
+        artifact_extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive_path, "r") as zip_file:
+            zip_file.extractall(artifact_extract_dir)
+
+    plugin_root = temp_root / "plugins"
+    plugin_root.mkdir(parents=True, exist_ok=True)
+    resolved: dict[str, Path] = {}
+    missing: list[str] = []
+    for asset_name in PLUGIN_ASSET_NAMES:
+        matches = sorted(extract_root.rglob(asset_name))
+        if not matches:
+            missing.append(asset_name)
+            continue
+        destination = plugin_root / asset_name
+        copy_file(matches[0], destination)
+        resolved[asset_name] = destination
+
+    if missing:
+        raise RuntimeError(
+            f"Missing plugin files in artifact source {source_ref}: {', '.join(missing)}"
+        )
+
+    return resolved
 
 
 def upload_content_bundle(
@@ -504,8 +896,10 @@ def upload_content_bundle(
 def build_content_manifest(
     *,
     app_tag: str,
+    app_source_mode: str,
+    app_source_ref: str,
     lens_release: dict[str, Any],
-    plugins_release: dict[str, Any],
+    plugin_source: PluginSource,
     downloaded_files: list[DownloadedFile],
 ) -> tuple[dict[str, Any], str]:
     file_entries = [
@@ -520,8 +914,11 @@ def build_content_manifest(
     ]
     hash_payload = {
         "app_tag": app_tag,
+        "app_source_mode": app_source_mode,
+        "app_source_ref": app_source_ref,
         "lens_release_tag": lens_release.get("tag_name", ""),
-        "plugins_release_tag": plugins_release.get("tag_name", ""),
+        "plugin_source_mode": plugin_source.mode,
+        "plugin_source_ref": plugin_source.source_ref,
         "files": file_entries,
     }
     manifest_hash = hashlib.sha256(
@@ -534,8 +931,12 @@ def build_content_manifest(
         "app_tag": app_tag,
         "content_tag": content_tag,
         "content_hash": manifest_hash,
+        "app_source_mode": app_source_mode,
+        "app_source_ref": app_source_ref,
         "lens_release_tag": lens_release.get("tag_name", ""),
-        "plugins_release_tag": plugins_release.get("tag_name", ""),
+        "plugin_source_mode": plugin_source.mode,
+        "plugin_source_ref": plugin_source.source_ref,
+        "plugins_release_tag": plugin_source.release.get("tag_name", "") if plugin_source.release else "",
         "files": file_entries,
     }
     return manifest, content_tag
@@ -544,9 +945,12 @@ def build_content_manifest(
 def build_release_summary(
     *,
     app_tag: str,
+    app_source_mode: str,
+    app_source_ref: str,
+    global_app_urls: dict[str, str],
     content_tag: str,
     lens_release: dict[str, Any],
-    plugins_release: dict[str, Any],
+    plugin_source: PluginSource,
     lens_metadata: dict[str, Any],
     sdk_base: str,
 ) -> dict[str, Any]:
@@ -554,11 +958,16 @@ def build_release_summary(
         "schema": 1,
         "generated_at": utc_now_iso(),
         "app_tag": app_tag,
+        "app_source_mode": app_source_mode,
+        "app_source_ref": app_source_ref,
+        "global_app_urls": global_app_urls,
         "content_tag": content_tag,
         "lens_version": lens_metadata.get("version", ""),
         "lens_sha256": lens_metadata.get("sha256", ""),
         "lens_source_tag": lens_release.get("tag_name", ""),
-        "plugins_source_tag": plugins_release.get("tag_name", ""),
+        "plugins_source_mode": plugin_source.mode,
+        "plugins_source_ref": plugin_source.source_ref,
+        "plugins_source_tag": plugin_source.display_name,
         "global_sdk_base": f"{sdk_base.rstrip('/')}/",
         "global_plugins_base": f"{DEFAULT_GLOBAL_PLUGINS_BASE}/",
     }

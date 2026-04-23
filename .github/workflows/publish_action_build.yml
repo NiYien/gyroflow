@@ -1,0 +1,79 @@
+name: NiYien Publish Action Build
+
+run-name: Publish action build ${{ inputs.build_id }} from #${{ inputs.source_run_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Source build workflow run id
+        required: true
+        type: string
+      build_id:
+        description: Internal build id used for CN release routing
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  artifact-metadata: read
+
+jobs:
+  publish_from_run:
+    name: Publish build artifacts to 123
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts from source run
+        uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.source_run_id }}
+          path: _deployment/_build_artifacts
+          merge-multiple: true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install publish dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests
+
+      - name: Publish action build bundle to 123
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PAN123_CLIENT_ID: ${{ secrets.PAN123_CLIENT_ID }}
+          PAN123_CLIENT_SECRET: ${{ secrets.PAN123_CLIENT_SECRET }}
+          PAN123_RELEASES_ROOT_ID: ${{ secrets.PAN123_RELEASES_ROOT_ID }}
+          NIYIEN_LENS_DATA_TAG: ${{ vars.NIYIEN_LENS_DATA_TAG }}
+          NIYIEN_PLUGINS_SOURCE_MODE: ${{ vars.NIYIEN_PLUGINS_SOURCE_MODE }}
+          NIYIEN_PLUGINS_TAG: ${{ vars.NIYIEN_PLUGINS_TAG }}
+          NIYIEN_PLUGINS_ARTIFACT_NAME: ${{ vars.NIYIEN_PLUGINS_ARTIFACT_NAME }}
+          NIYIEN_SDK_BASE: ${{ vars.NIYIEN_SDK_BASE }}
+        run: |
+          python _scripts/publish_pan123_release.py \
+            --app-tag "${{ inputs.build_id }}" \
+            --app-source-mode artifact \
+            --app-owner "${{ github.repository_owner }}" \
+            --app-repo "${{ github.event.repository.name }}" \
+            --app-run-id "${{ inputs.source_run_id }}"
+
+      - name: Upload publish summary artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gyroflow-niyien-release-summary.json
+          path: _deployment/_publish/gyroflow-niyien-release-summary.json
+          if-no-files-found: error
+
+      - name: Upload content manifest artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: gyroflow-niyien-content-manifest.json
+          path: _deployment/_publish/gyroflow-niyien-content-manifest.json
+          if-no-files-found: error
