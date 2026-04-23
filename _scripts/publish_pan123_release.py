@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import sys
+import tarfile
 import time
 import zipfile
 from urllib.parse import quote, urlparse
@@ -45,10 +46,34 @@ SDK_FILENAMES = (
     "RED_SDK_Windows_9.1.2.tar.gz",
     "RED_SDK_MacOS_9.1.2.tar.gz",
     "RED_SDK_Linux_9.1.2.tar.gz",
-    "ffmpeg_gpl_Windows.tar.gz",
-    "ffmpeg_gpl_MacOS.tar.gz",
-    "ffmpeg_gpl_Linux.tar.gz",
 )
+
+SDK_DOWNLOAD_SOURCES = {
+    "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz"},
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Windows.tar.gz"},
+    ),
+    "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz"},
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_MacOS.tar.gz"},
+    ),
+    "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz": (
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz"},
+        {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux.tar.gz"},
+    ),
+    "RED_SDK_Windows_9.1.2.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Windows_9.1.2.tar.gz"},
+        {"kind": "direct", "path": "RED_SDK_Windows.tar.gz"},
+    ),
+    "RED_SDK_MacOS_9.1.2.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_MacOS_9.1.2.tar.gz"},
+        {"kind": "direct", "path": "RED_SDK_MacOS.tar.gz"},
+    ),
+    "RED_SDK_Linux_9.1.2.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Linux_9.1.2.tar.gz"},
+        {"kind": "direct", "path": "RED_SDK_Linux.tar.gz"},
+    ),
+}
 
 LENS_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz"
 LENS_METADATA_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz.json"
@@ -691,9 +716,13 @@ def download_content_assets(
     sdk_base = normalize_base_url(sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
     for filename in SDK_FILENAMES:
         destination = temp_root / "sdk" / filename
-        download_url = f"{sdk_base}/{filename}"
-        download_to_path(session, download_url, destination)
-        downloads.append(build_downloaded_file(f"sdk/{filename}", destination, "sdk", sdk_base))
+        resolved_url = download_sdk_to_path(
+            session=session,
+            sdk_base=sdk_base,
+            logical_filename=filename,
+            destination=destination,
+        )
+        downloads.append(build_downloaded_file(f"sdk/{filename}", destination, "sdk", resolved_url))
 
     return downloads
 
@@ -1009,6 +1038,74 @@ def map_assets(release: dict[str, Any]) -> dict[str, dict[str, Any]]:
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def build_sdk_download_candidates(logical_filename: str, sdk_base: str) -> list[dict[str, str]]:
+    specs = SDK_DOWNLOAD_SOURCES.get(logical_filename) or (
+        {"kind": "direct", "path": logical_filename},
+    )
+    candidates: list[dict[str, str]] = []
+    for spec in specs:
+        kind = str(spec.get("kind", "direct")).strip().lower()
+        if kind == "direct":
+            path = str(spec.get("path", logical_filename)).strip() or logical_filename
+            url = path if "://" in path else f"{sdk_base.rstrip('/')}/{path.lstrip('/')}"
+            candidates.append({"kind": "direct", "url": url})
+        elif kind == "repack_tar_xz":
+            url = str(spec.get("url", "")).strip()
+            if url:
+                candidates.append({"kind": "repack_tar_xz", "url": url})
+    return candidates
+
+
+def download_sdk_to_path(
+    *,
+    session: requests.Session,
+    sdk_base: str,
+    logical_filename: str,
+    destination: Path,
+) -> str:
+    attempts: list[str] = []
+    for candidate in build_sdk_download_candidates(logical_filename, sdk_base):
+        url = candidate["url"]
+        try:
+            if candidate["kind"] == "repack_tar_xz":
+                download_and_repack_tar_xz(session, url, destination)
+            else:
+                download_to_path(session, url, destination)
+            return url
+        except requests.HTTPError as err:
+            status = getattr(err.response, "status_code", None)
+            attempts.append(f"{url} -> HTTP {status or 'error'}")
+        except Exception as err:
+            attempts.append(f"{url} -> {err}")
+        finally:
+            if destination.exists() and destination.stat().st_size == 0:
+                destination.unlink(missing_ok=True)
+
+    raise RuntimeError(
+        f"Unable to download SDK asset {logical_filename}. "
+        f"Attempts: {' | '.join(attempts) or 'none'}"
+    )
+
+
+def download_and_repack_tar_xz(session: requests.Session, url: str, destination: Path) -> None:
+    temp_archive = destination.parent / f"{destination.name}.source.tar.xz"
+    extract_root = destination.parent / f"{destination.name}.extract"
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(extract_root, ignore_errors=True)
+    temp_archive.unlink(missing_ok=True)
+    destination.unlink(missing_ok=True)
+    try:
+        download_to_path(session, url, temp_archive)
+        with tarfile.open(temp_archive, "r:xz") as archive:
+            archive.extractall(extract_root)
+        with tarfile.open(destination, "w:gz") as archive:
+            for path in sorted(extract_root.rglob("*")):
+                archive.add(path, arcname=path.relative_to(extract_root))
+    finally:
+        temp_archive.unlink(missing_ok=True)
+        shutil.rmtree(extract_root, ignore_errors=True)
 
 
 def download_to_path(session: requests.Session, url: str, destination: Path) -> None:
