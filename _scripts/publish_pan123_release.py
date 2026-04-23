@@ -89,6 +89,42 @@ PLUGIN_SOURCE_MODES = {"release", "artifact"}
 DEFAULT_APP_SOURCE_MODE = "release"
 APP_SOURCE_MODES = {"release", "artifact"}
 DEFAULT_NIGHTLY_LINK_BASE = "https://nightly.link"
+DEFAULT_DOWNLOAD_RETRIES = 5
+PROGRESS_EVENT_PREFIX = "@@CC_EVENT@@"
+PROGRESS_MODE = os.environ.get("NIYIEN_PROGRESS_MODE", "").strip().lower()
+
+
+def emit_event(payload: dict[str, Any]) -> None:
+    if PROGRESS_MODE != "jsonl":
+        return
+    print(f"{PROGRESS_EVENT_PREFIX}{json.dumps(payload, ensure_ascii=False)}", flush=True)
+
+
+def emit_progress(
+    *,
+    phase: str,
+    label: str = "",
+    message: str = "",
+    current: int | None = None,
+    total: int | None = None,
+    mode: str = "",
+) -> None:
+    payload: dict[str, Any] = {
+        "phase": str(phase).strip(),
+        "label": str(label).strip(),
+        "message": str(message).strip(),
+    }
+    if current is not None:
+        payload["current"] = int(current)
+    if total is not None:
+        payload["total"] = int(total)
+    if mode:
+        payload["mode"] = str(mode).strip()
+    emit_event(payload)
+
+
+def emit_log(message: str) -> None:
+    print(f"[publish_pan123_release] {message}", flush=True)
 
 
 def normalize_base_url(value: str, fallback: str, name: str) -> str:
@@ -104,10 +140,7 @@ def normalize_base_url(value: str, fallback: str, name: str) -> str:
         if parsed.scheme in {"http", "https"} and parsed.netloc:
             normalized = candidate.rstrip("/")
             if raw_value and normalized != raw_value.rstrip("/"):
-                print(
-                    f"[publish_pan123_release] Invalid {name} {raw_value!r}, fallback to {normalized!r}",
-                    file=sys.stderr,
-                )
+                emit_log(f"Invalid {name} {raw_value!r}, fallback to {normalized!r}")
             return normalized
 
     raise RuntimeError(f"Invalid {name}: {raw_value or fallback_base!r}")
@@ -215,13 +248,11 @@ class GitHubClient:
         return response.json()
 
     def download_asset(self, asset_url: str, destination: Path) -> None:
-        with self._get(asset_url, timeout=300, stream=True) as response:
-            response.raise_for_status()
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("wb") as fh:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        fh.write(chunk)
+        self._download_stream_with_retry(
+            lambda: self._get(asset_url, timeout=300, stream=True),
+            destination,
+            label=asset_url,
+        )
 
     def get_repository(self, owner: str, repo: str) -> dict[str, Any]:
         url = f"{DEFAULT_GITHUB_API}/repos/{owner}/{repo}"
@@ -260,13 +291,33 @@ class GitHubClient:
         return [item for item in artifacts or [] if isinstance(item, dict)]
 
     def download_artifact_archive(self, archive_url: str, destination: Path) -> None:
-        with self._get(archive_url, timeout=300, stream=True) as response:
-            response.raise_for_status()
+        self._download_stream_with_retry(
+            lambda: self._get(archive_url, timeout=300, stream=True),
+            destination,
+            label=archive_url,
+        )
+
+    def _download_stream_with_retry(self, opener, destination: Path, *, label: str) -> None:
+        last_error = ""
+        for attempt in range(1, DEFAULT_DOWNLOAD_RETRIES + 1):
             destination.parent.mkdir(parents=True, exist_ok=True)
-            with destination.open("wb") as fh:
-                for chunk in response.iter_content(chunk_size=1024 * 1024):
-                    if chunk:
-                        fh.write(chunk)
+            destination.unlink(missing_ok=True)
+            try:
+                with opener() as response:
+                    response.raise_for_status()
+                    with destination.open("wb") as fh:
+                        for chunk in response.iter_content(chunk_size=1024 * 1024):
+                            if chunk:
+                                fh.write(chunk)
+                if destination.exists() and destination.stat().st_size > 0:
+                    return
+                last_error = "downloaded file is empty"
+            except Exception as err:
+                last_error = str(err)
+            destination.unlink(missing_ok=True)
+            if attempt < DEFAULT_DOWNLOAD_RETRIES:
+                time.sleep(min(2 * attempt, 10))
+        raise RuntimeError(f"Failed to download {label}: {last_error}")
 
 
 class Pan123Client:
@@ -275,6 +326,7 @@ class Pan123Client:
         self.client_secret = client_secret.strip()
         self.releases_root_id = int(releases_root_id)
         self.session = requests.Session()
+        self.session.trust_env = True
         self.session.headers.update({"User-Agent": "niyien-pan123-publisher"})
         self._token = ""
         self._token_expires_at = 0.0
@@ -307,48 +359,66 @@ class Pan123Client:
         remote_name = remote_name or local_path.name
         file_size = local_path.stat().st_size
         file_md5 = md5_file(local_path)
+        last_error = ""
+        for upload_attempt in range(1, 4):
+            emit_log(f"Uploading to 123: {remote_name} (attempt {upload_attempt}/3)")
+            try:
+                create_data = self.request(
+                    "POST",
+                    "/upload/v2/file/create",
+                    json_body={
+                        "parentFileID": int(parent_id),
+                        "filename": remote_name,
+                        "etag": file_md5,
+                        "size": file_size,
+                        "duplicate": 2,
+                    },
+                )
 
-        create_data = self.request(
-            "POST",
-            "/upload/v2/file/create",
-            json_body={
-                "parentFileID": int(parent_id),
-                "filename": remote_name,
-                "etag": file_md5,
-                "size": file_size,
-                "duplicate": 2,
-            },
-        )
+                if create_data.get("reuse"):
+                    emit_log(f"Uploaded to 123: {remote_name} (reuse)")
+                    return int(create_data.get("fileID", 0))
 
-        if create_data.get("reuse"):
-            return int(create_data.get("fileID", 0))
+                preupload_id = str(create_data.get("preuploadID", "")).strip()
+                slice_size = int(create_data.get("sliceSize", 0))
+                servers = create_data.get("servers") or []
+                if not preupload_id or slice_size <= 0:
+                    raise RuntimeError(f"Invalid 123 create-file response for {remote_name}")
 
-        preupload_id = str(create_data.get("preuploadID", "")).strip()
-        slice_size = int(create_data.get("sliceSize", 0))
-        servers = create_data.get("servers") or []
-        if not preupload_id or slice_size <= 0:
-            raise RuntimeError(f"Invalid 123 create-file response for {remote_name}")
+                if not servers:
+                    domain_data = self.request("GET", "/upload/v2/file/domain")
+                    servers = domain_data if isinstance(domain_data, list) else []
+                if not servers:
+                    raise RuntimeError(f"123 did not return any upload server for {remote_name}")
 
-        if not servers:
-            domain_data = self.request("GET", "/upload/v2/file/domain")
-            servers = domain_data if isinstance(domain_data, list) else []
-        if not servers:
-            raise RuntimeError(f"123 did not return any upload server for {remote_name}")
+                upload_bases = [str(item).rstrip("/") for item in servers if str(item).strip()]
+                self._upload_slices(upload_bases, local_path, preupload_id, slice_size)
 
-        upload_bases = [str(item).rstrip("/") for item in servers if str(item).strip()]
-        self._upload_slices(upload_bases, local_path, preupload_id, slice_size)
+                for _ in range(120):
+                    try:
+                        complete_data = self.request(
+                            "POST",
+                            "/upload/v2/file/upload_complete",
+                            json_body={"preuploadID": preupload_id},
+                        )
+                    except RuntimeError as err:
+                        last_error = str(err)
+                        if "20103" in last_error:
+                            raise
+                        time.sleep(1)
+                        continue
+                    if bool(complete_data.get("completed")) and int(complete_data.get("fileID", 0)) > 0:
+                        emit_log(f"Uploaded to 123: {remote_name}")
+                        return int(complete_data["fileID"])
+                    time.sleep(1)
 
-        for _ in range(120):
-            complete_data = self.request(
-                "POST",
-                "/upload/v2/file/upload_complete",
-                json_body={"preuploadID": preupload_id},
-            )
-            if bool(complete_data.get("completed")) and int(complete_data.get("fileID", 0)) > 0:
-                return int(complete_data["fileID"])
-            time.sleep(1)
+                last_error = f"Timed out while finalizing 123 upload for {remote_name}"
+            except RuntimeError as err:
+                last_error = str(err)
+            if upload_attempt < 3:
+                time.sleep(min(3 * upload_attempt, 10))
 
-        raise RuntimeError(f"Timed out while finalizing 123 upload for {remote_name}")
+        raise RuntimeError(f"123 upload failed for {remote_name}: {last_error}")
 
     def find_child(self, parent_id: int, name: str, expected_type: int) -> dict[str, Any] | None:
         entries = self.list_directory(parent_id)
@@ -463,6 +533,7 @@ class Pan123Client:
     def _upload_slices(self, upload_bases: list[str], local_path: Path, preupload_id: str, slice_size: int) -> None:
         if not upload_bases:
             raise RuntimeError(f"No upload server available for {local_path.name}")
+        total_slices = max(1, (local_path.stat().st_size + slice_size - 1) // slice_size)
         with local_path.open("rb") as fh:
             slice_no = 1
             while True:
@@ -513,6 +584,13 @@ class Pan123Client:
                                 f"123 slice upload failed for {local_path.name}: {last_error}"
                             ) from err
                         time.sleep(min(2 * attempt, 10))
+                emit_progress(
+                    phase="upload",
+                    label=local_path.name,
+                    message="上传分片",
+                    current=slice_no,
+                    total=total_slices,
+                )
                 slice_no += 1
 
 
@@ -534,6 +612,8 @@ def main() -> int:
     workspace = Path(args.workspace).resolve()
     output_dir = (workspace / args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    temp_root = output_dir / "_staging"
+    temp_root.mkdir(parents=True, exist_ok=True)
 
     github = GitHubClient(os.environ.get("GITHUB_TOKEN", "").strip())
     pan123 = Pan123Client(
@@ -542,9 +622,21 @@ def main() -> int:
         releases_root_id=int(require_env("PAN123_RELEASES_ROOT_ID")),
     )
 
-    app_assets = discover_app_assets(workspace)
+    emit_log("Resolving app artifacts")
+    emit_progress(phase="resolve", message="解析应用产物", mode="indeterminate")
+    app_assets = resolve_app_asset_files(
+        github=github,
+        workspace=workspace,
+        temp_root=temp_root,
+        app_source_mode=args.app_source_mode,
+        app_owner=args.app_owner,
+        app_repo=args.app_repo,
+        app_run_id=args.app_run_id,
+    )
     if not app_assets:
         raise RuntimeError("No app artifacts were found after downloading build outputs")
+    emit_log("App artifacts ready")
+    emit_progress(phase="resolve", message="应用产物就绪")
     app_source_ref, global_app_urls = resolve_app_source(
         app_source_mode=args.app_source_mode,
         app_tag=args.app_tag,
@@ -555,12 +647,10 @@ def main() -> int:
     )
 
     with requests.Session() as session:
+        session.trust_env = True
         session.headers["User-Agent"] = "niyien-pan123-publisher"
-        temp_root = output_dir / "_staging"
-        if temp_root.exists():
-            shutil.rmtree(temp_root)
-        temp_root.mkdir(parents=True, exist_ok=True)
-
+        emit_log("Resolving content assets")
+        emit_progress(phase="resolve", message="解析内容资源", mode="indeterminate")
         lens_release = github.get_release(args.lens_owner, args.lens_repo, args.lens_tag)
         plugin_source = resolve_plugin_source(
             github=github,
@@ -580,6 +670,8 @@ def main() -> int:
             plugin_source=plugin_source,
             sdk_base=args.sdk_base,
         )
+        emit_log("Content assets ready")
+        emit_progress(phase="resolve", message="内容资源就绪")
 
         lens_metadata = json.loads(
             next(
@@ -600,10 +692,20 @@ def main() -> int:
         content_manifest_path = output_dir / CONTENT_MANIFEST_ASSET_NAME
         write_json(content_manifest_path, content_manifest)
 
+        emit_log("Uploading app bundle")
         app_dir_id = pan123.ensure_release_dir(args.app_tag)
-        for asset_name, asset_path in app_assets.items():
+        total_app_uploads = len(app_assets)
+        for index, (asset_name, asset_path) in enumerate(app_assets.items(), start=1):
+            emit_progress(
+                phase="upload",
+                label=asset_name,
+                message="上传应用包到 123",
+                current=index,
+                total=max(total_app_uploads, 1),
+            )
             pan123.upload_file(app_dir_id, asset_path, asset_name)
 
+        emit_log("Uploading content bundle")
         content_dir_id = pan123.ensure_release_dir(content_tag)
         upload_content_bundle(pan123, content_dir_id, downloaded_content, content_manifest_path)
 
@@ -634,8 +736,8 @@ def main() -> int:
             output_dir / LENS_METADATA_ASSET_NAME,
         )
 
-        shutil.rmtree(temp_root, ignore_errors=True)
-
+        emit_log("Publish finished")
+        emit_progress(phase="finalize", message="发布完成")
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
     return 0
@@ -648,6 +750,39 @@ def discover_app_assets(workspace: Path) -> dict[str, Path]:
         if matches:
             found[asset_name] = matches[0]
     return found
+
+
+def resolve_app_asset_files(
+    *,
+    github: GitHubClient,
+    workspace: Path,
+    temp_root: Path,
+    app_source_mode: str,
+    app_owner: str,
+    app_repo: str,
+    app_run_id: int,
+) -> dict[str, Path]:
+    mode = normalize_choice(
+        app_source_mode,
+        default=DEFAULT_APP_SOURCE_MODE,
+        name="app source mode",
+        allowed=APP_SOURCE_MODES,
+    )
+    if mode == "release":
+        return discover_app_assets(workspace)
+    if not app_owner or not app_repo or app_run_id <= 0:
+        raise RuntimeError("Artifact app source requires app owner, repo, and run id")
+    artifacts = github.list_workflow_run_artifacts(app_owner, app_repo, app_run_id)
+    valid_artifacts = [item for item in artifacts if not bool(item.get("expired"))]
+    if not valid_artifacts:
+        raise RuntimeError(f"No app artifacts available for run {app_run_id}")
+    return resolve_app_assets_from_artifacts(
+        github=github,
+        temp_root=temp_root,
+        run_id=app_run_id,
+        artifacts=valid_artifacts,
+        source_ref=f"actions-run-{app_run_id}",
+    )
 
 
 def resolve_app_source(
@@ -704,6 +839,8 @@ def download_content_assets(
     sdk_base: str,
 ) -> list[DownloadedFile]:
     downloads: list[DownloadedFile] = []
+    total_items = 2 + len(PLUGIN_ASSET_NAMES) + len(SDK_FILENAMES)
+    completed = 0
 
     lens_assets = map_assets(lens_release)
     lens_tag = str(lens_release.get("tag_name", "")).strip()
@@ -712,14 +849,56 @@ def download_content_assets(
         if not asset:
             raise RuntimeError(f"Missing {asset_name} in {lens_tag}")
         destination = temp_root / asset_name
-        github.download_asset(asset["browser_download_url"], destination)
+        expected = {
+            "kind": "github_release_asset",
+            "asset_id": int(asset.get("id", 0) or 0),
+            "asset_name": asset_name,
+            "updated_at": str(asset.get("updated_at", "")).strip(),
+            "source_tag": lens_tag,
+        }
+        if is_cached_file_match(destination, expected):
+            emit_log(f"Reusing local asset: {asset_name}")
+            emit_progress(
+                phase="download",
+                label=asset_name,
+                message="命中缓存，跳过下载",
+                current=completed + 1,
+                total=total_items,
+            )
+        else:
+            emit_progress(
+                phase="download",
+                label=asset_name,
+                message="下载 Lens 资源",
+                current=completed + 1,
+                total=total_items,
+            )
+            github.download_asset(asset["browser_download_url"], destination)
+            write_cached_metadata(destination, expected)
+        completed += 1
         downloads.append(build_downloaded_file(asset_name, destination, "lens", lens_tag))
 
+    emit_progress(
+        phase="extract",
+        label="plugins",
+        message="解析 Plugin 资源",
+        current=completed,
+        total=total_items,
+        mode="indeterminate",
+    )
     for asset_name, local_path in resolve_plugin_asset_files(
         github=github,
         temp_root=temp_root,
         plugin_source=plugin_source,
     ).items():
+        completed += 1
+        emit_progress(
+            phase="download",
+            label=asset_name,
+            message="Plugin 资源就绪",
+            current=completed,
+            total=total_items,
+        )
         downloads.append(
             build_downloaded_file(
                 f"plugins/{asset_name}",
@@ -732,12 +911,20 @@ def download_content_assets(
     sdk_base = normalize_base_url(sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
     for filename in SDK_FILENAMES:
         destination = temp_root / "sdk" / filename
+        emit_progress(
+            phase="download",
+            label=filename,
+            message="下载 SDK 资源",
+            current=completed + 1,
+            total=total_items,
+        )
         resolved_url = download_sdk_to_path(
             session=session,
             sdk_base=sdk_base,
             logical_filename=filename,
             destination=destination,
         )
+        completed += 1
         downloads.append(build_downloaded_file(f"sdk/{filename}", destination, "sdk", resolved_url))
 
     return downloads
@@ -856,7 +1043,18 @@ def resolve_plugin_asset_files(
             if not asset:
                 raise RuntimeError(f"Missing plugin asset {asset_name} in {plugin_source.source_ref}")
             destination = temp_root / "plugins" / asset_name
-            github.download_asset(asset["browser_download_url"], destination)
+            expected = {
+                "kind": "github_release_asset",
+                "asset_id": int(asset.get("id", 0) or 0),
+                "asset_name": asset_name,
+                "updated_at": str(asset.get("updated_at", "")).strip(),
+                "source_tag": plugin_source.source_ref,
+            }
+            if is_cached_file_match(destination, expected):
+                emit_log(f"Reusing local plugin asset: {asset_name}")
+            else:
+                github.download_asset(asset["browser_download_url"], destination)
+                write_cached_metadata(destination, expected)
             result[asset_name] = destination
         return result
 
@@ -894,6 +1092,30 @@ def resolve_plugin_assets_from_artifacts(
 ) -> dict[str, Path]:
     archives_root = temp_root / "plugin_artifacts" / str(run_id)
     extract_root = temp_root / "plugin_extract" / str(run_id)
+    plugin_root = temp_root / "plugins"
+    artifact_signatures = sorted(
+        f"{int(item.get('id', 0) or 0)}:{str(item.get('digest', '')).strip()}:{str(item.get('name', '')).strip()}"
+        for item in artifacts
+    )
+    resolved: dict[str, Path] = {}
+    reusable = True
+    for asset_name in PLUGIN_ASSET_NAMES:
+        destination = plugin_root / asset_name
+        expected = {
+            "kind": "plugin_artifact_output",
+            "source_ref": source_ref,
+            "artifact_signatures": artifact_signatures,
+            "asset_name": asset_name,
+        }
+        if is_cached_file_match(destination, expected):
+            resolved[asset_name] = destination
+        else:
+            reusable = False
+            break
+    if reusable and len(resolved) == len(PLUGIN_ASSET_NAMES):
+        emit_log(f"Reusing local plugin artifact outputs: {source_ref}")
+        return resolved
+
     shutil.rmtree(archives_root, ignore_errors=True)
     shutil.rmtree(extract_root, ignore_errors=True)
     archives_root.mkdir(parents=True, exist_ok=True)
@@ -911,9 +1133,8 @@ def resolve_plugin_assets_from_artifacts(
         with zipfile.ZipFile(archive_path, "r") as zip_file:
             zip_file.extractall(artifact_extract_dir)
 
-    plugin_root = temp_root / "plugins"
     plugin_root.mkdir(parents=True, exist_ok=True)
-    resolved: dict[str, Path] = {}
+    resolved = {}
     missing: list[str] = []
     for asset_name in PLUGIN_ASSET_NAMES:
         matches = sorted(extract_root.rglob(asset_name))
@@ -922,11 +1143,120 @@ def resolve_plugin_assets_from_artifacts(
             continue
         destination = plugin_root / asset_name
         copy_file(matches[0], destination)
+        write_cached_metadata(
+            destination,
+            {
+                "kind": "plugin_artifact_output",
+                "source_ref": source_ref,
+                "artifact_signatures": artifact_signatures,
+                "asset_name": asset_name,
+            },
+        )
         resolved[asset_name] = destination
 
     if missing:
         raise RuntimeError(
             f"Missing plugin files in artifact source {source_ref}: {', '.join(missing)}"
+        )
+
+    return resolved
+
+
+def resolve_app_assets_from_artifacts(
+    *,
+    github: GitHubClient,
+    temp_root: Path,
+    run_id: int,
+    artifacts: list[dict[str, Any]],
+    source_ref: str,
+) -> dict[str, Path]:
+    archives_root = temp_root / "app_artifacts" / str(run_id)
+    extract_root = temp_root / "app_extract" / str(run_id)
+    app_root = temp_root / "app"
+    artifact_signatures = sorted(
+        f"{int(item.get('id', 0) or 0)}:{str(item.get('digest', '')).strip()}:{str(item.get('name', '')).strip()}"
+        for item in artifacts
+    )
+    required_assets: set[str] = set()
+    for artifact in artifacts:
+        artifact_name = str(artifact.get("name", "")).strip().lower()
+        if "windows" in artifact_name:
+            required_assets.add("gyroflow-niyien-windows64.zip")
+        if "mac" in artifact_name:
+            required_assets.add("gyroflow-niyien-mac-universal.dmg")
+        if "linux" in artifact_name:
+            required_assets.add("gyroflow-niyien-linux64.AppImage")
+        if "android" in artifact_name or "apk" in artifact_name:
+            required_assets.add("gyroflow-niyien.apk")
+
+    resolved: dict[str, Path] = {}
+    reusable = True
+    for asset_name in required_assets:
+        destination = app_root / asset_name
+        expected = {
+            "kind": "app_artifact_output",
+            "source_ref": source_ref,
+            "artifact_signatures": artifact_signatures,
+            "asset_name": asset_name,
+        }
+        if is_cached_file_match(destination, expected):
+            resolved[asset_name] = destination
+        else:
+            reusable = False
+            break
+    if reusable and resolved:
+        for asset_name in APP_ASSET_NAMES:
+            destination = app_root / asset_name
+            expected = {
+                "kind": "app_artifact_output",
+                "source_ref": source_ref,
+                "artifact_signatures": artifact_signatures,
+                "asset_name": asset_name,
+            }
+            if asset_name not in resolved and is_cached_file_match(destination, expected):
+                resolved[asset_name] = destination
+        emit_log(f"Reusing local app artifact outputs: {source_ref}")
+        return resolved
+
+    shutil.rmtree(archives_root, ignore_errors=True)
+    shutil.rmtree(extract_root, ignore_errors=True)
+    archives_root.mkdir(parents=True, exist_ok=True)
+    extract_root.mkdir(parents=True, exist_ok=True)
+
+    for index, artifact in enumerate(artifacts, start=1):
+        archive_url = str(artifact.get("archive_download_url", "")).strip()
+        artifact_name = str(artifact.get("name", "")).strip() or f"artifact-{index}"
+        if not archive_url:
+            continue
+        archive_path = archives_root / f"{index:02d}-{artifact_name}.zip"
+        github.download_artifact_archive(archive_url, archive_path)
+        artifact_extract_dir = extract_root / f"{index:02d}-{artifact_name}"
+        artifact_extract_dir.mkdir(parents=True, exist_ok=True)
+        with zipfile.ZipFile(archive_path, "r") as zip_file:
+            zip_file.extractall(artifact_extract_dir)
+
+    app_root.mkdir(parents=True, exist_ok=True)
+    resolved = {}
+    for asset_name in APP_ASSET_NAMES:
+        matches = sorted(extract_root.rglob(asset_name))
+        if not matches:
+            continue
+        destination = app_root / asset_name
+        copy_file(matches[0], destination)
+        write_cached_metadata(
+            destination,
+            {
+                "kind": "app_artifact_output",
+                "source_ref": source_ref,
+                "artifact_signatures": artifact_signatures,
+                "asset_name": asset_name,
+            },
+        )
+        resolved[asset_name] = destination
+
+    if not resolved:
+        raise RuntimeError(
+            f"No app files were found in artifact source {source_ref}"
         )
 
     return resolved
@@ -938,10 +1268,25 @@ def upload_content_bundle(
     downloaded_content: list[DownloadedFile],
     content_manifest_path: Path,
 ) -> None:
+    total_uploads = len(downloaded_content) + 1
+    emit_progress(
+        phase="upload",
+        label=CONTENT_MANIFEST_ASSET_NAME,
+        message="上传内容清单",
+        current=1,
+        total=total_uploads,
+    )
     pan123.upload_file(content_dir_id, content_manifest_path, CONTENT_MANIFEST_ASSET_NAME)
 
     subdir_cache: dict[str, int] = {}
-    for item in downloaded_content:
+    for index, item in enumerate(downloaded_content, start=2):
+        emit_progress(
+            phase="upload",
+            label=item.logical_path,
+            message="上传内容资源到 123",
+            current=index,
+            total=total_uploads,
+        )
         relative_path = Path(item.logical_path)
         parent_id = content_dir_id
         if len(relative_path.parts) > 1:
@@ -1056,6 +1401,54 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def metadata_sidecar_path(path: Path) -> Path:
+    return path.with_name(f"{path.name}.meta.json")
+
+
+def load_cached_metadata(path: Path) -> dict[str, Any]:
+    sidecar = metadata_sidecar_path(path)
+    if not path.exists() or not sidecar.exists():
+        return {}
+    try:
+        payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def is_cached_file_match(path: Path, expected: dict[str, Any]) -> bool:
+    metadata = load_cached_metadata(path)
+    if not metadata:
+        return False
+    for key, value in expected.items():
+        if metadata.get(key) != value:
+            return False
+    if int(metadata.get("file_size", -1)) != path.stat().st_size:
+        return False
+    checksum = str(metadata.get("file_sha256", "")).strip()
+    if not checksum:
+        return False
+    return sha256_file(path) == checksum
+
+
+def write_cached_metadata(path: Path, expected: dict[str, Any]) -> None:
+    payload = dict(expected)
+    payload["file_size"] = path.stat().st_size
+    payload["file_sha256"] = sha256_file(path)
+    write_json(metadata_sidecar_path(path), payload)
+
+
+def fetch_remote_download_signature(session: requests.Session, url: str) -> dict[str, Any]:
+    with session.get(url, timeout=60, stream=True) as response:
+        response.raise_for_status()
+        return {
+            "url": url,
+            "content_length": int(response.headers.get("Content-Length", "0") or "0"),
+            "etag": str(response.headers.get("ETag", "")).strip(),
+            "last_modified": str(response.headers.get("Last-Modified", "")).strip(),
+        }
+
+
 def build_sdk_download_candidates(logical_filename: str, sdk_base: str) -> list[dict[str, str]]:
     specs = SDK_DOWNLOAD_SOURCES.get(logical_filename) or (
         {"kind": "direct", "path": logical_filename},
@@ -1085,10 +1478,21 @@ def download_sdk_to_path(
     for candidate in build_sdk_download_candidates(logical_filename, sdk_base):
         url = candidate["url"]
         try:
+            remote_signature = fetch_remote_download_signature(session, url)
+            expected = {
+                "kind": "sdk_download",
+                "logical_filename": logical_filename,
+                "source_url": url,
+                "remote_signature": remote_signature,
+            }
+            if is_cached_file_match(destination, expected):
+                emit_log(f"Reusing local SDK: {logical_filename}")
+                return url
             if candidate["kind"] == "repack_tar_xz":
                 download_and_repack_tar_xz(session, url, destination)
             else:
                 download_to_path(session, url, destination)
+            write_cached_metadata(destination, expected)
             return url
         except requests.HTTPError as err:
             status = getattr(err.response, "status_code", None)
@@ -1128,13 +1532,26 @@ def download_to_path(session: requests.Session, url: str, destination: Path) -> 
     parsed = urlparse(str(url or "").strip())
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise RuntimeError(f"Invalid download URL: {url!r}")
-    with session.get(url, timeout=300, stream=True) as response:
-        response.raise_for_status()
+    last_error = ""
+    for attempt in range(1, DEFAULT_DOWNLOAD_RETRIES + 1):
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with destination.open("wb") as fh:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    fh.write(chunk)
+        destination.unlink(missing_ok=True)
+        try:
+            with session.get(url, timeout=300, stream=True) as response:
+                response.raise_for_status()
+                with destination.open("wb") as fh:
+                    for chunk in response.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            fh.write(chunk)
+            if destination.exists() and destination.stat().st_size > 0:
+                return
+            last_error = "downloaded file is empty"
+        except Exception as err:
+            last_error = str(err)
+        destination.unlink(missing_ok=True)
+        if attempt < DEFAULT_DOWNLOAD_RETRIES:
+            time.sleep(min(2 * attempt, 10))
+    raise RuntimeError(f"Failed to download {url}: {last_error}")
 
 
 def copy_file(src: Path, dst: Path) -> None:

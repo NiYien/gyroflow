@@ -11,6 +11,13 @@
 - 需要使用本地 `Control Center` 管理 NiYien 发布流程的人
 - 需要配置 GitHub / Vercel / 123 云盘 / 本地控制中心的人
 
+当前版本的重要变化：
+
+- 123 上传已经完全改为本地 `Control Center` 执行
+- GitHub Actions 不再负责上传 123
+- `PAN123_*` 只需要保存在本地 `control_center.config.json`
+- “下次发版默认资源源”也改为保存在本地配置，不再写 GitHub Actions Variables
+
 ---
 
 ## 1. 先说结论
@@ -68,23 +75,7 @@
 - `PAN123_CLIENT_SECRET`
 - `PAN123_RELEASES_ROOT_ID`
 
-#### 第 2 步：GitHub 仓库里填 Actions Secrets
-
-去 `NiYien/gyroflow` 仓库：
-
-1. 打开 GitHub 仓库页面
-2. 点 `Settings`
-3. 点 `Secrets and variables`
-4. 点 `Actions`
-5. 点 `Secrets`
-6. 新增：
-   - `PAN123_CLIENT_ID`
-   - `PAN123_CLIENT_SECRET`
-   - `PAN123_RELEASES_ROOT_ID`
-
-如果你还要继续打 macOS 包，原有的签名相关 secrets 也必须保留。
-
-#### 第 3 步：Vercel 里给 docs 项目填环境变量
+#### 第 2 步：Vercel 里给 docs 项目填环境变量
 
 去 `docs` 对应的 Vercel 项目：
 
@@ -92,13 +83,10 @@
 2. 进入 `docs` 项目
 3. 点 `Settings`
 4. 点 `Environment Variables`
-5. 新增：
-   - `PAN123_CLIENT_ID`
-   - `PAN123_CLIENT_SECRET`
-   - `PAN123_RELEASES_ROOT_ID`
+5. 检查线上运行时变量是否齐全
 6. 填完后执行一次重新部署
 
-#### 第 4 步：把代码推上去
+#### 第 3 步：把代码推上去
 
 这一步第一次接入时必须确认：
 
@@ -110,7 +98,7 @@
 - `gyroflow` 里的 workflow、123 发布脚本、控制中心改动
 - `docs` 里的 manifest、download API、123 解析逻辑改动
 
-#### 第 5 步：本地 Control Center 填配置
+#### 第 4 步：本地 Control Center 填配置
 
 本地配置文件路径：
 
@@ -126,6 +114,14 @@
 python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
 ```
 
+本地配置里需要包含：
+
+- `pan123_client_id`
+- `pan123_client_secret`
+- `pan123_releases_root_id`
+
+现在这些 123 凭据只在本地使用，不再要求同步到 GitHub Actions。
+
 ---
 
 ### 2.2 每次发版前，如果要换资源版本
@@ -140,16 +136,16 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
 - `Plugin Artifact 名称`
 - `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
 
-你也会看到 2 个最常用按钮：
+你也会看到一个 `来源切换`：
 
-- `使用上次默认源`
-  - 把 GitHub Actions Variables 里现在保存的值重新读回来
-- `使用最新推荐`
+- `上次使用`
+  - 把本地上一次保存的默认值重新读回来
+- `最新推荐`
   - 自动查询最新 Lens/CameraDB Release
-  - 自动查询最新 Plugin Release
+  - 自动查询最新 Plugin Release / Artifact
   - 自动填入默认 SDK 下载源
-
-如果“上次默认源”里关键字段是空的，控制中心会自动先帮你切到“最新推荐”。
+- `当前自定义`
+  - 表示你正在手动调整当前表单
 
 这里最容易混的是 SDK：
 
@@ -174,7 +170,7 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
    - `Plugin 来源模式`
    - `Plugin Release Tag`
    - `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
-3. 如果不用改，直接点 `保存为下次发版默认源`
+3. 如果不用改，直接点 `保存为下次发版默认值`
 
 #### 方式 B：手动指定版本
 
@@ -186,12 +182,12 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
 6. `Plugin Artifact 名称` 可以留空
 7. 留空时会自动取插件仓库默认分支最近成功的 Action run
 8. 手动填写 `发版用 SDK 下载源 (NIYIEN_SDK_BASE)`
-9. 点 `保存为下次发版默认源`
+9. 点 `保存为下次发版默认值`
 
 结果：
 
-- 这些值会保存成“下次发版默认资源源”
-- 下次你打应用 tag 时，GitHub Actions 会自动使用这些值
+- 这些值会保存到本地控制中心配置
+- 下次你在本地发布中心执行 CN 发布时，会自动使用这些值
 - 其中 SDK 用的是 `NIYIEN_SDK_BASE`，不是 `NIYIEN_GLOBAL_SDK_BASE`
 
 注意：

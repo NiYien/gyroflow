@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-import io
 import json
+import os
+import queue
 import subprocess
+import sys
 import tkinter as tk
+import threading
 import time
+import traceback
 import webbrowser
-import zipfile
 from datetime import datetime
 from pathlib import Path
 from tkinter import font as tkfont
@@ -34,10 +37,56 @@ PLUGINS_SOURCE_MODE_VALUES = ("release", "artifact")
 DEFAULT_APP_SOURCE_MODE = "release"
 APP_SOURCE_MODE_VALUES = ("release", "artifact")
 APP_BUILD_WORKFLOW_FILE = "release.yml"
-APP_ARTIFACT_PUBLISH_WORKFLOW_FILE = "publish_action_build.yml"
 APP_ARTIFACT_RETENTION_DAYS = 90
 DEFAULT_NIGHTLY_LINK_BASE = "https://nightly.link"
 DEFAULT_NETWORK_PROXY = "127.0.0.1:6063"
+PUBLISH_PROGRESS_PREFIX = "@@CC_EVENT@@"
+
+DEFAULT_PUBLISH_DEFAULTS = {
+    "lens_data_tag": "",
+    "plugins_source_mode": DEFAULT_PLUGINS_SOURCE_MODE,
+    "plugins_tag": "",
+    "plugins_artifact_name": "",
+    "sdk_base": DEFAULT_GLOBAL_SDK_BASE,
+}
+
+APP_ACTION_OPTIONS = {
+    "manual_only": {
+        "label": "加入手动列表",
+        "button": "执行加入手动列表",
+        "style": "Primary.TButton",
+        "hint": "版本会进入手动可见列表，不会改变当前自动推送版本。",
+        "tone": "readonly",
+    },
+    "publish_and_promote": {
+        "label": "发布并立即推送",
+        "button": "执行发布并推送",
+        "style": "Immediate.TButton",
+        "hint": "版本会发布并立即切换为当前自动推送版本。",
+        "tone": "immediate",
+    },
+    "promote_existing": {
+        "label": "切换为当前推送版本",
+        "button": "执行切换当前推送",
+        "style": "Immediate.TButton",
+        "hint": "不会重新上传，只切换线上自动推送版本。",
+        "tone": "immediate",
+    },
+    "rollback_auto": {
+        "label": "回滚自动推送版本",
+        "button": "执行回滚",
+        "style": "Warning.TButton",
+        "hint": "会立即回滚当前自动推送版本，请确认目标版本无误。",
+        "tone": "warning",
+    },
+    "hide_version": {
+        "label": "隐藏版本",
+        "button": "执行隐藏版本",
+        "style": "Danger.TButton",
+        "hint": "会把版本从手动列表移除；若它正在自动推送，会自动切换到其他版本。",
+        "tone": "danger",
+    },
+}
 
 DEFAULT_CONFIG = {
     "vercel_token": "",
@@ -55,9 +104,13 @@ DEFAULT_CONFIG = {
     "lens_data_repo": DEFAULT_LENS_DATA_REPO,
     "plugins_owner": DEFAULT_PLUGINS_OWNER,
     "plugins_repo": DEFAULT_PLUGINS_REPO,
+    "pan123_client_id": "",
+    "pan123_client_secret": "",
+    "pan123_releases_root_id": "",
     "network_proxy": DEFAULT_NETWORK_PROXY,
     "git_remote": "origin",
     "repo_workdir": str(ROOT),
+    "publish_defaults": dict(DEFAULT_PUBLISH_DEFAULTS),
 }
 
 
@@ -537,6 +590,40 @@ class GitHubClient:
             raise RuntimeError("Missing GitHub owner/repo")
 
 
+class BackgroundTaskReporter:
+    def __init__(self, publish_event):
+        self._publish_event = publish_event
+
+    def status(self, message: str):
+        self._publish_event("status", message=str(message))
+
+    def log(self, message: str):
+        self._publish_event("log", message=str(message))
+
+    def progress(
+        self,
+        *,
+        phase: str = "",
+        label: str = "",
+        message: str = "",
+        current: int | None = None,
+        total: int | None = None,
+        mode: str = "",
+    ):
+        payload = {
+            "phase": str(phase).strip(),
+            "label": str(label).strip(),
+            "message": str(message).strip(),
+        }
+        if current is not None:
+            payload["current"] = int(current)
+        if total is not None:
+            payload["total"] = int(total)
+        if mode:
+            payload["mode"] = str(mode).strip()
+        self._publish_event("progress", **payload)
+
+
 class ControlCenter(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -547,7 +634,6 @@ class ControlCenter(tk.Tk):
         self.distribution_config = self.load_distribution_config()
         self.current_envs = {}
         self.current_env_records = {}
-        self.current_repo_variables = {}
         self.current_policy = self.default_policy()
         self.current_releases = []
         self.current_action_builds = []
@@ -559,6 +645,13 @@ class ControlCenter(tk.Tk):
         self.responsive_texts = []
         self.responsive_listboxes = []
         self.wrap_widgets = []
+        self.busy_widgets = []
+        self._task_queue: queue.Queue = queue.Queue()
+        self._task_after_id = None
+        self._active_task_token = ""
+        self._active_task_success = None
+        self._active_task_error = None
+        self._task_logs: list[str] = []
         self.palette = {
             "bg": "#F8FAFC",
             "surface": "#FFFFFF",
@@ -789,6 +882,211 @@ class ControlCenter(tk.Tk):
     def register_listbox(self, widget, base_height: int):
         self.responsive_listboxes.append((widget, base_height))
 
+    def register_busy_widget(self, widget):
+        original_state = None
+        try:
+            original_state = str(widget.cget("state"))
+        except Exception:
+            original_state = None
+        self.busy_widgets.append((widget, original_state))
+        return widget
+
+    def build_task_panel(self, parent):
+        panel = tk.Frame(
+            parent,
+            bg=self.palette["surface"],
+            highlightthickness=1,
+            highlightbackground=self.palette["line"],
+            bd=0,
+            padx=14,
+            pady=12,
+        )
+        panel.pack(fill="x", padx=28, pady=(0, 12))
+        self.task_panel = panel
+        self.task_title_var = tk.StringVar(value="后台任务：空闲")
+        self.task_meta_var = tk.StringVar(value="等待操作")
+        self.task_log_var = tk.StringVar(value="暂无后台日志")
+        tk.Label(
+            panel,
+            textvariable=self.task_title_var,
+            bg=self.palette["surface"],
+            fg=self.palette["text"],
+            font=self.fonts["body_bold"],
+            anchor="w",
+        ).pack(fill="x")
+        tk.Label(
+            panel,
+            textvariable=self.task_meta_var,
+            bg=self.palette["surface"],
+            fg=self.palette["muted"],
+            font=self.fonts["body"],
+            justify="left",
+            anchor="w",
+        ).pack(fill="x", pady=(4, 8))
+        self.task_progress = ttk.Progressbar(panel, mode="determinate", maximum=100, value=0)
+        self.task_progress.pack(fill="x")
+        tk.Label(
+            panel,
+            textvariable=self.task_log_var,
+            bg=self.palette["surface"],
+            fg=self.palette["muted"],
+            font=self.fonts["subtle"],
+            justify="left",
+            anchor="w",
+            wraplength=1200,
+        ).pack(fill="x", pady=(8, 0))
+
+    def default_publish_defaults(self) -> dict:
+        payload = self.config_data.get("publish_defaults")
+        if not isinstance(payload, dict):
+            payload = {}
+        defaults = dict(DEFAULT_PUBLISH_DEFAULTS)
+        for key in defaults.keys():
+            value = payload.get(key, defaults[key])
+            defaults[key] = str(value).strip() if isinstance(value, str) else value
+        mode = str(defaults.get("plugins_source_mode", DEFAULT_PLUGINS_SOURCE_MODE)).strip().lower()
+        if mode not in PLUGINS_SOURCE_MODE_VALUES:
+            defaults["plugins_source_mode"] = DEFAULT_PLUGINS_SOURCE_MODE
+        sdk_base = str(defaults.get("sdk_base", DEFAULT_GLOBAL_SDK_BASE)).strip() or DEFAULT_GLOBAL_SDK_BASE
+        defaults["sdk_base"] = sdk_base
+        return defaults
+
+    def save_publish_defaults_to_config(self, values: dict):
+        defaults = {
+            "lens_data_tag": str(values.get("NIYIEN_LENS_DATA_TAG", "")).strip(),
+            "plugins_source_mode": str(values.get("NIYIEN_PLUGINS_SOURCE_MODE", DEFAULT_PLUGINS_SOURCE_MODE)).strip().lower() or DEFAULT_PLUGINS_SOURCE_MODE,
+            "plugins_tag": str(values.get("NIYIEN_PLUGINS_TAG", "")).strip(),
+            "plugins_artifact_name": str(values.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip(),
+            "sdk_base": str(values.get("NIYIEN_SDK_BASE", DEFAULT_GLOBAL_SDK_BASE)).strip() or DEFAULT_GLOBAL_SDK_BASE,
+        }
+        self.config_data["publish_defaults"] = defaults
+        save_json_file(CONFIG_FILE, self.config_data)
+
+    def publish_event(self, token: str, event_type: str, **payload):
+        self._task_queue.put({"token": token, "type": event_type, **payload})
+
+    def reset_task_panel(self, title: str):
+        self._task_logs = []
+        self.task_title_var.set(f"后台任务：{title}")
+        self.task_meta_var.set("准备开始")
+        self.task_log_var.set("暂无后台日志")
+        self.task_progress.stop()
+        self.task_progress.configure(mode="determinate", maximum=100, value=0)
+
+    def append_task_log(self, line: str):
+        message = str(line or "").strip()
+        if not message:
+            return
+        self._task_logs.append(message)
+        self._task_logs = self._task_logs[-4:]
+        self.task_log_var.set("\n".join(self._task_logs))
+
+    def set_busy_state(self, busy: bool):
+        for widget, original_state in self.busy_widgets:
+            try:
+                widget.configure(state="disabled" if busy else (original_state or "normal"))
+            except Exception:
+                pass
+
+    def start_background_task(self, title: str, worker, on_success=None, on_error=None):
+        if self._active_task_token:
+            messagebox.showinfo("后台任务进行中", "请先等待当前后台任务完成。")
+            return False
+
+        token = f"task-{int(time.time() * 1000)}"
+        self._active_task_token = token
+        self._active_task_success = on_success
+        self._active_task_error = on_error
+        self.reset_task_panel(title)
+        self.set_busy_state(True)
+
+        def publish(event_type: str, **payload):
+            self.publish_event(token, event_type, **payload)
+
+        def run():
+            reporter = BackgroundTaskReporter(publish)
+            try:
+                result = worker(reporter)
+                publish("success", result=result)
+            except Exception as err:
+                publish(
+                    "error",
+                    message=str(err),
+                    detail=traceback.format_exc(),
+                )
+            finally:
+                publish("finished")
+
+        threading.Thread(target=run, daemon=True).start()
+        if not self._task_after_id:
+            self._task_after_id = self.after(120, self.poll_task_queue)
+        return True
+
+    def poll_task_queue(self):
+        self._task_after_id = None
+        keep_polling = False
+        while True:
+            try:
+                event = self._task_queue.get_nowait()
+            except queue.Empty:
+                break
+            token = str(event.get("token", "")).strip()
+            if token != self._active_task_token:
+                continue
+            event_type = event.get("type")
+            if event_type == "status":
+                self.task_meta_var.set(str(event.get("message", "")).strip() or "处理中")
+            elif event_type == "log":
+                self.append_task_log(str(event.get("message", "")))
+            elif event_type == "progress":
+                self.update_task_progress(event)
+            elif event_type == "success":
+                callback = self._active_task_success
+                self.task_title_var.set("后台任务：完成")
+                if callable(callback):
+                    callback(event.get("result"))
+            elif event_type == "error":
+                callback = self._active_task_error
+                self.task_title_var.set("后台任务：失败")
+                self.append_task_log(str(event.get("message", "")))
+                detail = str(event.get("detail", "")).strip()
+                if callable(callback):
+                    callback(str(event.get("message", "")), detail)
+                else:
+                    messagebox.showerror("任务失败", str(event.get("message", "")))
+            elif event_type == "finished":
+                self._active_task_token = ""
+                self._active_task_success = None
+                self._active_task_error = None
+                self.set_busy_state(False)
+                self.update_app_action_state()
+            if self._active_task_token:
+                keep_polling = True
+        if self._active_task_token or not self._task_queue.empty():
+            keep_polling = True
+        if keep_polling:
+            self._task_after_id = self.after(120, self.poll_task_queue)
+
+    def update_task_progress(self, event: dict):
+        phase = str(event.get("phase", "")).strip()
+        label = str(event.get("label", "")).strip()
+        message = str(event.get("message", "")).strip()
+        current = event.get("current")
+        total = event.get("total")
+        mode = str(event.get("mode", "")).strip()
+        parts = [item for item in [phase, label, message] if item]
+        if current is not None and total is not None and int(total) > 0:
+            self.task_progress.stop()
+            self.task_progress.configure(mode="determinate", maximum=int(total), value=int(current))
+            parts.append(f"{int(current)}/{int(total)}")
+        else:
+            if mode == "indeterminate" or total in (None, 0):
+                self.task_progress.configure(mode="indeterminate")
+                self.task_progress.start(10)
+        if parts:
+            self.task_meta_var.set(" / ".join(parts))
+
+
     def load_distribution_config(self):
         config_path = ROOT / self.config_data.get("distribution_config_path", "distribution/niyien.toml")
         if not config_path.exists():
@@ -955,6 +1253,7 @@ class ControlCenter(tk.Tk):
         self.global_auto_badge = self.create_status_badge(status_strip, "自动推送：-")
         self.global_content_badge = self.create_status_badge(status_strip, "内容版本：-")
         self.global_conn_badge = self.create_status_badge(status_strip, "控制面：未检测")
+        self.build_task_panel(main)
 
         body = tk.Frame(main, bg=self.palette["bg"])
         body.pack(fill="both", expand=True, padx=20, pady=(0, 20))
@@ -1279,8 +1578,10 @@ class ControlCenter(tk.Tk):
         grid = getattr(self, "app_grid", None)
         if not grid:
             return
-        if narrow:
-            self.configure_grid_columns(grid, [(0, 1, None), (1, 0, None), (2, 0, None)])
+        width = max(self.winfo_width(), 900)
+        compact = width < 1120
+        if compact:
+            self.configure_grid_columns(grid, [(0, 1, None), (1, 0, None)])
             self.configure_grid_rows(grid, [(0, 0), (1, 0), (2, 0), (3, 0)])
             placements = [
                 (self.app_release_card, 0, 0, 1, 1, (0, 0), (0, 12)),
@@ -1289,13 +1590,13 @@ class ControlCenter(tk.Tk):
                 (self.app_policy_card, 3, 0, 1, 1, (0, 0), (0, 0)),
             ]
         else:
-            self.configure_grid_columns(grid, [(0, 1, "app"), (1, 1, "app"), (2, 1, "app")])
+            self.configure_grid_columns(grid, [(0, 1, "app"), (1, 1, "app")])
             self.configure_grid_rows(grid, [(0, 0), (1, 0)])
             placements = [
-                (self.app_release_card, 0, 0, 2, 1, (0, 12), (0, 12)),
-                (self.app_overview_card, 0, 1, 1, 1, (0, 12), (0, 12)),
-                (self.app_action_card, 0, 2, 1, 1, (0, 0), (0, 12)),
-                (self.app_policy_card, 1, 1, 1, 2, (0, 0), (0, 0)),
+                (self.app_release_card, 0, 0, 1, 1, (0, 10), (0, 12)),
+                (self.app_overview_card, 0, 1, 1, 1, (10, 0), (0, 12)),
+                (self.app_action_card, 1, 0, 1, 1, (0, 10), (0, 0)),
+                (self.app_policy_card, 1, 1, 1, 1, (10, 0), (0, 0)),
             ]
         for widget, row, column, rowspan, columnspan, padx, pady in placements:
             widget.grid_configure(row=row, column=column, rowspan=rowspan, columnspan=columnspan, padx=padx, pady=pady, sticky="nsew")
@@ -1304,7 +1605,9 @@ class ControlCenter(tk.Tk):
         grid = getattr(self, "data_grid", None)
         if not grid:
             return
-        if narrow:
+        width = max(self.winfo_width(), 900)
+        compact = width < 1120
+        if compact:
             self.configure_grid_columns(grid, [(0, 1, None), (1, 0, None)])
             self.configure_grid_rows(grid, [(0, 0), (1, 0), (2, 0)])
             placements = [
@@ -1643,6 +1946,72 @@ class ControlCenter(tk.Tk):
         icon = "warning" if danger else "info"
         return messagebox.askyesno(title, message, icon=icon)
 
+    def toggle_detail_frame(self, frame, button, *, show_label: str = "查看详情", hide_label: str = "收起详情"):
+        visible = bool(getattr(frame, "_is_visible", False))
+        if visible:
+            frame.pack_forget()
+            frame._is_visible = False
+            button.configure(text=show_label)
+        else:
+            frame.pack(fill="both", expand=True)
+            frame._is_visible = True
+            button.configure(text=hide_label)
+
+    def toggle_policy_detail(self):
+        self.toggle_detail_frame(self.policy_detail_frame, self.policy_detail_button)
+
+    def toggle_data_status_detail(self):
+        self.toggle_detail_frame(self.data_status_frame, self.data_detail_button)
+
+    def toggle_resource_status_detail(self):
+        self.toggle_detail_frame(self.resource_status_frame, self.resource_detail_button)
+
+    def get_selected_app_action_id(self) -> str:
+        raw = self.app_action_choice_var.get().strip()
+        if raw in APP_ACTION_OPTIONS:
+            return raw
+        return self.app_action_label_to_id.get(raw, "manual_only")
+
+    def on_app_action_selection_change(self):
+        action_id = self.get_selected_app_action_id()
+        config = APP_ACTION_OPTIONS[action_id]
+        self.app_action_choice_var.set(config["label"])
+        self.app_action_hint_title_var.set(config["label"])
+        self.app_action_hint_var.set(config["hint"])
+        self.app_execute_button.configure(text=config["button"], style=config["style"])
+        self.update_app_action_state()
+
+    def on_resource_profile_select(self):
+        choice = self.resource_profile_var.get().strip()
+        if choice == "上次使用":
+            self.load_resource_source_state()
+        elif choice == "最新推荐":
+            self.load_latest_resource_sources()
+        else:
+            self.resource_selection_label_var.set("当前表单：当前自定义")
+            self.update_resource_status_text()
+
+    def reload_latest_resource_sources(self):
+        self.resource_profile_var.set("最新推荐")
+        self.load_latest_resource_sources()
+
+    def execute_selected_app_action(self):
+        action_id = self.get_selected_app_action_id()
+        mapping = {
+            "manual_only": self.action_add_manual_only,
+            "publish_and_promote": self.action_publish_and_promote,
+            "promote_existing": self.action_promote_existing,
+            "rollback_auto": self.action_rollback_auto_version,
+            "hide_version": self.action_hide_selected_version,
+        }
+        mapping[action_id]()
+
+    def show_task_error(self, title: str, message: str, detail: str = ""):
+        text = str(message or "").strip() or "未知错误"
+        if detail:
+            self.append_task_log(text)
+        messagebox.showerror(title, text)
+
     def build_guide_tab(self):
         wrapper = ttk.Frame(self.guide_tab)
         wrapper.pack(fill="both", expand=True, padx=16, pady=16)
@@ -1724,7 +2093,7 @@ class ControlCenter(tk.Tk):
             [
                 "GitHub 未连接：先检查 github_token。",
                 "Vercel 未连接：先检查 vercel_token 和 project id/name。",
-                "123 未配置：检查 GitHub Secrets 和 Vercel Env 中的 PAN123_*。",
+                "123 未配置：检查 Vercel Env、系统环境变量或本地配置里的 PAN123_*。",
             ],
             tone="slate",
         )
@@ -1778,25 +2147,24 @@ class ControlCenter(tk.Tk):
         self.add_section_header(
             wrapper,
             "应用发布",
-            "只做两件事：先发版本，再决定是否推送。上传、资源同步、下载入口更新都会自动完成。",
+            "收口成单流程：先选来源与版本，再选动作，最后统一执行。",
         )
         grid = tk.Frame(wrapper, bg=self.palette["bg"])
         grid.pack(fill="both", expand=True)
         grid.grid_columnconfigure(0, weight=1, uniform="app")
         grid.grid_columnconfigure(1, weight=1, uniform="app")
-        grid.grid_columnconfigure(2, weight=1, uniform="app")
         grid.grid_rowconfigure(1, weight=1)
         self.app_grid = grid
 
         release_card, release_body = self.create_card(
             grid,
-            "1. 选择来源",
-            "正式长期版本继续走 GitHub Release；无 Tag 临时版本走 Action 构建。",
+            "1. 来源",
+            "正式版本走 GitHub Release，临时版本走 Action 构建。",
             "readonly",
         )
         self.app_release_card = release_card
-        release_card.grid(row=0, column=0, rowspan=2, sticky="nsew", padx=(0, 12), pady=(0, 12))
-        self.create_scope_row(release_body, [("来源切换", "guide"), ("待选择版本", "readonly")])
+        release_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 12))
+        self.create_scope_row(release_body, [("来源切换", "guide"), ("选中摘要", "readonly")])
         self.app_source_mode_var = tk.StringVar(value=DEFAULT_APP_SOURCE_MODE)
         source_form = ttk.Frame(release_body)
         source_form.pack(fill="x")
@@ -1811,6 +2179,7 @@ class ControlCenter(tk.Tk):
         self.app_source_mode_combo.grid(row=0, column=1, sticky="w", pady=4)
         self.register_entry(self.app_source_mode_combo, 18)
         self.app_source_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self.on_app_source_mode_change())
+        self.register_busy_widget(self.app_source_mode_combo)
         self.app_mode_hint = self.create_note_box(
             release_body,
             "模式说明",
@@ -1825,32 +2194,47 @@ class ControlCenter(tk.Tk):
         self.release_source_frame = tk.Frame(release_body, bg=self.palette["surface"])
         release_toolbar = tk.Frame(self.release_source_frame, bg=self.palette["surface"])
         release_toolbar.pack(fill="x", pady=(0, 10))
-        ttk.Button(release_toolbar, text="刷新 Releases", command=self.load_releases, style="Primary.TButton").pack(fill="x")
-        ttk.Button(release_toolbar, text="刷新当前推送状态", command=self.refresh_runtime_state, style="Secondary.TButton").pack(fill="x", pady=(8, 0))
-        self.release_list = tk.Listbox(self.release_source_frame, width=38, height=28)
+        self.release_refresh_button = self.register_busy_widget(
+            ttk.Button(release_toolbar, text="刷新 Releases", command=self.load_releases, style="Primary.TButton")
+        )
+        self.release_refresh_button.pack(fill="x")
+        self.runtime_refresh_button = self.register_busy_widget(
+            ttk.Button(release_toolbar, text="刷新当前推送状态", command=self.refresh_runtime_state, style="Secondary.TButton")
+        )
+        self.runtime_refresh_button.pack(fill="x", pady=(8, 0))
+        self.release_list = tk.Listbox(self.release_source_frame, width=38, height=16)
         self.release_list.pack(fill="both", expand=True)
         self.release_list.bind("<<ListboxSelect>>", self.on_release_select)
         self.style_listbox(self.release_list)
-        self.register_listbox(self.release_list, 28)
+        self.register_listbox(self.release_list, 16)
 
         self.action_build_frame = tk.Frame(release_body, bg=self.palette["surface"])
         build_toolbar = tk.Frame(self.action_build_frame, bg=self.palette["surface"])
         build_toolbar.pack(fill="x", pady=(0, 10))
-        ttk.Button(build_toolbar, text="刷新 Action 构建", command=self.load_action_builds, style="Primary.TButton").pack(fill="x")
-        ttk.Button(build_toolbar, text="执行 Action 编译（不创建 Tag）", command=self.trigger_action_build_without_tag, style="Secondary.TButton").pack(fill="x", pady=(8, 0))
-        self.action_build_list = tk.Listbox(self.action_build_frame, width=38, height=28)
+        self.action_build_refresh_button = self.register_busy_widget(
+            ttk.Button(build_toolbar, text="刷新 Action 构建", command=self.load_action_builds, style="Primary.TButton")
+        )
+        self.action_build_refresh_button.pack(fill="x")
+        self.trigger_action_build_button = self.register_busy_widget(
+            ttk.Button(build_toolbar, text="执行 Action 编译（不创建 Tag）", command=self.trigger_action_build_without_tag, style="Secondary.TButton")
+        )
+        self.trigger_action_build_button.pack(fill="x", pady=(8, 0))
+        self.action_build_list = tk.Listbox(self.action_build_frame, width=38, height=16)
         self.action_build_list.pack(fill="both", expand=True)
         self.action_build_list.bind("<<ListboxSelect>>", self.on_action_build_select)
         self.style_listbox(self.action_build_list)
-        self.register_listbox(self.action_build_list, 28)
+        self.register_listbox(self.action_build_list, 16)
         link_row = tk.Frame(self.action_build_frame, bg=self.palette["surface"])
         link_row.pack(fill="x", pady=(10, 0))
-        ttk.Button(
-            link_row,
-            text="打开选中构建页面",
-            command=self.open_selected_action_build_url,
-            style="Secondary.TButton",
-        ).pack(anchor="w")
+        self.open_action_build_button = self.register_busy_widget(
+            ttk.Button(
+                link_row,
+                text="打开选中构建页面",
+                command=self.open_selected_action_build_url,
+                style="Secondary.TButton",
+            )
+        )
+        self.open_action_build_button.pack(anchor="w")
         self.action_build_url_var = tk.StringVar(value="构建页面：未选择")
         self.action_build_url_label = tk.Label(
             self.action_build_frame,
@@ -1866,15 +2250,27 @@ class ControlCenter(tk.Tk):
         self.register_wrap(self.action_build_url_label, 620)
         self.action_build_url_label.bind("<Button-1>", lambda _event: self.open_selected_action_build_url())
         self.selected_action_build_url = ""
+        self.app_source_summary_var = tk.StringVar(value="未选择版本")
+        self.app_source_summary_label = tk.Label(
+            release_body,
+            textvariable=self.app_source_summary_var,
+            bg=self.palette["surface"],
+            fg=self.palette["muted"],
+            justify="left",
+            anchor="w",
+            font=self.fonts["body"],
+        )
+        self.app_source_summary_label.pack(fill="x", pady=(10, 0))
+        self.register_wrap(self.app_source_summary_label, 620)
 
         overview_card, overview_body = self.create_card(
             grid,
             "2. 版本信息",
-            "确认版本号、来源标识和更新说明，再决定是仅发布还是立即推送。",
+            "版本号、Tag 和说明保持在一个区域里，减少来回跳。",
             "guide",
         )
         self.app_overview_card = overview_card
-        overview_card.grid(row=0, column=1, sticky="nsew", padx=(0, 12), pady=(0, 12))
+        overview_card.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=(0, 12))
         self.create_scope_row(overview_body, [("待确认信息", "guide")])
         stats_row = tk.Frame(overview_body, bg=self.palette["surface"])
         stats_row.pack(fill="x", pady=(0, 12))
@@ -1905,8 +2301,14 @@ class ControlCenter(tk.Tk):
         ttk.Checkbutton(form, text="推荐版本", variable=self.app_recommended_var).grid(row=3, column=1, sticky="w", pady=8)
         tag_tools = tk.Frame(overview_body, bg=self.palette["surface"])
         tag_tools.pack(fill="x", pady=(12, 0))
-        ttk.Button(tag_tools, text="创建并推送 Tag", command=self.create_and_push_tag, style="Primary.TButton").pack(fill="x")
-        ttk.Button(tag_tools, text="执行 Action 编译（不创建 Tag）", command=self.trigger_action_build_without_tag, style="Secondary.TButton").pack(fill="x", pady=(8, 0))
+        self.create_tag_button = self.register_busy_widget(
+            ttk.Button(tag_tools, text="创建并推送 Tag", command=self.create_and_push_tag, style="Primary.TButton")
+        )
+        self.create_tag_button.pack(fill="x")
+        self.create_artifact_button = self.register_busy_widget(
+            ttk.Button(tag_tools, text="执行 Action 编译（不创建 Tag）", command=self.trigger_action_build_without_tag, style="Secondary.TButton")
+        )
+        self.create_artifact_button.pack(fill="x", pady=(8, 0))
         self.action_build_note = self.create_note_box(
             overview_body,
             "无 Tag 构建提示",
@@ -1917,121 +2319,101 @@ class ControlCenter(tk.Tk):
             tone="orange",
         )
         self.action_build_note.pack(fill="x", pady=(12, 0))
-        self.on_app_source_mode_change()
 
         action_card, action_body = self.create_card(
             grid,
-            "3. 发布动作",
-            "把版本加入手动列表，或直接切换成当前自动推送版本。",
+            "3. 执行",
+            "只保留一个动作选择和一个执行按钮。",
             "immediate",
         )
         self.app_action_card = action_card
-        action_card.grid(row=0, column=2, sticky="nsew", pady=(0, 12))
-        self.create_scope_row(
+        action_card.grid(row=1, column=0, sticky="nsew", padx=(0, 10))
+        self.create_scope_row(action_body, [("动作互斥", "guide"), ("统一执行", "immediate")])
+        self.app_action_choice_var = tk.StringVar(value="manual_only")
+        self.app_action_label_to_id = {
+            config["label"]: key for key, config in APP_ACTION_OPTIONS.items()
+        }
+        ttk.Label(action_body, text="发布动作").pack(anchor="w")
+        self.app_action_combo = ttk.Combobox(
             action_body,
-            [("发布但不推送：不改当前推送", "readonly"), ("发布并立即推送：立即生效", "immediate")],
+            textvariable=self.app_action_choice_var,
+            values=[item["label"] for item in APP_ACTION_OPTIONS.values()],
+            state="readonly",
         )
-        live_note = self.create_note_box(
+        self.app_action_combo.pack(fill="x", pady=(6, 10))
+        self.app_action_combo.bind("<<ComboboxSelected>>", lambda _event: self.on_app_action_selection_change())
+        self.register_entry(self.app_action_combo, 24)
+        self.register_busy_widget(self.app_action_combo)
+        self.app_action_hint_title_var = tk.StringVar(value="动作说明")
+        self.app_action_hint_var = tk.StringVar(value=APP_ACTION_OPTIONS["manual_only"]["hint"])
+        self.app_action_hint_title = tk.Label(
             action_body,
-            "线上影响",
-            [
-                "橙色按钮会立即改变用户能否收到更新提示。",
-                "红色按钮会让版本从可见列表中消失，请谨慎操作。",
-            ],
-            tone="orange",
+            textvariable=self.app_action_hint_title_var,
+            bg=self.palette["surface"],
+            fg=self.palette["text"],
+            font=self.fonts["body_bold"],
         )
-        live_note.pack(fill="x", pady=(0, 12))
-        action_tiles = tk.Frame(action_body, bg=self.palette["surface"])
-        action_tiles.pack(fill="x")
-        for cfg in [
-            (
-                "发布新应用，但不推送",
-                "让版本进入手动可见列表，但不改变当前自动推送版本。",
-                [("手动可见", "readonly"), ("不改当前推送", "guide")],
-                "加入手动列表",
-                self.action_add_manual_only,
-                "Primary.TButton",
-                "手动可见动作",
-                "readonly",
-            ),
-            (
-                "发布并立即推送",
-                "把这个版本直接切成当前自动推送版本，后续用户会收到更新提示。",
-                [("立即生效", "immediate"), ("影响更新提示", "immediate")],
-                "立即推送这个版本",
-                self.action_publish_and_promote,
-                "Immediate.TButton",
-                "立即生效动作",
-                "immediate",
-            ),
-            (
-                "开始推送已发布版本",
-                "不重新打包或上传，只把已经发布过的版本切成当前自动推送版本。",
-                [("立即生效", "immediate"), ("不重新上传", "readonly")],
-                "切换为当前推送版本",
-                self.action_promote_existing,
-                "Immediate.TButton",
-                "立即生效动作",
-                "immediate",
-            ),
-            (
-                "回滚自动推送版本",
-                "把自动推送版本切回旧版本，影响后续用户看到的推荐更新。",
-                [("立即生效", "immediate"), ("警示操作", "guide")],
-                "回滚到选中版本",
-                self.action_rollback_auto_version,
-                "Warning.TButton",
-                "警示操作",
-                "warning",
-            ),
-            (
-                "隐藏某个版本",
-                "把版本从手动版本列表里移除。如果它是当前推送版本，会自动切到其他版本。",
-                [("危险操作", "immediate"), ("会移出列表", "readonly")],
-                "隐藏这个版本",
-                self.action_hide_selected_version,
-                "Danger.TButton",
-                "危险操作",
-                "danger",
-            ),
-        ]:
-            tile = self.create_action_tile(
-                action_tiles,
-                cfg[0],
-                cfg[1],
-                cfg[2],
-                cfg[3],
-                cfg[4],
-                cfg[5],
-                cfg[6],
-                cfg[7],
+        self.app_action_hint_title.pack(anchor="w")
+        self.app_action_hint_label = tk.Label(
+            action_body,
+            textvariable=self.app_action_hint_var,
+            bg=self.palette["surface_alt"],
+            fg=self.palette["muted"],
+            justify="left",
+            anchor="w",
+            wraplength=420,
+            padx=12,
+            pady=10,
+        )
+        self.app_action_hint_label.pack(fill="x", pady=(6, 10))
+        self.register_wrap(self.app_action_hint_label, 420)
+        self.app_execute_status_var = tk.StringVar(value="可执行")
+        tk.Label(
+            action_body,
+            textvariable=self.app_execute_status_var,
+            bg=self.palette["surface"],
+            fg=self.palette["muted"],
+            justify="left",
+            anchor="w",
+            font=self.fonts["body"],
+        ).pack(fill="x", pady=(0, 8))
+        self.app_execute_button = self.register_busy_widget(
+            ttk.Button(
+                action_body,
+                text=APP_ACTION_OPTIONS["manual_only"]["button"],
+                command=self.execute_selected_app_action,
+                style="Primary.TButton",
             )
-            tile.pack(fill="x", pady=(0, 10))
-        note = self.create_note_box(
-            action_body,
-            "操作说明",
-            [
-                "发布但不推送：版本上线，但不会弹更新。",
-                "发布并立即推送：同时上线并切到当前推送版本。",
-                "回滚：不会重新打包，只切换推送状态。",
-            ],
-            tone="blue",
         )
-        note.pack(fill="x", pady=(14, 0))
+        self.app_execute_button.pack(fill="x")
 
         policy_card, policy_body = self.create_card(
             grid,
             "当前发布策略",
-            "这里展示当前线上 release policy，便于核对白名单和自动推送版本。",
+            "默认只看摘要，需要时再展开明细。",
             "live",
         )
         self.app_policy_card = policy_card
-        policy_card.grid(row=1, column=1, columnspan=2, sticky="nsew")
-        self.create_scope_row(policy_body, [("当前线上", "live"), ("只读结果", "readonly")])
-        self.policy_text = scrolledtext.ScrolledText(policy_body, wrap="word", height=20)
-        self.policy_text.pack(fill="both", expand=True)
+        policy_card.grid(row=1, column=1, sticky="nsew", padx=(10, 0))
+        self.create_scope_row(policy_body, [("当前线上", "live"), ("摘要优先", "readonly")])
+        policy_summary = tk.Frame(policy_body, bg=self.palette["surface"])
+        policy_summary.pack(fill="x", pady=(0, 10))
+        self.policy_auto_chip = self.create_stat_block(policy_summary, "当前自动推送", "-", "blue")
+        self.policy_auto_chip.pack(side="left", fill="x", expand=True, padx=(0, 6))
+        self.policy_manual_chip = self.create_stat_block(policy_summary, "手动版本数", "0", "orange")
+        self.policy_manual_chip.pack(side="left", fill="x", expand=True, padx=(6, 0))
+        self.policy_detail_button = self.register_busy_widget(
+            ttk.Button(policy_body, text="查看详情", command=self.toggle_policy_detail, style="Secondary.TButton")
+        )
+        self.policy_detail_button.pack(anchor="w")
+        self.policy_detail_frame = tk.Frame(policy_body, bg=self.palette["surface"])
+        self.policy_text = scrolledtext.ScrolledText(self.policy_detail_frame, wrap="word", height=16)
+        self.policy_text.pack(fill="both", expand=True, pady=(10, 0))
         self.style_text_widget(self.policy_text)
-        self.register_text_widget(self.policy_text, 20)
+        self.register_text_widget(self.policy_text, 16)
+
+        self.on_app_source_mode_change()
+        self.on_app_action_selection_change()
 
     def build_data_tab(self):
         wrapper = ttk.Frame(self.data_tab)
@@ -2039,7 +2421,7 @@ class ControlCenter(tk.Tk):
         self.add_section_header(
             wrapper,
             "资源编排",
-            "这里统一管理中国区内容版本，以及下次发版要使用的 Lens/CameraDB、Plugin、SDK 源版本。",
+            "上半部分看当前线上，下半部分看下次发版默认值，默认不展示大段调试信息。",
         )
 
         self.content_tag_var = tk.StringVar()
@@ -2052,7 +2434,8 @@ class ControlCenter(tk.Tk):
         self.resource_sdk_base_var = tk.StringVar(value=DEFAULT_GLOBAL_SDK_BASE)
         self.resource_saved_snapshot = {}
         self.resource_latest_snapshot = {}
-        self.resource_selection_label_var = tk.StringVar(value="当前表单：未选择")
+        self.resource_selection_label_var = tk.StringVar(value="当前表单：当前自定义")
+        self.resource_profile_var = tk.StringVar(value="上次使用")
         for watched_var in (
             self.resource_lens_tag_var,
             self.resource_plugins_source_mode_var,
@@ -2081,8 +2464,8 @@ class ControlCenter(tk.Tk):
 
         current_frame, current_body = self.create_card(
             top,
-            "当前线上内容版本",
-            "这里展示现在中国区下载实际在使用的内容版本和 Lens 元信息。",
+            "1. 当前线上",
+            "这里只处理现在中国区用户实际下载到的内容版本。",
             "live",
         )
         self.data_current_card = current_frame
@@ -2105,52 +2488,40 @@ class ControlCenter(tk.Tk):
         self.add_labeled_entry(form, "lens sha256", self.lens_sha_var, 2, width=78)
         current_actions = tk.Frame(current_body, bg=self.palette["surface"])
         current_actions.pack(fill="x", pady=(12, 10))
-        current_read_tile = self.create_action_tile(
-            current_actions,
-            "从选中应用 Release 读取",
-            "从当前选中的应用 Release 自动读取内容版本、Lens 版本和 sha256。",
-            [("读取摘要", "readonly")],
-            "读取版本摘要",
-            self.load_data_release_metadata,
-            "Secondary.TButton",
-            "只读辅助动作",
-            "readonly",
+        self.load_data_release_button = self.register_busy_widget(
+            ttk.Button(current_actions, text="从当前选中版本读取摘要", command=self.load_data_release_metadata, style="Secondary.TButton")
         )
-        current_read_tile.pack(fill="x", pady=(0, 10))
-        current_switch_tile = self.create_action_tile(
-            current_actions,
-            "仅切换当前内容版本",
-            "直接修改当前线上内容版本，不等待下一次应用发版。",
-            [("立即生效", "immediate"), ("影响中国区下载", "immediate")],
-            "切换当前内容版本",
-            self.action_update_data_envs,
-            "Immediate.TButton",
-            "立即生效动作",
-            "immediate",
+        self.load_data_release_button.pack(fill="x")
+        self.data_apply_button = self.register_busy_widget(
+            ttk.Button(current_actions, text="立即切换当前内容版本", command=self.action_update_data_envs, style="Immediate.TButton")
         )
-        current_switch_tile.pack(fill="x")
-        self.data_status_text = scrolledtext.ScrolledText(current_body, wrap="word", height=12)
-        self.data_status_text.pack(fill="both", expand=True, pady=(4, 0))
+        self.data_apply_button.pack(fill="x", pady=(8, 0))
+        self.data_detail_button = self.register_busy_widget(
+            ttk.Button(current_body, text="查看调试详情", command=self.toggle_data_status_detail, style="Secondary.TButton")
+        )
+        self.data_detail_button.pack(anchor="w", pady=(10, 0))
+        self.data_status_frame = tk.Frame(current_body, bg=self.palette["surface"])
+        self.data_status_text = scrolledtext.ScrolledText(self.data_status_frame, wrap="word", height=10)
+        self.data_status_text.pack(fill="both", expand=True, pady=(8, 0))
         self.style_text_widget(self.data_status_text)
-        self.register_text_widget(self.data_status_text, 12)
+        self.register_text_widget(self.data_status_text, 10)
 
         source_frame, source_body = self.create_card(
             top,
-            "下次发版资源源",
-            "这里决定下一次应用发版时，将自动使用哪些 Lens/CameraDB、Plugin 和 SDK 下载源。Plugin 可切换为 Release 或 Action artifact。",
+            "2. 下次发版默认值",
+            "全球源仍走 GitHub；这里只保存 CN 发版时本地发布中心要带上的资源默认值。",
             "next",
         )
         self.data_source_card = source_frame
         source_frame.grid(row=0, column=1, sticky="nsew", padx=(10, 0), pady=(0, 12))
-        self.create_scope_row(source_body, [("下次发版生效", "next")])
+        self.create_scope_row(source_body, [("本地保存", "next"), ("下次发版生效", "next")])
         source_effect_note = self.create_note_box(
             source_body,
             "影响范围",
             [
                 "这里保存的是下一次应用发版要自动使用的资源源。",
                 "不会改变当前线上用户下载到的内容。",
-                "这里的 SDK 字段写入的是 GitHub Actions Variable：NIYIEN_SDK_BASE。",
-                "它用于发版脚本下载 SDK，并进入发版摘要；不是当前线上全局运行时变量 NIYIEN_GLOBAL_SDK_BASE。",
+                "保存后会写入本地配置，不再依赖 GitHub Actions Variables。",
                 "Plugin 选择 Action artifact 时，Artifact 名称可留空，留空会自动取插件仓库默认分支最近成功 run。",
             ],
             tone="blue",
@@ -2158,8 +2529,20 @@ class ControlCenter(tk.Tk):
         source_effect_note.pack(fill="x", pady=(0, 12))
         source_form = ttk.Frame(source_body)
         source_form.pack(fill="x")
-        self.add_labeled_entry(source_form, "Lens/CameraDB Tag", self.resource_lens_tag_var, 0, width=46)
-        ttk.Label(source_form, text="Plugin 来源模式").grid(row=1, column=0, sticky="w", pady=4, padx=(0, 8))
+        ttk.Label(source_form, text="来源切换").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
+        self.resource_profile_combo = ttk.Combobox(
+            source_form,
+            textvariable=self.resource_profile_var,
+            values=["上次使用", "最新推荐", "当前自定义"],
+            state="readonly",
+            width=18,
+        )
+        self.resource_profile_combo.grid(row=0, column=1, sticky="w", pady=4)
+        self.resource_profile_combo.bind("<<ComboboxSelected>>", lambda _event: self.on_resource_profile_select())
+        self.register_entry(self.resource_profile_combo, 18)
+        self.register_busy_widget(self.resource_profile_combo)
+        self.add_labeled_entry(source_form, "Lens/CameraDB Tag", self.resource_lens_tag_var, 1, width=46)
+        ttk.Label(source_form, text="Plugin 来源模式").grid(row=2, column=0, sticky="w", pady=4, padx=(0, 8))
         self.plugins_source_mode_combo = ttk.Combobox(
             source_form,
             textvariable=self.resource_plugins_source_mode_var,
@@ -2167,12 +2550,21 @@ class ControlCenter(tk.Tk):
             state="readonly",
             width=18,
         )
-        self.plugins_source_mode_combo.grid(row=1, column=1, sticky="w", pady=4)
+        self.plugins_source_mode_combo.grid(row=2, column=1, sticky="w", pady=4)
         self.register_entry(self.plugins_source_mode_combo, 18)
         self.plugins_source_mode_combo.bind("<<ComboboxSelected>>", lambda _event: self.on_plugin_source_mode_change())
-        self.add_labeled_entry(source_form, "Plugin Release Tag", self.resource_plugins_tag_var, 2, width=46)
-        self.add_labeled_entry(source_form, "Plugin Artifact 名称", self.resource_plugins_artifact_name_var, 3, width=46)
-        self.add_labeled_entry(source_form, "发版用 SDK 下载源 (NIYIEN_SDK_BASE)", self.resource_sdk_base_var, 4, width=58)
+        self.register_busy_widget(self.plugins_source_mode_combo)
+        self.plugin_release_tag_label = ttk.Label(source_form, text="Plugin Release Tag")
+        self.plugin_release_tag_label.grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
+        self.plugin_release_tag_entry = ttk.Entry(source_form, textvariable=self.resource_plugins_tag_var, width=46)
+        self.plugin_release_tag_entry.grid(row=3, column=1, sticky="we", pady=4)
+        self.register_entry(self.plugin_release_tag_entry, 46)
+        self.plugin_artifact_name_label = ttk.Label(source_form, text="Plugin Artifact 名称")
+        self.plugin_artifact_name_label.grid(row=4, column=0, sticky="w", pady=4, padx=(0, 8))
+        self.plugin_artifact_name_entry = ttk.Entry(source_form, textvariable=self.resource_plugins_artifact_name_var, width=46)
+        self.plugin_artifact_name_entry.grid(row=4, column=1, sticky="we", pady=4)
+        self.register_entry(self.plugin_artifact_name_entry, 46)
+        self.add_labeled_entry(source_form, "发版用 SDK 下载源", self.resource_sdk_base_var, 5, width=58)
         selection_label = tk.Label(
             source_body,
             textvariable=self.resource_selection_label_var,
@@ -2185,81 +2577,28 @@ class ControlCenter(tk.Tk):
         selection_label.pack(fill="x", pady=(10, 0))
         source_actions = tk.Frame(source_body, bg=self.palette["surface"])
         source_actions.pack(fill="x", pady=(12, 10))
-        source_tiles = tk.Frame(source_actions, bg=self.palette["surface"])
-        source_tiles.pack(fill="x")
-        for cfg in [
-            (
-                "使用上次默认源",
-                "从 GitHub Actions Variables 读取上一次保存、下次发版会实际使用的资源源。",
-                [("只读", "readonly")],
-                "切换到上次默认源",
-                self.load_resource_source_state,
-                "Secondary.TButton",
-                "只读辅助动作",
-                "readonly",
-            ),
-            (
-                "使用最新推荐",
-                "自动查询最新 Lens/CameraDB Release，并按当前 Plugin 来源模式填入最新推荐值；artifact 模式会自动定位最近成功的 Action run。",
-                [("自动查询", "guide"), ("不会立即生效", "next")],
-                "切换到最新推荐",
-                self.load_latest_resource_sources,
-                "Secondary.TButton",
-                "预填充动作",
-                "guide",
-            ),
-            (
-                "只刷新 Lens 最新",
-                "仅自动把 Lens/CameraDB Tag 填成当前最新 release 的 tag。",
-                [("预填充", "guide"), ("不会立即生效", "next")],
-                "填入最新 Lens/CameraDB Tag",
-                self.load_latest_lens_tag,
-                "Secondary.TButton",
-                "预填充动作",
-                "guide",
-            ),
-            (
-                "只刷新 Plugin 最新",
-                "仅刷新 Plugin 源；release 模式会填最新 tag，artifact 模式会定位最近成功且可用的 Action run。",
-                [("预填充", "guide"), ("不会立即生效", "next")],
-                "填入最新 Plugin 源",
-                self.load_latest_plugin_tag,
-                "Secondary.TButton",
-                "预填充动作",
-                "guide",
-            ),
-            (
-                "保存为下次发版默认源",
-                "把当前填写的 Lens/CameraDB、Plugin、SDK 源写入 GitHub Actions Variables。",
-                [("下次发版生效", "next"), ("不影响当前线上", "readonly")],
-                "保存为默认资源源",
-                self.action_save_resource_sources,
-                "Future.TButton",
-                "下次发版动作",
-                "next",
-            ),
-        ]:
-            tile = self.create_action_tile(
-                source_tiles,
-                cfg[0],
-                cfg[1],
-                cfg[2],
-                cfg[3],
-                cfg[4],
-                cfg[5],
-                cfg[6],
-                cfg[7],
-            )
-            tile.pack(fill="x", pady=(0, 10))
-        self.resource_status_text = scrolledtext.ScrolledText(source_body, wrap="word", height=12)
-        self.resource_status_text.pack(fill="both", expand=True, pady=(4, 0))
+        self.refresh_latest_resources_button = self.register_busy_widget(
+            ttk.Button(source_actions, text="重新检测最新推荐", command=self.reload_latest_resource_sources, style="Secondary.TButton")
+        )
+        self.refresh_latest_resources_button.pack(fill="x")
+        self.save_resource_defaults_button = self.register_busy_widget(
+            ttk.Button(source_actions, text="保存为下次发版默认值", command=self.action_save_resource_sources, style="Future.TButton")
+        )
+        self.save_resource_defaults_button.pack(fill="x", pady=(8, 0))
+        self.resource_detail_button = self.register_busy_widget(
+            ttk.Button(source_body, text="查看调试详情", command=self.toggle_resource_status_detail, style="Secondary.TButton")
+        )
+        self.resource_detail_button.pack(anchor="w")
+        self.resource_status_frame = tk.Frame(source_body, bg=self.palette["surface"])
+        self.resource_status_text = scrolledtext.ScrolledText(self.resource_status_frame, wrap="word", height=10)
+        self.resource_status_text.pack(fill="both", expand=True, pady=(8, 0))
         self.style_text_widget(self.resource_status_text)
-        self.register_text_widget(self.resource_status_text, 12)
+        self.register_text_widget(self.resource_status_text, 10)
 
         notes_frame, notes_body = self.create_card(
             top,
             "资源策略说明",
-            "这块用来区分“现在正在用什么”和“下次发版准备使用什么”。",
+            "只记住当前线上和下次发版默认值是两条独立的线。",
             "guide",
         )
         self.data_notes_card = notes_frame
@@ -2270,7 +2609,7 @@ class ControlCenter(tk.Tk):
             "你只需要记住两件事",
             [
                 "改当前内容版本：只影响现在下载到的内容包。",
-                "保存下次发版默认源：只影响下一次应用发版时会自动带上的资源来源。",
+                "保存下次发版默认值：只影响下一次应用发版时会自动带上的资源来源。",
                 "Lens 和 CameraDB 现在共用同一个 Tag。",
                 "Plugin 用 Release 模式时看 Tag；用 Action artifact 模式时看 Artifact 名称。",
             ],
@@ -2278,6 +2617,7 @@ class ControlCenter(tk.Tk):
         )
         note.pack(fill="x")
         self.on_plugin_source_mode_change()
+        self.load_resource_source_state()
 
     def build_route_tab(self):
         wrapper = ttk.Frame(self.route_tab)
@@ -2389,7 +2729,10 @@ class ControlCenter(tk.Tk):
         self.add_labeled_entry(form, "product_id", self.stats_product_var, 1)
         self.add_labeled_entry(form, "source_app_id", self.stats_source_var, 2)
         self.add_labeled_entry(form, "event", self.stats_event_var, 3)
-        ttk.Button(query_body, text="获取统计 JSON", command=self.fetch_stats, style="Primary.TButton").pack(fill="x", pady=(12, 0))
+        self.fetch_stats_button = self.register_busy_widget(
+            ttk.Button(query_body, text="获取统计 JSON", command=self.fetch_stats, style="Primary.TButton")
+        )
+        self.fetch_stats_button.pack(fill="x", pady=(12, 0))
         ttk.Button(query_body, text="打开 stats.html", command=self.open_stats_page, style="Secondary.TButton").pack(fill="x", pady=(10, 0))
         note = self.create_note_box(
             query_body,
@@ -2407,7 +2750,10 @@ class ControlCenter(tk.Tk):
         ttk.Entry(rebuild_form, textvariable=self.rebuild_start_var, width=18).grid(row=0, column=1, sticky="w", pady=4)
         ttk.Label(rebuild_form, text="结束").grid(row=1, column=0, sticky="w", pady=4)
         ttk.Entry(rebuild_form, textvariable=self.rebuild_end_var, width=18).grid(row=1, column=1, sticky="w", pady=4)
-        ttk.Button(query_body, text="触发 telemetry rebuild", command=self.trigger_rebuild, style="Warning.TButton").pack(fill="x", pady=(10, 0))
+        self.rebuild_button = self.register_busy_widget(
+            ttk.Button(query_body, text="触发 telemetry rebuild", command=self.trigger_rebuild, style="Warning.TButton")
+        )
+        self.rebuild_button.pack(fill="x", pady=(10, 0))
 
         result_card, result_body = self.create_card(
             layout,
@@ -2451,6 +2797,9 @@ class ControlCenter(tk.Tk):
             "lens_data_repo",
             "plugins_owner",
             "plugins_repo",
+            "pan123_client_id",
+            "pan123_client_secret",
+            "pan123_releases_root_id",
             "telemetry_base_url",
             "telemetry_stats_token",
             "telemetry_rebuild_token",
@@ -2477,20 +2826,30 @@ class ControlCenter(tk.Tk):
                 var,
                 row,
                 width=80,
-                show="*" if "token" in key and key != "telemetry_base_url" else None,
+                show="*" if ("token" in key or "secret" in key) and key != "telemetry_base_url" else None,
             )
 
         actions = tk.Frame(config_body, bg=self.palette["surface"])
         actions.pack(fill="x", pady=(14, 10))
-        ttk.Button(actions, text="保存本地配置", command=self.save_config, style="Primary.TButton").pack(fill="x")
-        ttk.Button(actions, text="刷新 Vercel 环境变量快照", command=self.refresh_runtime_state, style="Secondary.TButton").pack(fill="x", pady=(10, 0))
-        ttk.Button(actions, text="触发 deploy hook", command=self.trigger_deploy_hook, style="Secondary.TButton").pack(fill="x", pady=(10, 0))
+        self.save_config_button = self.register_busy_widget(
+            ttk.Button(actions, text="保存本地配置", command=self.save_config, style="Primary.TButton")
+        )
+        self.save_config_button.pack(fill="x")
+        self.advanced_refresh_button = self.register_busy_widget(
+            ttk.Button(actions, text="刷新 Vercel 环境变量快照", command=self.refresh_runtime_state, style="Secondary.TButton")
+        )
+        self.advanced_refresh_button.pack(fill="x", pady=(10, 0))
+        self.deploy_hook_button = self.register_busy_widget(
+            ttk.Button(actions, text="触发 deploy hook", command=self.trigger_deploy_hook, style="Secondary.TButton")
+        )
+        self.deploy_hook_button.pack(fill="x", pady=(10, 0))
         note = self.create_note_box(
             config_body,
             "建议",
             [
                 "owner/repo 一般保持默认，除非你真的更换了资源源仓库。",
                 "token 只需要填写一次，保存后下次会自动读取。",
+                "如果要在本地直接执行 publish_123，可以把 pan123_* 也填在这里。",
                 "network_proxy 支持直接填 127.0.0.1:6063，也支持带协议地址。",
             ],
             tone="blue",
@@ -2512,79 +2871,84 @@ class ControlCenter(tk.Tk):
         self.register_text_widget(self.env_snapshot_text, 18)
 
     def load_releases(self):
-        try:
-            releases = self.github().list_releases()
-            self.current_releases = releases
+        def worker(reporter):
+            reporter.status("读取 GitHub Releases")
+            reporter.progress(phase="resolve", message="读取 Releases", mode="indeterminate")
+            return self.github().list_releases()
+
+        def on_success(releases):
+            self.current_releases = releases or []
             self.release_list.delete(0, tk.END)
-            for item in releases:
-                if item.get("draft"):
-                    continue
-                suffix = " [pre]" if item.get("prerelease") else ""
-                self.release_list.insert(tk.END, f"{item.get('tag_name', '')}{suffix}")
+            visible = [item for item in self.current_releases if not item.get("draft")]
+            if not visible:
+                self.release_list.insert(tk.END, "暂无已加载的 Release")
+            else:
+                for item in visible:
+                    suffix = " [pre]" if item.get("prerelease") else ""
+                    self.release_list.insert(tk.END, f"{item.get('tag_name', '')}{suffix}")
             self.refresh_dashboard_releases()
             if self.pending_release_watch:
                 self.check_pending_release_watch()
-        except Exception as err:  # pragma: no cover - UI path
-            messagebox.showerror("GitHub error", str(err))
+            self.update_app_source_summary()
+            self.update_app_action_state()
+            self.refresh_visual_summaries(github_ok=True)
+
+        self.start_background_task(
+            "刷新 Releases",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("GitHub error", message, detail),
+        )
 
     def refresh_runtime_state(self):
-        vercel_ok = False
-        github_ok = False
-        github_variables_ok = False
-        github_variables_error = ""
-        try:
-            self.current_env_records = self.vercel().list_env_records()
-            self.current_envs = {
-                key: env.get("value", "") for key, env in self.current_env_records.items()
-            }
-            vercel_ok = True
-        except Exception as err:
+        def worker(reporter):
+            reporter.status("读取线上环境与发布摘要")
+            reporter.progress(phase="resolve", message="读取 Vercel 环境变量", mode="indeterminate")
+            env_records = self.vercel().list_env_records()
+            envs = {key: env.get("value", "") for key, env in env_records.items()}
+            releases = self.current_releases
+            github_ok = bool(releases)
+            if not releases:
+                reporter.progress(phase="resolve", message="读取 GitHub Releases", mode="indeterminate")
+                try:
+                    releases = self.github().list_releases()
+                    github_ok = True
+                except Exception:
+                    releases = []
+                    github_ok = False
+            return {"env_records": env_records, "envs": envs, "releases": releases, "github_ok": github_ok}
+
+        def on_success(payload):
+            self.current_env_records = payload["env_records"]
+            self.current_envs = payload["envs"]
+            self.current_releases = payload["releases"]
+            self.current_policy = self.load_policy_from_env()
+            self.policy_text.delete("1.0", tk.END)
+            self.policy_text.insert("1.0", json.dumps(self.current_policy, indent=2, ensure_ascii=False))
+            self.env_snapshot_text.delete("1.0", tk.END)
+            self.env_snapshot_text.insert("1.0", json.dumps(self.current_envs, indent=2, ensure_ascii=False))
+            self.content_tag_var.set(self.current_envs.get("NIYIEN_CONTENT_RELEASE_TAG", ""))
+            self.lens_version_var.set(str(self.current_envs.get("NIYIEN_LENS_VERSION", "")))
+            self.lens_sha_var.set(str(self.current_envs.get("NIYIEN_LENS_SHA256", "")))
+            self.update_data_status_text()
+            self.load_resource_source_state()
+            self.refresh_dashboard_releases()
+            self.refresh_visual_summaries(vercel_ok=True, github_ok=bool(payload["github_ok"]))
+            self.update_app_source_summary()
+            self.update_app_action_state()
+
+        def on_error(message, detail):
             self.current_envs = {}
             self.current_env_records = {}
             self.env_snapshot_text.delete("1.0", tk.END)
-            self.env_snapshot_text.insert("1.0", f"Failed to load Vercel envs:\n{err}\n")
+            self.env_snapshot_text.insert("1.0", f"Failed to load Vercel envs:\n{message}\n")
             self.policy_text.delete("1.0", tk.END)
             self.policy_text.insert("1.0", "{}\n")
             self.refresh_dashboard_releases()
             self.refresh_visual_summaries(vercel_ok=False, github_ok=False)
-            return
+            self.show_task_error("读取失败", message, detail)
 
-        try:
-            self.current_repo_variables = self.github().list_actions_variables()
-            github_variables_ok = True
-        except Exception as err:
-            self.current_repo_variables = {}
-            github_variables_error = str(err)
-
-        try:
-            if not self.current_releases:
-                self.current_releases = self.github().list_releases()
-            github_ok = True
-        except Exception:
-            github_ok = False
-
-        self.current_policy = self.load_policy_from_env()
-        self.policy_text.delete("1.0", tk.END)
-        self.policy_text.insert(
-            "1.0", json.dumps(self.current_policy, indent=2, ensure_ascii=False)
-        )
-        self.env_snapshot_text.delete("1.0", tk.END)
-        self.env_snapshot_text.insert(
-            "1.0", json.dumps(self.current_envs, indent=2, ensure_ascii=False)
-        )
-
-        self.content_tag_var.set(self.current_envs.get("NIYIEN_CONTENT_RELEASE_TAG", ""))
-        self.lens_version_var.set(str(self.current_envs.get("NIYIEN_LENS_VERSION", "")))
-        self.lens_sha_var.set(self.current_envs.get("NIYIEN_LENS_SHA256", ""))
-        self.update_data_status_text()
-        self.load_resource_source_state()
-        self.refresh_dashboard_releases()
-        self.refresh_visual_summaries(
-            vercel_ok=vercel_ok,
-            github_ok=github_ok,
-            github_variables_ok=github_variables_ok,
-            github_variables_error=github_variables_error,
-        )
+        self.start_background_task("刷新控制面状态", worker, on_success=on_success, on_error=on_error)
 
     def refresh_dashboard_releases(self):
         if not hasattr(self, "dashboard_release_list"):
@@ -2635,6 +2999,8 @@ class ControlCenter(tk.Tk):
                 selected_index = self.action_build_list.curselection()[0]
                 if selected_index < len(self.current_action_builds):
                     self.update_action_build_link(self.current_action_builds[selected_index])
+            else:
+                self.update_app_source_summary()
         else:
             self.release_source_frame.pack(fill="both", expand=True)
             self.app_tag_label.configure(text="Tag")
@@ -2642,6 +3008,8 @@ class ControlCenter(tk.Tk):
             self.update_action_build_link(None)
 
         self.refresh_visual_summaries()
+        self.update_app_source_summary()
+        self.update_app_action_state()
 
     def get_plugin_source_mode(self) -> str:
         mode = self.get_string_var_value("resource_plugins_source_mode_var").lower()
@@ -2658,7 +3026,7 @@ class ControlCenter(tk.Tk):
     def get_next_release_sdk_base(self) -> str:
         value = (
             self.get_string_var_value("resource_sdk_base_var")
-            or str(self.current_repo_variables.get("NIYIEN_SDK_BASE", "")).strip()
+            or str(self.default_publish_defaults().get("sdk_base", "")).strip()
             or DEFAULT_GLOBAL_SDK_BASE
         )
         return value.rstrip("/") + "/"
@@ -2666,7 +3034,7 @@ class ControlCenter(tk.Tk):
     def get_preview_global_sdk_base(self, auto_entry: dict | None) -> str:
         value = (
             str((auto_entry or {}).get("global_sdk_base", "")).strip()
-            or str(self.current_repo_variables.get("NIYIEN_SDK_BASE", "")).strip()
+            or str(self.default_publish_defaults().get("sdk_base", "")).strip()
             or str(self.current_envs.get("NIYIEN_GLOBAL_SDK_BASE", "")).strip()
             or DEFAULT_GLOBAL_SDK_BASE
         )
@@ -2690,17 +3058,18 @@ class ControlCenter(tk.Tk):
         }
 
     def snapshot_resource_source_values_from_repo_vars(self) -> dict:
+        defaults = self.default_publish_defaults()
         plugin_source_mode = str(
-            self.current_repo_variables.get("NIYIEN_PLUGINS_SOURCE_MODE", DEFAULT_PLUGINS_SOURCE_MODE)
+            defaults.get("plugins_source_mode", DEFAULT_PLUGINS_SOURCE_MODE)
         ).strip().lower()
         if plugin_source_mode not in PLUGINS_SOURCE_MODE_VALUES:
             plugin_source_mode = DEFAULT_PLUGINS_SOURCE_MODE
         return {
-            "NIYIEN_LENS_DATA_TAG": str(self.current_repo_variables.get("NIYIEN_LENS_DATA_TAG", "")).strip(),
+            "NIYIEN_LENS_DATA_TAG": str(defaults.get("lens_data_tag", "")).strip(),
             "NIYIEN_PLUGINS_SOURCE_MODE": plugin_source_mode,
-            "NIYIEN_PLUGINS_TAG": str(self.current_repo_variables.get("NIYIEN_PLUGINS_TAG", "")).strip(),
-            "NIYIEN_PLUGINS_ARTIFACT_NAME": str(self.current_repo_variables.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip(),
-            "NIYIEN_SDK_BASE": str(self.current_repo_variables.get("NIYIEN_SDK_BASE", DEFAULT_GLOBAL_SDK_BASE)).strip() or DEFAULT_GLOBAL_SDK_BASE,
+            "NIYIEN_PLUGINS_TAG": str(defaults.get("plugins_tag", "")).strip(),
+            "NIYIEN_PLUGINS_ARTIFACT_NAME": str(defaults.get("plugins_artifact_name", "")).strip(),
+            "NIYIEN_SDK_BASE": str(defaults.get("sdk_base", DEFAULT_GLOBAL_SDK_BASE)).strip() or DEFAULT_GLOBAL_SDK_BASE,
         }
 
     def apply_resource_source_values(self, values: dict, *, selection_label: str = ""):
@@ -2826,6 +3195,18 @@ class ControlCenter(tk.Tk):
         }
 
     def on_plugin_source_mode_change(self):
+        mode = self.get_plugin_source_mode()
+        if hasattr(self, "plugin_release_tag_label") and hasattr(self, "plugin_release_tag_entry"):
+            if mode == "artifact":
+                self.plugin_release_tag_label.grid_remove()
+                self.plugin_release_tag_entry.grid_remove()
+                self.plugin_artifact_name_label.grid()
+                self.plugin_artifact_name_entry.grid()
+            else:
+                self.plugin_release_tag_label.grid()
+                self.plugin_release_tag_entry.grid()
+                self.plugin_artifact_name_label.grid_remove()
+                self.plugin_artifact_name_entry.grid_remove()
         self.update_resource_status_text()
 
     def get_latest_release_with_fallback(
@@ -2951,8 +3332,6 @@ class ControlCenter(tk.Tk):
         self,
         vercel_ok: bool | None = None,
         github_ok: bool | None = None,
-        github_variables_ok: bool | None = None,
-        github_variables_error: str = "",
     ):
         auto_version = self.current_policy.get("auto_version", "") or "-"
         manual_count = len(
@@ -2964,6 +3343,8 @@ class ControlCenter(tk.Tk):
         resource_lens_tag_value = self.get_string_var_value("resource_lens_tag_var")
         self.set_stat_value(getattr(self, "auto_version_chip", None), auto_version)
         self.set_stat_value(getattr(self, "manual_count_chip", None), manual_count)
+        self.set_stat_value(getattr(self, "policy_auto_chip", None), auto_version)
+        self.set_stat_value(getattr(self, "policy_manual_chip", None), manual_count)
         self.set_stat_value(getattr(self, "dashboard_auto_chip", None), auto_version)
         self.set_stat_value(
             getattr(self, "content_tag_chip", None),
@@ -3004,19 +3385,13 @@ class ControlCenter(tk.Tk):
             vercel_ok = bool(self.current_envs)
         if github_ok is None:
             github_ok = bool(self.current_releases)
-        if github_variables_ok is None:
-            github_variables_ok = bool(self.current_repo_variables)
-        pan123_ok = all(self.is_vercel_env_configured(key) for key in ("PAN123_CLIENT_ID", "PAN123_CLIENT_SECRET", "PAN123_RELEASES_ROOT_ID"))
+        pan123_ok = all(
+            self.is_local_publish_env_configured(key)
+            for key in ("PAN123_CLIENT_ID", "PAN123_CLIENT_SECRET", "PAN123_RELEASES_ROOT_ID")
+        )
         self.set_status_badge(getattr(self, "vercel_status_badge", None), f"Vercel：{'已连接' if vercel_ok else '未连接'}", vercel_ok)
-        if github_ok and github_variables_ok:
-            github_label = "GitHub：已连接"
-            github_state = True
-        elif github_ok and not github_variables_ok:
-            github_label = "GitHub：Variables 权限不足"
-            github_state = False
-        else:
-            github_label = "GitHub：未连接"
-            github_state = False
+        github_label = "GitHub：已连接" if github_ok else "GitHub：未连接"
+        github_state = bool(github_ok)
         self.set_status_badge(getattr(self, "github_status_badge", None), github_label, github_state)
         self.set_status_badge(getattr(self, "pan123_status_badge", None), f"123：{'已配置' if pan123_ok else '未配置'}", pan123_ok)
         self.set_status_badge(
@@ -3126,6 +3501,7 @@ class ControlCenter(tk.Tk):
                 fg=self.palette["muted"],
                 cursor="arrow",
             )
+        self.update_app_source_summary()
 
     def open_selected_action_build_url(self):
         url = str(getattr(self, "selected_action_build_url", "")).strip()
@@ -3147,24 +3523,37 @@ class ControlCenter(tk.Tk):
         return False
 
     def load_action_builds(self):
-        try:
+        current_selection = None
+        if hasattr(self, "action_build_list") and self.action_build_list.curselection():
+            selected_index = self.action_build_list.curselection()[0]
+            if selected_index < len(self.current_action_builds):
+                current_selection = int(self.current_action_builds[selected_index].get("run_id", 0) or 0)
+
+        def worker(reporter):
+            reporter.status("读取 Action 构建列表")
+            reporter.progress(phase="resolve", message="读取 workflow runs", mode="indeterminate")
             runs = self.github().list_workflow_runs(
                 APP_BUILD_WORKFLOW_FILE,
                 event="workflow_dispatch",
                 per_page=20,
             )
-            current_selection = None
-            if hasattr(self, "action_build_list") and self.action_build_list.curselection():
-                selected_index = self.action_build_list.curselection()[0]
-                if selected_index < len(self.current_action_builds):
-                    current_selection = int(self.current_action_builds[selected_index].get("run_id", 0) or 0)
-
             entries = []
-            for run in runs:
+            total = len(runs)
+            for index, run in enumerate(runs, start=1):
                 run_id = int(run.get("id", 0) or 0)
+                reporter.progress(
+                    phase="resolve",
+                    label=f"run-{run_id}" if run_id > 0 else "",
+                    message="读取 artifact",
+                    current=index,
+                    total=total,
+                )
                 artifacts = self.github().list_run_artifacts(run_id) if run_id > 0 else []
                 entries.append(self.normalize_action_build_entry(run, artifacts))
+            return {"entries": entries, "current_selection": current_selection}
 
+        def on_success(payload):
+            entries = payload["entries"]
             self.current_action_builds = entries
             self.action_build_list.delete(0, tk.END)
             self.update_action_build_link(None)
@@ -3173,12 +3562,19 @@ class ControlCenter(tk.Tk):
             else:
                 for entry in entries:
                     self.action_build_list.insert(tk.END, self.format_action_build_entry(entry))
-            if current_selection:
-                self.select_action_build_in_list(current_selection)
+            if payload["current_selection"]:
+                self.select_action_build_in_list(payload["current_selection"])
             if self.pending_action_build_watch:
                 self.check_pending_action_build_watch()
-        except Exception as err:
-            messagebox.showerror("GitHub error", str(err))
+            self.update_app_source_summary()
+            self.update_app_action_state()
+
+        self.start_background_task(
+            "刷新 Action 构建",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("GitHub error", message, detail),
+        )
 
     def on_action_build_select(self, _event=None):
         index = self.action_build_list.curselection()
@@ -3192,6 +3588,95 @@ class ControlCenter(tk.Tk):
             self.app_changelog_var.set(entry.get("title", ""))
         self.update_action_build_link(entry)
         self.refresh_visual_summaries()
+        self.update_app_action_state()
+
+    def current_action_build_entry(self) -> dict | None:
+        if not hasattr(self, "action_build_list"):
+            return None
+        index = self.action_build_list.curselection()
+        if not index:
+            return None
+        if index[0] >= len(self.current_action_builds):
+            return None
+        return self.current_action_builds[index[0]]
+
+    def current_release_entry(self) -> dict | None:
+        if not hasattr(self, "release_list"):
+            return None
+        index = self.release_list.curselection()
+        if not index:
+            return None
+        tag = self.release_list.get(index[0]).replace(" [pre]", "").strip()
+        return next((item for item in self.current_releases if item.get("tag_name") == tag), None)
+
+    def build_app_source_summary(self) -> str:
+        if self.get_app_source_mode() == "artifact":
+            entry = self.current_action_build_entry()
+            if not entry:
+                return "未选择 Action 构建"
+            packages = [
+                f"Windows：{'有' if entry.get('has_windows') else '缺失'}",
+                f"macOS：{'有' if entry.get('has_macos') else '缺失'}",
+            ]
+            lines = [
+                f"构建：run-{entry.get('run_id')}",
+                f"状态：{entry.get('conclusion') or entry.get('status') or '-'}",
+                " / ".join(packages),
+            ]
+            url = str(entry.get("html_url", "")).strip()
+            if url:
+                lines.append(f"链接：{url}")
+            return "\n".join(lines)
+        release = self.current_release_entry()
+        if not release:
+            return "未选择 GitHub Release"
+        return "\n".join(
+            [
+                f"Release：{release.get('tag_name', '-')}",
+                f"预发布：{'是' if release.get('prerelease') else '否'}",
+            ]
+        )
+
+    def publish_action_issue(self, action_id: str) -> str:
+        mode = self.get_app_source_mode()
+        if action_id in {"manual_only", "publish_and_promote"}:
+            if mode == "release":
+                return "" if self.current_release_entry() else "请先选择一个 GitHub Release"
+            entry = self.current_action_build_entry()
+            if not entry:
+                return "请先选择一个 Action 构建"
+            if str(entry.get("status", "")).strip() != "completed" or str(entry.get("conclusion", "")).strip() != "success":
+                return "选中的 Action 构建还没有成功完成"
+            if not entry.get("has_windows") or not entry.get("has_macos"):
+                return "缺少 Windows 或 macOS 包，暂不能发布"
+            return ""
+        if action_id in {"promote_existing", "rollback_auto", "hide_version"}:
+            version = self.app_version_var.get().strip()
+            if not version:
+                return "请先填写版本号"
+            entry = next(
+                (item for item in self.current_policy.get("versions", []) if item.get("version") == version),
+                None,
+            )
+            return "" if entry else "目标版本还不在当前白名单中"
+        return ""
+
+    def update_app_source_summary(self):
+        if hasattr(self, "app_source_summary_var"):
+            self.app_source_summary_var.set(self.build_app_source_summary())
+
+    def update_app_action_state(self):
+        if not hasattr(self, "app_execute_button"):
+            return
+        action_id = self.get_selected_app_action_id()
+        issue = self.publish_action_issue(action_id)
+        if issue:
+            self.app_execute_status_var.set(issue)
+            self.app_execute_button.configure(state="disabled")
+        else:
+            self.app_execute_status_var.set("可执行")
+            if not self._active_task_token:
+                self.app_execute_button.configure(state="normal")
 
     def trigger_action_build_without_tag(self):
         branch = self.get_current_branch().strip()
@@ -3199,49 +3684,63 @@ class ControlCenter(tk.Tk):
             messagebox.showerror("无法触发", "当前不是一个可识别的本地分支")
             return
         local_head = self.get_head_commit_sha().strip()
-        remote_head = self.get_remote_branch_sha(branch).strip()
         if not local_head:
             messagebox.showerror("无法触发", "无法读取当前本地 HEAD")
-            return
-        if not remote_head:
-            messagebox.showerror("无法触发", f"远端 {self.git_remote_name()} 上还没有分支 {branch}，请先 push")
-            return
-        if local_head != remote_head:
-            messagebox.showerror(
-                "请先 push",
-                "\n".join(
-                    [
-                        f"当前分支：{branch}",
-                        "Action 编译只会基于远端已推送分支运行。",
-                        "请先把当前提交 push 到远端，再回来点击这个按钮。",
-                    ]
-                ),
-            )
             return
 
         lines = [
             f"仓库路径：{self.repo_workdir()}",
             f"当前分支：{branch}",
             f"远端：{self.git_remote_name()}",
-            f"远端 HEAD：{remote_head[:12]}",
             "这个操作会触发 workflow_dispatch 编译，但不会创建 Tag。",
         ]
         if not self.confirm_action("确认执行 Action 编译", lines):
             return
 
-        try:
+        def worker(reporter):
             label = f"control-center-{int(time.time())}"
+            reporter.status("触发 Action 编译")
+            reporter.progress(phase="resolve", label=branch, message="检查远端分支 HEAD", mode="indeterminate")
+            remote_head = self.get_remote_branch_sha(branch).strip()
+            if not remote_head:
+                raise RuntimeError(f"远端 {self.git_remote_name()} 上还没有分支 {branch}，请先 push")
+            if local_head != remote_head:
+                raise RuntimeError(
+                    "\n".join(
+                        [
+                            f"当前分支：{branch}",
+                            "Action 编译只会基于远端已推送分支运行。",
+                            "请先把当前提交 push 到远端，再回来点击这个按钮。",
+                        ]
+                    )
+                )
+            reporter.progress(phase="finalize", label=branch, message="dispatch workflow", mode="indeterminate")
             self.github().dispatch_workflow(
                 APP_BUILD_WORKFLOW_FILE,
                 branch,
                 inputs={"build_label": label},
             )
+            return {"branch": branch, "head_sha": remote_head}
+
+        def on_success(payload):
             self.app_source_mode_var.set("artifact")
             self.on_app_source_mode_change()
-            self.begin_action_build_watch(branch=branch, head_sha=remote_head, started_at=time.time())
-            messagebox.showinfo("已触发", "Action 编译已触发，正在自动刷新构建列表。")
-        except Exception as err:
-            messagebox.showerror("触发失败", str(err))
+            self.after(
+                200,
+                lambda: self.begin_action_build_watch(
+                    branch=payload["branch"],
+                    head_sha=payload["head_sha"],
+                    started_at=time.time(),
+                ),
+            )
+            self.after(220, lambda: messagebox.showinfo("已触发", "Action 编译已触发，正在自动刷新构建列表。"))
+
+        self.start_background_task(
+            "触发 Action 编译",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("触发失败", message, detail),
+        )
 
     def begin_action_build_watch(self, *, branch: str, head_sha: str, started_at: float):
         self.pending_action_build_watch = {
@@ -3258,6 +3757,9 @@ class ControlCenter(tk.Tk):
 
     def poll_pending_action_build_watch(self):
         if not self.pending_action_build_watch:
+            return
+        if self._active_task_token:
+            self.after(self.pending_action_build_watch.get("interval_ms", 5000), self.poll_pending_action_build_watch)
             return
         watch = self.pending_action_build_watch
         watch["attempt"] += 1
@@ -3359,111 +3861,6 @@ class ControlCenter(tk.Tk):
             "source_mode": str(entry.get("app_source_mode", "artifact")).strip().lower() or "artifact",
         }
 
-    def wait_for_publish_run(self, *, branch: str, build_id: str, started_at: float, existing_run_ids: set[int]) -> dict:
-        deadline = time.time() + 30 * 60
-        last_status = ""
-        target_run_id = 0
-        while time.time() < deadline:
-            target = None
-            if target_run_id > 0:
-                target = self.github().get_workflow_run(target_run_id)
-            else:
-                runs = self.github().list_workflow_runs(
-                    APP_ARTIFACT_PUBLISH_WORKFLOW_FILE,
-                    branch=branch,
-                    event="workflow_dispatch",
-                    per_page=20,
-                )
-                for run in runs:
-                    run_id = int(run.get("id", 0) or 0)
-                    created_at = self.parse_time_seconds(run.get("created_at", ""))
-                    if run_id > 0 and run_id not in existing_run_ids and created_at >= started_at - 5:
-                        target_run_id = run_id
-                        target = run
-                        break
-            if target:
-                status = str(target.get("status", "")).strip()
-                conclusion = str(target.get("conclusion", "")).strip()
-                if status == "completed":
-                    if conclusion != "success":
-                        raise RuntimeError(
-                            "\n".join(
-                                [
-                                    f"发布工作流执行失败：{conclusion or 'unknown'}",
-                                    str(target.get("html_url", "")).strip(),
-                                ]
-                            )
-                        )
-                    return target
-                last_status = status or last_status
-            self.update_idletasks()
-            self.update()
-            time.sleep(5)
-        raise RuntimeError(
-            f"等待发布工作流超时，build_id={build_id}，最后状态：{last_status or 'unknown'}"
-        )
-
-    def extract_json_from_artifact(self, artifact_id: int, artifact_name: str) -> dict:
-        payload = self.github().download_artifact_archive_bytes(artifact_id)
-        buffer = io.BytesIO(payload)
-        if zipfile.is_zipfile(buffer):
-            buffer.seek(0)
-            with zipfile.ZipFile(buffer, "r") as archive:
-                for name in archive.namelist():
-                    if name.endswith(artifact_name):
-                        with archive.open(name) as fh:
-                            return json.loads(fh.read().decode("utf-8"))
-                if archive.namelist():
-                    with archive.open(archive.namelist()[0]) as fh:
-                        return json.loads(fh.read().decode("utf-8"))
-        return json.loads(payload.decode("utf-8"))
-
-    def read_workflow_run_summary(self, run_id: int) -> dict:
-        artifacts = self.github().list_run_artifacts(run_id)
-        target = next(
-            (
-                item
-                for item in artifacts
-                if str(item.get("name", "")).strip() == RELEASE_SUMMARY_ASSET_NAME
-                and not bool(item.get("expired"))
-            ),
-            None,
-        )
-        if not target:
-            raise RuntimeError("发布工作流未产出 release summary artifact")
-        return self.extract_json_from_artifact(int(target.get("id", 0) or 0), RELEASE_SUMMARY_ASSET_NAME)
-
-    def publish_selected_action_build(self, payload: dict) -> dict:
-        branch = str(payload.get("branch", "")).strip() or self.get_current_branch().strip()
-        if not branch:
-            raise RuntimeError("无法确定发布工作流要使用的分支")
-        started_at = time.time()
-        existing_run_ids = {
-            int(run.get("id", 0) or 0)
-            for run in self.github().list_workflow_runs(
-                APP_ARTIFACT_PUBLISH_WORKFLOW_FILE,
-                branch=branch,
-                event="workflow_dispatch",
-                per_page=20,
-            )
-            if int(run.get("id", 0) or 0) > 0
-        }
-        self.github().dispatch_workflow(
-            APP_ARTIFACT_PUBLISH_WORKFLOW_FILE,
-            branch,
-            inputs={
-                "source_run_id": str(int(payload["run_id"])),
-                "build_id": payload["tag"],
-            },
-        )
-        publish_run = self.wait_for_publish_run(
-            branch=branch,
-            build_id=payload["tag"],
-            started_at=started_at,
-            existing_run_ids=existing_run_ids,
-        )
-        return self.read_workflow_run_summary(int(publish_run.get("id", 0) or 0))
-
     def is_vercel_env_configured(self, key: str) -> bool:
         record = self.current_env_records.get(key)
         if not record:
@@ -3472,26 +3869,210 @@ class ControlCenter(tk.Tk):
             return True
         return str(record.get("type", "")).strip().lower() == "sensitive"
 
+    def local_secret_fallback_key(self, env_name: str) -> str:
+        return {
+            "PAN123_CLIENT_ID": "pan123_client_id",
+            "PAN123_CLIENT_SECRET": "pan123_client_secret",
+            "PAN123_RELEASES_ROOT_ID": "pan123_releases_root_id",
+            "GITHUB_TOKEN": "github_token",
+        }.get(env_name, "")
+
+    def get_local_publish_env_value(self, env_name: str) -> str:
+        config_key = self.local_secret_fallback_key(env_name)
+        candidates = [
+            str(self.current_envs.get(env_name, "")).strip(),
+            str(os.environ.get(env_name, "")).strip(),
+        ]
+        if config_key:
+            candidates.append(str(self.config_data.get(config_key, "")).strip())
+        for candidate in candidates:
+            if candidate:
+                return candidate
+        return ""
+
+    def is_local_publish_env_configured(self, env_name: str) -> bool:
+        return bool(self.get_local_publish_env_value(env_name))
+
+    def build_local_publish_env(self, payload: dict) -> dict:
+        env = dict(os.environ)
+        proxy = normalize_proxy_url(self.current_network_proxy())
+        if proxy:
+            for key in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+                env[key] = proxy
+
+        required_names = (
+            "GITHUB_TOKEN",
+            "PAN123_CLIENT_ID",
+            "PAN123_CLIENT_SECRET",
+            "PAN123_RELEASES_ROOT_ID",
+        )
+        missing = [name for name in required_names if not self.get_local_publish_env_value(name)]
+        if missing:
+            raise RuntimeError(
+                "本地 publish_123 缺少必要凭据："
+                + ", ".join(missing)
+                + "。\n请先在“高级设置”填写 pan123_* / github_token，或保证当前系统环境变量可用。"
+            )
+
+        for env_name in required_names:
+            env[env_name] = self.get_local_publish_env_value(env_name)
+
+        resource_values = self.collect_resource_source_values()
+        env.update(resource_values)
+        env["NIYIEN_APP_SOURCE_MODE"] = "artifact"
+        env["NIYIEN_APP_RUN_ID"] = str(int(payload.get("run_id", 0) or 0))
+        env["NIYIEN_APP_OWNER"] = str(self.config_data.get("github_owner", "")).strip()
+        env["NIYIEN_APP_REPO"] = str(self.config_data.get("github_repo", "")).strip()
+        env["NIYIEN_LENS_DATA_OWNER"] = str(
+            self.config_data.get("lens_data_owner", DEFAULT_LENS_DATA_OWNER)
+        ).strip()
+        env["NIYIEN_LENS_DATA_REPO"] = str(
+            self.config_data.get("lens_data_repo", DEFAULT_LENS_DATA_REPO)
+        ).strip()
+        env["NIYIEN_PLUGINS_OWNER"] = str(
+            self.config_data.get("plugins_owner", DEFAULT_PLUGINS_OWNER)
+        ).strip()
+        env["NIYIEN_PLUGINS_REPO"] = str(
+            self.config_data.get("plugins_repo", DEFAULT_PLUGINS_REPO)
+        ).strip()
+        return env
+
+    def parse_publish_progress_line(self, line: str) -> dict | None:
+        text = str(line or "").strip()
+        if not text.startswith(PUBLISH_PROGRESS_PREFIX):
+            return None
+        try:
+            payload = json.loads(text[len(PUBLISH_PROGRESS_PREFIX):])
+        except json.JSONDecodeError:
+            return None
+        return payload if isinstance(payload, dict) else None
+
+    def run_local_publish_script(self, payload: dict, reporter: BackgroundTaskReporter | None = None) -> dict:
+        repo_root = self.repo_workdir()
+        script_path = ROOT / "_scripts" / "publish_pan123_release.py"
+        output_dir = repo_root / "_deployment" / "_publish_local" / payload["tag"]
+        summary_path = output_dir / RELEASE_SUMMARY_ASSET_NAME
+        error_log_path = output_dir / "publish_local_error.txt"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        resource_values = self.collect_resource_source_values()
+        command = [
+            sys.executable,
+            str(script_path),
+            "--workspace",
+            str(repo_root),
+            "--output-dir",
+            str(output_dir),
+            "--app-tag",
+            str(payload["tag"]).strip(),
+            "--app-source-mode",
+            "artifact",
+            "--app-owner",
+            str(self.config_data.get("github_owner", "")).strip(),
+            "--app-repo",
+            str(self.config_data.get("github_repo", "")).strip(),
+            "--app-run-id",
+            str(int(payload["run_id"])),
+            "--lens-owner",
+            str(self.config_data.get("lens_data_owner", DEFAULT_LENS_DATA_OWNER)).strip(),
+            "--lens-repo",
+            str(self.config_data.get("lens_data_repo", DEFAULT_LENS_DATA_REPO)).strip(),
+            "--plugins-owner",
+            str(self.config_data.get("plugins_owner", DEFAULT_PLUGINS_OWNER)).strip(),
+            "--plugins-repo",
+            str(self.config_data.get("plugins_repo", DEFAULT_PLUGINS_REPO)).strip(),
+            "--plugins-source-mode",
+            resource_values["NIYIEN_PLUGINS_SOURCE_MODE"],
+            "--sdk-base",
+            resource_values["NIYIEN_SDK_BASE"],
+        ]
+        if resource_values["NIYIEN_LENS_DATA_TAG"]:
+            command.extend(["--lens-tag", resource_values["NIYIEN_LENS_DATA_TAG"]])
+        if resource_values["NIYIEN_PLUGINS_TAG"]:
+            command.extend(["--plugins-tag", resource_values["NIYIEN_PLUGINS_TAG"]])
+        if resource_values["NIYIEN_PLUGINS_ARTIFACT_NAME"]:
+            command.extend(["--plugins-artifact-name", resource_values["NIYIEN_PLUGINS_ARTIFACT_NAME"]])
+        output_lines: list[str] = []
+
+        try:
+            env = self.build_local_publish_env(payload)
+            env["NIYIEN_PROGRESS_MODE"] = "jsonl"
+            process = subprocess.Popen(
+                command,
+                cwd=repo_root,
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+            )
+            stdout_handle = process.stdout
+            if stdout_handle is not None:
+                for raw_line in stdout_handle:
+                    line = raw_line.rstrip()
+                    if not line:
+                        continue
+                    output_lines.append(line)
+                    progress_event = self.parse_publish_progress_line(line)
+                    if progress_event:
+                        if reporter:
+                            reporter.progress(
+                                phase=str(progress_event.get("phase", "")).strip(),
+                                label=str(progress_event.get("label", "")).strip(),
+                                message=str(progress_event.get("message", "")).strip(),
+                                current=progress_event.get("current"),
+                                total=progress_event.get("total"),
+                                mode=str(progress_event.get("mode", "")).strip(),
+                            )
+                        continue
+                    if reporter:
+                        reporter.log(line)
+            return_code = process.wait()
+
+            if return_code != 0:
+                detail = "\n".join(output_lines[-12:]).strip() or "未知错误"
+                message = "\n".join(
+                    [
+                        "本地 publish_123 执行失败。",
+                        f"输出目录：{output_dir}",
+                        detail,
+                    ]
+                )
+                error_log_path.write_text(message, encoding="utf-8")
+                raise RuntimeError(message)
+            if not summary_path.exists():
+                message = "\n".join(
+                    [
+                        "本地 publish_123 已执行，但没有生成 release summary。",
+                        f"期望文件：{summary_path}",
+                        "\n".join(output_lines[-12:]).strip() or "无额外输出",
+                    ]
+                )
+                error_log_path.write_text(message, encoding="utf-8")
+                raise RuntimeError(message)
+            error_log_path.unlink(missing_ok=True)
+            return json.loads(summary_path.read_text(encoding="utf-8"))
+        except Exception as err:
+            if not error_log_path.exists():
+                error_log_path.write_text(str(err), encoding="utf-8")
+            raise
+
     def load_resource_source_state(self):
         saved_values = self.snapshot_resource_source_values_from_repo_vars()
         self.resource_saved_snapshot = dict(saved_values)
         self.apply_resource_source_values(
             saved_values,
-            selection_label="当前表单：上次默认源",
+            selection_label="当前表单：上次使用",
         )
-        if self.is_resource_source_incomplete(saved_values):
-            try:
-                self.load_latest_resource_sources(
-                    silent=True,
-                    selection_label="当前表单：最新推荐（因为上次默认源不完整，已自动填入）",
-                )
-            except Exception:
-                pass
+        if hasattr(self, "resource_profile_var"):
+            self.resource_profile_var.set("上次使用")
         self.refresh_visual_summaries()
 
     def update_resource_status_text(self):
+        current_form = self.collect_resource_source_values()
         payload = {
-            "current_form": self.collect_resource_source_values(),
+            "current_form": current_form,
             "saved_default": self.resource_saved_snapshot,
             "latest_candidate": self.resource_latest_snapshot,
             "NIYIEN_GLOBAL_SDK_BASE(只读参考)": self.current_envs.get("NIYIEN_GLOBAL_SDK_BASE", ""),
@@ -3503,41 +4084,78 @@ class ControlCenter(tk.Tk):
             self.resource_status_text.insert(
                 "1.0", json.dumps(payload, indent=2, ensure_ascii=False)
             )
+        if hasattr(self, "resource_profile_var"):
+            profile = self.resource_profile_var.get().strip()
+            if profile != "当前自定义" and current_form not in (self.resource_saved_snapshot, self.resource_latest_snapshot):
+                self.resource_profile_var.set("当前自定义")
+                profile = "当前自定义"
+        else:
+            profile = ""
+        if profile == "当前自定义":
+            self.resource_selection_label_var.set("当前表单：当前自定义")
         self.refresh_visual_summaries()
 
     def load_latest_lens_tag(self):
-        try:
-            release, source_ref = self.get_latest_release_with_fallback(
+        def worker(reporter):
+            reporter.status("读取 Lens/CameraDB 最新版本")
+            reporter.progress(phase="resolve", message="读取最新 Release", mode="indeterminate")
+            return self.get_latest_release_with_fallback(
                 owner=self.config_data.get("lens_data_owner", DEFAULT_LENS_DATA_OWNER),
                 repo=self.config_data.get("lens_data_repo", DEFAULT_LENS_DATA_REPO),
                 fallback_owner=DEFAULT_LENS_DATA_OWNER,
                 fallback_repo=DEFAULT_LENS_DATA_REPO,
                 label="Lens/CameraDB",
             )
+
+        def on_success(payload):
+            release, source_ref = payload
+            self.resource_profile_var.set("当前自定义")
             self.resource_lens_tag_var.set(str(release.get("tag_name", "")).strip())
-            self.resource_selection_label_var.set(f"当前表单：手动调整（已刷新 Lens 最新，来源 {source_ref}）")
+            self.resource_selection_label_var.set(f"当前表单：当前自定义（已刷新 Lens 最新，来源 {source_ref}）")
             self.update_resource_status_text()
-        except Exception as err:
-            messagebox.showerror("读取失败", str(err))
+
+        self.start_background_task(
+            "读取 Lens 最新版本",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("读取失败", message, detail),
+        )
 
     def load_latest_plugin_tag(self):
-        try:
-            plugin_values, plugin_meta = self.resolve_latest_plugin_source_values()
+        def worker(reporter):
+            reporter.status("读取 Plugin 最新源")
+            reporter.progress(phase="resolve", message="定位 Plugin 最新源", mode="indeterminate")
+            return self.resolve_latest_plugin_source_values()
+
+        def on_success(payload):
+            plugin_values, plugin_meta = payload
+            self.resource_profile_var.set("当前自定义")
             self.resource_plugins_source_mode_var.set(plugin_values["NIYIEN_PLUGINS_SOURCE_MODE"])
             self.resource_plugins_tag_var.set(plugin_values["NIYIEN_PLUGINS_TAG"])
             self.resource_plugins_artifact_name_var.set(plugin_values["NIYIEN_PLUGINS_ARTIFACT_NAME"])
             refresh_target = "Plugin 最新 Artifact" if plugin_meta.get("mode") == "artifact" else "Plugin 最新 Release"
             self.resource_selection_label_var.set(
-                f"当前表单：手动调整（已刷新 {refresh_target}，来源 {plugin_meta.get('source_label', '')}）"
+                f"当前表单：当前自定义（已刷新 {refresh_target}，来源 {plugin_meta.get('source_label', '')}）"
             )
             self.on_plugin_source_mode_change()
             self.update_resource_status_text()
-        except Exception as err:
-            messagebox.showerror("读取失败", str(err))
+
+        self.start_background_task(
+            "读取 Plugin 最新源",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("读取失败", message, detail),
+        )
 
     def load_latest_resource_sources(self, silent: bool = False, selection_label: str = "当前表单：最新推荐"):
-        try:
-            latest_values, meta = self.fetch_latest_resource_source_values_with_meta()
+        def worker(reporter):
+            reporter.status("读取最新推荐资源源")
+            reporter.progress(phase="resolve", message="读取 Lens / Plugin / SDK 推荐值", mode="indeterminate")
+            return self.fetch_latest_resource_source_values_with_meta()
+
+        def on_success(payload):
+            latest_values, meta = payload
+            self.resource_profile_var.set("最新推荐")
             self.resource_latest_snapshot = dict(latest_values)
             self.apply_resource_source_values(latest_values, selection_label=selection_label)
             if not silent:
@@ -3561,13 +4179,13 @@ class ControlCenter(tk.Tk):
                 ]
                 if action_url:
                     lines.append(f"Action URL：{action_url}")
-                messagebox.showinfo(
-                    "已填入最新推荐",
-                    "\n".join(lines),
-                )
-        except Exception as err:
+                messagebox.showinfo("已填入最新推荐", "\n".join(lines))
+
+        def on_error(message, detail):
             if not silent:
-                messagebox.showerror("读取失败", str(err))
+                self.show_task_error("读取失败", message, detail)
+
+        self.start_background_task("读取最新推荐", worker, on_success=on_success, on_error=on_error)
 
     def action_save_resource_sources(self):
         mapping = {
@@ -3590,22 +4208,12 @@ class ControlCenter(tk.Tk):
                 ],
             ):
                 return
-            optional_empty_allowed = {
-                "NIYIEN_PLUGINS_TAG",
-                "NIYIEN_PLUGINS_ARTIFACT_NAME",
-            }
-            github = self.github()
-            for key, value in mapping.items():
-                if key in optional_empty_allowed and not str(value).strip():
-                    github.delete_actions_variable(key)
-                    self.current_repo_variables.pop(key, None)
-                    continue
-                github.upsert_actions_variable(key, value)
-                self.current_repo_variables[key] = value
+            self.save_publish_defaults_to_config(mapping)
             self.resource_saved_snapshot = dict(mapping)
-            self.resource_selection_label_var.set("当前表单：上次默认源（刚保存）")
+            self.resource_selection_label_var.set("当前表单：上次使用（刚保存）")
+            self.resource_profile_var.set("上次使用")
             self.update_resource_status_text()
-            messagebox.showinfo("完成", "下次发版默认资源源已保存到 GitHub Actions Variables")
+            messagebox.showinfo("完成", "下次发版默认值已保存到本地配置")
         except Exception as err:
             messagebox.showerror("保存失败", str(err))
 
@@ -3639,6 +4247,8 @@ class ControlCenter(tk.Tk):
         changelog = payload["changelog"].splitlines()[0] if payload["changelog"] else ""
         self.app_changelog_var.set(changelog)
         self.refresh_visual_summaries()
+        self.update_app_source_summary()
+        self.update_app_action_state()
 
     def select_release_in_main_list(self, tag: str):
         if not tag:
@@ -3702,6 +4312,9 @@ class ControlCenter(tk.Tk):
     def poll_pending_release_watch(self):
         if not self.pending_release_watch:
             return
+        if self._active_task_token:
+            self.after(self.pending_release_watch.get("interval_ms", 5000), self.poll_pending_release_watch)
+            return
         watch = self.pending_release_watch
         watch["attempt"] += 1
         self.load_releases()
@@ -3745,9 +4358,6 @@ class ControlCenter(tk.Tk):
         if self.local_tag_exists(tag):
             messagebox.showerror("Tag 已存在", f"本地已经存在 Tag：{tag}")
             return
-        if self.remote_tag_exists(tag):
-            messagebox.showerror("Tag 已存在", f"远端 {self.git_remote_name()} 已存在 Tag：{tag}")
-            return
 
         lines = [
             f"仓库路径：{self.repo_workdir()}",
@@ -3771,16 +4381,27 @@ class ControlCenter(tk.Tk):
         if not self.confirm_action("确认创建并推送 Tag", lines, danger=True):
             return
 
-        try:
+        def worker(reporter):
+            reporter.status(f"创建并推送 Tag {tag}")
+            reporter.progress(phase="resolve", label=tag, message="检查远端 Tag", mode="indeterminate")
+            if self.remote_tag_exists(tag):
+                raise RuntimeError(f"远端 {self.git_remote_name()} 已存在 Tag：{tag}")
+            reporter.progress(phase="finalize", label=tag, message="本地打 Tag", mode="indeterminate")
             self.run_git("tag", tag)
+            reporter.progress(phase="finalize", label=tag, message="推送 Tag 到远端", mode="indeterminate")
             self.run_git("push", self.git_remote_name(), tag)
-            self.app_tag_var.set(tag)
-            self.begin_release_watch(tag)
-        except subprocess.CalledProcessError as err:
-            stderr = (err.stderr or "").strip()
-            stdout = (err.stdout or "").strip()
-            detail = stderr or stdout or str(err)
-            messagebox.showerror("创建 Tag 失败", detail)
+            return tag
+
+        def on_success(created_tag):
+            self.app_tag_var.set(created_tag)
+            self.after(200, lambda: self.begin_release_watch(created_tag))
+
+        self.start_background_task(
+            "创建并推送 Tag",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("创建 Tag 失败", message, detail),
+        )
 
     def release_by_tag(self, tag: str):
         release = next((item for item in self.current_releases if item.get("tag_name") == tag), None)
@@ -3858,23 +4479,36 @@ class ControlCenter(tk.Tk):
         )
         return f"{self.download_api_base()}/{scope}/{encoded_tag}/{encoded_path}"
 
-    def write_policy(self, policy, extra_envs=None):
-        raw = json.dumps(policy, indent=2, ensure_ascii=False)
-        mapping = {"NIYIEN_RELEASE_POLICY_JSON": raw}
-        if extra_envs:
-            mapping.update(extra_envs)
-        self.vercel().upsert_envs(mapping)
+    def apply_policy_locally(self, policy, extra_envs=None):
         self.current_policy = policy
         self.policy_text.delete("1.0", tk.END)
-        self.policy_text.insert("1.0", raw)
+        self.policy_text.insert("1.0", json.dumps(policy, indent=2, ensure_ascii=False))
         if extra_envs:
             self.current_envs.update(extra_envs)
             self.content_tag_var.set(self.current_envs.get("NIYIEN_CONTENT_RELEASE_TAG", ""))
             self.lens_version_var.set(str(self.current_envs.get("NIYIEN_LENS_VERSION", "")))
             self.lens_sha_var.set(self.current_envs.get("NIYIEN_LENS_SHA256", ""))
             self.update_data_status_text()
+        self.refresh_visual_summaries()
+        self.update_app_action_state()
+
+    def write_policy_remote(self, policy, extra_envs=None, reporter: BackgroundTaskReporter | None = None):
+        raw = json.dumps(policy, indent=2, ensure_ascii=False)
+        mapping = {"NIYIEN_RELEASE_POLICY_JSON": raw}
+        if extra_envs:
+            mapping.update(extra_envs)
+        if reporter:
+            reporter.progress(phase="finalize", message="写入发布策略到 Vercel", mode="indeterminate")
+        self.vercel().upsert_envs(mapping)
         if self.config_data.get("deploy_hook_url"):
-            self.trigger_deploy_hook(silent=True)
+            if reporter:
+                reporter.progress(phase="finalize", message="触发 deploy hook", mode="indeterminate")
+            response = self.http_post(self.config_data.get("deploy_hook_url", "").strip(), timeout=30)
+            response.raise_for_status()
+
+    def write_policy(self, policy, extra_envs=None):
+        self.write_policy_remote(policy, extra_envs)
+        self.apply_policy_locally(policy, extra_envs)
 
     def upsert_policy_entry(self, version, tag, changelog, recommended, channels, release_summary=None):
         policy = json.loads(json.dumps(self.current_policy))
@@ -3907,21 +4541,33 @@ class ControlCenter(tk.Tk):
                 ],
             ):
                 return
-            release_summary = (
-                self.publish_selected_action_build(payload)
-                if payload.get("source_mode") == "artifact"
-                else self.load_release_summary(payload["tag"])
+            def worker(reporter):
+                release_summary = (
+                    self.run_local_publish_script(payload, reporter)
+                    if payload.get("source_mode") == "artifact"
+                    else self.load_release_summary(payload["tag"])
+                )
+                policy = self.upsert_policy_entry(
+                    payload["version"],
+                    payload["tag"],
+                    payload["changelog"],
+                    payload["recommended"],
+                    ["manual"],
+                    release_summary=release_summary,
+                )
+                self.write_policy_remote(policy, reporter=reporter)
+                return {"policy": policy, "version": payload["version"]}
+
+            def on_success(result):
+                self.apply_policy_locally(result["policy"])
+                messagebox.showinfo("完成", f"{result['version']} 已加入手动版本白名单")
+
+            self.start_background_task(
+                "加入手动列表",
+                worker,
+                on_success=on_success,
+                on_error=lambda message, detail: self.show_task_error("失败", message, detail),
             )
-            policy = self.upsert_policy_entry(
-                payload["version"],
-                payload["tag"],
-                payload["changelog"],
-                payload["recommended"],
-                ["manual"],
-                release_summary=release_summary,
-            )
-            self.write_policy(policy)
-            messagebox.showinfo("完成", f"{payload['version']} 已加入手动版本白名单")
         except Exception as err:
             messagebox.showerror("失败", str(err))
 
@@ -3939,31 +4585,42 @@ class ControlCenter(tk.Tk):
                 danger=True,
             ):
                 return
-            release_summary = (
-                self.publish_selected_action_build(payload)
-                if payload.get("source_mode") == "artifact"
-                else self.load_release_summary(payload["tag"])
+            def worker(reporter):
+                release_summary = (
+                    self.run_local_publish_script(payload, reporter)
+                    if payload.get("source_mode") == "artifact"
+                    else self.load_release_summary(payload["tag"])
+                )
+                policy = self.upsert_policy_entry(
+                    payload["version"],
+                    payload["tag"],
+                    payload["changelog"],
+                    payload["recommended"],
+                    ["auto", "manual"],
+                    release_summary=release_summary,
+                )
+                policy["auto_version"] = payload["version"]
+                for item in policy["versions"]:
+                    if item["version"] != payload["version"] and "auto" in item.get("channels", []):
+                        item["channels"] = [c for c in item["channels"] if c != "auto"] or ["manual"]
+                target_entry = next(
+                    (item for item in policy["versions"] if item.get("version") == payload["version"]),
+                    None,
+                )
+                extra_envs = self.build_content_env_mapping_from_entry(target_entry)
+                self.write_policy_remote(policy, extra_envs, reporter=reporter)
+                return {"policy": policy, "extra_envs": extra_envs, "version": payload["version"]}
+
+            def on_success(result):
+                self.apply_policy_locally(result["policy"], result["extra_envs"])
+                messagebox.showinfo("完成", f"{result['version']} 已设为自动推送版本")
+
+            self.start_background_task(
+                "发布并立即推送",
+                worker,
+                on_success=on_success,
+                on_error=lambda message, detail: self.show_task_error("失败", message, detail),
             )
-            policy = self.upsert_policy_entry(
-                payload["version"],
-                payload["tag"],
-                payload["changelog"],
-                payload["recommended"],
-                ["auto", "manual"],
-                release_summary=release_summary,
-            )
-            policy["auto_version"] = payload["version"]
-            for item in policy["versions"]:
-                if item["version"] != payload["version"] and "auto" in item.get("channels", []):
-                    item["channels"] = [c for c in item["channels"] if c != "auto"] or [
-                        "manual"
-                    ]
-            target_entry = next(
-                (item for item in policy["versions"] if item.get("version") == payload["version"]),
-                None,
-            )
-            self.write_policy(policy, self.build_content_env_mapping_from_entry(target_entry))
-            messagebox.showinfo("完成", f"{payload['version']} 已设为自动推送版本")
         except Exception as err:
             messagebox.showerror("失败", str(err))
 
@@ -3980,35 +4637,37 @@ class ControlCenter(tk.Tk):
                 danger=True,
             ):
                 return
-            version = payload["version"]
-            policy = json.loads(json.dumps(self.current_policy))
-            found = False
-            release_summary = (
-                self.load_release_summary(payload["tag"])
-                if payload.get("source_mode") != "artifact"
-                else {}
+            def worker(reporter):
+                version = payload["version"]
+                policy = json.loads(json.dumps(self.current_policy))
+                found = False
+                release_summary = self.load_release_summary(payload["tag"]) if payload.get("source_mode") != "artifact" else {}
+                for item in policy.get("versions", []):
+                    if item.get("version") == version:
+                        found = True
+                        item["channels"] = sorted(set(item.get("channels", []) + ["auto", "manual"]))
+                        item["recommended"] = bool(self.app_recommended_var.get())
+                        self.merge_release_summary_into_entry(item, release_summary)
+                    elif "auto" in item.get("channels", []):
+                        item["channels"] = [c for c in item.get("channels", []) if c != "auto"] or ["manual"]
+                if not found:
+                    raise RuntimeError("目标版本不在白名单中，请先执行“发布新应用，但不推送”")
+                policy["auto_version"] = version
+                target_entry = next((item for item in policy["versions"] if item.get("version") == version), None)
+                extra_envs = self.build_content_env_mapping_from_entry(target_entry)
+                self.write_policy_remote(policy, extra_envs, reporter=reporter)
+                return {"policy": policy, "extra_envs": extra_envs, "version": version}
+
+            def on_success(result):
+                self.apply_policy_locally(result["policy"], result["extra_envs"])
+                messagebox.showinfo("完成", f"{result['version']} 已开始自动推送")
+
+            self.start_background_task(
+                "切换为当前推送版本",
+                worker,
+                on_success=on_success,
+                on_error=lambda message, detail: self.show_task_error("失败", message, detail),
             )
-            for item in policy.get("versions", []):
-                if item.get("version") == version:
-                    found = True
-                    item["channels"] = sorted(
-                        set(item.get("channels", []) + ["auto", "manual"])
-                    )
-                    item["recommended"] = bool(self.app_recommended_var.get())
-                    self.merge_release_summary_into_entry(item, release_summary)
-                elif "auto" in item.get("channels", []):
-                    item["channels"] = [c for c in item["channels"] if c != "auto"] or [
-                        "manual"
-                    ]
-            if not found:
-                raise RuntimeError("目标版本不在白名单中，请先执行“发布新应用，但不推送”")
-            policy["auto_version"] = version
-            target_entry = next(
-                (item for item in policy["versions"] if item.get("version") == version),
-                None,
-            )
-            self.write_policy(policy, self.build_content_env_mapping_from_entry(target_entry))
-            messagebox.showinfo("完成", f"{version} 已开始自动推送")
         except Exception as err:
             messagebox.showerror("失败", str(err))
 
@@ -4025,31 +4684,33 @@ class ControlCenter(tk.Tk):
                 danger=True,
             ):
                 return
-            version = payload["version"]
-            policy = json.loads(json.dumps(self.current_policy))
-            release_summary = (
-                self.load_release_summary(payload["tag"])
-                if payload.get("source_mode") != "artifact"
-                else {}
+            def worker(reporter):
+                version = payload["version"]
+                policy = json.loads(json.dumps(self.current_policy))
+                release_summary = self.load_release_summary(payload["tag"]) if payload.get("source_mode") != "artifact" else {}
+                for item in policy.get("versions", []):
+                    if item.get("version") == version:
+                        item["channels"] = sorted(set(item.get("channels", []) + ["auto", "manual"]))
+                        item["recommended"] = True
+                        self.merge_release_summary_into_entry(item, release_summary)
+                    elif "auto" in item.get("channels", []):
+                        item["channels"] = [c for c in item["channels"] if c != "auto"] or ["manual"]
+                policy["auto_version"] = version
+                target_entry = next((item for item in policy["versions"] if item.get("version") == version), None)
+                extra_envs = self.build_content_env_mapping_from_entry(target_entry)
+                self.write_policy_remote(policy, extra_envs, reporter=reporter)
+                return {"policy": policy, "extra_envs": extra_envs, "version": version}
+
+            def on_success(result):
+                self.apply_policy_locally(result["policy"], result["extra_envs"])
+                messagebox.showinfo("完成", f"自动推送版本已回滚到 {result['version']}")
+
+            self.start_background_task(
+                "回滚自动推送版本",
+                worker,
+                on_success=on_success,
+                on_error=lambda message, detail: self.show_task_error("失败", message, detail),
             )
-            for item in policy.get("versions", []):
-                if item.get("version") == version:
-                    item["channels"] = sorted(
-                        set(item.get("channels", []) + ["auto", "manual"])
-                    )
-                    item["recommended"] = True
-                    self.merge_release_summary_into_entry(item, release_summary)
-                elif "auto" in item.get("channels", []):
-                    item["channels"] = [c for c in item["channels"] if c != "auto"] or [
-                        "manual"
-                    ]
-            policy["auto_version"] = version
-            target_entry = next(
-                (item for item in policy["versions"] if item.get("version") == version),
-                None,
-            )
-            self.write_policy(policy, self.build_content_env_mapping_from_entry(target_entry))
-            messagebox.showinfo("完成", f"自动推送版本已回滚到 {version}")
         except Exception as err:
             messagebox.showerror("失败", str(err))
 
@@ -4064,23 +4725,33 @@ class ControlCenter(tk.Tk):
                 lines.append("它当前还是自动推送版本，隐藏后系统会自动切到其他可用版本。")
             if not self.confirm_action("确认隐藏版本", lines, danger=True):
                 return
-            version = payload["version"]
-            policy = json.loads(json.dumps(self.current_policy))
-            policy["versions"] = [
-                item
-                for item in policy.get("versions", [])
-                if item.get("version") != version
-            ]
-            extra_envs = None
-            if policy.get("auto_version") == version:
-                policy["auto_version"] = (
-                    policy["versions"][0]["version"] if policy["versions"] else ""
-                )
-                extra_envs = self.build_content_env_mapping_from_entry(
-                    policy["versions"][0] if policy["versions"] else None
-                )
-            self.write_policy(policy, extra_envs)
-            messagebox.showinfo("完成", f"{version} 已从白名单中移除")
+            def worker(reporter):
+                version = payload["version"]
+                policy = json.loads(json.dumps(self.current_policy))
+                policy["versions"] = [
+                    item
+                    for item in policy.get("versions", [])
+                    if item.get("version") != version
+                ]
+                extra_envs = None
+                if policy.get("auto_version") == version:
+                    policy["auto_version"] = policy["versions"][0]["version"] if policy["versions"] else ""
+                    extra_envs = self.build_content_env_mapping_from_entry(
+                        policy["versions"][0] if policy["versions"] else None
+                    )
+                self.write_policy_remote(policy, extra_envs, reporter=reporter)
+                return {"policy": policy, "extra_envs": extra_envs, "version": version}
+
+            def on_success(result):
+                self.apply_policy_locally(result["policy"], result["extra_envs"])
+                messagebox.showinfo("完成", f"{result['version']} 已从白名单中移除")
+
+            self.start_background_task(
+                "隐藏版本",
+                worker,
+                on_success=on_success,
+                on_error=lambda message, detail: self.show_task_error("失败", message, detail),
+            )
         except Exception as err:
             messagebox.showerror("失败", str(err))
 
@@ -4089,21 +4760,38 @@ class ControlCenter(tk.Tk):
         if not tag:
             messagebox.showerror("缺少 tag", "请先填写内容 Release Tag")
             return
-        try:
+        def worker(reporter):
+            reporter.status(f"读取 {tag} 的版本摘要")
+            reporter.progress(phase="resolve", label=tag, message="读取 Release 资产", mode="indeterminate")
             release = self.release_by_tag(tag)
             asset_map = self.get_release_asset_map(release)
             summary = self.read_json_asset(asset_map.get(RELEASE_SUMMARY_ASSET_NAME))
             if summary:
-                self.content_tag_var.set(str(summary.get("content_tag", "")))
-                self.lens_version_var.set(str(summary.get("lens_version", "")))
-                self.lens_sha_var.set(str(summary.get("lens_sha256", "")))
-            else:
-                lens_meta = self.read_json_asset(asset_map.get("gyroflow-niyien-lens.cbor.gz.json"))
-                self.lens_version_var.set(str(lens_meta.get("version", "")))
-                self.lens_sha_var.set(lens_meta.get("sha256", ""))
+                return {
+                    "content_tag": str(summary.get("content_tag", "")),
+                    "lens_version": str(summary.get("lens_version", "")),
+                    "lens_sha256": str(summary.get("lens_sha256", "")),
+                }
+            lens_meta = self.read_json_asset(asset_map.get("gyroflow-niyien-lens.cbor.gz.json"))
+            return {
+                "content_tag": "",
+                "lens_version": str(lens_meta.get("version", "")),
+                "lens_sha256": str(lens_meta.get("sha256", "")),
+            }
+
+        def on_success(payload):
+            if payload.get("content_tag"):
+                self.content_tag_var.set(payload["content_tag"])
+            self.lens_version_var.set(payload.get("lens_version", ""))
+            self.lens_sha_var.set(payload.get("lens_sha256", ""))
             self.update_data_status_text()
-        except Exception as err:
-            messagebox.showerror("读取失败", str(err))
+
+        self.start_background_task(
+            "读取版本摘要",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("读取失败", message, detail),
+        )
 
     def action_update_data_envs(self):
         mapping = {
@@ -4122,12 +4810,28 @@ class ControlCenter(tk.Tk):
                 danger=True,
             ):
                 return
-            self.vercel().upsert_envs(mapping)
-            self.current_envs.update(mapping)
-            self.update_data_status_text()
-            if self.config_data.get("deploy_hook_url"):
-                self.trigger_deploy_hook(silent=True)
-            messagebox.showinfo("完成", "数据资源环境变量已更新")
+
+            def worker(reporter):
+                reporter.status("更新当前内容版本")
+                reporter.progress(phase="finalize", message="写入 Vercel 环境变量", mode="indeterminate")
+                self.vercel().upsert_envs(mapping)
+                if self.config_data.get("deploy_hook_url"):
+                    reporter.progress(phase="finalize", message="触发 deploy hook", mode="indeterminate")
+                    response = self.http_post(self.config_data.get("deploy_hook_url", "").strip(), timeout=30)
+                    response.raise_for_status()
+                return mapping
+
+            def on_success(payload):
+                self.current_envs.update(payload)
+                self.update_data_status_text()
+                messagebox.showinfo("完成", "数据资源环境变量已更新")
+
+            self.start_background_task(
+                "切换当前内容版本",
+                worker,
+                on_success=on_success,
+                on_error=lambda message, detail: self.show_task_error("失败", message, detail),
+            )
         except Exception as err:
             messagebox.showerror("失败", str(err))
 
@@ -4245,7 +4949,9 @@ class ControlCenter(tk.Tk):
         token = self.config_data.get("telemetry_stats_token", "").strip()
         if token:
             headers["X-Stats-Token"] = token
-        try:
+        def worker(reporter):
+            reporter.status("读取 telemetry 统计")
+            reporter.progress(phase="resolve", message="请求统计接口", mode="indeterminate")
             response = self.http_get(
                 f"{base}/api/telemetry-stats",
                 params=params,
@@ -4253,11 +4959,18 @@ class ControlCenter(tk.Tk):
                 timeout=30,
             )
             response.raise_for_status()
-            payload = response.json()
+            return response.json()
+
+        def on_success(payload):
             self.stats_text.delete("1.0", tk.END)
             self.stats_text.insert("1.0", json.dumps(payload, indent=2, ensure_ascii=False))
-        except Exception as err:
-            messagebox.showerror("统计获取失败", str(err))
+
+        self.start_background_task(
+            "获取统计 JSON",
+            worker,
+            on_success=on_success,
+            on_error=lambda message, detail: self.show_task_error("统计获取失败", message, detail),
+        )
 
     def open_stats_page(self):
         base = self.config_data.get("telemetry_base_url", "").rstrip("/")
@@ -4279,7 +4992,9 @@ class ControlCenter(tk.Tk):
             "apply": True,
             "reset_day_keys": False,
         }
-        try:
+        def worker(reporter):
+            reporter.status("执行 telemetry rebuild")
+            reporter.progress(phase="finalize", message="请求 rebuild 接口", mode="indeterminate")
             response = self.http_post(
                 f"{base}/api/telemetry-rebuild",
                 headers={"X-Rebuild-Token": token, "Content-Type": "application/json"},
@@ -4287,11 +5002,14 @@ class ControlCenter(tk.Tk):
                 timeout=60,
             )
             response.raise_for_status()
-            messagebox.showinfo(
-                "Rebuild 结果", json.dumps(response.json(), indent=2, ensure_ascii=False)
-            )
-        except Exception as err:
-            messagebox.showerror("Rebuild 失败", str(err))
+            return response.json()
+
+        self.start_background_task(
+            "执行 telemetry rebuild",
+            worker,
+            on_success=lambda payload: messagebox.showinfo("Rebuild 结果", json.dumps(payload, indent=2, ensure_ascii=False)),
+            on_error=lambda message, detail: self.show_task_error("Rebuild 失败", message, detail),
+        )
 
     def trigger_deploy_hook(self, silent=False):
         url = self.config_data.get("deploy_hook_url", "").strip()
@@ -4299,14 +5017,22 @@ class ControlCenter(tk.Tk):
             if not silent:
                 messagebox.showerror("缺少 deploy hook", "deploy_hook_url 未配置")
             return
-        try:
+        def worker(reporter):
+            reporter.status("触发 deploy hook")
+            reporter.progress(phase="finalize", message="请求 deploy hook", mode="indeterminate")
             response = self.http_post(url, timeout=30)
             response.raise_for_status()
+            return True
+
+        def on_success(_payload):
             if not silent:
                 messagebox.showinfo("完成", "已触发 Vercel redeploy")
-        except Exception as err:
+
+        def on_error(message, detail):
             if not silent:
-                messagebox.showerror("触发失败", str(err))
+                self.show_task_error("触发失败", message, detail)
+
+        self.start_background_task("触发 deploy hook", worker, on_success=on_success, on_error=on_error)
 
     def save_config(self):
         for key, var in self.config_vars.items():

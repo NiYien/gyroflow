@@ -10,9 +10,19 @@
   "lens_data_repo": "niyien-lens-data",
   "plugins_owner": "gyroflow",
   "plugins_repo": "gyroflow-plugins",
+  "pan123_client_id": "",
+  "pan123_client_secret": "",
+  "pan123_releases_root_id": "",
   "telemetry_base_url": "https://www.niyien.com",
   "telemetry_stats_token": "",
   "telemetry_rebuild_token": "",
   "deploy_hook_url": "",
-  "distribution_config_path": "distribution/niyien.toml"
+  "distribution_config_path": "distribution/niyien.toml",
+  "publish_defaults": {
+    "lens_data_tag": "",
+    "plugins_source_mode": "release",
+    "plugins_tag": "",
+    "plugins_artifact_name": "",
+    "sdk_base": "https://api.gyroflow.xyz/sdk/"
+  }
 }
