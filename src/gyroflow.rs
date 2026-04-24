@@ -89,7 +89,7 @@ fn entry() {
     let brand = gyroflow_core::distribution::config().brand.clone();
     let organization_name = QString::from(brand.organization_name.as_str());
     let organization_domain = QString::from(brand.organization_domain.as_str());
-    let application_name = QString::from(brand.display_name.as_str());
+    let application_name = QString::from(brand.application_name.as_str());
     cpp!(unsafe [organization_name as "QString", organization_domain as "QString", application_name as "QString"] {
         qApp->setOrganizationName(organization_name);
         qApp->setOrganizationDomain(organization_domain);
@@ -235,7 +235,16 @@ fn entry() {
     engine.set_property("screenSize".into(), QVariant::from(screen_size_inch));
     engine.set_property("dpiScale".into(), QVariant::from(dpi));
     engine.set_property("version".into(), QString::from(util::get_version()).into());
-    engine.set_property("brandDisplayName".into(), QString::from(gyroflow_core::distribution::config().brand.display_name.as_str()).into());
+    engine.set_property(
+        "brandDisplayName".into(),
+        QString::from(
+            gyroflow_core::distribution::config()
+                .brand
+                .display_name
+                .as_str(),
+        )
+        .into(),
+    );
     engine.set_property("graphics_api".into(), util::qt_graphics_api().into());
     engine.set_object_property("main_controller".into(), ctlpinned);
     engine.set_object_property("ui_tools".into(), ui_tools_pinned);

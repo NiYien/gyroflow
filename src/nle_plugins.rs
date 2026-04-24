@@ -1,10 +1,51 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
+use semver::Version;
+use serde::Serialize;
+use std::cmp::Ordering;
 use std::io::{self, Cursor};
 use std::path::Path;
 use std::process::Command;
 use zip_extensions::zip_archive_extensions::ZipArchiveExtensions;
+
+const DEFAULT_NIGHTLY_PLUGINS_BASE: &str =
+    "https://nightly.link/gyroflow/gyroflow-plugins/workflows/release/main";
+const DEFAULT_RELEASE_PLUGINS_BASE: &str =
+    "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download";
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct LatestPluginInfo {
+    version: String,
+    source_ref: String,
+    source_tag: String,
+    source_base: String,
+    source_mode: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct InstalledPluginInfo {
+    version: String,
+    source_ref: String,
+    source_base: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize)]
+struct PluginStatus {
+    typ: String,
+    installed_version: String,
+    installed_source_ref: String,
+    installed_source_base: String,
+    latest_version: String,
+    latest_source_ref: String,
+    latest_source_tag: String,
+    latest_source_base: String,
+    latest_source_mode: String,
+    latest_label: String,
+    source_changed: bool,
+    update_available: bool,
+    is_latest: bool,
+}
 
 pub fn get_path(typ: &str) -> &'static str {
     if cfg!(target_os = "windows") {
@@ -26,10 +67,10 @@ pub fn get_path(typ: &str) -> &'static str {
 #[cfg(target_os = "windows")]
 fn query_file_version(path: &str) -> Option<String> {
     use windows::{
-        core::HSTRING,
         Win32::Storage::FileSystem::{
             GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
         },
+        core::HSTRING,
     };
     unsafe {
         let hpath = HSTRING::from(path);
@@ -203,15 +244,11 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     let nightly_base = custom_base
         .as_ref()
         .map(|s| format!("{s}/"))
-        .unwrap_or_else(|| {
-            "https://nightly.link/gyroflow/gyroflow-plugins/workflows/release/main/".to_owned()
-        });
+        .unwrap_or_else(|| format!("{DEFAULT_NIGHTLY_PLUGINS_BASE}/"));
     let release_base = custom_base
         .as_ref()
         .map(|s| format!("{s}/"))
-        .unwrap_or_else(|| {
-            "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download/".to_owned()
-        });
+        .unwrap_or_else(|| format!("{DEFAULT_RELEASE_PLUGINS_BASE}/"));
     let (download_url, extract_path) = match typ {
         "openfx" => {
             if cfg!(target_os = "windows") {
@@ -310,7 +347,9 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
             copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ)?;
         }
     }
-    detect(typ)
+    let detected = detect(typ)?;
+    remember_installed_plugin(typ, &detected, &latest_plugin_info());
+    Ok(detected)
 }
 
 fn is_nightly() -> bool {
@@ -356,46 +395,40 @@ pub fn is_nle_installed(typ: &str) -> bool {
 }
 
 pub fn latest_version() -> Option<String> {
-    if !gyroflow_core::settings::get_str("pluginsBase", "").is_empty() {
-        return Some("manifest".to_owned());
-    }
-    if is_nightly() {
-        let body = ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/actions/runs")
-            .call()
-            .ok()?
-            .into_body()
-            .read_to_string()
-            .ok()?;
-        let v: serde_json::Value = serde_json::from_str(&body).ok()?;
-        for obj in v.get("workflow_runs")?.as_array()? {
-            let obj = obj.as_object()?;
-            if obj.get("conclusion").and_then(|x| x.as_str()) == Some("success") {
-                return Some(format!("{}", obj.get("run_number")?.as_u64()?));
-            }
-        }
+    let info = latest_plugin_info();
+    (!info.version.is_empty()).then_some(info.version)
+}
+
+pub fn status_json(typ: &str) -> io::Result<String> {
+    let installed_version = detect(typ)?;
+    let installed = load_installed_plugin_info(typ, &installed_version);
+    let latest = latest_plugin_info();
+    let source_changed = source_changed(&installed, &latest);
+    let version_cmp = compare_plugin_versions(&latest.version, &installed.version);
+    let update_available = if installed.version.is_empty() {
+        true
+    } else if source_changed {
+        true
     } else {
-        let body = ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/releases")
-            .call()
-            .ok()?
-            .into_body()
-            .read_to_string()
-            .ok()?;
-        let v: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
-        for obj in v {
-            let obj = obj.as_object()?;
-            if obj.get("draft").and_then(|x| x.as_bool()) == Some(false)
-                && obj.get("prerelease").and_then(|x| x.as_bool()) == Some(false)
-            {
-                return Some(
-                    obj.get("tag_name")?
-                        .as_str()?
-                        .trim_start_matches('v')
-                        .to_owned(),
-                );
-            }
-        }
-    }
-    None
+        version_cmp == Ordering::Greater
+    };
+    let latest_label = latest_display_label(&latest);
+    let payload = PluginStatus {
+        typ: typ.to_owned(),
+        installed_version: installed.version,
+        installed_source_ref: installed.source_ref,
+        installed_source_base: installed.source_base,
+        latest_version: latest.version,
+        latest_source_ref: latest.source_ref,
+        latest_source_tag: latest.source_tag,
+        latest_source_base: latest.source_base,
+        latest_source_mode: latest.source_mode,
+        latest_label,
+        source_changed,
+        update_available,
+        is_latest: !update_available && !installed_version.is_empty(),
+    };
+    serde_json::to_string(&payload).map_err(|err| io::Error::new(io::ErrorKind::Other, err))
 }
 
 pub fn detect(typ: &str) -> io::Result<String> {
@@ -423,5 +456,300 @@ pub fn detect(typ: &str) -> io::Result<String> {
         } else {
             Ok(String::new())
         }
+    }
+}
+
+fn latest_plugin_info() -> LatestPluginInfo {
+    let source_base = crate::distribution::plugin_source_base()
+        .trim()
+        .trim_end_matches('/')
+        .to_owned();
+    if !source_base.is_empty() {
+        let source_ref = crate::distribution::plugin_source_ref();
+        let source_tag = crate::distribution::plugin_source_tag();
+        let source_mode = crate::distribution::plugin_source_mode();
+        return LatestPluginInfo {
+            version: latest_version_token(&source_ref, &source_tag, &source_base),
+            source_ref,
+            source_tag,
+            source_base,
+            source_mode,
+        };
+    }
+
+    if is_nightly() {
+        let body =
+            match ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/actions/runs")
+                .call()
+                .ok()
+                .and_then(|response| response.into_body().read_to_string().ok())
+            {
+                Some(body) => body,
+                None => return LatestPluginInfo::default(),
+            };
+        let value: serde_json::Value = match serde_json::from_str(&body) {
+            Ok(value) => value,
+            Err(_) => return LatestPluginInfo::default(),
+        };
+        if let Some(workflow_runs) = value.get("workflow_runs").and_then(|item| item.as_array()) {
+            for obj in workflow_runs {
+                let Some(obj) = obj.as_object() else { continue };
+                if obj.get("conclusion").and_then(|x| x.as_str()) != Some("success") {
+                    continue;
+                }
+                let Some(run_number) = obj.get("run_number").and_then(|x| x.as_u64()) else {
+                    continue;
+                };
+                let source_ref = format!("run-{run_number}");
+                return LatestPluginInfo {
+                    version: source_ref.clone(),
+                    source_ref: source_ref.clone(),
+                    source_tag: source_ref,
+                    source_base: DEFAULT_NIGHTLY_PLUGINS_BASE.to_owned(),
+                    source_mode: "nightly".to_owned(),
+                };
+            }
+        }
+        return LatestPluginInfo::default();
+    }
+
+    let body = match ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/releases")
+        .call()
+        .ok()
+        .and_then(|response| response.into_body().read_to_string().ok())
+    {
+        Some(body) => body,
+        None => return LatestPluginInfo::default(),
+    };
+    let releases: Vec<serde_json::Value> = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => return LatestPluginInfo::default(),
+    };
+    for obj in releases {
+        let Some(obj) = obj.as_object() else { continue };
+        if obj.get("draft").and_then(|x| x.as_bool()) != Some(false)
+            || obj.get("prerelease").and_then(|x| x.as_bool()) != Some(false)
+        {
+            continue;
+        }
+        let Some(tag_name) = obj.get("tag_name").and_then(|x| x.as_str()) else {
+            continue;
+        };
+        let source_ref = tag_name.trim().to_owned();
+        return LatestPluginInfo {
+            version: source_ref.trim_start_matches('v').to_owned(),
+            source_ref: source_ref.clone(),
+            source_tag: source_ref,
+            source_base: DEFAULT_RELEASE_PLUGINS_BASE.to_owned(),
+            source_mode: "release".to_owned(),
+        };
+    }
+    LatestPluginInfo::default()
+}
+
+fn latest_version_token(source_ref: &str, source_tag: &str, source_base: &str) -> String {
+    let trimmed_ref = source_ref.trim();
+    if !trimmed_ref.is_empty() {
+        return trimmed_ref.to_owned();
+    }
+    let trimmed_tag = source_tag.trim();
+    if !trimmed_tag.is_empty() {
+        return trimmed_tag.to_owned();
+    }
+    if !source_base.trim().is_empty() {
+        return "manifest".to_owned();
+    }
+    String::new()
+}
+
+fn latest_display_label(info: &LatestPluginInfo) -> String {
+    if !info.source_tag.trim().is_empty() {
+        return info.source_tag.trim().to_owned();
+    }
+    if !info.source_ref.trim().is_empty() {
+        return info.source_ref.trim().to_owned();
+    }
+    info.version.trim().to_owned()
+}
+
+fn load_installed_plugin_info(typ: &str, installed_version: &str) -> InstalledPluginInfo {
+    InstalledPluginInfo {
+        version: installed_version.trim().to_owned(),
+        source_ref: gyroflow_core::settings::get_str(&installed_source_ref_key(typ), ""),
+        source_base: gyroflow_core::settings::get_str(&installed_source_base_key(typ), ""),
+    }
+}
+
+fn remember_installed_plugin(typ: &str, installed_version: &str, latest: &LatestPluginInfo) {
+    gyroflow_core::settings::set(
+        &installed_source_ref_key(typ),
+        latest.source_ref.trim().to_owned().into(),
+    );
+    gyroflow_core::settings::set(
+        &installed_source_base_key(typ),
+        latest.source_base.trim().to_owned().into(),
+    );
+    gyroflow_core::settings::set(
+        &installed_version_key(typ),
+        installed_version.trim().to_owned().into(),
+    );
+}
+
+fn installed_source_ref_key(typ: &str) -> String {
+    format!("nlePluginInstalledSourceRef_{typ}")
+}
+
+fn installed_source_base_key(typ: &str) -> String {
+    format!("nlePluginInstalledSourceBase_{typ}")
+}
+
+fn installed_version_key(typ: &str) -> String {
+    format!("nlePluginInstalledVersion_{typ}")
+}
+
+fn normalize_source_base(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_owned()
+}
+
+fn source_changed(installed: &InstalledPluginInfo, latest: &LatestPluginInfo) -> bool {
+    let latest_base = normalize_source_base(&latest.source_base);
+    if latest_base.is_empty() {
+        return false;
+    }
+    let installed_base = normalize_source_base(&installed.source_base);
+    if installed_base != latest_base {
+        return true;
+    }
+    let latest_ref = latest.source_ref.trim();
+    if latest_ref.is_empty() {
+        return false;
+    }
+    let installed_ref = installed.source_ref.trim();
+    installed_ref.is_empty() || installed_ref != latest_ref
+}
+
+fn compare_plugin_versions(latest: &str, installed: &str) -> Ordering {
+    let latest = latest.trim();
+    let installed = installed.trim();
+    if latest.is_empty() || installed.is_empty() {
+        return Ordering::Equal;
+    }
+    if latest.eq_ignore_ascii_case(installed) {
+        return Ordering::Equal;
+    }
+    if let (Ok(latest), Ok(installed)) = (latest.parse::<u64>(), installed.parse::<u64>()) {
+        return latest.cmp(&installed);
+    }
+    if let (Some(latest), Some(installed)) = (
+        parse_numeric_dotted_version(latest),
+        parse_numeric_dotted_version(installed),
+    ) {
+        return latest.cmp(&installed);
+    }
+
+    let latest_semver = parse_semver(latest);
+    let installed_semver = parse_semver(installed);
+    match (latest_semver, installed_semver) {
+        (Some(latest), Some(installed)) => latest.cmp(&installed),
+        _ => Ordering::Equal,
+    }
+}
+
+fn parse_numeric_dotted_version(value: &str) -> Option<Vec<u64>> {
+    let trimmed = value.trim().trim_start_matches('v');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for part in trimmed.split('.') {
+        if part.is_empty() || !part.chars().all(|ch| ch.is_ascii_digit()) {
+            return None;
+        }
+        parts.push(part.parse::<u64>().ok()?);
+    }
+    while parts.len() > 1 && matches!(parts.last(), Some(&0)) {
+        parts.pop();
+    }
+    Some(parts)
+}
+
+fn parse_semver(value: &str) -> Option<Version> {
+    let trimmed = value.trim().trim_start_matches('v');
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(version) = Version::parse(trimmed) {
+        return Some(version);
+    }
+    if trimmed.matches('.').count() == 3 && trimmed.ends_with(".0") {
+        return Version::parse(trimmed.trim_end_matches(".0")).ok();
+    }
+    Version::parse(&format!("{trimmed}.0")).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compare_semver_versions() {
+        assert_eq!(compare_plugin_versions("1.6.3", "1.6.2"), Ordering::Greater);
+        assert_eq!(
+            compare_plugin_versions("v1.6.3", "1.6.3.0"),
+            Ordering::Equal
+        );
+        assert_eq!(compare_plugin_versions("1.6.2", "1.6.3"), Ordering::Less);
+    }
+
+    #[test]
+    fn compare_numeric_run_versions() {
+        assert_eq!(compare_plugin_versions("248", "247"), Ordering::Greater);
+        assert_eq!(compare_plugin_versions("247", "247"), Ordering::Equal);
+    }
+
+    #[test]
+    fn compare_four_part_versions() {
+        assert_eq!(
+            compare_plugin_versions("2.1.1.107", "2.1.1.106"),
+            Ordering::Greater
+        );
+        assert_eq!(compare_plugin_versions("2.1.1.0", "2.1.1"), Ordering::Equal);
+    }
+
+    #[test]
+    fn source_change_forces_update() {
+        let installed = InstalledPluginInfo {
+            version: "9.9.9".to_owned(),
+            source_ref: String::new(),
+            source_base: String::new(),
+        };
+        let latest = LatestPluginInfo {
+            version: "1.0.0".to_owned(),
+            source_ref: "v1.0.0".to_owned(),
+            source_tag: "v1.0.0".to_owned(),
+            source_base: "https://github.com/NiYien/gyroflow-plugins/releases/latest/download"
+                .to_owned(),
+            source_mode: "release".to_owned(),
+        };
+        assert!(source_changed(&installed, &latest));
+    }
+
+    #[test]
+    fn same_source_and_ref_is_not_source_change() {
+        let installed = InstalledPluginInfo {
+            version: "1.0.0".to_owned(),
+            source_ref: "v1.0.0".to_owned(),
+            source_base: "https://github.com/NiYien/gyroflow-plugins/releases/latest/download/"
+                .to_owned(),
+        };
+        let latest = LatestPluginInfo {
+            version: "1.0.0".to_owned(),
+            source_ref: "v1.0.0".to_owned(),
+            source_tag: "v1.0.0".to_owned(),
+            source_base: "https://github.com/NiYien/gyroflow-plugins/releases/latest/download"
+                .to_owned(),
+            source_mode: "release".to_owned(),
+        };
+        assert!(!source_changed(&installed, &latest));
     }
 }

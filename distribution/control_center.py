@@ -37,6 +37,7 @@ PLUGINS_SOURCE_MODE_VALUES = ("release", "artifact")
 DEFAULT_APP_SOURCE_MODE = "release"
 APP_SOURCE_MODE_VALUES = ("release", "artifact")
 APP_BUILD_WORKFLOW_FILE = "release.yml"
+APP_BUILD_WORKFLOW_NAME = "release"
 APP_ARTIFACT_RETENTION_DAYS = 90
 DEFAULT_NIGHTLY_LINK_BASE = "https://nightly.link"
 DEFAULT_NETWORK_PROXY = "127.0.0.1:6063"
@@ -905,7 +906,6 @@ class ControlCenter(tk.Tk):
         self.task_panel = panel
         self.task_title_var = tk.StringVar(value="后台任务：空闲")
         self.task_meta_var = tk.StringVar(value="等待操作")
-        self.task_log_var = tk.StringVar(value="暂无后台日志")
         tk.Label(
             panel,
             textvariable=self.task_title_var,
@@ -925,16 +925,25 @@ class ControlCenter(tk.Tk):
         ).pack(fill="x", pady=(4, 8))
         self.task_progress = ttk.Progressbar(panel, mode="determinate", maximum=100, value=0)
         self.task_progress.pack(fill="x")
-        tk.Label(
+        self.task_log_text = scrolledtext.ScrolledText(
             panel,
-            textvariable=self.task_log_var,
+            height=7,
+            wrap="word",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=1,
+            highlightbackground=self.palette["line"],
+            highlightcolor=self.palette["primary"],
             bg=self.palette["surface"],
             fg=self.palette["muted"],
+            insertbackground=self.palette["text"],
+            padx=8,
+            pady=8,
             font=self.fonts["subtle"],
-            justify="left",
-            anchor="w",
-            wraplength=1200,
-        ).pack(fill="x", pady=(8, 0))
+        )
+        self.task_log_text.pack(fill="x", pady=(8, 0))
+        self.task_log_text.configure(state="disabled")
+        self.register_text_widget(self.task_log_text, 7)
 
     def default_publish_defaults(self) -> dict:
         payload = self.config_data.get("publish_defaults")
@@ -969,17 +978,70 @@ class ControlCenter(tk.Tk):
         self._task_logs = []
         self.task_title_var.set(f"后台任务：{title}")
         self.task_meta_var.set("准备开始")
-        self.task_log_var.set("暂无后台日志")
         self.task_progress.stop()
         self.task_progress.configure(mode="determinate", maximum=100, value=0)
+        if hasattr(self, "task_log_text"):
+            self.task_log_text.configure(state="normal")
+            self.task_log_text.delete("1.0", tk.END)
+            self.task_log_text.insert(tk.END, "[系统] 等待后台日志...\n")
+            self.task_log_text.configure(state="disabled")
 
     def append_task_log(self, line: str):
         message = str(line or "").strip()
         if not message:
             return
-        self._task_logs.append(message)
-        self._task_logs = self._task_logs[-4:]
-        self.task_log_var.set("\n".join(self._task_logs))
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        entry = f"[{timestamp}] {message}"
+        self._task_logs.append(entry)
+        self._task_logs = self._task_logs[-200:]
+        if hasattr(self, "task_log_text"):
+            self.task_log_text.configure(state="normal")
+            self.task_log_text.delete("1.0", tk.END)
+            self.task_log_text.insert(tk.END, "\n".join(self._task_logs) + "\n")
+            self.task_log_text.see(tk.END)
+            self.task_log_text.configure(state="disabled")
+
+    def format_task_progress_text(self, event: dict) -> str:
+        phase_names = {
+            "resolve": "准备",
+            "download": "下载",
+            "extract": "解包",
+            "upload": "上传",
+            "finalize": "收尾",
+        }
+        phase = phase_names.get(str(event.get("phase", "")).strip(), str(event.get("phase", "")).strip())
+        label = str(event.get("label", "")).strip()
+        message = str(event.get("message", "")).strip()
+        current = event.get("current")
+        total = event.get("total")
+
+        parts = []
+        if phase:
+            parts.append(f"阶段：{phase}")
+        if label:
+            parts.append(f"目标：{label}")
+        if message:
+            parts.append(f"说明：{message}")
+        if current is not None and total is not None:
+            try:
+                if int(total) > 0:
+                    parts.append(f"进度：{int(current)}/{int(total)}")
+            except Exception:
+                pass
+        return "  |  ".join(parts) if parts else "处理中"
+
+    def finish_task_progress(self, success: bool | None = None):
+        self.task_progress.stop()
+        self.task_progress.configure(mode="determinate", maximum=100)
+        if success is True:
+            self.task_progress.configure(value=100)
+            self.task_meta_var.set("已完成，等待下一次操作")
+        elif success is False:
+            self.task_progress.configure(value=0)
+            self.task_meta_var.set("执行失败，请查看下方日志")
+        else:
+            self.task_progress.configure(value=0)
+            self.task_meta_var.set("等待操作")
 
     def set_busy_state(self, busy: bool):
         for widget, original_state in self.busy_widgets:
@@ -1043,11 +1105,13 @@ class ControlCenter(tk.Tk):
             elif event_type == "success":
                 callback = self._active_task_success
                 self.task_title_var.set("后台任务：完成")
+                self.finish_task_progress(True)
                 if callable(callback):
                     callback(event.get("result"))
             elif event_type == "error":
                 callback = self._active_task_error
                 self.task_title_var.set("后台任务：失败")
+                self.finish_task_progress(False)
                 self.append_task_log(str(event.get("message", "")))
                 detail = str(event.get("detail", "")).strip()
                 if callable(callback):
@@ -1055,6 +1119,8 @@ class ControlCenter(tk.Tk):
                 else:
                     messagebox.showerror("任务失败", str(event.get("message", "")))
             elif event_type == "finished":
+                if self.task_title_var.get().strip() == "后台任务：空闲":
+                    self.finish_task_progress(None)
                 self._active_task_token = ""
                 self._active_task_success = None
                 self._active_task_error = None
@@ -1069,22 +1135,21 @@ class ControlCenter(tk.Tk):
 
     def update_task_progress(self, event: dict):
         phase = str(event.get("phase", "")).strip()
-        label = str(event.get("label", "")).strip()
-        message = str(event.get("message", "")).strip()
         current = event.get("current")
         total = event.get("total")
         mode = str(event.get("mode", "")).strip()
-        parts = [item for item in [phase, label, message] if item]
         if current is not None and total is not None and int(total) > 0:
             self.task_progress.stop()
             self.task_progress.configure(mode="determinate", maximum=int(total), value=int(current))
-            parts.append(f"{int(current)}/{int(total)}")
         else:
             if mode == "indeterminate" or total in (None, 0):
                 self.task_progress.configure(mode="indeterminate")
                 self.task_progress.start(10)
-        if parts:
-            self.task_meta_var.set(" / ".join(parts))
+        self.task_meta_var.set(self.format_task_progress_text(event))
+        if phase:
+            log_text = self.format_task_progress_text(event)
+            if not self._task_logs or self._task_logs[-1].split("] ", 1)[-1] != log_text:
+                self.append_task_log(log_text)
 
 
     def load_distribution_config(self):
@@ -2281,9 +2346,11 @@ class ControlCenter(tk.Tk):
 
         form = ttk.Frame(overview_body)
         form.pack(fill="x")
+        form.grid_columnconfigure(1, weight=1)
         self.app_version_var = tk.StringVar()
         self.app_tag_var = tk.StringVar()
         self.app_changelog_var = tk.StringVar()
+        self.app_build_label_var = tk.StringVar()
         self.app_recommended_var = tk.BooleanVar(value=True)
         ttk.Label(form, text="版本号").grid(row=0, column=0, sticky="w", pady=4, padx=(0, 8))
         self.app_version_entry = ttk.Entry(form, textvariable=self.app_version_var, width=40)
@@ -2298,7 +2365,26 @@ class ControlCenter(tk.Tk):
         self.app_changelog_entry = ttk.Entry(form, textvariable=self.app_changelog_var, width=64)
         self.app_changelog_entry.grid(row=2, column=1, sticky="we", pady=4)
         self.register_entry(self.app_changelog_entry, 64)
-        ttk.Checkbutton(form, text="推荐版本", variable=self.app_recommended_var).grid(row=3, column=1, sticky="w", pady=8)
+        ttk.Label(form, text="Action 名称").grid(row=3, column=0, sticky="w", pady=4, padx=(0, 8))
+        build_label_row = ttk.Frame(form)
+        build_label_row.grid(row=3, column=1, sticky="we", pady=4)
+        build_label_row.grid_columnconfigure(0, weight=1)
+        self.app_build_label_entry = self.register_busy_widget(
+            ttk.Entry(build_label_row, textvariable=self.app_build_label_var, width=64)
+        )
+        self.app_build_label_entry.grid(row=0, column=0, sticky="we")
+        self.register_entry(self.app_build_label_entry, 64)
+        self.refresh_build_label_button = self.register_busy_widget(
+            ttk.Button(
+                build_label_row,
+                text="取最后提交",
+                command=lambda: self.refresh_action_build_label_default(force=True),
+                style="Secondary.TButton",
+            )
+        )
+        self.refresh_build_label_button.grid(row=0, column=1, padx=(8, 0))
+        ttk.Checkbutton(form, text="推荐版本", variable=self.app_recommended_var).grid(row=4, column=1, sticky="w", pady=8)
+        self.refresh_action_build_label_default(force=True)
         tag_tools = tk.Frame(overview_body, bg=self.palette["surface"])
         tag_tools.pack(fill="x", pady=(12, 0))
         self.create_tag_button = self.register_busy_widget(
@@ -2314,6 +2400,7 @@ class ControlCenter(tk.Tk):
             "无 Tag 构建提示",
             [
                 "artifact 模式下，内部构建ID会自动按 run-<run_id> 生成。",
+                "Action 名称可手动填写，默认取当前分支最后一次 commit 标题。",
                 f"这类版本默认按临时版本处理，GitHub artifact 最长保留 {APP_ARTIFACT_RETENTION_DAYS} 天。",
             ],
             tone="orange",
@@ -3268,7 +3355,7 @@ class ControlCenter(tk.Tk):
                     per_page=20,
                 )
                 if not runs:
-                    raise RuntimeError(f"{candidate_owner}/{candidate_repo} 的 {branch} 分支没有 workflow runs")
+                    raise RuntimeError(f"{candidate_owner}/{candidate_repo} 的 {branch} 分支没有 {APP_BUILD_WORKFLOW_NAME} workflow runs")
 
                 rejected: list[str] = []
                 for run in runs:
@@ -3417,6 +3504,35 @@ class ControlCenter(tk.Tk):
         except Exception:
             return ""
 
+    def get_head_commit_subject(self) -> str:
+        try:
+            return self.run_git("-c", "i18n.logOutputEncoding=utf-8", "log", "-1", "--pretty=%s").stdout.strip()
+        except Exception:
+            return ""
+
+    def default_action_build_label(self) -> str:
+        subject = " ".join(self.get_head_commit_subject().split()).strip()
+        if subject:
+            return subject[:120]
+        branch = self.get_current_branch().strip()
+        if branch:
+            return f"{branch} manual build"
+        return "manual build"
+
+    def normalize_action_build_label(self, value: str) -> str:
+        label = " ".join(str(value or "").split()).strip()
+        if label:
+            return label[:120]
+        return self.default_action_build_label()
+
+    def refresh_action_build_label_default(self, force: bool = False):
+        if not hasattr(self, "app_build_label_var"):
+            return
+        current = self.get_string_var_value("app_build_label_var")
+        if current and not force:
+            return
+        self.app_build_label_var.set(self.default_action_build_label())
+
     def get_remote_branch_sha(self, branch: str) -> str:
         if not branch:
             return ""
@@ -3474,6 +3590,7 @@ class ControlCenter(tk.Tk):
         branch = entry.get("branch", "") or "-"
         status = entry.get("status", "") or "-"
         conclusion = entry.get("conclusion", "") or "-"
+        title = str(entry.get("title", "")).strip() or "-"
         availability = []
         if entry.get("has_windows"):
             availability.append("win")
@@ -3481,8 +3598,9 @@ class ControlCenter(tk.Tk):
             availability.append("mac")
         artifacts = "/".join(availability) if availability else "-"
         state = status if status != "completed" else conclusion
-        run_url = entry.get("html_url", "") or "-"
-        return f"#{run_id} | {branch} | {state} | {artifacts} | {run_url}"
+        if len(title) > 52:
+            title = f"{title[:49]}..."
+        return f"#{run_id} | {branch} | {state} | {artifacts} | {title}"
 
     def update_action_build_link(self, entry: dict | None = None):
         url = str((entry or {}).get("html_url", "")).strip()
@@ -3531,7 +3649,7 @@ class ControlCenter(tk.Tk):
 
         def worker(reporter):
             reporter.status("读取 Action 构建列表")
-            reporter.progress(phase="resolve", message="读取 workflow runs", mode="indeterminate")
+            reporter.progress(phase="resolve", message=f"读取 {APP_BUILD_WORKFLOW_NAME} workflow runs", mode="indeterminate")
             runs = self.github().list_workflow_runs(
                 APP_BUILD_WORKFLOW_FILE,
                 event="workflow_dispatch",
@@ -3620,6 +3738,7 @@ class ControlCenter(tk.Tk):
             ]
             lines = [
                 f"构建：run-{entry.get('run_id')}",
+                f"名称：{entry.get('title') or '-'}",
                 f"状态：{entry.get('conclusion') or entry.get('status') or '-'}",
                 " / ".join(packages),
             ]
@@ -3687,19 +3806,22 @@ class ControlCenter(tk.Tk):
         if not local_head:
             messagebox.showerror("无法触发", "无法读取当前本地 HEAD")
             return
+        label = self.normalize_action_build_label(self.get_string_var_value("app_build_label_var"))
+        if hasattr(self, "app_build_label_var"):
+            self.app_build_label_var.set(label)
 
         lines = [
             f"仓库路径：{self.repo_workdir()}",
             f"当前分支：{branch}",
             f"远端：{self.git_remote_name()}",
-            "这个操作会触发 workflow_dispatch 编译，但不会创建 Tag。",
+            f"构建名称：{label}",
+            f"这个操作会触发 {APP_BUILD_WORKFLOW_NAME} workflow_dispatch 编译，但不会创建 Tag。",
         ]
         if not self.confirm_action("确认执行 Action 编译", lines):
             return
 
         def worker(reporter):
-            label = f"control-center-{int(time.time())}"
-            reporter.status("触发 Action 编译")
+            reporter.status(f"触发 {APP_BUILD_WORKFLOW_NAME} 编译")
             reporter.progress(phase="resolve", label=branch, message="检查远端分支 HEAD", mode="indeterminate")
             remote_head = self.get_remote_branch_sha(branch).strip()
             if not remote_head:
@@ -3953,6 +4075,7 @@ class ControlCenter(tk.Tk):
         output_dir = repo_root / "_deployment" / "_publish_local" / payload["tag"]
         summary_path = output_dir / RELEASE_SUMMARY_ASSET_NAME
         error_log_path = output_dir / "publish_local_error.txt"
+        stdout_log_path = output_dir / "publish_local_stdout.log"
         output_dir.mkdir(parents=True, exist_ok=True)
         resource_values = self.collect_resource_source_values()
         command = [
@@ -3996,6 +4119,12 @@ class ControlCenter(tk.Tk):
         try:
             env = self.build_local_publish_env(payload)
             env["NIYIEN_PROGRESS_MODE"] = "jsonl"
+            env["PYTHONIOENCODING"] = "utf-8"
+            env["PYTHONUTF8"] = "1"
+            if reporter:
+                reporter.log(f"启动本地 publish_123：{payload['tag']}")
+                reporter.log(f"输出目录：{output_dir}")
+                reporter.log(f"完整日志：{stdout_log_path}")
             process = subprocess.Popen(
                 command,
                 cwd=repo_root,
@@ -4008,26 +4137,29 @@ class ControlCenter(tk.Tk):
                 bufsize=1,
             )
             stdout_handle = process.stdout
-            if stdout_handle is not None:
-                for raw_line in stdout_handle:
-                    line = raw_line.rstrip()
-                    if not line:
-                        continue
-                    output_lines.append(line)
-                    progress_event = self.parse_publish_progress_line(line)
-                    if progress_event:
+            with stdout_log_path.open("w", encoding="utf-8") as stdout_file:
+                if stdout_handle is not None:
+                    for raw_line in stdout_handle:
+                        line = raw_line.rstrip()
+                        if not line:
+                            continue
+                        stdout_file.write(line + "\n")
+                        stdout_file.flush()
+                        output_lines.append(line)
+                        progress_event = self.parse_publish_progress_line(line)
+                        if progress_event:
+                            if reporter:
+                                reporter.progress(
+                                    phase=str(progress_event.get("phase", "")).strip(),
+                                    label=str(progress_event.get("label", "")).strip(),
+                                    message=str(progress_event.get("message", "")).strip(),
+                                    current=progress_event.get("current"),
+                                    total=progress_event.get("total"),
+                                    mode=str(progress_event.get("mode", "")).strip(),
+                                )
+                            continue
                         if reporter:
-                            reporter.progress(
-                                phase=str(progress_event.get("phase", "")).strip(),
-                                label=str(progress_event.get("label", "")).strip(),
-                                message=str(progress_event.get("message", "")).strip(),
-                                current=progress_event.get("current"),
-                                total=progress_event.get("total"),
-                                mode=str(progress_event.get("mode", "")).strip(),
-                            )
-                        continue
-                    if reporter:
-                        reporter.log(line)
+                            reporter.log(line)
             return_code = process.wait()
 
             if return_code != 0:
@@ -4036,6 +4168,7 @@ class ControlCenter(tk.Tk):
                     [
                         "本地 publish_123 执行失败。",
                         f"输出目录：{output_dir}",
+                        f"完整日志：{stdout_log_path}",
                         detail,
                     ]
                 )
@@ -4046,12 +4179,15 @@ class ControlCenter(tk.Tk):
                     [
                         "本地 publish_123 已执行，但没有生成 release summary。",
                         f"期望文件：{summary_path}",
+                        f"完整日志：{stdout_log_path}",
                         "\n".join(output_lines[-12:]).strip() or "无额外输出",
                     ]
                 )
                 error_log_path.write_text(message, encoding="utf-8")
                 raise RuntimeError(message)
             error_log_path.unlink(missing_ok=True)
+            if reporter:
+                reporter.log(f"publish_123 完成，summary：{summary_path}")
             return json.loads(summary_path.read_text(encoding="utf-8"))
         except Exception as err:
             if not error_log_path.exists():
@@ -4450,6 +4586,12 @@ class ControlCenter(tk.Tk):
             entry["global_sdk_base"] = str(summary["global_sdk_base"]).strip()
         if summary.get("global_plugins_base"):
             entry["global_plugins_base"] = str(summary["global_plugins_base"]).strip()
+        if summary.get("plugins_source_mode"):
+            entry["plugins_source_mode"] = str(summary["plugins_source_mode"]).strip().lower()
+        if summary.get("plugins_source_ref"):
+            entry["plugins_source_ref"] = str(summary["plugins_source_ref"]).strip()
+        if summary.get("plugins_source_tag"):
+            entry["plugins_source_tag"] = str(summary["plugins_source_tag"]).strip()
         return entry
 
     def build_content_env_mapping_from_entry(self, entry: dict | None) -> dict:
@@ -4865,6 +5007,11 @@ class ControlCenter(tk.Tk):
             or self.current_envs.get("NIYIEN_CONTENT_RELEASE_TAG", "")
         )
         auto_source_mode = str((auto_entry or {}).get("app_source_mode", "release")).strip().lower()
+        plugin_source_mode = str((auto_entry or {}).get("plugins_source_mode", "release")).strip().lower()
+        if plugin_source_mode not in PLUGINS_SOURCE_MODE_VALUES:
+            plugin_source_mode = DEFAULT_PLUGINS_SOURCE_MODE
+        plugin_source_ref = str((auto_entry or {}).get("plugins_source_ref", "")).strip()
+        plugin_source_tag = str((auto_entry or {}).get("plugins_source_tag", "")).strip()
         sdk_base = self.get_preview_global_sdk_base(auto_entry)
         plugins_base = self.get_preview_global_plugins_base(auto_entry)
         preview = {
@@ -4923,9 +5070,12 @@ class ControlCenter(tk.Tk):
                 self.build_cn_download_url("content", content_tag, "plugins") + "/"
                 if is_cn and content_tag
                 else self.build_cn_download_url("content", content_tag, "plugins") + "/"
-                if auto_entry and auto_source_mode == "artifact" and content_tag
+                if auto_entry and plugin_source_mode == "artifact" and content_tag
                 else plugins_base
             ),
+            "plugins_source_mode": plugin_source_mode,
+            "plugins_source_ref": plugin_source_ref,
+            "plugins_source_tag": plugin_source_tag,
         }
         self.route_preview_text.delete("1.0", tk.END)
         self.route_preview_text.insert(

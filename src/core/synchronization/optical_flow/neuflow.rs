@@ -29,7 +29,9 @@ pub struct OFNeuFlowV2 {
     /// Cache of optical flow results, keyed by target timestamp.
     /// Prevents re-inference when cache_optical_flow() calls optical_flow_to() again
     /// after process_detected_frames() has already cleaned up the RGB frames.
-    matched_points: Arc<parking_lot::RwLock<std::collections::BTreeMap<i64, (Vec<(f32, f32)>, Vec<(f32, f32)>)>>>,
+    matched_points: Arc<
+        parking_lot::RwLock<std::collections::BTreeMap<i64, (Vec<(f32, f32)>, Vec<(f32, f32)>)>>,
+    >,
     used: Arc<AtomicU32>,
 }
 
@@ -119,7 +121,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 );
                 match self.get_or_preprocess() {
                     Ok(v) => v,
-                    Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+                    Err(e) => {
+                        log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS");
+                        return fallback_to_dis(self, next);
+                    }
                 }
             };
             let (chw1, _, _, _) = {
@@ -128,7 +133,10 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                 );
                 match next.get_or_preprocess() {
                     Ok(v) => v,
-                    Err(e) => { log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS"); return fallback_to_dis(self, next); }
+                    Err(e) => {
+                        log::warn!("NeuFlow preprocess failed: {e}, falling back to DIS");
+                        return fallback_to_dis(self, next);
+                    }
                 }
             };
 
@@ -175,29 +183,45 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                     }
                 }
                 _ => {
-                    log::warn!("Unknown NeuFlow backend: {}, falling back to DIS", self.backend);
+                    log::warn!(
+                        "Unknown NeuFlow backend: {}, falling back to DIS",
+                        self.backend
+                    );
                     return fallback_to_dis(self, next);
                 }
             };
 
             if let Some((ref from_pts, ref to_pts)) = result {
                 // Remove padding offset and scale back to original resolution
-                let from_scaled: Vec<(f32, f32)> = from_pts.iter()
-                    .filter(|(x, y)| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                let from_scaled: Vec<(f32, f32)> = from_pts
+                    .iter()
+                    .filter(|(x, y)| {
+                        *x >= pad_left
+                            && *x < pad_left + new_w
+                            && *y >= pad_top
+                            && *y < pad_top + new_h
+                    })
                     .map(|(x, y)| ((x - pad_left) / scale, (y - pad_top) / scale))
                     .collect();
-                let to_scaled: Vec<(f32, f32)> = to_pts.iter()
+                let to_scaled: Vec<(f32, f32)> = to_pts
+                    .iter()
                     .zip(from_pts.iter())
-                    .filter(|(_, (x, y))| *x >= pad_left && *x < pad_left + new_w && *y >= pad_top && *y < pad_top + new_h)
+                    .filter(|(_, (x, y))| {
+                        *x >= pad_left
+                            && *x < pad_left + new_w
+                            && *y >= pad_top
+                            && *y < pad_top + new_h
+                    })
                     .map(|((tx, ty), _)| ((tx - pad_left) / scale, (ty - pad_top) / scale))
                     .collect();
 
                 if from_scaled.len() >= 10 {
-                    unsafe { *self.features.get() = from_scaled.clone(); }
-                    self.matched_points.write().insert(
-                        next.timestamp_us,
-                        (from_scaled.clone(), to_scaled.clone()),
-                    );
+                    unsafe {
+                        *self.features.get() = from_scaled.clone();
+                    }
+                    self.matched_points
+                        .write()
+                        .insert(next.timestamp_us, (from_scaled.clone(), to_scaled.clone()));
                     self.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     next.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     return Some((from_scaled, to_scaled));
@@ -231,14 +255,23 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
 /// only the output-resolution pixels (640×480) instead of all source pixels.
 /// For a 960×540 source, this is ~60% fewer pixel operations.
 #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
-pub(super) fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride: usize) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
+pub(super) fn preprocess_frame_nv12(
+    nv12: &[u8],
+    width: u32,
+    height: u32,
+    stride: usize,
+) -> Result<(Vec<f32>, Vec<u8>, usize, usize), String> {
     let w = width as usize;
     let h = height as usize;
     let s = stride;
     let uv_start = s * h;
 
     if nv12.len() < uv_start + s * (h / 2) {
-        return Err(format!("NV12 buffer too small: {} < {}", nv12.len(), uv_start + s * (h / 2)));
+        return Err(format!(
+            "NV12 buffer too small: {} < {}",
+            nv12.len(),
+            uv_start + s * (h / 2)
+        ));
     }
 
     // ONNX model fixed at 432x768. Letterbox: fit within, maintain aspect ratio.
@@ -283,9 +316,9 @@ pub(super) fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride
             let w11 = fx * fy;
 
             let y_val = nv12[sy0 * s + sx0] as f32 * w00
-                      + nv12[sy0 * s + sx1] as f32 * w10
-                      + nv12[sy1 * s + sx0] as f32 * w01
-                      + nv12[sy1 * s + sx1] as f32 * w11;
+                + nv12[sy0 * s + sx1] as f32 * w10
+                + nv12[sy1 * s + sx0] as f32 * w01
+                + nv12[sy1 * s + sx1] as f32 * w11;
 
             // Nearest-neighbor UV from interleaved UV plane (half resolution)
             let uv_x = ((src_xf * 0.5) as usize).min(max_uv_x);
@@ -299,10 +332,10 @@ pub(super) fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride
             let b = (y_val + 1.772 * u_val).clamp(0.0, 255.0);
 
             let out_idx = out_y * target_w + out_x;
-            chw[out_idx] = r;               // R plane
-            chw[plane + out_idx] = g;        // G plane
-            chw[2 * plane + out_idx] = b;    // B plane
-            gray[out_idx] = r as u8;         // R channel as grayscale (matches original)
+            chw[out_idx] = r; // R plane
+            chw[plane + out_idx] = g; // G plane
+            chw[2 * plane + out_idx] = b; // B plane
+            gray[out_idx] = r as u8; // R channel as grayscale (matches original)
         }
     }
 
@@ -318,7 +351,12 @@ pub(super) fn preprocess_frame_nv12(nv12: &[u8], width: u32, height: u32, stride
 /// 3. Skip invalid flow (non-finite values, out-of-bounds destinations)
 /// 4. Return (from_pts, to_pts) where to = from + flow
 /// 5. RANSAC in estimate_pose handles foreground/background separation
-fn sample_from_dense_flow(flow_data: &[f32], gray: &[u8], width: u32, height: u32) -> OpticalFlowPair {
+fn sample_from_dense_flow(
+    flow_data: &[f32],
+    gray: &[u8],
+    width: u32,
+    height: u32,
+) -> OpticalFlowPair {
     let w = width as usize;
     let h = height as usize;
 
@@ -384,7 +422,9 @@ fn texture_variance(gray: &[u8], x: usize, y: usize, w: usize, h: usize, patch: 
             count += 1.0;
         }
     }
-    if count == 0.0 { return 0.0; }
+    if count == 0.0 {
+        return 0.0;
+    }
     let mean = sum / count;
     sum_sq / count - mean * mean
 }
@@ -399,8 +439,18 @@ fn fallback_to_dis(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> Optica
         return None;
     }
 
-    let gray1 = nv12_to_gray(&self_frame.nv12_frame, self_frame.width, self_frame.height, self_frame.stride);
-    let gray2 = nv12_to_gray(&next_frame.nv12_frame, next_frame.width, next_frame.height, next_frame.stride);
+    let gray1 = nv12_to_gray(
+        &self_frame.nv12_frame,
+        self_frame.width,
+        self_frame.height,
+        self_frame.stride,
+    );
+    let gray2 = nv12_to_gray(
+        &next_frame.nv12_frame,
+        next_frame.width,
+        next_frame.height,
+        next_frame.stride,
+    );
 
     let dis1 = OFOpenCVDis::detect_features(
         self_frame.timestamp_us,
@@ -418,8 +468,12 @@ fn fallback_to_dis(self_frame: &OFNeuFlowV2, next_frame: &OFNeuFlowV2) -> Optica
     let result = dis1.optical_flow_to(&OpticalFlowMethod::OFOpenCVDis(dis2));
 
     if result.is_some() {
-        self_frame.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        next_frame.used.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self_frame
+            .used
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        next_frame
+            .used
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
     result
@@ -430,7 +484,11 @@ fn nv12_to_gray(nv12: &[u8], width: u32, height: u32, stride: usize) -> image::G
     let w = width as usize;
     let h = height as usize;
     if nv12.len() < stride * h {
-        log::warn!("NeuFlow nv12_to_gray: buffer too small (expected {}, got {})", stride * h, nv12.len());
+        log::warn!(
+            "NeuFlow nv12_to_gray: buffer too small (expected {}, got {})",
+            stride * h,
+            nv12.len()
+        );
         return image::GrayImage::new(width, height);
     }
     let mut gray = image::GrayImage::new(width, height);
@@ -522,7 +580,9 @@ mod tests {
             flow[i * 2 + 1] = 0.5;
         }
         // Textured gray: alternating pattern to ensure variance > 3.0
-        let gray: Vec<u8> = (0..(w * h) as usize).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
+        let gray: Vec<u8> = (0..(w * h) as usize)
+            .map(|i| if i % 2 == 0 { 200 } else { 50 })
+            .collect();
         let result = sample_from_dense_flow(&flow, &gray, w, h);
         assert!(result.is_some());
         let (from_pts, to_pts) = result.unwrap();
@@ -563,8 +623,8 @@ mod tests {
         let n = (w * h) as usize;
         let mut flow_data = vec![0.0f32; 2 * n];
         for i in 0..n {
-            flow_data[i * 2]     = 10.0; // dx
-            flow_data[i * 2 + 1] = 5.0;  // dy
+            flow_data[i * 2] = 10.0; // dx
+            flow_data[i * 2 + 1] = 5.0; // dy
         }
         // Textured gray: alternating pattern to ensure variance > 3.0
         let gray: Vec<u8> = (0..n).map(|i| if i % 2 == 0 { 200 } else { 50 }).collect();
@@ -589,22 +649,25 @@ mod tests {
         let n = (w * h) as usize;
         let mut flow_data = vec![0.0f32; 2 * n];
         for i in 0..n {
-            flow_data[i * 2]     = 1.0;
+            flow_data[i * 2] = 1.0;
             flow_data[i * 2 + 1] = 1.0;
         }
         // Uniform gray: all same value → variance = 0
         let gray = vec![128u8; n];
         let result = sample_from_dense_flow(&flow_data, &gray, w, h);
-        assert!(result.is_none(), "uniform gray should produce no points (low texture)");
+        assert!(
+            result.is_none(),
+            "uniform gray should produce no points (low texture)"
+        );
     }
 
     #[test]
     fn test_rgb_to_gray() {
         // 3 pixels: pure R, pure G, pure B
         let rgb = vec![
-            255, 0, 0,   // Red
-            0, 255, 0,   // Green
-            0, 0, 255,   // Blue
+            255, 0, 0, // Red
+            0, 255, 0, // Green
+            0, 0, 255, // Blue
         ];
         let gray = rgb_to_gray(&rgb, 3, 1);
         assert_eq!(gray.width(), 3);
@@ -614,9 +677,18 @@ mod tests {
         let g_gray = gray.get_pixel(1, 0).0[0]; // G → 0.587*255 ≈ 149
         let b_gray = gray.get_pixel(2, 0).0[0]; // B → 0.114*255 ≈ 29
 
-        assert!((r_gray as i32 - 76).abs() <= 1, "Red channel gray: expected ~76, got {r_gray}");
-        assert!((g_gray as i32 - 149).abs() <= 1, "Green channel gray: expected ~149, got {g_gray}");
-        assert!((b_gray as i32 - 29).abs() <= 1, "Blue channel gray: expected ~29, got {b_gray}");
+        assert!(
+            (r_gray as i32 - 76).abs() <= 1,
+            "Red channel gray: expected ~76, got {r_gray}"
+        );
+        assert!(
+            (g_gray as i32 - 149).abs() <= 1,
+            "Green channel gray: expected ~149, got {g_gray}"
+        );
+        assert!(
+            (b_gray as i32 - 29).abs() <= 1,
+            "Blue channel gray: expected ~29, got {b_gray}"
+        );
     }
 
     #[test]

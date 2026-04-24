@@ -136,7 +136,10 @@ pub fn enter(seq: Option<u64>, phase: TracePhase) -> TraceContextGuard {
     let prev_seq = CURRENT_SEQ.with(|cell| cell.replace(seq));
     let prev_phase = CURRENT_PHASE.with(|cell| cell.replace(phase));
 
-    TraceContextGuard { prev_seq, prev_phase }
+    TraceContextGuard {
+        prev_seq,
+        prev_phase,
+    }
 }
 
 pub fn enter_context(ctx: TraceContext) -> TraceContextGuard {
@@ -241,8 +244,5 @@ pub fn take_frame(seq: u64) -> Option<FrameTrace> {
     if !enabled() {
         return None;
     }
-    traces()
-        .lock()
-        .expect("trace mutex poisoned")
-        .remove(&seq)
+    traces().lock().expect("trace mutex poisoned").remove(&seq)
 }

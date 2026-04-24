@@ -27,36 +27,10 @@ MenuItem {
         && window.videoArea
         && window.videoArea.queue
         && window.videoArea.queue.selectedCount > 0)
-    readonly property string scopeText: batchScope ? qsTr("Local") : qsTr("Global")
-    readonly property int usedLensGroupCount: {
-        let count = 0
-        for (let i = 0; i < statuses.length; ++i) {
-            if (statuses[i] && statuses[i].used)
-                count++
-        }
-        return count
-    }
-    readonly property bool hasManualEntries: {
-        for (let i = 0; i < configs.length; ++i) {
-            const config = configs[i] || defaultConfig(i)
-            if (hasManualFocusValue(config) || !!config.anamorphic_enabled || hasMixedState(config))
-                return true
-        }
-        return false
-    }
-    readonly property bool compactMode: {
-        if (usedLensGroupCount <= 0 || hasManualEntries)
-            return false
-        for (let i = 0; i < statuses.length; ++i) {
-            const status = statuses[i]
-            if (!status || !status.used)
-                continue
-            if (!status.has_auto_focus || status.has_missing_focus)
-                return false
-        }
-        return true
-    }
-    readonly property bool editorVisible: !compactMode || manualEditExpanded || hasManualEntries
+    // Editor (lens group selector + focal/anamorphic fields) is only shown when the
+    // global Manual edit toggle is on. When off, calibration follows telemetry auto
+    // path and the editing UI is irrelevant, so we hide it entirely.
+    readonly property bool editorVisible: !!controller.lens_group_manual_edit
 
     readonly property bool lightTheme: style === "light"
     readonly property color cardColor: root.lightTheme ? "#ffffff" : styleButtonColor
@@ -208,26 +182,26 @@ MenuItem {
     function lensGroupLabel(index: int): string {
         const status = statuses[index] || defaultStatus(index)
         const config = configs[index] || defaultConfig(index)
-        if (!status.used)
-            return "L" + (index + 1) + " - " + qsTr("Unused")
+        // Prefix a bullet for groups that were detected in the current telemetry —
+        // a lightweight visual cue without disabling the row.
+        const badge = status.used ? "● " : ""
         if (hasMixedState(config))
-            return "L" + (index + 1) + " - " + qsTr("Mixed")
+            return badge + "L" + (index + 1) + " - " + qsTr("Mixed")
         if (hasManualFocusValue(config))
-            return "L" + (index + 1) + " " + config.focal_length_mm.toFixed(1) + "mm"
+            return badge + "L" + (index + 1) + " " + config.focal_length_mm.toFixed(1) + "mm"
         if (status.has_auto_focus && status.auto_focus_length_mm > 0)
-            return "L" + (index + 1) + " " + status.auto_focus_length_mm.toFixed(1) + "mm"
+            return badge + "L" + (index + 1) + " " + status.auto_focus_length_mm.toFixed(1) + "mm"
         if (status.has_missing_focus)
-            return "L" + (index + 1) + " - " + qsTr("No focus")
+            return badge + "L" + (index + 1) + " - " + qsTr("No focus")
         return "L" + (index + 1)
     }
     function lensGroupOptions(): var {
         let result = []
         for (let i = 0; i < 6; ++i) {
-            const status = statuses[i] || defaultStatus(i)
             result.push({
                 value: i,
                 label: lensGroupLabel(i),
-                enabled: !!status.used
+                enabled: true
             })
         }
         return result
@@ -434,31 +408,25 @@ MenuItem {
                         wrapMode: Text.WordWrap
                     }
 
-                    BasicText {
-                        width: parent.width
-                        leftPadding: 0
-                        text: root.scopeText
-                        color: root.mutedTextColor
-                        font.bold: true
-                    }
-
-                    Row {
-                        visible: root.compactMode || root.manualEditExpanded
-                        spacing: 8 * dpiScale
-
-                        Button {
-                            text: root.manualEditExpanded ? qsTr("Auto detect") : qsTr("Manual edit")
-                            accent: true
-                            height: 30 * dpiScale
-                            leftPadding: 14 * dpiScale
-                            rightPadding: 14 * dpiScale
-                            onClicked: {
-                                if (root.manualEditExpanded) {
-                                    root.clearCurrentFocalLength()
-                                } else {
-                                    root.manualEditExpanded = true
-                                }
-                            }
+                    // Global "Manual edit" toggle for all 6 lens groups. Persists to
+                    // settings.json via controller.lens_group_manual_edit. When off, the
+                    // fields below stay editable but calibration still follows telemetry
+                    // (auto) for every group. When on, a group's focal length / anamorphic
+                    // override kicks in only for videos whose telemetry can't satisfy
+                    // auto by itself (see should_use_manual_config in Rust).
+                    CheckBox {
+                        id: manualEditSwitch
+                        text: qsTr("Manual edit")
+                        tooltip: qsTr("When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be > 5mm to take effect.")
+                        checked: controller.lens_group_manual_edit
+                        onCheckedChanged: {
+                            if (checked === controller.lens_group_manual_edit) return
+                            controller.lens_group_manual_edit = checked
+                            // Toggling the global gate must re-decide auto/manual for every
+                            // queued job too — the per-job render path reads the same
+                            // settings flag, but only when reapply is invoked.
+                            if (typeof render_queue !== "undefined" && render_queue.has_match_results())
+                                render_queue.reapply_lens_group_config()
                         }
                     }
                 }
@@ -481,7 +449,7 @@ MenuItem {
                         model: root.lensGroupOptions()
                         currentIndex: Math.max(0, Math.min(root.selectedLensIndex, model.length - 1))
                         onActivated: {
-                            if (!root.syncing && model[currentIndex] && model[currentIndex].enabled)
+                            if (!root.syncing)
                                 root.selectedLensIndex = currentIndex
                         }
                     }
@@ -502,11 +470,9 @@ MenuItem {
                         precision: 1
                         unit: qsTr("mm")
                         placeholderText: root.currentConfig().mixed_focal_length ? qsTr("Mixed") : ""
-                        // In batch mode the metadata-derived "used" flag may be false for every group
-                        // (videos without lens_index metadata), but the user still needs to set a
-                        // focal length manually for the selected queue jobs — so allow edits.
-                        enabled: root.batchScope || !!root.currentStatus().used
-                        opacity: enabled ? 1.0 : 0.6
+                        // All 6 lens groups are editable at all times. The per-group Manual
+                        // checkbox decides whether the value is actually applied.
+                        enabled: true
                         onValueChanged: {
                             if (root.syncing) return
                             root.updateCurrentConfig(config => {
@@ -519,10 +485,8 @@ MenuItem {
                 CheckBoxWithContent {
                     id: anamorphicBox
                     text: qsTr("Anamorphic lens")
-                    // Same rationale as focalLengthField: batch mode needs manual edits even when
-                    // no selected job has a metadata-derived "used" lens group yet.
-                    cb.enabled: root.batchScope || !!root.currentStatus().used
-                    cb.opacity: cb.enabled ? 1.0 : 0.6
+                    // Always editable — applied only when the group's Manual toggle is on.
+                    cb.enabled: true
                     cb.onCheckedChanged: {
                         if (root.syncing) return
                         root.updateCurrentConfig(config => {

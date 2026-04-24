@@ -43,12 +43,17 @@ fn ensure_ort_loaded() -> Result<(), String> {
         return Ok(());
     }
 
-    let dll_name = if cfg!(windows) { "onnxruntime.dll" }
-        else if cfg!(target_os = "macos") { "libonnxruntime.dylib" }
-        else { "libonnxruntime.so" };
+    let dll_name = if cfg!(windows) {
+        "onnxruntime.dll"
+    } else if cfg!(target_os = "macos") {
+        "libonnxruntime.dylib"
+    } else {
+        "libonnxruntime.so"
+    };
 
     let mut candidates: Vec<PathBuf> = vec![
-        std::env::current_exe().ok()
+        std::env::current_exe()
+            .ok()
             .and_then(|p| p.parent().map(|d| d.join(dll_name)))
             .unwrap_or_default(),
         PathBuf::from(format!("ext/{dll_name}")),
@@ -56,7 +61,10 @@ fn ensure_ort_loaded() -> Result<(), String> {
     ];
 
     if let Ok(output) = std::process::Command::new("python")
-        .args(["-c", "import onnxruntime; import os; print(os.path.dirname(onnxruntime.__file__))"])
+        .args([
+            "-c",
+            "import onnxruntime; import os; print(os.path.dirname(onnxruntime.__file__))",
+        ])
         .output()
     {
         if output.status.success() {
@@ -73,8 +81,13 @@ fn ensure_ort_loaded() -> Result<(), String> {
                 let dll_dir_str = dll_dir.to_string_lossy().to_string();
                 let current_path = std::env::var("PATH").unwrap_or_default();
                 if !current_path.contains(&dll_dir_str) {
-                    unsafe { std::env::set_var("PATH", format!("{dll_dir_str};{current_path}")); }
-                    log::info!("NeuFlow: added {} to PATH for CUDA provider DLLs", dll_dir_str);
+                    unsafe {
+                        std::env::set_var("PATH", format!("{dll_dir_str};{current_path}"));
+                    }
+                    log::info!(
+                        "NeuFlow: added {} to PATH for CUDA provider DLLs",
+                        dll_dir_str
+                    );
                 }
             }
 
@@ -93,9 +106,7 @@ fn ensure_ort_loaded() -> Result<(), String> {
 fn create_session(path: &std::path::Path) -> Result<Session, String> {
     Session::builder()
         .map_err(|e| format!("ORT session builder: {e}"))?
-        .with_execution_providers([
-            ort::ep::CUDA::default().build(),
-        ])
+        .with_execution_providers([ort::ep::CUDA::default().build()])
         .map_err(|e| format!("ORT execution providers: {e}"))?
         .with_intra_threads(2)
         .map_err(|e| format!("ORT intra threads: {e}"))?
@@ -107,10 +118,13 @@ fn create_session(path: &std::path::Path) -> Result<Session, String> {
 fn init_pool() -> Result<SessionPool, String> {
     ensure_ort_loaded()?;
 
-    let path = find_weight_file()
-        .ok_or_else(|| "NeuFlow ONNX model file not found".to_string())?;
+    let path = find_weight_file().ok_or_else(|| "NeuFlow ONNX model file not found".to_string())?;
 
-    log::info!("NeuFlow: loading {} ORT sessions in parallel from {} (CUDA requested)", SESSION_POOL_SIZE, path.display());
+    log::info!(
+        "NeuFlow: loading {} ORT sessions in parallel from {} (CUDA requested)",
+        SESSION_POOL_SIZE,
+        path.display()
+    );
 
     // Create all sessions in parallel. Session 0 also does CUDA warmup immediately.
     let handles: Vec<_> = (0..SESSION_POOL_SIZE)
@@ -139,7 +153,8 @@ fn init_pool() -> Result<SessionPool, String> {
     let mut sessions = Vec::with_capacity(SESSION_POOL_SIZE);
     for h in handles {
         sessions.push(Mutex::new(
-            h.join().unwrap_or_else(|_| Err("Thread panicked".to_string()))?
+            h.join()
+                .unwrap_or_else(|_| Err("Thread panicked".to_string()))?,
         ));
     }
 
@@ -159,7 +174,8 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
     if img0.len() != expected || img1.len() != expected {
         return Err(format!(
             "Input size mismatch: expected {expected}, got img0={}, img1={}",
-            img0.len(), img1.len()
+            img0.len(),
+            img1.len()
         ));
     }
 
@@ -173,20 +189,24 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
 
     // Create input tensor views (zero-copy over borrowed data)
     let shape = [1usize, 3, h, w];
-    let img0_ref = TensorRef::from_array_view((shape, img0))
-        .map_err(|e| format!("img0 tensor: {e}"))?;
-    let img1_ref = TensorRef::from_array_view((shape, img1))
-        .map_err(|e| format!("img1 tensor: {e}"))?;
+    let img0_ref =
+        TensorRef::from_array_view((shape, img0)).map_err(|e| format!("img0 tensor: {e}"))?;
+    let img1_ref =
+        TensorRef::from_array_view((shape, img1)).map_err(|e| format!("img1 tensor: {e}"))?;
 
-    let outputs = session.run(ort::inputs![
-        "img0" => img0_ref,
-        "img1" => img1_ref,
-    ]).map_err(|e| format!("ONNX inference failed: {e}"))?;
+    let outputs = session
+        .run(ort::inputs![
+            "img0" => img0_ref,
+            "img1" => img1_ref,
+        ])
+        .map_err(|e| format!("ONNX inference failed: {e}"))?;
 
     // Extract flow output: [1, 2, H, W]
-    let flow_value = outputs.get("flow")
+    let flow_value = outputs
+        .get("flow")
         .ok_or_else(|| "Missing 'flow' output".to_string())?;
-    let (flow_shape, flow_data) = flow_value.try_extract_tensor::<f32>()
+    let (flow_shape, flow_data) = flow_value
+        .try_extract_tensor::<f32>()
         .map_err(|e| format!("Extract flow: {e}"))?;
 
     if flow_shape.len() != 4 || flow_shape[0] != 1 || flow_shape[1] != 2 {
@@ -210,10 +230,17 @@ pub fn infer(img0: &[f32], img1: &[f32], h: usize, w: usize) -> Result<Vec<f32>,
 
 /// Find the NeuFlow v2 ONNX model file. Prefers FP32 432×768 (iter5), then legacy fallbacks.
 pub fn find_weight_file() -> Option<PathBuf> {
-    ["resources/neuflow_v2_fp32_432x768.onnx", "../resources/neuflow_v2_fp32_432x768.onnx",
-     "resources/neuflow_v2_mixed.onnx", "../resources/neuflow_v2_mixed.onnx",
-     "resources/neuflow_v2.onnx", "../resources/neuflow_v2.onnx"]
-        .iter().map(PathBuf::from).find(|p| p.exists())
+    [
+        "resources/neuflow_v2_fp32_432x768.onnx",
+        "../resources/neuflow_v2_fp32_432x768.onnx",
+        "resources/neuflow_v2_mixed.onnx",
+        "../resources/neuflow_v2_mixed.onnx",
+        "resources/neuflow_v2.onnx",
+        "../resources/neuflow_v2.onnx",
+    ]
+    .iter()
+    .map(PathBuf::from)
+    .find(|p| p.exists())
 }
 
 /// Check if NeuFlow v2 model is available.

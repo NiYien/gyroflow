@@ -101,14 +101,37 @@ impl StageStats {
 }
 
 static STATS: [StageStats; NUM_STAGES] = [
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(), StageStats::new(),
-    StageStats::new(), StageStats::new(), StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
+    StageStats::new(),
 ];
 
 pub struct StageGuard {
@@ -118,7 +141,10 @@ pub struct StageGuard {
 
 impl StageGuard {
     pub fn new(stage: Stage) -> Self {
-        Self { stage, start: Instant::now() }
+        Self {
+            stage,
+            start: Instant::now(),
+        }
     }
 }
 
@@ -136,7 +162,10 @@ pub fn record_ns(stage: Stage, ns: u64) {
     s.total_ns.fetch_add(ns, Ordering::Relaxed);
     let mut prev = s.max_ns.load(Ordering::Relaxed);
     while ns > prev {
-        match s.max_ns.compare_exchange_weak(prev, ns, Ordering::Relaxed, Ordering::Relaxed) {
+        match s
+            .max_ns
+            .compare_exchange_weak(prev, ns, Ordering::Relaxed, Ordering::Relaxed)
+        {
             Ok(_) => break,
             Err(p) => prev = p,
         }

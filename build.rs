@@ -7,6 +7,81 @@ use std::path::Path;
 use std::process::Command;
 use walkdir::WalkDir;
 
+#[derive(Debug, Clone)]
+struct NiyienVersionInfo {
+    canonical: String,
+    display: String,
+    numeric: String,
+}
+
+fn current_tag_version() -> Option<String> {
+    let reference = env::var("GITHUB_REF").ok()?;
+    let tag = reference.strip_prefix("refs/tags/")?.trim();
+    if tag.is_empty() {
+        return None;
+    }
+    Some(tag.trim_start_matches('v').to_owned())
+}
+
+fn numeric_core_version(version: &str) -> String {
+    let core = version.split(['-', '+']).next().unwrap_or(version).trim();
+    let mut parts = core
+        .split('.')
+        .filter_map(|part| {
+            let digits = part
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit())
+                .collect::<String>();
+            (!digits.is_empty()).then_some(digits)
+        })
+        .collect::<Vec<_>>();
+    while parts.len() < 3 {
+        parts.push("0".to_owned());
+    }
+    parts.truncate(3);
+    if parts.is_empty() {
+        "0.0.0".to_owned()
+    } else {
+        parts.join(".")
+    }
+}
+
+fn padded_run_number(run_number: u64) -> String {
+    if run_number < 1000 {
+        format!("{run_number:03}")
+    } else {
+        run_number.to_string()
+    }
+}
+
+fn niyien_version_info(base_version: &str, build_time: Option<&str>) -> NiyienVersionInfo {
+    if let Some(tag_version) = current_tag_version() {
+        return NiyienVersionInfo {
+            display: format!("{tag_version}(ni)"),
+            canonical: tag_version.clone(),
+            numeric: format!("{}.0", numeric_core_version(&tag_version)),
+        };
+    }
+
+    if let Ok(run_number) = env::var("GITHUB_RUN_NUMBER") {
+        let trimmed = run_number.trim();
+        if let Ok(run_number_num) = trimmed.parse::<u64>() {
+            return NiyienVersionInfo {
+                canonical: format!("{base_version}-0.ni.{run_number_num}"),
+                display: format!("{}(ni{})", base_version, padded_run_number(run_number_num)),
+                numeric: format!("{}.{}", numeric_core_version(base_version), run_number_num),
+            };
+        }
+    }
+
+    let dev_token = build_time.unwrap_or("1").trim();
+    NiyienVersionInfo {
+        canonical: format!("{base_version}-0.dev.{dev_token}"),
+        display: format!("{base_version}(dev{dev_token})"),
+        numeric: format!("{}.1", numeric_core_version(base_version)),
+    }
+}
+
 fn compile_qml(dir: &str, qt_include_path: &str, qt_library_path: &str) {
     let mut config = cc::Build::new();
     config.include(qt_include_path);
@@ -114,6 +189,30 @@ fn compile_qml(dir: &str, qt_include_path: &str, qt_library_path: &str) {
 }
 
 fn main() {
+    let build_time = std::time::SystemTime::now()
+        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+        .ok()
+        .map(|time| ((time.as_secs() - 1642516578) / 600).to_string());
+    let build_time_value = build_time.as_deref().unwrap_or("1");
+    let version_info = niyien_version_info(
+        &env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_owned()),
+        Some(build_time_value),
+    );
+
+    println!("cargo:rustc-env=BUILD_TIME={build_time_value}");
+    println!(
+        "cargo:rustc-env=NIYIEN_VERSION_CANONICAL={}",
+        version_info.canonical
+    );
+    println!(
+        "cargo:rustc-env=NIYIEN_VERSION_DISPLAY={}",
+        version_info.display
+    );
+    println!(
+        "cargo:rustc-env=NIYIEN_VERSION_FILE={}",
+        version_info.numeric
+    );
+
     let qt_include_path = env::var("DEP_QT_INCLUDE_PATH").unwrap();
     let qt_library_path = env::var("DEP_QT_LIBRARY_PATH").unwrap();
     let qt_version = env::var("DEP_QT_VERSION").unwrap();
@@ -339,24 +438,16 @@ fn main() {
             );
             let mut res = winres::WindowsResource::new();
             res.set_icon("resources/app_icon.ico");
-            res.set("FileVersion", env!("CARGO_PKG_VERSION"));
-            res.set("ProductVersion", env!("CARGO_PKG_VERSION"));
+            res.set("FileVersion", &version_info.numeric);
+            res.set("ProductVersion", &version_info.numeric);
             res.set("ProductName", "Gyroflow");
             res.set(
                 "FileDescription",
-                &format!("Gyroflow v{}", env!("CARGO_PKG_VERSION")),
+                &format!("Gyroflow v{}", version_info.display),
             );
             res.compile().unwrap();
         }
         tos => panic!("unknown target os {:?}!", tos),
-    }
-
-    if let Ok(time) = std::time::SystemTime::now().duration_since(std::time::SystemTime::UNIX_EPOCH)
-    {
-        println!(
-            "cargo:rustc-env=BUILD_TIME={}",
-            (time.as_secs() - 1642516578) / 600
-        ); // New version every 10 minutes
     }
 
     config.include(&qt_include_path).build("src/gyroflow.rs");

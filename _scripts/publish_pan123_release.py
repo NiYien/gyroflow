@@ -127,6 +127,27 @@ def emit_log(message: str) -> None:
     print(f"[publish_pan123_release] {message}", flush=True)
 
 
+def format_bytes(size: int) -> str:
+    units = ("B", "KB", "MB", "GB", "TB")
+    value = float(max(int(size), 0))
+    unit = units[0]
+    for candidate in units:
+        unit = candidate
+        if value < 1024.0 or candidate == units[-1]:
+            break
+        value /= 1024.0
+    if unit == "B":
+        return f"{int(value)} {unit}"
+    return f"{value:.2f} {unit}"
+
+
+def short_id(value: str, keep: int = 8) -> str:
+    text = str(value or "").strip()
+    if len(text) <= keep:
+        return text
+    return f"{text[:keep]}..."
+
+
 def normalize_base_url(value: str, fallback: str, name: str) -> str:
     fallback_base = str(fallback or "").strip().rstrip("/")
     raw_value = str(value or "").strip()
@@ -334,6 +355,9 @@ class Pan123Client:
     def ensure_release_dir(self, name: str) -> int:
         existing = self.find_child(self.releases_root_id, name, expected_type=1)
         if existing:
+            emit_log(
+                f"123 target dir reused: name={name}, parent={self.releases_root_id}, dir_id={existing['fileId']}"
+            )
             return int(existing["fileId"])
 
         data = self.request(
@@ -341,17 +365,26 @@ class Pan123Client:
             "/upload/v1/file/mkdir",
             json_body={"name": name, "parentID": self.releases_root_id},
         )
+        emit_log(
+            f"123 target dir created: name={name}, parent={self.releases_root_id}, dir_id={data['dirID']}"
+        )
         return int(data["dirID"])
 
     def ensure_release_dir_in(self, parent_id: int, name: str) -> int:
         existing = self.find_child(parent_id, name, expected_type=1)
         if existing:
+            emit_log(
+                f"123 nested dir reused: name={name}, parent={int(parent_id)}, dir_id={existing['fileId']}"
+            )
             return int(existing["fileId"])
 
         data = self.request(
             "POST",
             "/upload/v1/file/mkdir",
             json_body={"name": name, "parentID": int(parent_id)},
+        )
+        emit_log(
+            f"123 nested dir created: name={name}, parent={int(parent_id)}, dir_id={data['dirID']}"
         )
         return int(data["dirID"])
 
@@ -361,7 +394,10 @@ class Pan123Client:
         file_md5 = md5_file(local_path)
         last_error = ""
         for upload_attempt in range(1, 4):
-            emit_log(f"Uploading to 123: {remote_name} (attempt {upload_attempt}/3)")
+            emit_log(
+                f"123 upload start: file={remote_name}, size={format_bytes(file_size)}, "
+                f"parent={int(parent_id)}, attempt={upload_attempt}/3"
+            )
             try:
                 create_data = self.request(
                     "POST",
@@ -376,16 +412,24 @@ class Pan123Client:
                 )
 
                 if create_data.get("reuse"):
-                    emit_log(f"Uploaded to 123: {remote_name} (reuse)")
+                    emit_log(
+                        f"123 upload reused existing file: file={remote_name}, "
+                        f"file_id={create_data.get('fileID', 0)}"
+                    )
                     return int(create_data.get("fileID", 0))
 
                 preupload_id = str(create_data.get("preuploadID", "")).strip()
                 slice_size = int(create_data.get("sliceSize", 0))
                 servers = create_data.get("servers") or []
+                emit_log(
+                    f"123 upload create ok: file={remote_name}, preupload={short_id(preupload_id)}, "
+                    f"slice_size={format_bytes(slice_size)}, servers={len(servers)}"
+                )
                 if not preupload_id or slice_size <= 0:
                     raise RuntimeError(f"Invalid 123 create-file response for {remote_name}")
 
                 if not servers:
+                    emit_log(f"123 upload create returned no servers, requesting upload domains: file={remote_name}")
                     domain_data = self.request("GET", "/upload/v2/file/domain")
                     servers = domain_data if isinstance(domain_data, list) else []
                 if not servers:
@@ -394,7 +438,8 @@ class Pan123Client:
                 upload_bases = [str(item).rstrip("/") for item in servers if str(item).strip()]
                 self._upload_slices(upload_bases, local_path, preupload_id, slice_size)
 
-                for _ in range(120):
+                emit_log(f"123 upload slice phase finished: file={remote_name}, polling upload_complete")
+                for finalize_attempt in range(1, 121):
                     try:
                         complete_data = self.request(
                             "POST",
@@ -403,19 +448,34 @@ class Pan123Client:
                         )
                     except RuntimeError as err:
                         last_error = str(err)
+                        if finalize_attempt in {1, 5, 15, 30, 60, 120}:
+                            emit_log(
+                                f"123 upload_complete pending: file={remote_name}, "
+                                f"attempt={finalize_attempt}/120, detail={last_error}"
+                            )
                         if "20103" in last_error:
                             raise
                         time.sleep(1)
                         continue
                     if bool(complete_data.get("completed")) and int(complete_data.get("fileID", 0)) > 0:
-                        emit_log(f"Uploaded to 123: {remote_name}")
+                        emit_log(
+                            f"123 upload finished: file={remote_name}, "
+                            f"file_id={complete_data['fileID']}, finalize_attempt={finalize_attempt}"
+                        )
                         return int(complete_data["fileID"])
+                    if finalize_attempt in {1, 5, 15, 30, 60, 120}:
+                        emit_log(
+                            f"123 upload_complete not ready yet: file={remote_name}, "
+                            f"attempt={finalize_attempt}/120"
+                        )
                     time.sleep(1)
 
                 last_error = f"Timed out while finalizing 123 upload for {remote_name}"
             except RuntimeError as err:
                 last_error = str(err)
+                emit_log(f"123 upload error: file={remote_name}, attempt={upload_attempt}/3, detail={last_error}")
             if upload_attempt < 3:
+                emit_log(f"123 upload retry scheduled: file={remote_name}, next_attempt={upload_attempt + 1}/3")
                 time.sleep(min(3 * upload_attempt, 10))
 
         raise RuntimeError(f"123 upload failed for {remote_name}: {last_error}")
@@ -483,19 +543,32 @@ class Pan123Client:
         if json_body is not None:
             headers["Content-Type"] = "application/json"
 
-        response = self.session.request(
-            method=method,
-            url=f"{DEFAULT_123_API}{path}",
-            params=params,
-            json=json_body,
-            headers=headers,
-            timeout=120,
-        )
-        response.raise_for_status()
-        payload = response.json()
+        url = f"{DEFAULT_123_API}{path}"
+        try:
+            response = self.session.request(
+                method=method,
+                url=url,
+                params=params,
+                json=json_body,
+                headers=headers,
+                timeout=120,
+            )
+            response.raise_for_status()
+        except requests.RequestException as err:
+            raise RuntimeError(
+                f"123 request failed: {method} {path}, http_error={err}"
+            ) from err
+        try:
+            payload = response.json()
+        except ValueError as err:
+            preview = response.text[:200].replace("\n", " ")
+            raise RuntimeError(
+                f"123 response is not valid JSON: {method} {path}, status={response.status_code}, body={preview!r}"
+            ) from err
         if int(payload.get("code", -1)) != 0:
             raise RuntimeError(
-                f"123 API error {payload.get('code')}: {payload.get('message', 'unknown error')}"
+                f"123 API error {payload.get('code')}: {payload.get('message', 'unknown error')} "
+                f"({method} {path})"
             )
         return payload.get("data")
 
@@ -504,6 +577,7 @@ class Pan123Client:
         if self._token and self._token_expires_at - 60 > now:
             return self._token
 
+        emit_log("123 requesting access token")
         response = self.session.post(
             f"{DEFAULT_123_API}/api/v1/access_token",
             json={
@@ -528,12 +602,19 @@ class Pan123Client:
         expires_ts = parse_iso_timestamp(expired_at)
         self._token = access_token
         self._token_expires_at = expires_ts or now + 300
+        emit_log(
+            f"123 access token ready, expires_at={expired_at or 'unknown'}"
+        )
         return self._token
 
     def _upload_slices(self, upload_bases: list[str], local_path: Path, preupload_id: str, slice_size: int) -> None:
         if not upload_bases:
             raise RuntimeError(f"No upload server available for {local_path.name}")
         total_slices = max(1, (local_path.stat().st_size + slice_size - 1) // slice_size)
+        emit_log(
+            f"123 slice upload start: file={local_path.name}, total_slices={total_slices}, "
+            f"slice_size={format_bytes(slice_size)}, servers={len(upload_bases)}, preupload={short_id(preupload_id)}"
+        )
         with local_path.open("rb") as fh:
             slice_no = 1
             while True:
@@ -576,9 +657,18 @@ class Pan123Client:
                                 f"{payload.get('message', 'unknown error')}"
                             )
                         last_error = ""
+                        if slice_no == 1 or slice_no == total_slices or slice_no % 20 == 0:
+                            emit_log(
+                                f"123 slice upload ok: file={local_path.name}, slice={slice_no}/{total_slices}, "
+                                f"server={upload_base}"
+                            )
                         break
                     except (requests.Timeout, requests.ConnectionError, requests.HTTPError, RuntimeError) as err:
                         last_error = f"slice {slice_no}, attempt {attempt}, server {upload_base}: {err}"
+                        emit_log(
+                            f"123 slice upload retry: file={local_path.name}, "
+                            f"slice={slice_no}/{total_slices}, attempt={attempt}/5, detail={err}"
+                        )
                         if attempt >= 5:
                             raise RuntimeError(
                                 f"123 slice upload failed for {local_path.name}: {last_error}"
@@ -587,7 +677,7 @@ class Pan123Client:
                 emit_progress(
                     phase="upload",
                     label=local_path.name,
-                    message="上传分片",
+                    message="upload slices",
                     current=slice_no,
                     total=total_slices,
                 )
@@ -614,6 +704,15 @@ def main() -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     temp_root = output_dir / "_staging"
     temp_root.mkdir(parents=True, exist_ok=True)
+    emit_log(
+        f"Publish start: app_tag={args.app_tag}, app_source_mode={args.app_source_mode}, "
+        f"plugins_source_mode={args.plugins_source_mode}, output_dir={output_dir}"
+    )
+    emit_log(
+        f"Resource refs: lens_tag={args.lens_tag or 'auto-latest'}, "
+        f"plugins_tag={args.plugins_tag or 'auto-latest'}, "
+        f"plugins_artifact_name={args.plugins_artifact_name or 'auto-latest'}, sdk_base={args.sdk_base}"
+    )
 
     github = GitHubClient(os.environ.get("GITHUB_TOKEN", "").strip())
     pan123 = Pan123Client(
@@ -623,7 +722,7 @@ def main() -> int:
     )
 
     emit_log("Resolving app artifacts")
-    emit_progress(phase="resolve", message="解析应用产物", mode="indeterminate")
+    emit_progress(phase="resolve", message="resolve app artifacts", mode="indeterminate")
     app_assets = resolve_app_asset_files(
         github=github,
         workspace=workspace,
@@ -636,7 +735,7 @@ def main() -> int:
     if not app_assets:
         raise RuntimeError("No app artifacts were found after downloading build outputs")
     emit_log("App artifacts ready")
-    emit_progress(phase="resolve", message="应用产物就绪")
+    emit_progress(phase="resolve", message="app artifacts ready")
     app_source_ref, global_app_urls = resolve_app_source(
         app_source_mode=args.app_source_mode,
         app_tag=args.app_tag,
@@ -650,7 +749,7 @@ def main() -> int:
         session.trust_env = True
         session.headers["User-Agent"] = "niyien-pan123-publisher"
         emit_log("Resolving content assets")
-        emit_progress(phase="resolve", message="解析内容资源", mode="indeterminate")
+        emit_progress(phase="resolve", message="resolve content assets", mode="indeterminate")
         lens_release = github.get_release(args.lens_owner, args.lens_repo, args.lens_tag)
         plugin_source = resolve_plugin_source(
             github=github,
@@ -671,7 +770,7 @@ def main() -> int:
             sdk_base=args.sdk_base,
         )
         emit_log("Content assets ready")
-        emit_progress(phase="resolve", message="内容资源就绪")
+        emit_progress(phase="resolve", message="content assets ready")
 
         lens_metadata = json.loads(
             next(
@@ -699,7 +798,7 @@ def main() -> int:
             emit_progress(
                 phase="upload",
                 label=asset_name,
-                message="上传应用包到 123",
+                message="upload app bundle to 123",
                 current=index,
                 total=max(total_app_uploads, 1),
             )
@@ -737,7 +836,7 @@ def main() -> int:
         )
 
         emit_log("Publish finished")
-        emit_progress(phase="finalize", message="发布完成")
+        emit_progress(phase="finalize", message="publish finished")
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
     return 0
@@ -861,7 +960,7 @@ def download_content_assets(
             emit_progress(
                 phase="download",
                 label=asset_name,
-                message="命中缓存，跳过下载",
+                message="cache hit, skip download",
                 current=completed + 1,
                 total=total_items,
             )
@@ -869,7 +968,7 @@ def download_content_assets(
             emit_progress(
                 phase="download",
                 label=asset_name,
-                message="下载 Lens 资源",
+                message="download lens asset",
                 current=completed + 1,
                 total=total_items,
             )
@@ -881,7 +980,7 @@ def download_content_assets(
     emit_progress(
         phase="extract",
         label="plugins",
-        message="解析 Plugin 资源",
+        message="resolve plugin assets",
         current=completed,
         total=total_items,
         mode="indeterminate",
@@ -895,7 +994,7 @@ def download_content_assets(
         emit_progress(
             phase="download",
             label=asset_name,
-            message="Plugin 资源就绪",
+            message="plugin asset ready",
             current=completed,
             total=total_items,
         )
@@ -914,7 +1013,7 @@ def download_content_assets(
         emit_progress(
             phase="download",
             label=filename,
-            message="下载 SDK 资源",
+            message="download sdk asset",
             current=completed + 1,
             total=total_items,
         )
@@ -1272,7 +1371,7 @@ def upload_content_bundle(
     emit_progress(
         phase="upload",
         label=CONTENT_MANIFEST_ASSET_NAME,
-        message="上传内容清单",
+        message="upload content manifest",
         current=1,
         total=total_uploads,
     )
@@ -1283,7 +1382,7 @@ def upload_content_bundle(
         emit_progress(
             phase="upload",
             label=item.logical_path,
-            message="上传内容资源到 123",
+            message="upload content asset to 123",
             current=index,
             total=total_uploads,
         )
@@ -1359,6 +1458,12 @@ def build_release_summary(
     lens_metadata: dict[str, Any],
     sdk_base: str,
 ) -> dict[str, Any]:
+    global_plugins_base = f"{DEFAULT_GLOBAL_PLUGINS_BASE}/"
+    if plugin_source.mode == "release" and plugin_source.owner and plugin_source.repo:
+        global_plugins_base = (
+            f"https://github.com/{quote(plugin_source.owner, safe='')}/"
+            f"{quote(plugin_source.repo, safe='')}/releases/latest/download/"
+        )
     return {
         "schema": 1,
         "generated_at": utc_now_iso(),
@@ -1374,7 +1479,7 @@ def build_release_summary(
         "plugins_source_ref": plugin_source.source_ref,
         "plugins_source_tag": plugin_source.display_name,
         "global_sdk_base": f"{sdk_base.rstrip('/')}/",
-        "global_plugins_base": f"{DEFAULT_GLOBAL_PLUGINS_BASE}/",
+        "global_plugins_base": global_plugins_base,
     }
 
 

@@ -9,14 +9,15 @@ use qmetaobject::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::str::FromStr;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
-use std::sync::Arc;
 
 use qml_video_rs::video_item::MDKVideoItem;
 
 use crate::core;
+use crate::core::StabilizationManager;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
 use crate::core::filesystem;
@@ -24,7 +25,6 @@ use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
 use crate::core::synchronization::AutosyncProcess;
-use crate::core::StabilizationManager;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::niyien_device::{DeviceCommand, DeviceEvent, DeviceManager};
 use crate::qt_gpu::qrhi_undistort;
@@ -79,6 +79,8 @@ pub struct Controller {
     lens_group_status_changed: qt_signal!(),
     get_lens_group_status: qt_method!(fn(&self) -> QString),
     refresh_lens_group_status: qt_method!(fn(&self)),
+    lens_group_manual_edit: qt_property!(bool; READ get_lens_group_manual_edit WRITE set_lens_group_manual_edit NOTIFY lens_group_manual_edit_changed),
+    lens_group_manual_edit_changed: qt_signal!(),
     get_lens_presets: qt_method!(fn(&self) -> QString),
     has_neuflow_support: qt_method!(fn(&self) -> bool),
     export_lens_profile: qt_method!(fn(&mut self, url: QUrl, info: QJsonObject, upload: bool)),
@@ -606,7 +608,10 @@ impl Controller {
                     for x in offsets {
                         ::log::info!(
                             "Setting offset at {:.4}: {:.4} (cost {:.4}, conf {:.3})",
-                            x.0, x.1, x.2, x.3
+                            x.0,
+                            x.1,
+                            x.2,
+                            x.3
                         );
                         let new_ts = ((x.0 - x.1) * 1000.0) as i64;
                         let confidence = x.3;
@@ -617,9 +622,9 @@ impl Controller {
                                 let sync_data = this.stabilizer.sync_data.read();
                                 if !sync_data.rank.is_empty() {
                                     let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0))
-                                        .round() as usize;
-                                    if index < sync_data.rank.len()
-                                        && sync_data.rank[index] < 13.0
+                                        .round()
+                                        as usize;
+                                    if index < sync_data.rank.len() && sync_data.rank[index] < 13.0
                                     {
                                         continue;
                                     }
@@ -1455,6 +1460,20 @@ impl Controller {
     }
     fn refresh_lens_group_status(&self) {
         self.lens_group_status_changed();
+    }
+    fn get_lens_group_manual_edit(&self) -> bool {
+        self.stabilizer.get_lens_group_manual_edit()
+    }
+    fn set_lens_group_manual_edit(&self, enabled: bool) {
+        if self.stabilizer.get_lens_group_manual_edit() == enabled {
+            return;
+        }
+        self.stabilizer.set_lens_group_manual_edit(enabled);
+        self.lens_group_manual_edit_changed();
+        // Reapply the selected lens-group decision to the main stabilizer and recompute
+        // so the live preview reflects the new manual/auto state immediately.
+        self.chart_data_changed();
+        self.request_recompute();
     }
     fn get_lens_presets(&self) -> QString {
         QString::from(self.stabilizer.get_lens_presets_json())
@@ -3553,11 +3572,17 @@ impl Controller {
 
     fn get_neuflow_available(&self) -> bool {
         #[cfg(feature = "neuflow-ort")]
-        { return crate::core::neuflow::is_available(); }
+        {
+            return crate::core::neuflow::is_available();
+        }
         #[cfg(feature = "neuflow-burn")]
-        { return crate::core::neuflow_burn::is_available(); }
+        {
+            return crate::core::neuflow_burn::is_available();
+        }
         #[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
-        { false }
+        {
+            false
+        }
     }
 
     fn has_gravity_vectors(&self) -> bool {
@@ -4027,7 +4052,7 @@ impl Controller {
             let typ = typ.to_string();
             let command = command.to_string();
             let result = match command.as_ref() {
-                "install" | "latest_version" => {
+                "install" | "latest_version" | "status" => {
                     let command2 = QString::from(command.clone());
                     let signal = util::qt_queued_callback_mut(
                         QPointer::from(self as &Self),
@@ -4046,6 +4071,7 @@ impl Controller {
                                     "Failed to check version",
                                 ))
                             }
+                            "status" => crate::nle_plugins::status_json(&typ),
                             _ => Err(std::io::Error::new(
                                 std::io::ErrorKind::Other,
                                 format!("Unknown command {command}"),

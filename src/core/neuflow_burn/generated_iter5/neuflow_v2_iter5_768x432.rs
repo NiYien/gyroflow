@@ -1,5 +1,4 @@
 // Generated from ONNX "C:/Users/Jhe/Desktop/github/gyroflow-burn-neuflow/neuflow_v2_iter5_768x432.onnx" by burn-onnx
-use burn::prelude::*;
 use burn::nn::BatchNorm;
 use burn::nn::BatchNormConfig;
 use burn::nn::LayerNorm;
@@ -11,10 +10,10 @@ use burn::nn::conv::Conv2d;
 use burn::nn::conv::Conv2dConfig;
 use burn::nn::pool::AvgPool2d;
 use burn::nn::pool::AvgPool2dConfig;
+use burn::prelude::*;
 use burn::tensor::Bytes;
 use burn_store::BurnpackStore;
 use burn_store::ModuleSnapshot;
-
 
 #[derive(Module, Debug)]
 pub struct Submodule1<B: Backend> {
@@ -64,13 +63,12 @@ impl<B: Backend> Submodule1<B> {
     pub fn new(device: &B::Device) -> Self {
         let constant75: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([255f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([255f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
@@ -179,10 +177,9 @@ impl<B: Backend> Submodule1<B> {
             .init(device);
         let constant77: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([2, 2, 27, 48], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([2, 2, 27, 48], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [2, 2, 27, 48].into(),
@@ -192,10 +189,9 @@ impl<B: Backend> Submodule1<B> {
         let linear3 = LinearConfig::new(192, 192).with_bias(true).init(device);
         let constant109: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::zeros([1], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::zeros([1], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1].into(),
@@ -208,39 +204,36 @@ impl<B: Backend> Submodule1<B> {
         let linear5 = LinearConfig::new(384, 384).with_bias(false).init(device);
         let constant81: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([1.4140625f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([1.4140625f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant82: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([1f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([1f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant83: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([0.5f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([0.5f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
@@ -320,107 +313,67 @@ impl<B: Backend> Submodule1<B> {
         Tensor<B, 4>,
     ) {
         let constant75_out1 = self.constant75.val();
-        let div1_out1 = img0
-            .div((constant75_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div2_out1 = img1
-            .div((constant75_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let concat1_out1 = burn::tensor::Tensor::cat(
-            [div1_out1.clone(), div2_out1].into(),
-            0,
-        );
+        let div1_out1 =
+            img0.div((constant75_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div2_out1 = img1.div((constant75_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let concat1_out1 = burn::tensor::Tensor::cat([div1_out1.clone(), div2_out1].into(), 0);
         let averagepool2d1_out1 = self.averagepool2d1.forward(concat1_out1);
         let conv2d1_out1 = self.conv2d1.forward(averagepool2d1_out1.clone());
-        let leakyrelu1_out1 = burn::tensor::activation::leaky_relu(
-            conv2d1_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu1_out1 =
+            burn::tensor::activation::leaky_relu(conv2d1_out1, 0.10000000149011612);
         let conv2d2_out1 = self.conv2d2.forward(leakyrelu1_out1);
-        let leakyrelu2_out1 = burn::tensor::activation::leaky_relu(
-            conv2d2_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu2_out1 =
+            burn::tensor::activation::leaky_relu(conv2d2_out1, 0.10000000149011612);
         let averagepool2d2_out1 = self.averagepool2d2.forward(averagepool2d1_out1);
         let conv2d3_out1 = self.conv2d3.forward(averagepool2d2_out1.clone());
-        let leakyrelu3_out1 = burn::tensor::activation::leaky_relu(
-            conv2d3_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu3_out1 =
+            burn::tensor::activation::leaky_relu(conv2d3_out1, 0.10000000149011612);
         let conv2d4_out1 = self.conv2d4.forward(leakyrelu3_out1);
-        let leakyrelu4_out1 = burn::tensor::activation::leaky_relu(
-            conv2d4_out1,
-            0.10000000149011612,
-        );
-        let concat2_out1 = burn::tensor::Tensor::cat(
-            [leakyrelu2_out1, leakyrelu4_out1].into(),
-            1,
-        );
+        let leakyrelu4_out1 =
+            burn::tensor::activation::leaky_relu(conv2d4_out1, 0.10000000149011612);
+        let concat2_out1 = burn::tensor::Tensor::cat([leakyrelu2_out1, leakyrelu4_out1].into(), 1);
         let conv2d5_out1 = self.conv2d5.forward(concat2_out1);
-        let leakyrelu5_out1 = burn::tensor::activation::leaky_relu(
-            conv2d5_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu5_out1 =
+            burn::tensor::activation::leaky_relu(conv2d5_out1, 0.10000000149011612);
         let conv2d6_out1 = self.conv2d6.forward(leakyrelu5_out1);
-        let leakyrelu6_out1 = burn::tensor::activation::leaky_relu(
-            conv2d6_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu6_out1 =
+            burn::tensor::activation::leaky_relu(conv2d6_out1, 0.10000000149011612);
         let averagepool2d3_out1 = self.averagepool2d3.forward(averagepool2d2_out1);
         let conv2d7_out1 = self.conv2d7.forward(averagepool2d3_out1);
-        let leakyrelu7_out1 = burn::tensor::activation::leaky_relu(
-            conv2d7_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu7_out1 =
+            burn::tensor::activation::leaky_relu(conv2d7_out1, 0.10000000149011612);
         let conv2d8_out1 = self.conv2d8.forward(leakyrelu7_out1);
-        let leakyrelu8_out1 = burn::tensor::activation::leaky_relu(
-            conv2d8_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu8_out1 =
+            burn::tensor::activation::leaky_relu(conv2d8_out1, 0.10000000149011612);
         let conv2d9_out1 = self.conv2d9.forward(leakyrelu6_out1.clone());
-        let leakyrelu9_out1 = burn::tensor::activation::leaky_relu(
-            conv2d9_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu9_out1 =
+            burn::tensor::activation::leaky_relu(conv2d9_out1, 0.10000000149011612);
         let conv2d10_out1 = self.conv2d10.forward(leakyrelu9_out1);
-        let leakyrelu10_out1 = burn::tensor::activation::leaky_relu(
-            conv2d10_out1,
-            0.10000000149011612,
-        );
-        let concat3_out1 = burn::tensor::Tensor::cat(
-            [leakyrelu8_out1, leakyrelu10_out1].into(),
-            1,
-        );
+        let leakyrelu10_out1 =
+            burn::tensor::activation::leaky_relu(conv2d10_out1, 0.10000000149011612);
+        let concat3_out1 = burn::tensor::Tensor::cat([leakyrelu8_out1, leakyrelu10_out1].into(), 1);
         let conv2d11_out1 = self.conv2d11.forward(concat3_out1);
-        let leakyrelu11_out1 = burn::tensor::activation::leaky_relu(
-            conv2d11_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu11_out1 =
+            burn::tensor::activation::leaky_relu(conv2d11_out1, 0.10000000149011612);
         let conv2d12_out1 = self.conv2d12.forward(leakyrelu11_out1);
-        let leakyrelu12_out1 = burn::tensor::activation::leaky_relu(
-            conv2d12_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu12_out1 =
+            burn::tensor::activation::leaky_relu(conv2d12_out1, 0.10000000149011612);
         let constant77_out1 = self.constant77.val();
-        let concat4_out1 = burn::tensor::Tensor::cat(
-            [leakyrelu12_out1, constant77_out1].into(),
-            1,
-        );
+        let concat4_out1 = burn::tensor::Tensor::cat([leakyrelu12_out1, constant77_out1].into(), 1);
         let reshape1_out1 = concat4_out1.reshape([2, 192, -1]);
         let transpose1_out1 = reshape1_out1.permute([0, 2, 1]);
         let slice1_out1 = transpose1_out1.clone().slice(s![0..1, .., ..]);
         let slice2_out1 = transpose1_out1.clone().slice(s![1..2, .., ..]);
-        let concat5_out1 = burn::tensor::Tensor::cat(
-            [slice2_out1, slice1_out1].into(),
-            0,
-        );
+        let concat5_out1 = burn::tensor::Tensor::cat([slice2_out1, slice1_out1].into(), 0);
         let linear1_out1 = self.linear1.forward(transpose1_out1.clone());
         let linear2_out1 = self.linear2.forward(concat5_out1.clone());
         let linear3_out1 = self.linear3.forward(concat5_out1);
         let transpose2_out1 = linear2_out1.permute([0, 2, 1]);
         let constant109_out1 = self.constant109.val();
-        let mul1_out1 = linear1_out1
-            .mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
-        let mul2_out1 = transpose2_out1
-            .mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let mul1_out1 =
+            linear1_out1.mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let mul2_out1 =
+            transpose2_out1.mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let matmul4_out1 = mul1_out1.matmul(mul2_out1);
         let softmax1_out1 = {
             let dtype = matmul4_out1.dtype();
@@ -446,12 +399,10 @@ impl<B: Backend> Submodule1<B> {
             .div((constant81_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let erf1_out1 = div3_out1.erf();
         let constant82_out1 = self.constant82.val();
-        let add1_out1 = erf1_out1
-            .add((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let add1_out1 = erf1_out1.add((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let mul3_out1 = linear5_out1.mul(add1_out1);
         let constant83_out1 = self.constant83.val();
-        let mul4_out1 = mul3_out1
-            .mul((constant83_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let mul4_out1 = mul3_out1.mul((constant83_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let linear6_out1 = self.linear6.forward(mul4_out1);
         let layernormalization2_out1 = {
             let dtype = linear6_out1.dtype();
@@ -462,18 +413,14 @@ impl<B: Backend> Submodule1<B> {
         let add2_out1 = transpose1_out1.add(layernormalization2_out1);
         let slice3_out1 = add2_out1.clone().slice(s![0..1, .., ..]);
         let slice4_out1 = add2_out1.clone().slice(s![1..2, .., ..]);
-        let concat7_out1 = burn::tensor::Tensor::cat(
-            [slice4_out1, slice3_out1].into(),
-            0,
-        );
+        let concat7_out1 = burn::tensor::Tensor::cat([slice4_out1, slice3_out1].into(), 0);
         let linear7_out1 = self.linear7.forward(add2_out1.clone());
         let linear8_out1 = self.linear8.forward(concat7_out1.clone());
         let linear9_out1 = self.linear9.forward(concat7_out1);
         let transpose3_out1 = linear8_out1.permute([0, 2, 1]);
-        let mul5_out1 = linear7_out1
-            .mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
-        let mul6_out1 = transpose3_out1
-            .mul((constant109_out1).unsqueeze_dims(&[0isize, 1isize]));
+        let mul5_out1 =
+            linear7_out1.mul((constant109_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let mul6_out1 = transpose3_out1.mul((constant109_out1).unsqueeze_dims(&[0isize, 1isize]));
         let matmul12_out1 = mul5_out1.matmul(mul6_out1);
         let softmax2_out1 = {
             let dtype = matmul12_out1.dtype();
@@ -488,20 +435,16 @@ impl<B: Backend> Submodule1<B> {
                 .forward(linear10_out1.cast(burn::tensor::DType::F32))
                 .cast(dtype)
         };
-        let concat8_out1 = burn::tensor::Tensor::cat(
-            [add2_out1.clone(), layernormalization3_out1].into(),
-            2,
-        );
+        let concat8_out1 =
+            burn::tensor::Tensor::cat([add2_out1.clone(), layernormalization3_out1].into(), 2);
         let linear11_out1 = self.linear11.forward(concat8_out1);
         let div4_out1 = linear11_out1
             .clone()
             .div((constant81_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let erf2_out1 = div4_out1.erf();
-        let add3_out1 = erf2_out1
-            .add((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let add3_out1 = erf2_out1.add((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let mul7_out1 = linear11_out1.mul(add3_out1);
-        let mul8_out1 = mul7_out1
-            .mul((constant83_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let mul8_out1 = mul7_out1.mul((constant83_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
         let linear12_out1 = self.linear12.forward(mul8_out1);
         let layernormalization4_out1 = {
             let dtype = linear12_out1.dtype();
@@ -560,112 +503,102 @@ impl<B: Backend> Submodule2<B> {
             .init(device);
         let constant140: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::zeros([1], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::zeros([1], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant86: burn::module::Param<Tensor<B, 3>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                3,
-            >::zeros([1, 1296, 2], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 3>::zeros([1, 1296, 2], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 1296, 2].into(),
         );
         let constant87: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1, 2, 27, 48], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1, 2, 27, 48], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 2, 27, 48].into(),
         );
         let constant88: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([11.3125f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([11.3125f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant89: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1296, 9, 9, 2], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1296, 9, 9, 2], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1296, 9, 9, 2].into(),
         );
         let constant90: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([2f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([2f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant91: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([47f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([47f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant92: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([26f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([26f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant93: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1, 64, 27, 48], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1, 64, 27, 48], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 64, 27, 48].into(),
         );
         let constant94: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1, 1, 27, 48], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1, 1, 27, 48], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 1, 27, 48].into(),
@@ -807,8 +740,7 @@ impl<B: Backend> Submodule2<B> {
         let reshape2_out1 = add4_out1.reshape([2, 27, 48, 192]);
         let transpose4_out1 = reshape2_out1.permute([0, 3, 1, 2]);
         let batchnormalization1_out1 = self.batchnormalization1.forward(transpose4_out1);
-        let split_tensors = batchnormalization1_out1
-            .split_with_sizes([64, 128].into(), 1);
+        let split_tensors = batchnormalization1_out1.split_with_sizes([64, 128].into(), 1);
         let [split1_out1, split1_out2] = split_tensors.try_into().unwrap();
         let slice5_out1 = split1_out1.slice(s![0..1, .., .., ..]);
         let relu1_out1 = burn::tensor::activation::relu(slice5_out1);
@@ -822,10 +754,9 @@ impl<B: Backend> Submodule2<B> {
         let transpose5_out1 = reshape3_out1.permute([0, 2, 1]);
         let reshape4_out1 = slice8_out1.clone().reshape([1, 128, -1]);
         let constant140_out1 = self.constant140.val();
-        let mul9_out1 = transpose5_out1
-            .mul((constant140_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
-        let mul10_out1 = reshape4_out1
-            .mul((constant140_out1).unsqueeze_dims(&[0isize, 1isize]));
+        let mul9_out1 =
+            transpose5_out1.mul((constant140_out1.clone()).unsqueeze_dims(&[0isize, 1isize]));
+        let mul10_out1 = reshape4_out1.mul((constant140_out1).unsqueeze_dims(&[0isize, 1isize]));
         let matmul17_out1 = mul9_out1.matmul(mul10_out1);
         let softmax3_out1 = {
             let dtype = matmul17_out1.dtype();
@@ -844,8 +775,8 @@ impl<B: Backend> Submodule2<B> {
         let matmul19_out1 = transpose7_out1.matmul(reshape7_out1);
         let reshape8_out1 = matmul19_out1.reshape([1296, 1, 27, 48]);
         let constant88_out1 = self.constant88.val();
-        let div5_out1 = reshape8_out1
-            .div((constant88_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div5_out1 =
+            reshape8_out1.div((constant88_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let add5_out1 = constant87_out1.add(sub1_out1.clone());
         let transpose8_out1 = add5_out1.permute([0, 2, 3, 1]);
         let reshape9_out1 = transpose8_out1.reshape([1296, 1, 1, 2]);
@@ -854,33 +785,32 @@ impl<B: Backend> Submodule2<B> {
         let split_tensors = add6_out1.split_with_sizes([1, 1].into(), 3);
         let [split3_out1, split3_out2] = split_tensors.try_into().unwrap();
         let constant90_out1 = self.constant90.val();
-        let mul11_out1 = split3_out1
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul11_out1 =
+            split3_out1.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let constant91_out1 = self.constant91.val();
-        let div6_out1 = mul11_out1
-            .div((constant91_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub2_out1 = div6_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let mul12_out1 = split3_out2
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div6_out1 = mul11_out1.div((constant91_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub2_out1 =
+            div6_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul12_out1 =
+            split3_out2.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let constant92_out1 = self.constant92.val();
-        let div7_out1 = mul12_out1
-            .div((constant92_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub3_out1 = div7_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div7_out1 = mul12_out1.div((constant92_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub3_out1 =
+            div7_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat9_out1 = burn::tensor::Tensor::cat([sub2_out1, sub3_out1].into(), 3);
         let gridsample1_out1 = {
             let dtype = div5_out1.dtype();
-            div5_out1.cast(burn::tensor::DType::F32)
-            .grid_sample_2d(
-                concat9_out1.cast(burn::tensor::DType::F32),
-                burn::tensor::ops::GridSampleOptions::new(
+            div5_out1
+                .cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat9_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
                         burn::tensor::ops::InterpolateMode::Bilinear,
                     )
                     .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
                     .with_align_corners(true),
-            )
-            .cast(dtype)
+                )
+                .cast(dtype)
         };
         let reshape10_out1 = gridsample1_out1.reshape([1, 27, 48, -1]);
         let transpose9_out1 = reshape10_out1.permute([0, 3, 1, 2]);
@@ -894,44 +824,30 @@ impl<B: Backend> Submodule2<B> {
                 sub1_out1.clone(),
                 constant94_out1,
             ]
-                .into(),
+            .into(),
             1,
         );
         let conv2d13_out1 = self.conv2d13.forward(concat10_out1);
-        let leakyrelu13_out1 = burn::tensor::activation::leaky_relu(
-            conv2d13_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu13_out1 =
+            burn::tensor::activation::leaky_relu(conv2d13_out1, 0.10000000149011612);
         let conv2d14_out1 = self.conv2d14.forward(leakyrelu13_out1);
-        let leakyrelu14_out1 = burn::tensor::activation::leaky_relu(
-            conv2d14_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu14_out1 =
+            burn::tensor::activation::leaky_relu(conv2d14_out1, 0.10000000149011612);
         let conv2d15_out1 = self.conv2d15.forward(leakyrelu14_out1);
-        let leakyrelu15_out1 = burn::tensor::activation::leaky_relu(
-            conv2d15_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu15_out1 =
+            burn::tensor::activation::leaky_relu(conv2d15_out1, 0.10000000149011612);
         let conv2d16_out1 = self.conv2d16.forward(leakyrelu15_out1);
-        let leakyrelu16_out1 = burn::tensor::activation::leaky_relu(
-            conv2d16_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu16_out1 =
+            burn::tensor::activation::leaky_relu(conv2d16_out1, 0.10000000149011612);
         let conv2d17_out1 = self.conv2d17.forward(leakyrelu16_out1);
-        let leakyrelu17_out1 = burn::tensor::activation::leaky_relu(
-            conv2d17_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu17_out1 =
+            burn::tensor::activation::leaky_relu(conv2d17_out1, 0.10000000149011612);
         let conv2d18_out1 = self.conv2d18.forward(leakyrelu17_out1);
-        let leakyrelu18_out1 = burn::tensor::activation::leaky_relu(
-            conv2d18_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu18_out1 =
+            burn::tensor::activation::leaky_relu(conv2d18_out1, 0.10000000149011612);
         let conv2d19_out1 = self.conv2d19.forward(leakyrelu18_out1);
-        let leakyrelu19_out1 = burn::tensor::activation::leaky_relu(
-            conv2d19_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu19_out1 =
+            burn::tensor::activation::leaky_relu(conv2d19_out1, 0.10000000149011612);
         let conv2d20_out1 = self.conv2d20.forward(leakyrelu19_out1);
         let slice9_out1 = conv2d20_out1.slice(s![.., 0..2, .., ..]);
         let add7_out1 = sub1_out1.add(slice9_out1);
@@ -941,28 +857,25 @@ impl<B: Backend> Submodule2<B> {
                 .forward(add7_out1.cast(burn::tensor::DType::F32))
                 .cast(dtype)
         };
-        let mul13_out1 = resize1_out1
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul13_out1 =
+            resize1_out1.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let resize2_out1 = {
             let dtype = split1_out2.dtype();
             self.resize2
                 .forward(split1_out2.cast(burn::tensor::DType::F32))
                 .cast(dtype)
         };
-        let concat11_out1 = burn::tensor::Tensor::cat(
-            [split2_out2, resize2_out1].into(),
-            1,
-        );
+        let concat11_out1 = burn::tensor::Tensor::cat([split2_out2, resize2_out1].into(), 1);
         let conv2d21_out1 = self.conv2d21.forward(concat11_out1);
         let div8_out1 = conv2d21_out1
             .clone()
             .div((constant81_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let erf3_out1 = div8_out1.erf();
-        let add8_out1 = erf3_out1
-            .add((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let add8_out1 =
+            erf3_out1.add((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let mul14_out1 = conv2d21_out1.mul(add8_out1);
-        let mul15_out1 = mul14_out1
-            .mul((constant83_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul15_out1 =
+            mul14_out1.mul((constant83_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let conv2d22_out1 = self.conv2d22.forward(mul15_out1);
         let slice10_out1 = conv2d22_out1.clone().slice(s![0..1, .., .., ..]);
         let slice11_out1 = conv2d22_out1.slice(s![1..2, .., .., ..]);
@@ -971,28 +884,24 @@ impl<B: Backend> Submodule2<B> {
         let transpose10_out1 = reshape11_out1.permute([0, 2, 1]);
         let matmul20_out1 = transpose10_out1.matmul(reshape12_out1);
         let reshape13_out1 = matmul20_out1.reshape([5184, 1, 54, 96]);
-        let div9_out1 = reshape13_out1
-            .div((constant88_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div9_out1 =
+            reshape13_out1.div((constant88_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let resize3_out1 = {
             let dtype = relu1_out1.dtype();
             self.resize3
                 .forward(relu1_out1.cast(burn::tensor::DType::F32))
                 .cast(dtype)
         };
-        let concat12_out1 = burn::tensor::Tensor::cat(
-            [relu2_out1, resize3_out1].into(),
-            1,
-        );
+        let concat12_out1 = burn::tensor::Tensor::cat([relu2_out1, resize3_out1].into(), 1);
         let conv2d23_out1 = self.conv2d23.forward(concat12_out1);
         let div10_out1 = conv2d23_out1
             .clone()
             .div((constant81_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let erf4_out1 = div10_out1.erf();
-        let add9_out1 = erf4_out1
-            .add((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let add9_out1 = erf4_out1.add((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let mul16_out1 = conv2d23_out1.mul(add9_out1);
-        let mul17_out1 = mul16_out1
-            .mul((constant83_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul17_out1 =
+            mul16_out1.mul((constant83_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         (mul17_out1, mul13_out1, constant90_out1, div9_out1)
     }
 }
@@ -1032,66 +941,60 @@ impl<B: Backend> Submodule3<B> {
             .init(device);
         let constant95: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1, 2, 54, 96], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1, 2, 54, 96], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 2, 54, 96].into(),
         );
         let constant96: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([5184, 9, 9, 2], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([5184, 9, 9, 2], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [5184, 9, 9, 2].into(),
         );
         let constant97: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([95f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([95f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant98: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([53f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([53f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
         );
         let constant99: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1, 64, 54, 96], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1, 64, 54, 96], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 64, 54, 96].into(),
         );
         let constant100: burn::module::Param<Tensor<B, 4>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                4,
-            >::zeros([1, 1, 54, 96], (device, burn::tensor::DType::F16)),
+            move |device, _require_grad| {
+                Tensor::<B, 4>::zeros([1, 1, 54, 96], (device, burn::tensor::DType::F16))
+            },
             device.clone(),
             false,
             [1, 1, 54, 96].into(),
@@ -1223,34 +1126,34 @@ impl<B: Backend> Submodule3<B> {
         let add11_out1 = reshape14_out1.add(constant96_out1.clone());
         let split_tensors = add11_out1.split_with_sizes([1, 1].into(), 3);
         let [split4_out1, split4_out2] = split_tensors.try_into().unwrap();
-        let mul18_out1 = split4_out1
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul18_out1 =
+            split4_out1.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let constant97_out1 = self.constant97.val();
-        let div11_out1 = mul18_out1
-            .div((constant97_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub4_out1 = div11_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let mul19_out1 = split4_out2
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div11_out1 =
+            mul18_out1.div((constant97_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub4_out1 =
+            div11_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul19_out1 =
+            split4_out2.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let constant98_out1 = self.constant98.val();
-        let div12_out1 = mul19_out1
-            .div((constant98_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub5_out1 = div12_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div12_out1 =
+            mul19_out1.div((constant98_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub5_out1 =
+            div12_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat13_out1 = burn::tensor::Tensor::cat([sub4_out1, sub5_out1].into(), 3);
         let gridsample2_out1 = {
             let data = div9_out1.clone();
             let dtype = data.dtype();
             data.cast(burn::tensor::DType::F32)
-            .grid_sample_2d(
-                concat13_out1.cast(burn::tensor::DType::F32),
-                burn::tensor::ops::GridSampleOptions::new(
+                .grid_sample_2d(
+                    concat13_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
                         burn::tensor::ops::InterpolateMode::Bilinear,
                     )
                     .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
                     .with_align_corners(true),
-            )
-            .cast(dtype)
+                )
+                .cast(dtype)
         };
         let reshape15_out1 = gridsample2_out1.reshape([1, 54, 96, -1]);
         let transpose12_out1 = reshape15_out1.permute([0, 3, 1, 2]);
@@ -1264,44 +1167,30 @@ impl<B: Backend> Submodule3<B> {
                 mul13_out1.clone(),
                 constant100_out1.clone(),
             ]
-                .into(),
+            .into(),
             1,
         );
         let conv2d25_out1 = self.conv2d25.forward(concat14_out1);
-        let leakyrelu20_out1 = burn::tensor::activation::leaky_relu(
-            conv2d25_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu20_out1 =
+            burn::tensor::activation::leaky_relu(conv2d25_out1, 0.10000000149011612);
         let conv2d26_out1 = self.conv2d26.forward(leakyrelu20_out1);
-        let leakyrelu21_out1 = burn::tensor::activation::leaky_relu(
-            conv2d26_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu21_out1 =
+            burn::tensor::activation::leaky_relu(conv2d26_out1, 0.10000000149011612);
         let conv2d27_out1 = self.conv2d27.forward(leakyrelu21_out1);
-        let leakyrelu22_out1 = burn::tensor::activation::leaky_relu(
-            conv2d27_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu22_out1 =
+            burn::tensor::activation::leaky_relu(conv2d27_out1, 0.10000000149011612);
         let conv2d28_out1 = self.conv2d28.forward(leakyrelu22_out1);
-        let leakyrelu23_out1 = burn::tensor::activation::leaky_relu(
-            conv2d28_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu23_out1 =
+            burn::tensor::activation::leaky_relu(conv2d28_out1, 0.10000000149011612);
         let conv2d29_out1 = self.conv2d29.forward(leakyrelu23_out1);
-        let leakyrelu24_out1 = burn::tensor::activation::leaky_relu(
-            conv2d29_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu24_out1 =
+            burn::tensor::activation::leaky_relu(conv2d29_out1, 0.10000000149011612);
         let conv2d30_out1 = self.conv2d30.forward(leakyrelu24_out1);
-        let leakyrelu25_out1 = burn::tensor::activation::leaky_relu(
-            conv2d30_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu25_out1 =
+            burn::tensor::activation::leaky_relu(conv2d30_out1, 0.10000000149011612);
         let conv2d31_out1 = self.conv2d31.forward(leakyrelu25_out1);
-        let leakyrelu26_out1 = burn::tensor::activation::leaky_relu(
-            conv2d31_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu26_out1 =
+            burn::tensor::activation::leaky_relu(conv2d31_out1, 0.10000000149011612);
         let conv2d32_out1 = self.conv2d32.forward(leakyrelu26_out1);
         let slice12_out1 = conv2d32_out1.clone().slice(s![.., 2.., .., ..]);
         let clip1_out1 = {
@@ -1317,31 +1206,31 @@ impl<B: Backend> Submodule3<B> {
         let add14_out1 = reshape16_out1.add(constant96_out1.clone());
         let split_tensors = add14_out1.split_with_sizes([1, 1].into(), 3);
         let [split5_out1, split5_out2] = split_tensors.try_into().unwrap();
-        let mul20_out1 = split5_out1
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div13_out1 = mul20_out1
-            .div((constant97_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub6_out1 = div13_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let mul21_out1 = split5_out2
-            .mul((constant90_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div14_out1 = mul21_out1
-            .div((constant98_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub7_out1 = div14_out1
-            .sub((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul20_out1 =
+            split5_out1.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div13_out1 =
+            mul20_out1.div((constant97_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub6_out1 =
+            div13_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul21_out1 =
+            split5_out2.mul((constant90_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div14_out1 =
+            mul21_out1.div((constant98_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub7_out1 = div14_out1.sub((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat15_out1 = burn::tensor::Tensor::cat([sub6_out1, sub7_out1].into(), 3);
         let gridsample3_out1 = {
             let dtype = div9_out1.dtype();
-            div9_out1.cast(burn::tensor::DType::F32)
-            .grid_sample_2d(
-                concat15_out1.cast(burn::tensor::DType::F32),
-                burn::tensor::ops::GridSampleOptions::new(
+            div9_out1
+                .cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat15_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
                         burn::tensor::ops::InterpolateMode::Bilinear,
                     )
                     .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
                     .with_align_corners(true),
-            )
-            .cast(dtype)
+                )
+                .cast(dtype)
         };
         let reshape17_out1 = gridsample3_out1.reshape([1, 54, 96, -1]);
         let transpose14_out1 = reshape17_out1.permute([0, 3, 1, 2]);
@@ -1353,24 +1242,18 @@ impl<B: Backend> Submodule3<B> {
                 add12_out1.clone(),
                 constant100_out1.clone(),
             ]
-                .into(),
+            .into(),
             1,
         );
         let conv2d33_out1 = self.conv2d33.forward(concat16_out1);
-        let leakyrelu27_out1 = burn::tensor::activation::leaky_relu(
-            conv2d33_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu27_out1 =
+            burn::tensor::activation::leaky_relu(conv2d33_out1, 0.10000000149011612);
         let conv2d34_out1 = self.conv2d34.forward(leakyrelu27_out1);
-        let leakyrelu28_out1 = burn::tensor::activation::leaky_relu(
-            conv2d34_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu28_out1 =
+            burn::tensor::activation::leaky_relu(conv2d34_out1, 0.10000000149011612);
         let conv2d35_out1 = self.conv2d35.forward(leakyrelu28_out1);
-        let leakyrelu29_out1 = burn::tensor::activation::leaky_relu(
-            conv2d35_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu29_out1 =
+            burn::tensor::activation::leaky_relu(conv2d35_out1, 0.10000000149011612);
         (
             leakyrelu29_out1,
             add12_out1,
@@ -1603,37 +1486,34 @@ impl<B: Backend> Submodule4<B> {
             .with_groups(1)
             .with_bias(true)
             .init(device);
-        let constant137: burn::module::Param<Tensor<B, 2, Int>> = burn::module::Param::uninitialized(
-            burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                2,
-                Int,
-            >::zeros([3, 54], (device, burn::tensor::DType::I64)),
-            device.clone(),
-            false,
-            [3, 54].into(),
-        );
-        let constant138: burn::module::Param<Tensor<B, 2, Int>> = burn::module::Param::uninitialized(
-            burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                2,
-                Int,
-            >::zeros([3, 96], (device, burn::tensor::DType::I64)),
-            device.clone(),
-            false,
-            [3, 96].into(),
-        );
+        let constant137: burn::module::Param<Tensor<B, 2, Int>> =
+            burn::module::Param::uninitialized(
+                burn::module::ParamId::new(),
+                move |device, _require_grad| {
+                    Tensor::<B, 2, Int>::zeros([3, 54], (device, burn::tensor::DType::I64))
+                },
+                device.clone(),
+                false,
+                [3, 54].into(),
+            );
+        let constant138: burn::module::Param<Tensor<B, 2, Int>> =
+            burn::module::Param::uninitialized(
+                burn::module::ParamId::new(),
+                move |device, _require_grad| {
+                    Tensor::<B, 2, Int>::zeros([3, 96], (device, burn::tensor::DType::I64))
+                },
+                device.clone(),
+                false,
+                [3, 96].into(),
+            );
         let constant104: burn::module::Param<Tensor<B, 1>> = burn::module::Param::uninitialized(
             burn::module::ParamId::new(),
-            move |device, _require_grad| Tensor::<
-                B,
-                1,
-            >::from_data(
-                burn::tensor::TensorData::from([8f64]),
-                (device, burn::tensor::DType::F16),
-            ),
+            move |device, _require_grad| {
+                Tensor::<B, 1>::from_data(
+                    burn::tensor::TensorData::from([8f64]),
+                    (device, burn::tensor::DType::F16),
+                )
+            },
             device.clone(),
             false,
             [1].into(),
@@ -1689,25 +1569,17 @@ impl<B: Backend> Submodule4<B> {
         div1_out1: Tensor<B, 4>,
     ) -> Tensor<B, 4> {
         let conv2d36_out1 = self.conv2d36.forward(leakyrelu29_out1);
-        let leakyrelu30_out1 = burn::tensor::activation::leaky_relu(
-            conv2d36_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu30_out1 =
+            burn::tensor::activation::leaky_relu(conv2d36_out1, 0.10000000149011612);
         let conv2d37_out1 = self.conv2d37.forward(leakyrelu30_out1);
-        let leakyrelu31_out1 = burn::tensor::activation::leaky_relu(
-            conv2d37_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu31_out1 =
+            burn::tensor::activation::leaky_relu(conv2d37_out1, 0.10000000149011612);
         let conv2d38_out1 = self.conv2d38.forward(leakyrelu31_out1);
-        let leakyrelu32_out1 = burn::tensor::activation::leaky_relu(
-            conv2d38_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu32_out1 =
+            burn::tensor::activation::leaky_relu(conv2d38_out1, 0.10000000149011612);
         let conv2d39_out1 = self.conv2d39.forward(leakyrelu32_out1);
-        let leakyrelu33_out1 = burn::tensor::activation::leaky_relu(
-            conv2d39_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu33_out1 =
+            burn::tensor::activation::leaky_relu(conv2d39_out1, 0.10000000149011612);
         let conv2d40_out1 = self.conv2d40.forward(leakyrelu33_out1);
         let slice14_out1 = conv2d40_out1.clone().slice(s![.., 2.., .., ..]);
         let clip2_out1 = {
@@ -1723,32 +1595,32 @@ impl<B: Backend> Submodule4<B> {
         let add17_out1 = reshape18_out1.add(constant96_out1.clone());
         let split_tensors = add17_out1.split_with_sizes([1, 1].into(), 3);
         let [split6_out1, split6_out2] = split_tensors.try_into().unwrap();
-        let mul22_out1 = split6_out1
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div15_out1 = mul22_out1
-            .div((constant97_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub8_out1 = div15_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let mul23_out1 = split6_out2
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div16_out1 = mul23_out1
-            .div((constant98_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub9_out1 = div16_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul22_out1 =
+            split6_out1.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div15_out1 =
+            mul22_out1.div((constant97_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub8_out1 =
+            div15_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul23_out1 =
+            split6_out2.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div16_out1 =
+            mul23_out1.div((constant98_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub9_out1 =
+            div16_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         let concat17_out1 = burn::tensor::Tensor::cat([sub8_out1, sub9_out1].into(), 3);
         let gridsample4_out1 = {
             let data = div9_out1.clone();
             let dtype = data.dtype();
             data.cast(burn::tensor::DType::F32)
-            .grid_sample_2d(
-                concat17_out1.cast(burn::tensor::DType::F32),
-                burn::tensor::ops::GridSampleOptions::new(
+                .grid_sample_2d(
+                    concat17_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
                         burn::tensor::ops::InterpolateMode::Bilinear,
                     )
                     .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
                     .with_align_corners(true),
-            )
-            .cast(dtype)
+                )
+                .cast(dtype)
         };
         let reshape19_out1 = gridsample4_out1.reshape([1, 54, 96, -1]);
         let transpose16_out1 = reshape19_out1.permute([0, 3, 1, 2]);
@@ -1760,44 +1632,30 @@ impl<B: Backend> Submodule4<B> {
                 add15_out1.clone(),
                 constant100_out1.clone(),
             ]
-                .into(),
+            .into(),
             1,
         );
         let conv2d41_out1 = self.conv2d41.forward(concat18_out1);
-        let leakyrelu34_out1 = burn::tensor::activation::leaky_relu(
-            conv2d41_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu34_out1 =
+            burn::tensor::activation::leaky_relu(conv2d41_out1, 0.10000000149011612);
         let conv2d42_out1 = self.conv2d42.forward(leakyrelu34_out1);
-        let leakyrelu35_out1 = burn::tensor::activation::leaky_relu(
-            conv2d42_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu35_out1 =
+            burn::tensor::activation::leaky_relu(conv2d42_out1, 0.10000000149011612);
         let conv2d43_out1 = self.conv2d43.forward(leakyrelu35_out1);
-        let leakyrelu36_out1 = burn::tensor::activation::leaky_relu(
-            conv2d43_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu36_out1 =
+            burn::tensor::activation::leaky_relu(conv2d43_out1, 0.10000000149011612);
         let conv2d44_out1 = self.conv2d44.forward(leakyrelu36_out1);
-        let leakyrelu37_out1 = burn::tensor::activation::leaky_relu(
-            conv2d44_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu37_out1 =
+            burn::tensor::activation::leaky_relu(conv2d44_out1, 0.10000000149011612);
         let conv2d45_out1 = self.conv2d45.forward(leakyrelu37_out1);
-        let leakyrelu38_out1 = burn::tensor::activation::leaky_relu(
-            conv2d45_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu38_out1 =
+            burn::tensor::activation::leaky_relu(conv2d45_out1, 0.10000000149011612);
         let conv2d46_out1 = self.conv2d46.forward(leakyrelu38_out1);
-        let leakyrelu39_out1 = burn::tensor::activation::leaky_relu(
-            conv2d46_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu39_out1 =
+            burn::tensor::activation::leaky_relu(conv2d46_out1, 0.10000000149011612);
         let conv2d47_out1 = self.conv2d47.forward(leakyrelu39_out1);
-        let leakyrelu40_out1 = burn::tensor::activation::leaky_relu(
-            conv2d47_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu40_out1 =
+            burn::tensor::activation::leaky_relu(conv2d47_out1, 0.10000000149011612);
         let conv2d48_out1 = self.conv2d48.forward(leakyrelu40_out1);
         let slice16_out1 = conv2d48_out1.clone().slice(s![.., 2.., .., ..]);
         let clip3_out1 = {
@@ -1813,34 +1671,32 @@ impl<B: Backend> Submodule4<B> {
         let add20_out1 = reshape20_out1.add(constant96_out1);
         let split_tensors = add20_out1.split_with_sizes([1, 1].into(), 3);
         let [split7_out1, split7_out2] = split_tensors.try_into().unwrap();
-        let mul24_out1 = split7_out1
-            .mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div17_out1 = mul24_out1
-            .div((constant97_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub10_out1 = div17_out1
-            .sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let mul25_out1 = split7_out2
-            .mul((constant90_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let div18_out1 = mul25_out1
-            .div((constant98_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let sub11_out1 = div18_out1
-            .sub((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
-        let concat19_out1 = burn::tensor::Tensor::cat(
-            [sub10_out1, sub11_out1].into(),
-            3,
-        );
+        let mul24_out1 =
+            split7_out1.mul((constant90_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div17_out1 =
+            mul24_out1.div((constant97_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub10_out1 =
+            div17_out1.sub((constant82_out1.clone()).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul25_out1 =
+            split7_out2.mul((constant90_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let div18_out1 =
+            mul25_out1.div((constant98_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let sub11_out1 =
+            div18_out1.sub((constant82_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let concat19_out1 = burn::tensor::Tensor::cat([sub10_out1, sub11_out1].into(), 3);
         let gridsample5_out1 = {
             let dtype = div9_out1.dtype();
-            div9_out1.cast(burn::tensor::DType::F32)
-            .grid_sample_2d(
-                concat19_out1.cast(burn::tensor::DType::F32),
-                burn::tensor::ops::GridSampleOptions::new(
+            div9_out1
+                .cast(burn::tensor::DType::F32)
+                .grid_sample_2d(
+                    concat19_out1.cast(burn::tensor::DType::F32),
+                    burn::tensor::ops::GridSampleOptions::new(
                         burn::tensor::ops::InterpolateMode::Bilinear,
                     )
                     .with_padding_mode(burn::tensor::ops::GridSamplePaddingMode::Zeros)
                     .with_align_corners(true),
-            )
-            .cast(dtype)
+                )
+                .cast(dtype)
         };
         let reshape21_out1 = gridsample5_out1.reshape([1, 54, 96, -1]);
         let transpose18_out1 = reshape21_out1.permute([0, 3, 1, 2]);
@@ -1852,61 +1708,41 @@ impl<B: Backend> Submodule4<B> {
                 add18_out1.clone(),
                 constant100_out1,
             ]
-                .into(),
+            .into(),
             1,
         );
         let conv2d49_out1 = self.conv2d49.forward(concat20_out1);
-        let leakyrelu41_out1 = burn::tensor::activation::leaky_relu(
-            conv2d49_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu41_out1 =
+            burn::tensor::activation::leaky_relu(conv2d49_out1, 0.10000000149011612);
         let conv2d50_out1 = self.conv2d50.forward(leakyrelu41_out1);
-        let leakyrelu42_out1 = burn::tensor::activation::leaky_relu(
-            conv2d50_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu42_out1 =
+            burn::tensor::activation::leaky_relu(conv2d50_out1, 0.10000000149011612);
         let conv2d51_out1 = self.conv2d51.forward(leakyrelu42_out1);
-        let leakyrelu43_out1 = burn::tensor::activation::leaky_relu(
-            conv2d51_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu43_out1 =
+            burn::tensor::activation::leaky_relu(conv2d51_out1, 0.10000000149011612);
         let conv2d52_out1 = self.conv2d52.forward(leakyrelu43_out1);
-        let leakyrelu44_out1 = burn::tensor::activation::leaky_relu(
-            conv2d52_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu44_out1 =
+            burn::tensor::activation::leaky_relu(conv2d52_out1, 0.10000000149011612);
         let conv2d53_out1 = self.conv2d53.forward(leakyrelu44_out1);
-        let leakyrelu45_out1 = burn::tensor::activation::leaky_relu(
-            conv2d53_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu45_out1 =
+            burn::tensor::activation::leaky_relu(conv2d53_out1, 0.10000000149011612);
         let conv2d54_out1 = self.conv2d54.forward(leakyrelu45_out1);
-        let leakyrelu46_out1 = burn::tensor::activation::leaky_relu(
-            conv2d54_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu46_out1 =
+            burn::tensor::activation::leaky_relu(conv2d54_out1, 0.10000000149011612);
         let conv2d55_out1 = self.conv2d55.forward(leakyrelu46_out1);
-        let leakyrelu47_out1 = burn::tensor::activation::leaky_relu(
-            conv2d55_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu47_out1 =
+            burn::tensor::activation::leaky_relu(conv2d55_out1, 0.10000000149011612);
         let conv2d56_out1 = self.conv2d56.forward(leakyrelu47_out1);
         let slice18_out1 = conv2d56_out1.slice(s![.., 0..2, .., ..]);
         let add21_out1 = add18_out1.add(slice18_out1);
         let conv2d57_out1 = self.conv2d57.forward(div1_out1);
-        let leakyrelu48_out1 = burn::tensor::activation::leaky_relu(
-            conv2d57_out1,
-            0.10000000149011612,
-        );
+        let leakyrelu48_out1 =
+            burn::tensor::activation::leaky_relu(conv2d57_out1, 0.10000000149011612);
         let conv2d58_out1 = self.conv2d58.forward(leakyrelu48_out1);
-        let leakyrelu49_out1 = burn::tensor::activation::leaky_relu(
-            conv2d58_out1,
-            0.10000000149011612,
-        );
-        let concat21_out1 = burn::tensor::Tensor::cat(
-            [add21_out1.clone(), leakyrelu49_out1].into(),
-            1,
-        );
+        let leakyrelu49_out1 =
+            burn::tensor::activation::leaky_relu(conv2d58_out1, 0.10000000149011612);
+        let concat21_out1 =
+            burn::tensor::Tensor::cat([add21_out1.clone(), leakyrelu49_out1].into(), 1);
         let conv2d59_out1 = self.conv2d59.forward(concat21_out1);
         let relu3_out1 = burn::tensor::activation::relu(conv2d59_out1);
         let conv2d60_out1 = self.conv2d60.forward(relu3_out1);
@@ -1918,11 +1754,15 @@ impl<B: Backend> Submodule4<B> {
             burn::tensor::activation::softmax(reshape22_out1.cast(burn::tensor::DType::F32), 2)
                 .cast(dtype)
         };
-        let pad1_out1 = add21_out1
-            .pad(
-                [(0usize, 0usize), (0usize, 0usize), (1usize, 1usize), (1usize, 1usize)],
-                burn::tensor::ops::PadMode::Constant(0_f32),
-            );
+        let pad1_out1 = add21_out1.pad(
+            [
+                (0usize, 0usize),
+                (0usize, 0usize),
+                (1usize, 1usize),
+                (1usize, 1usize),
+            ],
+            burn::tensor::ops::PadMode::Constant(0_f32),
+        );
         let constant137_out1 = self.constant137.val();
         let gather1_out1 = pad1_out1.take::<2, 5>(2, constant137_out1);
         let constant138_out1 = self.constant138.val();
@@ -1932,15 +1772,17 @@ impl<B: Backend> Submodule4<B> {
         let mul26_out1 = softmax4_out1.mul(reshape23_out1);
         let reducesum1_out1 = {
             let dtype = mul26_out1.dtype();
-            mul26_out1.cast(burn::tensor::DType::F32)
-                .sum_dim(2usize).squeeze_dims::<6usize>(&[2])
+            mul26_out1
+                .cast(burn::tensor::DType::F32)
+                .sum_dim(2usize)
+                .squeeze_dims::<6usize>(&[2])
                 .cast(dtype)
         };
         let transpose20_out1 = reducesum1_out1.permute([0, 1, 4, 2, 5, 3]);
         let reshape24_out1 = transpose20_out1.reshape([1, 2, 432, 768]);
         let constant104_out1 = self.constant104.val();
-        let mul27_out1 = reshape24_out1
-            .mul((constant104_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
+        let mul27_out1 =
+            reshape24_out1.mul((constant104_out1).unsqueeze_dims(&[0isize, 1isize, 2isize]));
         mul27_out1
     }
 }
@@ -1956,7 +1798,6 @@ pub struct Model<B: Backend> {
     device: B::Device,
 }
 
-
 impl<B: Backend> Default for Model<B> {
     fn default() -> Self {
         Self::from_file(
@@ -1971,7 +1812,9 @@ impl<B: Backend> Model<B> {
     pub fn from_file(file: &str, device: &B::Device) -> Self {
         let mut model = Self::new(device);
         let mut store = BurnpackStore::from_file(file);
-        model.load_from(&mut store).expect("Failed to load burnpack file");
+        model
+            .load_from(&mut store)
+            .expect("Failed to load burnpack file");
         model
     }
 
@@ -1981,7 +1824,9 @@ impl<B: Backend> Model<B> {
     pub fn from_bytes(bytes: Bytes, device: &B::Device) -> Self {
         let mut model = Self::new(device);
         let mut store = BurnpackStore::from_bytes(Some(bytes));
-        model.load_from(&mut store).expect("Failed to load burnpack bytes");
+        model
+            .load_from(&mut store)
+            .expect("Failed to load burnpack bytes");
         model
     }
 }
@@ -2013,15 +1858,13 @@ impl<B: Backend> Model<B> {
             constant83_out1,
             div1_out1,
         ) = self.submodule1.forward(img0, img1);
-        let (mul17_out1, mul13_out1, constant90_out1, div9_out1) = self
-            .submodule2
-            .forward(
-                add4_out1,
-                leakyrelu6_out1,
-                constant82_out1.clone(),
-                constant81_out1,
-                constant83_out1,
-            );
+        let (mul17_out1, mul13_out1, constant90_out1, div9_out1) = self.submodule2.forward(
+            add4_out1,
+            leakyrelu6_out1,
+            constant82_out1.clone(),
+            constant81_out1,
+            constant83_out1,
+        );
         let (
             leakyrelu29_out1,
             add12_out1,
@@ -2031,31 +1874,27 @@ impl<B: Backend> Model<B> {
             constant98_out1,
             conv2d24_out1,
             constant100_out1,
-        ) = self
-            .submodule3
-            .forward(
-                mul17_out1,
-                mul13_out1,
-                constant90_out1.clone(),
-                constant82_out1.clone(),
-                div9_out1.clone(),
-            );
-        let mul27_out1 = self
-            .submodule4
-            .forward(
-                leakyrelu29_out1,
-                add12_out1,
-                constant95_out1,
-                constant96_out1,
-                constant90_out1,
-                constant97_out1,
-                constant82_out1,
-                constant98_out1,
-                div9_out1,
-                conv2d24_out1,
-                constant100_out1,
-                div1_out1,
-            );
+        ) = self.submodule3.forward(
+            mul17_out1,
+            mul13_out1,
+            constant90_out1.clone(),
+            constant82_out1.clone(),
+            div9_out1.clone(),
+        );
+        let mul27_out1 = self.submodule4.forward(
+            leakyrelu29_out1,
+            add12_out1,
+            constant95_out1,
+            constant96_out1,
+            constant90_out1,
+            constant97_out1,
+            constant82_out1,
+            constant98_out1,
+            div9_out1,
+            conv2d24_out1,
+            constant100_out1,
+            div1_out1,
+        );
         mul27_out1
     }
 }

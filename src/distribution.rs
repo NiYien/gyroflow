@@ -6,9 +6,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::io::Read;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct Manifest {
     #[serde(default)]
     pub app: AppRelease,
@@ -19,12 +19,24 @@ pub struct Manifest {
     #[serde(default)]
     pub plugins_base: String,
     #[serde(default)]
+    pub plugins_source_mode: String,
+    #[serde(default)]
+    pub plugins_source_ref: String,
+    #[serde(default)]
+    pub plugins_source_tag: String,
+    #[serde(default)]
     pub country: String,
     #[serde(default)]
     pub region: String,
+    #[serde(default)]
+    pub city: String,
+    #[serde(default)]
+    pub country_source: String,
+    #[serde(default)]
+    pub selected_source: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct AppRelease {
     #[serde(default)]
     pub version: String,
@@ -48,7 +60,7 @@ pub struct ManualAppVersion {
     pub recommended: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct DataPackageRelease {
     #[serde(default)]
     pub version: u64,
@@ -75,6 +87,7 @@ struct CachedManifest {
 
 #[derive(Clone, Debug, Serialize)]
 struct TelemetryEvent<'a> {
+    anon_id: &'a str,
     source_app_id: &'a str,
     product_id: &'a str,
     event: &'a str,
@@ -117,7 +130,7 @@ pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
         .append_pair("app_version", env!("CARGO_PKG_VERSION"));
 
     let started = Instant::now();
-    let body = ureq::get(url.as_str())
+    let body = configure_geo_request(ureq::get(url.as_str()))
         .call()
         .map_err(|err| format!("fetch manifest failed: {err}"))?
         .into_body()
@@ -125,6 +138,23 @@ pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
         .map_err(|err| format!("read manifest failed: {err}"))?;
     let manifest: Manifest =
         serde_json::from_str(&body).map_err(|err| format!("parse manifest failed: {err}"))?;
+    log::info!("Distribution manifest URL: {}", url);
+    match serde_json::to_string_pretty(&manifest) {
+        Ok(pretty) => log::info!("Distribution manifest payload:\n{}", pretty),
+        Err(err) => log::warn!("Serialize manifest for logging failed: {}", err),
+    }
+    log::info!(
+        "Distribution geo context: country={}, region={}, city={}, country_source={}, selected_source={}, disable_proxy={}, http_proxy={}, https_proxy={}, all_proxy={}",
+        manifest.country,
+        manifest.region,
+        manifest.city,
+        manifest.country_source,
+        manifest.selected_source,
+        disable_proxy_enabled(),
+        env_value_for_log("HTTP_PROXY"),
+        env_value_for_log("HTTPS_PROXY"),
+        env_value_for_log("ALL_PROXY"),
+    );
 
     apply_manifest_sources(&manifest);
     let source_label = manifest_source_label(&manifest);
@@ -174,7 +204,7 @@ fn sync_package(
 
     let started = Instant::now();
     let result = (|| -> Result<usize, String> {
-        let response = ureq::get(&release.url)
+        let response = configure_geo_request(ureq::get(&release.url))
             .call()
             .map_err(|err| format!("download {package_name} failed: {err}"))?;
         let mut reader = response.into_body().into_reader();
@@ -312,6 +342,25 @@ fn decode_bundle(bytes: &[u8]) -> Result<DataBundle, String> {
     ciborium::from_reader(decoder).map_err(|err| err.to_string())
 }
 
+fn telemetry_anon_id() -> String {
+    let existing = gyroflow_core::settings::get_str("telemetryAnonId", "");
+    if !existing.trim().is_empty() {
+        return existing;
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let generated = format!(
+        "gfniyien-{now_ms:012x}-{:016x}{:016x}",
+        fastrand::u64(..),
+        fastrand::u64(..)
+    );
+    gyroflow_core::settings::set("telemetryAnonId", generated.clone().into());
+    generated
+}
+
 pub fn report_download_event(
     event: &str,
     artifact_type: &str,
@@ -326,8 +375,10 @@ pub fn report_download_event(
     if endpoint.is_empty() {
         return;
     }
+    let anon_id = telemetry_anon_id();
 
     let payload = TelemetryEvent {
+        anon_id: &anon_id,
         source_app_id: "gyroflow_niyien",
         product_id: "gyroflow_niyien",
         event,
@@ -351,13 +402,57 @@ pub fn report_download_event(
     };
 
     crate::core::run_threaded(move || {
-        if let Err(err) = ureq::post(&endpoint)
+        if let Err(err) = configure_geo_request(ureq::post(&endpoint))
             .header("Content-Type", "application/json")
             .send(body.as_str())
         {
             log::debug!("Telemetry submit failed: {}", err);
         }
     });
+}
+
+fn configure_geo_request<T>(request: ureq::RequestBuilder<T>) -> ureq::RequestBuilder<T> {
+    let mut request = request;
+    if disable_proxy_enabled() {
+        request = request.config().proxy(None).build();
+    }
+    if geo_debug_enabled() {
+        request = request.header("x-telemetry-debug", "1");
+    }
+    if geo_bypass_cache_enabled() {
+        request = request.header("x-geo-bypass-cache", "1");
+    }
+    request
+}
+
+fn geo_debug_enabled() -> bool {
+    env_flag("NIYIEN_GEO_DEBUG") || env_flag("NIYIEN_TELEMETRY_DEBUG_GEO")
+}
+
+fn geo_bypass_cache_enabled() -> bool {
+    env_flag("NIYIEN_GEO_BYPASS_CACHE")
+}
+
+fn disable_proxy_enabled() -> bool {
+    env_flag("NIYIEN_DISABLE_PROXY")
+}
+
+fn env_flag(name: &str) -> bool {
+    match std::env::var(name) {
+        Ok(value) => matches!(
+            value.trim().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        ),
+        Err(_) => false,
+    }
+}
+
+fn env_value_for_log(name: &str) -> &'static str {
+    if std::env::var_os(name).is_some() {
+        "set"
+    } else {
+        "empty"
+    }
 }
 
 fn apply_manifest_sources(manifest: &Manifest) {
@@ -367,6 +462,18 @@ fn apply_manifest_sources(manifest: &Manifest) {
     if !manifest.plugins_base.is_empty() {
         gyroflow_core::settings::set("pluginsBase", manifest.plugins_base.clone().into());
     }
+    gyroflow_core::settings::set(
+        "pluginsSourceMode",
+        manifest.plugins_source_mode.trim().to_owned().into(),
+    );
+    gyroflow_core::settings::set(
+        "pluginsSourceRef",
+        manifest.plugins_source_ref.trim().to_owned().into(),
+    );
+    gyroflow_core::settings::set(
+        "pluginsSourceTag",
+        manifest.plugins_source_tag.trim().to_owned().into(),
+    );
     if !manifest.country.is_empty() {
         gyroflow_core::settings::set("distributionCountry", manifest.country.clone().into());
     }
@@ -406,12 +513,16 @@ pub fn has_app_update(manifest: &Manifest) -> bool {
     if latest.is_empty() {
         return false;
     }
-    if latest == env!("CARGO_PKG_VERSION") || latest == crate::util::get_version() {
+    let current_canonical = crate::util::get_canonical_version().trim();
+    if latest == current_canonical
+        || latest == env!("CARGO_PKG_VERSION")
+        || latest == crate::util::get_version()
+    {
         return false;
     }
     match (
         semver::Version::parse(latest.trim_start_matches('v')),
-        semver::Version::parse(env!("CARGO_PKG_VERSION")),
+        semver::Version::parse(current_canonical.trim_start_matches('v')),
     ) {
         (Ok(latest), Ok(current)) => latest > current,
         _ => true,
@@ -439,5 +550,26 @@ pub fn plugin_source_base() -> String {
     match fetch_manifest(false) {
         Ok(manifest) if !manifest.plugins_base.is_empty() => manifest.plugins_base,
         Ok(_) | Err(_) => gyroflow_core::settings::get_str("pluginsBase", ""),
+    }
+}
+
+pub fn plugin_source_mode() -> String {
+    match fetch_manifest(false) {
+        Ok(manifest) if !manifest.plugins_source_mode.is_empty() => manifest.plugins_source_mode,
+        Ok(_) | Err(_) => gyroflow_core::settings::get_str("pluginsSourceMode", ""),
+    }
+}
+
+pub fn plugin_source_ref() -> String {
+    match fetch_manifest(false) {
+        Ok(manifest) if !manifest.plugins_source_ref.is_empty() => manifest.plugins_source_ref,
+        Ok(_) | Err(_) => gyroflow_core::settings::get_str("pluginsSourceRef", ""),
+    }
+}
+
+pub fn plugin_source_tag() -> String {
+    match fetch_manifest(false) {
+        Ok(manifest) if !manifest.plugins_source_tag.is_empty() => manifest.plugins_source_tag,
+        Ok(_) | Err(_) => gyroflow_core::settings::get_str("pluginsSourceTag", ""),
     }
 }

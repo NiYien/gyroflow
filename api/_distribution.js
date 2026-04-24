@@ -1,6 +1,10 @@
 const fs = require("fs");
 const path = require("path");
 
+const COUNTRY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const countryCache = new Map();
+const pendingCountryLookups = new Map();
+
 function parseTomlValue(raw) {
   const value = raw.trim();
   if (value.startsWith('"') && value.endsWith('"')) {
@@ -51,13 +55,126 @@ function readJsonIfExists(filePath) {
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
 }
 
-function getCountry(req) {
-  return (
-    req.headers["x-vercel-ip-country"] ||
-    req.headers["x-country-code"] ||
-    req.query.country ||
-    "US"
-  ).toString().toUpperCase();
+function getClientIp(req) {
+  const cfConnectingIp = req?.headers?.["cf-connecting-ip"];
+  if (typeof cfConnectingIp === "string" && cfConnectingIp.trim()) {
+    return cfConnectingIp.trim();
+  }
+
+  const trueClientIp = req?.headers?.["true-client-ip"];
+  if (typeof trueClientIp === "string" && trueClientIp.trim()) {
+    return trueClientIp.trim();
+  }
+
+  const forwarded = req?.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string" && forwarded.trim()) {
+    return forwarded.split(",")[0].trim();
+  }
+
+  return req?.socket?.remoteAddress || "";
+}
+
+function normalizeCountry(value) {
+  return typeof value === "string" ? value.trim().toUpperCase() : "";
+}
+
+function getCachedCountry(ip) {
+  if (!ip) {
+    return null;
+  }
+  const cached = countryCache.get(ip);
+  if (!cached) {
+    return null;
+  }
+  if (cached.expires_at <= Date.now()) {
+    countryCache.delete(ip);
+    return null;
+  }
+  return cached;
+}
+
+function setCachedCountry(ip, country, source, ttlMs = COUNTRY_CACHE_TTL_MS) {
+  if (!ip || !country) {
+    return;
+  }
+  countryCache.set(ip, {
+    country,
+    source,
+    expires_at: Date.now() + ttlMs,
+  });
+}
+
+async function lookupCountryByIpInfo(ip) {
+  const token = String(process.env.IPINFO_TOKEN || "").trim();
+  if (!token || !ip) {
+    return "";
+  }
+
+  const url = `https://ipinfo.io/${encodeURIComponent(ip)}?token=${encodeURIComponent(token)}`;
+  try {
+    const response = await fetch(url, { method: "GET" });
+    if (!response.ok) {
+      return "";
+    }
+    const data = await response.json();
+    return normalizeCountry(data.country);
+  } catch (_) {
+    return "";
+  }
+}
+
+async function resolveCountry(req) {
+  const queryCountry = normalizeCountry(req?.query?.country);
+  if (queryCountry) {
+    return { country: queryCountry, source: "query" };
+  }
+
+  const headerCountry = normalizeCountry(req?.headers?.["x-country-code"]);
+  if (headerCountry) {
+    return { country: headerCountry, source: "header" };
+  }
+
+  const clientIp = getClientIp(req);
+  const cached = getCachedCountry(clientIp);
+  if (cached) {
+    return { country: cached.country, source: cached.source };
+  }
+
+  if (clientIp) {
+    let pending = pendingCountryLookups.get(clientIp);
+    if (!pending) {
+      pending = lookupCountryByIpInfo(clientIp)
+        .then((country) => {
+          const normalized = normalizeCountry(country);
+          if (normalized) {
+            setCachedCountry(clientIp, normalized, "ipinfo");
+          }
+          return normalized;
+        })
+        .finally(() => {
+          pendingCountryLookups.delete(clientIp);
+        });
+      pendingCountryLookups.set(clientIp, pending);
+    }
+    const ipInfoCountry = await pending;
+    if (ipInfoCountry) {
+      return { country: ipInfoCountry, source: "ipinfo" };
+    }
+  }
+
+  const vercelCountry = normalizeCountry(req?.headers?.["x-vercel-ip-country"]);
+  if (vercelCountry) {
+    setCachedCountry(clientIp, vercelCountry, "vercel", 30 * 60 * 1000);
+    return { country: vercelCountry, source: "vercel" };
+  }
+
+  setCachedCountry(clientIp, "US", "default", 30 * 60 * 1000);
+  return { country: "US", source: "default" };
+}
+
+async function getCountry(req) {
+  const resolved = await resolveCountry(req);
+  return resolved.country;
 }
 
 function selectSource(config, country) {
@@ -160,5 +277,6 @@ module.exports = {
   loadReleasePolicy,
   readJsonIfExists,
   getCountry,
+  resolveCountry,
   selectSource,
 };

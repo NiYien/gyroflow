@@ -5,11 +5,11 @@ use qmetaobject::*;
 
 use crate::core::StabilizationManager;
 use crate::{core, rendering, util};
-use core::niyien_lens_presets;
 use core::camera_identifier::CameraIdentifier;
 use core::filesystem;
 use core::gyro_source::GyroSource;
 use core::lens_profile::LensProfile;
+use core::niyien_lens_presets;
 use core::stabilization_params::ReadoutDirection;
 use parking_lot::{Mutex as ParkingMutex, RwLock};
 use rayon::prelude::*;
@@ -17,8 +17,8 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
     Arc,
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
 };
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
@@ -2062,7 +2062,14 @@ impl RenderQueue {
 
             let sync_cancel_flag = cancel_flag.clone();
             core::run_threaded(move || {
-                Self::do_autosync(stab.clone(), processing, &input_file, err2, proc_height, sync_cancel_flag);
+                Self::do_autosync(
+                    stab.clone(),
+                    processing,
+                    &input_file,
+                    err2,
+                    proc_height,
+                    sync_cancel_flag,
+                );
                 stab.recompute_blocking();
 
                 if let Some((opt, path, fields)) = export_metadata {
@@ -2891,7 +2898,11 @@ impl RenderQueue {
         if force_autosync && has_sync_points {
             let stale = stab.gyro.read().get_offsets().len();
             stab.gyro.write().clear_offsets();
-            ::log::info!("do_autosync clearing {} stale sync point(s) for {}", stale, url);
+            ::log::info!(
+                "do_autosync clearing {} stale sync point(s) for {}",
+                stale,
+                url
+            );
         }
         if force_autosync || (!has_sync_points && !has_accurate_timestamps) {
             // ----------------------------------------------------------------------------
@@ -3077,34 +3088,45 @@ impl RenderQueue {
                                             } else {
                                                 ffmpeg_next::format::Pixel::GRAY8
                                             };
-                                            match converter.scale(
-                                                input_frame,
-                                                pix_fmt,
-                                                sw,
-                                                sh,
-                                            ) {
+                                            match converter.scale(input_frame, pix_fmt, sw, sh) {
                                                 Ok(small_frame) => {
-                                                    let (width, height, stride, pixels) = if of_method == 3 || of_method == 4 {
-                                                        // NV12: pass all planes (Y + UV)
-                                                        let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
-                                                                      + small_frame.stride(1) * small_frame.plane_height(1) as usize;
-                                                        let mut all_data = Vec::with_capacity(total_len);
-                                                        all_data.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
-                                                        all_data.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
-                                                        (
-                                                            small_frame.plane_width(0),
-                                                            small_frame.plane_height(0),
-                                                            small_frame.stride(0),
-                                                            all_data,
-                                                        )
-                                                    } else {
-                                                        (
-                                                            small_frame.plane_width(0),
-                                                            small_frame.plane_height(0),
-                                                            small_frame.stride(0),
-                                                            small_frame.data(0).to_vec(),
-                                                        )
-                                                    };
+                                                    let (width, height, stride, pixels) =
+                                                        if of_method == 3 || of_method == 4 {
+                                                            // NV12: pass all planes (Y + UV)
+                                                            let total_len = small_frame.stride(0)
+                                                                * small_frame.plane_height(0)
+                                                                    as usize
+                                                                + small_frame.stride(1)
+                                                                    * small_frame.plane_height(1)
+                                                                        as usize;
+                                                            let mut all_data =
+                                                                Vec::with_capacity(total_len);
+                                                            all_data.extend_from_slice(
+                                                                &small_frame.data(0)[..small_frame
+                                                                    .stride(0)
+                                                                    * small_frame.plane_height(0)
+                                                                        as usize],
+                                                            );
+                                                            all_data.extend_from_slice(
+                                                                &small_frame.data(1)[..small_frame
+                                                                    .stride(1)
+                                                                    * small_frame.plane_height(1)
+                                                                        as usize],
+                                                            );
+                                                            (
+                                                                small_frame.plane_width(0),
+                                                                small_frame.plane_height(0),
+                                                                small_frame.stride(0),
+                                                                all_data,
+                                                            )
+                                                        } else {
+                                                            (
+                                                                small_frame.plane_width(0),
+                                                                small_frame.plane_height(0),
+                                                                small_frame.stride(0),
+                                                                small_frame.data(0).to_vec(),
+                                                            )
+                                                        };
 
                                                     sync2.feed_frame(
                                                         timestamp_us,
@@ -3947,71 +3969,96 @@ impl RenderQueue {
 
                             if let Some(lens_index) = lens_index {
                                 if let Some(group_config) = effective_configs.get(lens_index) {
-                                    let selected_focal_length =
-                                        resolve_lens_group_focal_length(auto_focus, Some(group_config));
-                                    let manual_focus_length_mm = selected_focal_length.and_then(
-                                        |(focal_length_mm, source)| {
-                                            (source == niyien_lens_presets::FocalLengthSource::Manual)
-                                                .then_some(focal_length_mm)
-                                        },
+                                    // Gate: only apply manual overrides when the global
+                                    // Manual edit toggle is on AND the auto path can't fully
+                                    // satisfy this video (see should_use_manual_config).
+                                    // Read settings live (not stab's cached Arc): job stabs
+                                    // are spawned independently with their own AtomicBool,
+                                    // so reading the persistent setting here ensures the
+                                    // current toggle value is honored at reapply time.
+                                    let manual_edit = core::settings::get_bool(
+                                        "lens_group_manual_edit",
+                                        false,
                                     );
-
-                                    if let Some(focal_length_mm) = manual_focus_length_mm {
-                                        niyien_lens_presets::apply_focal_length_fallback_to_metadata(
-                                            &mut base_metadata,
-                                            focal_length_mm,
+                                    let should_apply_manual =
+                                        niyien_lens_presets::should_use_manual_config(
+                                            manual_edit,
+                                            group_config,
+                                            &base_metadata,
                                         );
-                                        {
-                                            let gyro = stab.gyro.read();
-                                            let mut md = gyro.file_metadata.write();
+
+                                    if should_apply_manual {
+                                        let selected_focal_length = resolve_lens_group_focal_length(
+                                            auto_focus,
+                                            Some(group_config),
+                                        );
+                                        let manual_focus_length_mm = selected_focal_length.and_then(
+                                            |(focal_length_mm, source)| {
+                                                (source == niyien_lens_presets::FocalLengthSource::Manual)
+                                                    .then_some(focal_length_mm)
+                                            },
+                                        );
+
+                                        if let Some(focal_length_mm) = manual_focus_length_mm {
                                             niyien_lens_presets::apply_focal_length_fallback_to_metadata(
-                                                &mut md,
+                                                &mut base_metadata,
                                                 focal_length_mm,
                                             );
-                                        }
-                                        stab.set_user_focal_length(focal_length_mm);
-                                        ::log::info!(
-                                            "[reapply_lens_group_config] job[{}] applied manual focal length {:.1}mm",
-                                            job_id,
-                                            focal_length_mm
-                                        );
-                                    }
-
-                                    if group_config.anamorphic_enabled {
-                                        let existing_lens = stab.lens.read().clone();
-                                        let profile = niyien_lens_presets::build_lens_profile(
-                                            &base_metadata,
-                                            size,
-                                            Some(group_config),
-                                            Some(&existing_lens),
-                                        );
-                                        if let Some(profile) = profile {
-                                            if let Some(output_dim) = profile.output_dimension.clone() {
-                                                updated_render_options.output_width = output_dim.w;
-                                                updated_render_options.output_height = output_dim.h;
+                                            {
+                                                let gyro = stab.gyro.read();
+                                                let mut md = gyro.file_metadata.write();
+                                                niyien_lens_presets::apply_focal_length_fallback_to_metadata(
+                                                    &mut md,
+                                                    focal_length_mm,
+                                                );
                                             }
-                                            *stab.lens.write() = profile;
+                                            stab.set_user_focal_length(focal_length_mm);
                                             ::log::info!(
-                                                "[reapply_lens_group_config] job[{}] applied anamorphic profile for group #{}",
+                                                "[reapply_lens_group_config] job[{}] applied manual focal length {:.1}mm",
                                                 job_id,
-                                                lens_index
+                                                focal_length_mm
                                             );
                                         }
+
+                                        if group_config.anamorphic_enabled {
+                                            let existing_lens = stab.lens.read().clone();
+                                            let profile = niyien_lens_presets::build_lens_profile(
+                                                &base_metadata,
+                                                size,
+                                                Some(group_config),
+                                                Some(&existing_lens),
+                                            );
+                                            if let Some(profile) = profile {
+                                                if let Some(output_dim) =
+                                                    profile.output_dimension.clone()
+                                                {
+                                                    updated_render_options.output_width = output_dim.w;
+                                                    updated_render_options.output_height = output_dim.h;
+                                                }
+                                                *stab.lens.write() = profile;
+                                                ::log::info!(
+                                                    "[reapply_lens_group_config] job[{}] applied anamorphic profile for group #{}",
+                                                    job_id,
+                                                    lens_index
+                                                );
+                                            }
+                                        }
                                     }
 
-                                    // Mirror apply_lens_group_to_main: anamorphic ON honors the
-                                    // per-group slider value (default 100 when unset); anamorphic
-                                    // OFF always reverts to 100%. Without this the queue renders
-                                    // differ from the live preview.
-                                    let correction_percent = if group_config.anamorphic_enabled {
-                                        group_config
-                                            .lens_correction_amount
-                                            .filter(|v| v.is_finite())
-                                            .map(|v| v.clamp(0.0, 100.0) as f64)
-                                            .unwrap_or(100.0)
-                                    } else {
-                                        100.0
-                                    };
+                                    // Mirror apply_lens_group_to_main: correction override only
+                                    // applies when manual override is effectively applied AND
+                                    // anamorphic is on. Otherwise revert to 100% so queue renders
+                                    // match the live preview.
+                                    let correction_percent =
+                                        if should_apply_manual && group_config.anamorphic_enabled {
+                                            group_config
+                                                .lens_correction_amount
+                                                .filter(|v| v.is_finite())
+                                                .map(|v| v.clamp(0.0, 100.0) as f64)
+                                                .unwrap_or(100.0)
+                                        } else {
+                                            100.0
+                                        };
                                     stab.set_lens_correction_amount(correction_percent / 100.0);
                                 }
                             }
@@ -4594,9 +4641,18 @@ impl RenderQueue {
                     let md =
                         clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
                     let detected_source = md.detected_source.as_deref().unwrap_or("");
-                    let is_r3d = item.render_options.input_filename.to_ascii_lowercase().ends_with(".r3d");
-                    let has_metadata_rotation = item.original_video_rotation.round() as i32 != 0 && !is_r3d;
-                    if !is_r3d && !has_metadata_rotation && item.auto_rotate && detected_source.starts_with("SenseFlow") {
+                    let is_r3d = item
+                        .render_options
+                        .input_filename
+                        .to_ascii_lowercase()
+                        .ends_with(".r3d");
+                    let has_metadata_rotation =
+                        item.original_video_rotation.round() as i32 != 0 && !is_r3d;
+                    if !is_r3d
+                        && !has_metadata_rotation
+                        && item.auto_rotate
+                        && detected_source.starts_with("SenseFlow")
+                    {
                         ::log::info!(
                             "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={}",
                             item.render_options.input_filename,

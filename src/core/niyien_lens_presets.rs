@@ -42,6 +42,11 @@ pub struct LensGroupConfig {
     pub lens_correction_amount: Option<f32>,
 }
 
+/// Minimum manual focal length that is considered sensible. Below this threshold the
+/// user has likely left the field empty / at a placeholder value and we fall back to
+/// the auto path regardless of the global manual_edit toggle.
+pub const MANUAL_FOCAL_LENGTH_MIN_MM: f64 = 5.0;
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LensGroupStatus {
@@ -249,6 +254,33 @@ impl LensGroupConfig {
                 .map(|v| !v.is_empty())
                 .unwrap_or(false)
     }
+}
+
+/// Decide whether to generate the lens profile via the manual path (user-supplied focal
+/// length and/or anamorphic) for this group. Requires the global `manual_edit` toggle,
+/// then either condition is sufficient:
+///   A. Fill missing focal length:  video has no telemetry focal length AND the group's
+///      manual focal length is above the MANUAL_FOCAL_LENGTH_MIN_MM sanity threshold.
+///   B. Apply anamorphic:  group has anamorphic enabled. Focal length can still come
+///      from telemetry in this case — build_lens_profile already falls back to auto
+///      focal when the manual field is empty.
+pub fn should_use_manual_config(
+    manual_edit: bool,
+    config: &LensGroupConfig,
+    metadata: &FileMetadata,
+) -> bool {
+    if !manual_edit {
+        return false;
+    }
+    let auto_has_focal = metadata
+        .lens_params
+        .values()
+        .any(|lp| lp.focal_length.is_some() || lp.pixel_focal_length.is_some());
+    let manual_focal_sufficient =
+        config.focal_length_mm.unwrap_or(0.0) > MANUAL_FOCAL_LENGTH_MIN_MM;
+    let fills_missing_focal = !auto_has_focal && manual_focal_sufficient;
+    let applies_anamorphic = config.anamorphic_enabled;
+    fills_missing_focal || applies_anamorphic
 }
 
 pub fn extract_lens_index(additional_data: &serde_json::Value) -> Option<usize> {
@@ -554,7 +586,10 @@ fn load_from_lens_package() -> Option<Vec<AnamorphicPreset>> {
     }
     match std::fs::read_to_string(&index_path) {
         Ok(index_json) => {
-            log::info!("loading lens presets from lens package at {}", dir.display());
+            log::info!(
+                "loading lens presets from lens package at {}",
+                dir.display()
+            );
             let presets = load_presets_from_index(&index_json, Some(&dir), false);
             if presets.is_empty() {
                 log::warn!(

@@ -49,8 +49,6 @@ use neuflow_v2_generated_fp16::Model;
 // Backend type: Wgpu<f16> — all compute in FP16.
 type B = burn::backend::wgpu::Wgpu<f16>;
 
-
-
 fn is_optimized_weight_file(path: &Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -116,7 +114,9 @@ static QUEUE_DEPTH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// otherwise `GlobalConfig::set` panics. Call at the very top of main before
 /// wgpu GPU probing (see `util::init_logging` in `gyroflow.rs`).
 pub fn init_cubecl_cache() {
-    use cubecl_runtime::config::{GlobalConfig, cache::CacheConfig, compilation::CompilationConfig};
+    use cubecl_runtime::config::{
+        GlobalConfig, cache::CacheConfig, compilation::CompilationConfig,
+    };
 
     static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
     if DONE.get().is_some() {
@@ -125,7 +125,10 @@ pub fn init_cubecl_cache() {
 
     let cache_root = crate::settings::data_dir().join("cubecl_cache");
     if let Err(e) = std::fs::create_dir_all(&cache_root) {
-        log::warn!("NeuFlow Burn: failed to create cubecl cache dir {:?}: {e}", cache_root);
+        log::warn!(
+            "NeuFlow Burn: failed to create cubecl cache dir {:?}: {e}",
+            cache_root
+        );
         let _ = DONE.set(());
         return;
     }
@@ -851,26 +854,29 @@ pub fn find_weight_file() -> Option<PathBuf> {
     if let Ok(exe) = std::env::current_exe() {
         if let Some(dir) = exe.parent() {
             candidates.push(
-                dir.join(
-                    "src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
-                ),
+                dir.join("src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
             );
-            candidates.push(dir.join(
-                "../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
-            ));
-            candidates.push(dir.join(
-                "../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
-            ));
-            candidates.push(dir.join("generated_iter5/neuflow_v2_iter5_768x432.bpk"));
-            candidates.push(dir.join("../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
-            candidates.push(dir.join("../../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
-            candidates
-                .push(dir.join("src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"));
             candidates.push(
                 dir.join("../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
             );
             candidates.push(
-                dir.join("../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
+                dir.join(
+                    "../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
+                ),
+            );
+            candidates.push(dir.join("generated_iter5/neuflow_v2_iter5_768x432.bpk"));
+            candidates.push(dir.join("../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
+            candidates.push(dir.join("../../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
+            candidates.push(
+                dir.join("src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
+            );
+            candidates.push(
+                dir.join("../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
+            );
+            candidates.push(
+                dir.join(
+                    "../../src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk",
+                ),
             );
         }
     }

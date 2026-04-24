@@ -1,6 +1,6 @@
-name: NiYien App Release
+name: release
 
-run-name: NiYien build ${{ github.ref_name }}${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_label && format(' • {0}', github.event.inputs.build_label) || '' }}
+run-name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_label || github.ref_name }}
 
 on:
   push:

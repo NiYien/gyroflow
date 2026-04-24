@@ -309,7 +309,8 @@ impl FindOffsetsRssync<'_> {
 
         // Pre-size presync_curves so per-range indices align with sync_points order.
         self.presync_curves.clear();
-        self.presync_curves.resize(self.sync_points.len(), Vec::new());
+        self.presync_curves
+            .resize(self.sync_points.len(), Vec::new());
         let sync_points = self.sync_points.clone();
         for (range_idx, (from_ts, to_ts)) in sync_points.iter().enumerate() {
             let range_t0 = std::time::Instant::now();
@@ -364,7 +365,8 @@ impl FindOffsetsRssync<'_> {
                 range_idx,
                 sync_call_ms,
                 range_t0.elapsed().as_secs_f64() * 1000.0,
-                from_ts, to_ts,
+                from_ts,
+                to_ts,
                 presync_radius
             );
         }
@@ -411,9 +413,7 @@ impl FindOffsetsRssync<'_> {
         let (best_offs, best_cost) = curve
             .iter()
             .filter(|p| !p.1.is_nan())
-            .min_by(|a, b| {
-                a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal)
-            })
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .copied()
             .unwrap_or((final_offset_external_ms, f64::NAN));
         let second_best_cost = curve
@@ -428,9 +428,7 @@ impl FindOffsetsRssync<'_> {
         };
 
         if crate::synchronization::sync_diag::is_enabled() {
-            crate::synchronization::sync_diag::record_cost_curve_rssync(
-                range_idx, &curve,
-            );
+            crate::synchronization::sync_diag::record_cost_curve_rssync(range_idx, &curve);
             crate::synchronization::sync_diag::record_rssync_summary(
                 range_idx,
                 self.sync_params.initial_offset,
@@ -484,10 +482,7 @@ impl FindOffsetsRssync<'_> {
             let mid_us = (mid_ms * 1000.0) as i64;
 
             // Match the original range (mid falls within it)
-            let (from_us, to_us) = match ranges
-                .iter()
-                .find(|(f, t)| mid_us >= *f && mid_us <= *t)
-            {
+            let (from_us, to_us) = match ranges.iter().find(|(f, t)| mid_us >= *f && mid_us <= *t) {
                 Some(r) => *r,
                 None => continue,
             };
@@ -523,8 +518,7 @@ impl FindOffsetsRssync<'_> {
                     }
                 })
                 .collect();
-            raw_pairs
-                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            raw_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             if raw_pairs.len() < 10 {
                 continue;
             }
@@ -544,14 +538,18 @@ impl FindOffsetsRssync<'_> {
             if corr_at_final >= CORR_OK {
                 log::debug!(
                     "[corr-rerank] seg {}: cost_final={:.1}ms corr={:.3} → keep",
-                    i, cost_final_ext_ms, corr_at_final
+                    i,
+                    cost_final_ext_ms,
+                    corr_at_final
                 );
                 continue;
             }
             if corr_at_final > CORR_BAD {
                 log::warn!(
                     "[corr-rerank] seg {}: cost_final={:.1}ms corr={:.3} (ambiguous, kept)",
-                    i, cost_final_ext_ms, corr_at_final
+                    i,
+                    cost_final_ext_ms,
+                    corr_at_final
                 );
                 continue;
             }
@@ -617,18 +615,27 @@ impl FindOffsetsRssync<'_> {
                         fine_step_s,
                         fine_radius_s,
                     ) {
-                        let refined_ext_ms =
-                            -refined_internal_s * 1000.0 - frt_offset_ms;
+                        let refined_ext_ms = -refined_internal_s * 1000.0 - frt_offset_ms;
                         log::warn!(
                             "[corr-rerank] seg {}: cost_final={:.1}ms (corr={:.3}) overridden → candidate {:.1}ms (corr={:.3}) refined to {:.3}ms (cost {:.3} → {:.3})",
-                            i, cost_final_ext_ms, corr_at_final, best_ext_ms, best_corr,
-                            refined_ext_ms, cost_final_value, refined_cost
+                            i,
+                            cost_final_ext_ms,
+                            corr_at_final,
+                            best_ext_ms,
+                            best_corr,
+                            refined_ext_ms,
+                            cost_final_value,
+                            refined_cost
                         );
                         offsets[i] = (mid_ms, refined_ext_ms, refined_cost, 0.5);
                     } else {
                         log::warn!(
                             "[corr-rerank] seg {}: cost_final={:.1}ms (corr={:.3}) overridden → candidate {:.1}ms (corr={:.3}) [refine failed, using candidate cost {:.3}]",
-                            i, cost_final_ext_ms, corr_at_final, best_ext_ms, best_corr,
+                            i,
+                            cost_final_ext_ms,
+                            corr_at_final,
+                            best_ext_ms,
+                            best_corr,
                             best_cost
                         );
                         offsets[i] = (mid_ms, best_ext_ms, best_cost, 0.5);
@@ -637,7 +644,10 @@ impl FindOffsetsRssync<'_> {
                 None => {
                     log::warn!(
                         "[corr-rerank] seg {}: cost_final={:.1}ms corr={:.3}; no point on curve reached corr≥{:.2}, keeping cost-based final (sync unreliable)",
-                        i, cost_final_ext_ms, corr_at_final, CORR_SWITCH_THRESHOLD
+                        i,
+                        cost_final_ext_ms,
+                        corr_at_final,
+                        CORR_SWITCH_THRESHOLD
                     );
                 }
             }
@@ -694,10 +704,7 @@ impl FindOffsetsRssync<'_> {
             let (mid_ms, cost_final_ext_ms, cost_final_value, _conf) = offsets[i];
             let mid_us = (mid_ms * 1000.0) as i64;
 
-            let (from_us, to_us) = match ranges
-                .iter()
-                .find(|(f, t)| mid_us >= *f && mid_us <= *t)
-            {
+            let (from_us, to_us) = match ranges.iter().find(|(f, t)| mid_us >= *f && mid_us <= *t) {
                 Some(r) => *r,
                 None => continue,
             };
@@ -751,7 +758,9 @@ impl FindOffsetsRssync<'_> {
                     .unwrap_or(lambda_default);
                 log::info!(
                     "[tikhonov] seg {}: λ={:.3} (max_axis_angle={:.3}°)",
-                    i, lambda, max_axis_angle_deg
+                    i,
+                    lambda,
+                    max_axis_angle_deg
                 );
                 let n = est.len();
                 // A = I + λ·LᵀL is symmetric pentadiagonal (bandwidth 2):
@@ -783,14 +792,22 @@ impl FindOffsetsRssync<'_> {
                 for ii in 0..n {
                     let l2i = if ii >= 2 { a2[ii] / d[ii - 2] } else { 0.0 };
                     let l1i = if ii >= 1 {
-                        let cross = if ii >= 2 { l2i * l1f[ii - 1] * d[ii - 2] } else { 0.0 };
+                        let cross = if ii >= 2 {
+                            l2i * l1f[ii - 1] * d[ii - 2]
+                        } else {
+                            0.0
+                        };
                         (a1[ii] - cross) / d[ii - 1]
                     } else {
                         0.0
                     };
                     let mut dii = a0[ii];
-                    if ii >= 1 { dii -= l1i * l1i * d[ii - 1]; }
-                    if ii >= 2 { dii -= l2i * l2i * d[ii - 2]; }
+                    if ii >= 1 {
+                        dii -= l1i * l1i * d[ii - 1];
+                    }
+                    if ii >= 2 {
+                        dii -= l2i * l2i * d[ii - 2];
+                    }
                     l1f[ii] = l1i;
                     l2f[ii] = l2i;
                     d[ii] = dii;
@@ -802,13 +819,19 @@ impl FindOffsetsRssync<'_> {
                 let mut x = vec![0.0f64; n];
                 for axis in 0..3 {
                     z[0] = est[0].1[axis];
-                    if n >= 2 { z[1] = est[1].1[axis] - l1f[1] * z[0]; }
+                    if n >= 2 {
+                        z[1] = est[1].1[axis] - l1f[1] * z[0];
+                    }
                     for ii in 2..n {
                         z[ii] = est[ii].1[axis] - l1f[ii] * z[ii - 1] - l2f[ii] * z[ii - 2];
                     }
-                    for ii in 0..n { y[ii] = z[ii] / d[ii]; }
+                    for ii in 0..n {
+                        y[ii] = z[ii] / d[ii];
+                    }
                     x[n - 1] = y[n - 1];
-                    if n >= 2 { x[n - 2] = y[n - 2] - l1f[n - 1] * x[n - 1]; }
+                    if n >= 2 {
+                        x[n - 2] = y[n - 2] - l1f[n - 1] * x[n - 1];
+                    }
                     if n >= 3 {
                         for ii in (0..=n - 3).rev() {
                             x[ii] = y[ii] - l1f[ii + 1] * x[ii + 1] - l2f[ii + 2] * x[ii + 2];
@@ -820,12 +843,8 @@ impl FindOffsetsRssync<'_> {
                 }
                 tik_ns = tik_t0.elapsed().as_nanos() as u64;
             }
-            let win_lo = (from_us as f64 / 1000.0)
-                - self.sync_params.search_size
-                - 200.0;
-            let win_hi = (to_us as f64 / 1000.0)
-                + self.sync_params.search_size
-                + 200.0;
+            let win_lo = (from_us as f64 / 1000.0) - self.sync_params.search_size - 200.0;
+            let win_hi = (to_us as f64 / 1000.0) + self.sync_params.search_size + 200.0;
             let mut raw_pairs: Vec<(f64, [f64; 3])> = raw_imu
                 .iter()
                 .filter_map(|x| {
@@ -836,8 +855,7 @@ impl FindOffsetsRssync<'_> {
                     }
                 })
                 .collect();
-            raw_pairs
-                .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            raw_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             if raw_pairs.len() < 10 {
                 continue;
             }
@@ -859,15 +877,24 @@ impl FindOffsetsRssync<'_> {
             if max_axis_angle_deg < MIN_AXIS_ANGLE_DEG {
                 log::warn!(
                     "[ncc-fuse] seg {}: motion too weak (max |ω|={:.4} < {}), fallback initial",
-                    i, max_axis_angle_deg, MIN_AXIS_ANGLE_DEG
+                    i,
+                    max_axis_angle_deg,
+                    MIN_AXIS_ANGLE_DEG
                 );
                 offsets[i] = (mid_ms, initial_offset, f64::INFINITY, 0.0);
                 crate::synchronization::sync_diag::record_fusion_decision(
                     i,
-                    f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN,
+                    f64::NAN,
+                    f64::NAN,
+                    f64::NAN,
+                    f64::NAN,
+                    f64::NAN,
                     cost_final_ext_ms,
-                    initial_offset, f64::INFINITY,
-                    rs_argmin_ms, rs_2nd_over_best, f64::NAN,
+                    initial_offset,
+                    f64::INFINITY,
+                    rs_argmin_ms,
+                    rs_2nd_over_best,
+                    f64::NAN,
                     "fallback_initial",
                     Some("motion_too_weak"),
                 );
@@ -899,10 +926,17 @@ impl FindOffsetsRssync<'_> {
                     offsets[i] = (mid_ms, initial_offset, f64::INFINITY, 0.0);
                     crate::synchronization::sync_diag::record_fusion_decision(
                         i,
-                        f64::NAN, f64::NAN, f64::NAN, f64::NAN, f64::NAN,
+                        f64::NAN,
+                        f64::NAN,
+                        f64::NAN,
+                        f64::NAN,
+                        f64::NAN,
                         cost_final_ext_ms,
-                        initial_offset, f64::INFINITY,
-                        rs_argmin_ms, rs_2nd_over_best, f64::NAN,
+                        initial_offset,
+                        f64::INFINITY,
+                        rs_argmin_ms,
+                        rs_2nd_over_best,
+                        f64::NAN,
                         "fallback_initial",
                         Some("ncc_fft_failed"),
                     );
@@ -945,7 +979,11 @@ impl FindOffsetsRssync<'_> {
             if let Some(reason) = quality_warn {
                 log::warn!(
                     "[ncc-fuse] seg {}: LOW QUALITY {} (peak_h={:.3}, W={:.1}ms, r2={:.3}) — applying best-effort offset with reduced confidence",
-                    i, reason, peak_h, w_ms, r2
+                    i,
+                    reason,
+                    peak_h,
+                    w_ms,
+                    r2
                 );
             }
 
@@ -971,7 +1009,10 @@ impl FindOffsetsRssync<'_> {
                 }
                 let (_, _, _, r, n) =
                     crate::synchronization::sync_diag::compute_triaxis_correlation(
-                        &est, &raw_pairs, offset_ms, NEAREST_TOL_MS_V2,
+                        &est,
+                        &raw_pairs,
+                        offset_ms,
+                        NEAREST_TOL_MS_V2,
                     );
                 if n >= 10 && r.is_finite() { r } else { 0.0 }
             };
@@ -987,14 +1028,13 @@ impl FindOffsetsRssync<'_> {
             // shifts near search_radius edge produce artificial peaks (normalized
             // by full-segment energy but with minimal overlap). Penalize NCC
             // weight when |ncc_peak - initial_offset| approaches search_radius.
-            let tau_ratio = (ncc_peak_ms - initial_offset).abs()
-                / self.sync_params.search_size.max(1.0);
+            let tau_ratio =
+                (ncc_peak_ms - initial_offset).abs() / self.sync_params.search_size.max(1.0);
             let ncc_edge_penalty = (1.0 - 2.0 * tau_ratio).clamp(0.0, 1.0);
 
             let w_rs = cost_sharpness * r_at_rs_argmin.max(0.0);
             let w_rs_cost = cost_sharpness * 0.8 * r_at_rs_best.max(0.0);
-            let w_ncc =
-                peak_h * (1.0 - r2).max(0.0) * ncc_edge_penalty * r_at_ncc_peak.max(0.0);
+            let w_ncc = peak_h * (1.0 - r2).max(0.0) * ncc_edge_penalty * r_at_ncc_peak.max(0.0);
 
             // Gather candidates with non-negligible weight.
             let mut cand: Vec<(f64, f64, &'static str)> = Vec::new();
@@ -1014,11 +1054,9 @@ impl FindOffsetsRssync<'_> {
             // est_gyro vs raw_gyro shape match) → in many scenarios gives a
             // more stable argmax than NCC (edge-ghost prone) or cost (flat).
             // Env var GYROFLOW_SYNC_NO_PEARSON_CANDIDATE=1 disables for rollback.
-            let pearson_candidate_enabled = std::env::var(
-                "GYROFLOW_SYNC_NO_PEARSON_CANDIDATE",
-            )
-            .map(|v| !matches!(v.trim(), "1" | "true" | "yes" | "on"))
-            .unwrap_or(true);
+            let pearson_candidate_enabled = std::env::var("GYROFLOW_SYNC_NO_PEARSON_CANDIDATE")
+                .map(|v| !matches!(v.trim(), "1" | "true" | "yes" | "on"))
+                .unwrap_or(true);
 
             let mut pearson_peak_ms = f64::NAN;
             let mut pearson_peak_r = 0.0f64;
@@ -1042,8 +1080,7 @@ impl FindOffsetsRssync<'_> {
 
                 let mut samples: Vec<(f64, f64)> = Vec::with_capacity((n_steps + 1) as usize);
                 for k in 0..=n_steps {
-                    let cand_ms =
-                        initial_offset - scan_radius + (k as f64) * PEARSON_SCAN_STEP_MS;
+                    let cand_ms = initial_offset - scan_radius + (k as f64) * PEARSON_SCAN_STEP_MS;
                     let r = pearson_at(cand_ms);
                     if r.is_finite() {
                         samples.push((cand_ms, r));
@@ -1051,12 +1088,13 @@ impl FindOffsetsRssync<'_> {
                 }
                 if !samples.is_empty() {
                     // peak
-                    let (pk_ms, pk_r) = samples
-                        .iter()
-                        .cloned()
-                        .fold((f64::NAN, f64::NEG_INFINITY), |acc, x| {
-                            if x.1 > acc.1 { x } else { acc }
-                        });
+                    let (pk_ms, pk_r) =
+                        samples
+                            .iter()
+                            .cloned()
+                            .fold((f64::NAN, f64::NEG_INFINITY), |acc, x| {
+                                if x.1 > acc.1 { x } else { acc }
+                            });
                     // Parabolic 3-point interpolation for sub-grid peak precision
                     // (P1 refinement). Pearson curve around true peak is locally
                     // quadratic; fit y = a(x-x0)² + y0 using r(k-1), r(k), r(k+1).
@@ -1072,8 +1110,7 @@ impl FindOffsetsRssync<'_> {
                             let denom = dr_left + dr_right;
                             if denom < -1e-9 {
                                 // Both neighbors lower (real interior peak)
-                                let frac =
-                                    0.5 * (dr_left - dr_right) / denom;
+                                let frac = 0.5 * (dr_left - dr_right) / denom;
                                 // Clamp fractional shift to [-1, +1] bin
                                 let frac = frac.clamp(-1.0, 1.0);
                                 pk_ms + frac * PEARSON_SCAN_STEP_MS
@@ -1086,8 +1123,7 @@ impl FindOffsetsRssync<'_> {
                     pearson_peak_ms = refined_pk_ms;
                     pearson_peak_r = pk_r;
                     // median r
-                    let mut rs: Vec<f64> =
-                        samples.iter().map(|x| x.1).collect();
+                    let mut rs: Vec<f64> = samples.iter().map(|x| x.1).collect();
                     rs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     let median_r = rs[rs.len() / 2];
                     pearson_prominence = (pk_r - median_r).max(0.0);
@@ -1107,8 +1143,7 @@ impl FindOffsetsRssync<'_> {
                 // reflecting Pearson's first-order delay sensitivity advantage
                 // over 2nd-order rs-sync cost.
                 if pearson_peak_r > 0.0 && pearson_peak_ms.is_finite() {
-                    let prominence_factor =
-                        (pearson_prominence / 0.15).max(0.0).powf(1.5).min(1.5);
+                    let prominence_factor = (pearson_prominence / 0.15).max(0.0).powf(1.5).min(1.5);
                     let est_len_clamped = est.len().min(60).max(10) as f64;
                     // Use the same n_paired as single-point pearson (close enough; scan
                     // samples have same n since est+raw bounds are identical).
@@ -1117,8 +1152,7 @@ impl FindOffsetsRssync<'_> {
                     // Lower motion gate: even weak-motion sync ranges give
                     // reliable Pearson peaks (the shape match exists regardless
                     // of motion magnitude). Floor 0.3 prevents over-penalty.
-                    let motion_factor =
-                        (max_axis_angle_deg / 0.15).clamp(0.3, 1.0);
+                    let motion_factor = (max_axis_angle_deg / 0.15).clamp(0.3, 1.0);
                     let unimodal_factor = if pearson_second_r >= 0.85 * pearson_peak_r {
                         0.0
                     } else {
@@ -1147,8 +1181,16 @@ impl FindOffsetsRssync<'_> {
                 };
                 log::info!(
                     "[pearson-scan] seg {}: peak={:.1}ms r={:.3} 2nd_r={:.3} prom={:.3} (factors: prom={:.2} mot={:.2} uni={:.2} | max_axis_angle={:.3}°) → w_pearson={:.3}",
-                    i, pearson_peak_ms, pearson_peak_r, pearson_second_r, pearson_prominence,
-                    prom_f, mot_f, uni_f, max_axis_angle_deg, w_pearson_peak
+                    i,
+                    pearson_peak_ms,
+                    pearson_peak_r,
+                    pearson_second_r,
+                    pearson_prominence,
+                    prom_f,
+                    mot_f,
+                    uni_f,
+                    max_axis_angle_deg,
+                    w_pearson_peak
                 );
                 pearson_scan_ns = pearson_t0.elapsed().as_nanos() as u64;
             }
@@ -1177,34 +1219,29 @@ impl FindOffsetsRssync<'_> {
             }
 
             // Pick best cluster (max total weight).
-            let (coarse_ms, cluster_weight, cluster_signals) = match clusters
-                .iter()
-                .max_by(|a, b| {
+            let (coarse_ms, cluster_weight, cluster_signals) =
+                match clusters.iter().max_by(|a, b| {
                     let wa: f64 = a.iter().map(|x| x.1).sum();
                     let wb: f64 = b.iter().map(|x| x.1).sum();
                     wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
                 }) {
-                Some(c) if !c.is_empty() => {
-                    let w_sum: f64 = c.iter().map(|x| x.1).sum();
-                    let coarse: f64 = c.iter().map(|x| x.0 * x.1).sum::<f64>() / w_sum;
-                    let signals = c
-                        .iter()
-                        .map(|x| x.2)
-                        .collect::<Vec<_>>()
-                        .join("+");
-                    (coarse, w_sum, signals)
-                }
-                _ => {
-                    // No usable signal (all weights near zero).
-                    // Fallback: prefer NCC peak if it's at least finite, else initial.
-                    let fallback = if ncc_peak_ms.is_finite() {
-                        ncc_peak_ms
-                    } else {
-                        initial_offset
-                    };
-                    (fallback, 0.0, "fallback".to_string())
-                }
-            };
+                    Some(c) if !c.is_empty() => {
+                        let w_sum: f64 = c.iter().map(|x| x.1).sum();
+                        let coarse: f64 = c.iter().map(|x| x.0 * x.1).sum::<f64>() / w_sum;
+                        let signals = c.iter().map(|x| x.2).collect::<Vec<_>>().join("+");
+                        (coarse, w_sum, signals)
+                    }
+                    _ => {
+                        // No usable signal (all weights near zero).
+                        // Fallback: prefer NCC peak if it's at least finite, else initial.
+                        let fallback = if ncc_peak_ms.is_finite() {
+                            ncc_peak_ms
+                        } else {
+                            initial_offset
+                        };
+                        (fallback, 0.0, "fallback".to_string())
+                    }
+                };
 
             // Output = coarse (weighted cluster centroid). No 0.5ms Pearson refine:
             // empirically the 0.5ms scan introduces interpolation noise that shifts
@@ -1214,7 +1251,9 @@ impl FindOffsetsRssync<'_> {
             let total_weight_pre: f64 = cand.iter().map(|x| x.1).sum();
             let cluster_frac_pre = if total_weight_pre > 1e-9 {
                 cluster_weight / total_weight_pre
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             // Shortcut: when all 4 candidates unanimously cluster (cfrac≈1.0) and
             // rs_argmin Pearson correlation is high, rs_argmin (LBFGS f64) is the
             // highest-precision estimate — centroiding with grid-quantized
@@ -1224,8 +1263,7 @@ impl FindOffsetsRssync<'_> {
             // is safer in that case. Fall back whenever unanimity breaks, signal
             // is weak, or the cost surface is multi-modal.
             let r_rs_for_shortcut = pearson_at(rs_argmin_ms);
-            let unimodal_ok = pearson_peak_r > 1e-9
-                && pearson_second_r < 0.7 * pearson_peak_r;
+            let unimodal_ok = pearson_peak_r > 1e-9 && pearson_second_r < 0.7 * pearson_peak_r;
             let use_rs_shortcut = quality_warn.is_none()
                 && cluster_frac_pre >= 0.999
                 && r_rs_for_shortcut.is_finite()
@@ -1233,7 +1271,11 @@ impl FindOffsetsRssync<'_> {
                 && rs_argmin_ms.is_finite()
                 && unimodal_ok
                 && (rs_argmin_ms - coarse_ms).abs() < CLUSTER_MERGE_MS;
-            let output_ms = if use_rs_shortcut { rs_argmin_ms } else { coarse_ms };
+            let output_ms = if use_rs_shortcut {
+                rs_argmin_ms
+            } else {
+                coarse_ms
+            };
             let best_r_refined = pearson_at(output_ms);
             let refine_ok = best_r_refined.is_finite() && best_r_refined > 0.0;
 
@@ -1246,7 +1288,13 @@ impl FindOffsetsRssync<'_> {
                     crate::synchronization::sync_perf::Stage::NccOutputPreSync,
                 );
                 self.sync
-                    .pre_sync(center_internal_s, sp_from, sp_to, FINE_STEP_S, diag_radius_s)
+                    .pre_sync(
+                        center_internal_s,
+                        sp_from,
+                        sp_to,
+                        FINE_STEP_S,
+                        diag_radius_s,
+                    )
                     .map(|(c, _)| c)
                     .unwrap_or(f64::NAN)
             };
@@ -1272,15 +1320,29 @@ impl FindOffsetsRssync<'_> {
 
             log::info!(
                 "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], cfrac={:.2}, conf={:.3})",
-                i, path_str_owned, coarse_ms, output_ms, best_r_refined,
-                r_at_rs_argmin, r_at_rs_best, r_at_ncc_peak,
-                pearson_peak_ms, pearson_peak_r, pearson_prominence,
-                w_rs, w_rs_cost, w_ncc, w_pearson_peak,
-                cluster_frac, confidence
+                i,
+                path_str_owned,
+                coarse_ms,
+                output_ms,
+                best_r_refined,
+                r_at_rs_argmin,
+                r_at_rs_best,
+                r_at_ncc_peak,
+                pearson_peak_ms,
+                pearson_peak_r,
+                pearson_prominence,
+                w_rs,
+                w_rs_cost,
+                w_ncc,
+                w_pearson_peak,
+                cluster_frac,
+                confidence
             );
 
             let total_seg_ms = seg_t0.elapsed().as_secs_f64() * 1000.0;
-            let accounted_ms = (tik_ns + cost_scan_ns + ncc_fft_ns + pearson_scan_ns + output_pre_sync_ns) as f64 / 1_000_000.0;
+            let accounted_ms =
+                (tik_ns + cost_scan_ns + ncc_fft_ns + pearson_scan_ns + output_pre_sync_ns) as f64
+                    / 1_000_000.0;
             let other_ms = (total_seg_ms - accounted_ms).max(0.0);
             log::info!(
                 "[ncc-fuse-timing] seg {}: total={:.1}ms tikhonov={:.2}ms cost_scan={:.1}ms ncc_fft={:.2}ms pearson_scan={:.1}ms pre_sync={:.2}ms other={:.2}ms",
@@ -1302,10 +1364,17 @@ impl FindOffsetsRssync<'_> {
             };
             crate::synchronization::sync_diag::record_fusion_decision(
                 i,
-                ncc_peak_ms, peak_h, fwhm_ms, w_ms, r2,
+                ncc_peak_ms,
+                peak_h,
+                fwhm_ms,
+                w_ms,
+                r2,
                 cost_final_ext_ms,
-                output_ms, output_cost,
-                rs_argmin_ms, rs_2nd_over_best, output_ms,
+                output_ms,
+                output_cost,
+                rs_argmin_ms,
+                rs_2nd_over_best,
+                output_ms,
                 &path_str_owned,
                 combined_fb.as_deref(),
             );
@@ -1432,23 +1501,43 @@ mod penta_solver_tests {
         for i in 0..n {
             let l2i = if i >= 2 { a2[i] / d[i - 2] } else { 0.0 };
             let l1i = if i >= 1 {
-                let cross = if i >= 2 { l2i * l1f[i - 1] * d[i - 2] } else { 0.0 };
+                let cross = if i >= 2 {
+                    l2i * l1f[i - 1] * d[i - 2]
+                } else {
+                    0.0
+                };
                 (a1[i] - cross) / d[i - 1]
-            } else { 0.0 };
+            } else {
+                0.0
+            };
             let mut dii = a0[i];
-            if i >= 1 { dii -= l1i * l1i * d[i - 1]; }
-            if i >= 2 { dii -= l2i * l2i * d[i - 2]; }
-            l1f[i] = l1i; l2f[i] = l2i; d[i] = dii;
+            if i >= 1 {
+                dii -= l1i * l1i * d[i - 1];
+            }
+            if i >= 2 {
+                dii -= l2i * l2i * d[i - 2];
+            }
+            l1f[i] = l1i;
+            l2f[i] = l2i;
+            d[i] = dii;
         }
         let mut z = vec![0.0f64; n];
         z[0] = b[0];
-        if n >= 2 { z[1] = b[1] - l1f[1] * z[0]; }
-        for i in 2..n { z[i] = b[i] - l1f[i] * z[i - 1] - l2f[i] * z[i - 2]; }
+        if n >= 2 {
+            z[1] = b[1] - l1f[1] * z[0];
+        }
+        for i in 2..n {
+            z[i] = b[i] - l1f[i] * z[i - 1] - l2f[i] * z[i - 2];
+        }
         let mut y = vec![0.0f64; n];
-        for i in 0..n { y[i] = z[i] / d[i]; }
+        for i in 0..n {
+            y[i] = z[i] / d[i];
+        }
         let mut x = vec![0.0f64; n];
         x[n - 1] = y[n - 1];
-        if n >= 2 { x[n - 2] = y[n - 2] - l1f[n - 1] * x[n - 1]; }
+        if n >= 2 {
+            x[n - 2] = y[n - 2] - l1f[n - 1] * x[n - 1];
+        }
         if n >= 3 {
             for i in (0..=n - 3).rev() {
                 x[i] = y[i] - l1f[i + 1] * x[i + 1] - l2f[i + 2] * x[i + 2];
@@ -1459,7 +1548,9 @@ mod penta_solver_tests {
 
     fn solve_dense(n: usize, lambda: f64, b: &[f64]) -> Vec<f64> {
         let mut a = vec![vec![0.0f64; n]; n];
-        for i in 0..n { a[i][i] = 1.0; }
+        for i in 0..n {
+            a[i][i] = 1.0;
+        }
         for k in 1..n - 1 {
             let idx = [k - 1, k, k + 1];
             let val = [1.0, -2.0, 1.0];
@@ -1475,19 +1566,29 @@ mod penta_solver_tests {
             let mut mr = p;
             let mut mv = aug[p][p].abs();
             for r in p + 1..n {
-                if aug[r][p].abs() > mv { mv = aug[r][p].abs(); mr = r; }
+                if aug[r][p].abs() > mv {
+                    mv = aug[r][p].abs();
+                    mr = r;
+                }
             }
-            if mr != p { aug.swap(p, mr); rhs.swap(p, mr); }
+            if mr != p {
+                aug.swap(p, mr);
+                rhs.swap(p, mr);
+            }
             for r in p + 1..n {
                 let f = aug[r][p] / aug[p][p];
-                for c in p..n { aug[r][c] -= f * aug[p][c]; }
+                for c in p..n {
+                    aug[r][c] -= f * aug[p][c];
+                }
                 rhs[r] -= f * rhs[p];
             }
         }
         let mut x = vec![0.0f64; n];
         for i in (0..n).rev() {
             let mut s = rhs[i];
-            for j in i + 1..n { s -= aug[i][j] * x[j]; }
+            for j in i + 1..n {
+                s -= aug[i][j] * x[j];
+            }
             x[i] = s / aug[i][i];
         }
         x
@@ -1501,12 +1602,18 @@ mod penta_solver_tests {
                 let mut b = Vec::with_capacity(n);
                 let mut s: u64 = 0x9E3779B97F4A7C15;
                 for _ in 0..n {
-                    s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                    s = s
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
                     b.push(((s >> 11) as f64 / (1u64 << 53) as f64) * 2.0 - 1.0);
                 }
                 let xp = solve_penta(n, lambda, &b);
                 let xd = solve_dense(n, lambda, &b);
-                let diff: f64 = xp.iter().zip(&xd).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+                let diff: f64 = xp
+                    .iter()
+                    .zip(&xd)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0, f64::max);
                 assert!(diff < 1e-9, "n={} λ={} diff={}", n, lambda, diff);
             }
         }

@@ -347,11 +347,8 @@ bundle:
     cp -Recurse -Force Assets bundle\Assets
     cp -Force AppxManifest.xml bundle\
 
-    # Apps are not allowed to have a Version with a revision number other than zero specified in the app manifest.
-    if ("$Env:GITHUB_RUN_NUMBER") {
-        $VersionNoDots = "{{ProjectVersion}}" -replace "[^0-9\.]", '' -replace "\.([0-9]+)$", '$1'
-        (Get-Content bundle\AppxManifest.xml) -replace 'Identity Version="[0-9\.]+"', "Identity Version=`"$VersionNoDots.$Env:GITHUB_RUN_NUMBER.0`"" | Out-File bundle\AppxManifest.xml -Encoding Utf8
-    }
+    $AppFileVersion = python "$ProjectDir\_scripts\niyien_version.py" file --repo-root "$ProjectDir"
+    (Get-Content bundle\AppxManifest.xml) -replace 'Identity Version="[0-9\.]+"', "Identity Version=`"$AppFileVersion`"" | Out-File bundle\AppxManifest.xml -Encoding Utf8
 
     if ("{{Arch}}" -eq "aarch64") {
         (Get-Content bundle\AppxManifest.xml) -replace 'ProcessorArchitecture="x64"', 'ProcessorArchitecture="arm64"' | Out-File bundle\AppxManifest.xml -Encoding Utf8

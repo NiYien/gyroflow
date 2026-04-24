@@ -53,9 +53,8 @@ fn download_niyien_lens_snapshot(project_dir: &str) {
             continue;
         }
 
-        let url = format!(
-            "https://github.com/{NIYIEN_LENS_DATA_REPO}/releases/download/{tag}/{tarball}"
-        );
+        let url =
+            format!("https://github.com/{NIYIEN_LENS_DATA_REPO}/releases/download/{tag}/{tarball}");
         println!("cargo:warning=downloading {url}");
 
         let response = match ureq::get(&url).call() {

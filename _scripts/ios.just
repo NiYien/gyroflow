@@ -144,17 +144,11 @@ build-and-package profile is_dist:
         cp -rf {{ProjectDir}}/_deployment/ios/Info.plist {{AppBundle}}/Info.plist
         cp -rf {{ProjectDir}}/_deployment/ios/PrivacyInfo.xcprivacy {{AppBundle}}/PrivacyInfo.xcprivacy
         cp -rf {{ProjectDir}}/_deployment/ios/PkgInfo {{AppBundle}}/PkgInfo
+        APP_NUMERIC_CORE="$(python "{{ProjectDir}}/_scripts/niyien_version.py" numeric_core --repo-root "{{ProjectDir}}")"
+        APP_FILE_VERSION="$(python "{{ProjectDir}}/_scripts/niyien_version.py" file --repo-root "{{ProjectDir}}")"
         PlistBuddy -x -c "Set :CFBundleIdentifier {{BundleIdentifier}}" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Set :CFBundleShortVersionString {{ProjectVersion}}" {{AppBundle}}/Info.plist
-        PlistBuddy -x -c "Set :CFBundleVersion {{ProjectVersion}}" {{AppBundle}}/Info.plist
-        if ! [ -z "$GITHUB_RUN_NUMBER" ]; then
-            PlistBuddy -x -c "Set :CFBundleVersion \"{{ProjectVersion}}.$GITHUB_RUN_NUMBER\"" {{AppBundle}}/Info.plist
-        fi
-        PATCH_NUM="0"
-        if [ "$IS_MANUAL_DISPATCH" == "true" ]; then
-            PATCH_NUM="1"
-        fi
-        PlistBuddy -x -c "Set :CFBundleShortVersionString \"`echo "{{ProjectVersion}}" | sed -E 's/[^0-9\.]//' | sed -E 's/\.([0-9]+)$/\1/'`.$PATCH_NUM\"" {{AppBundle}}/Info.plist
+        PlistBuddy -x -c "Set :CFBundleShortVersionString $APP_NUMERIC_CORE" {{AppBundle}}/Info.plist
+        PlistBuddy -x -c "Set :CFBundleVersion $APP_FILE_VERSION" {{AppBundle}}/Info.plist
 
         ICON={{ProjectDir}}/resources/icon_1080.png
         ICON_OUT={{ProjectDir}}/_deployment/ios/Resources/Images.xcassets/AppIcon.appiconset
@@ -271,8 +265,8 @@ deploy *param:
         PlistBuddy -x -c "Add :ApplicationProperties:Architectures array" $ARCHIVE_PLIST
         PlistBuddy -x -c "Add :ApplicationProperties:Architectures:0 string arm64" $ARCHIVE_PLIST
         PlistBuddy -x -c "Add :ApplicationProperties:CFBundleIdentifier string {{BundleIdentifier}}" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleShortVersionString string {{ProjectVersion}}" $ARCHIVE_PLIST
-        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleVersion string {{ProjectVersion}}" $ARCHIVE_PLIST
+        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleShortVersionString string $(python "{{ProjectDir}}/_scripts/niyien_version.py" numeric_core --repo-root "{{ProjectDir}}")" $ARCHIVE_PLIST
+        PlistBuddy -x -c "Add :ApplicationProperties:CFBundleVersion string $(python "{{ProjectDir}}/_scripts/niyien_version.py" file --repo-root "{{ProjectDir}}")" $ARCHIVE_PLIST
         PlistBuddy -x -c "Add :ApplicationProperties:Team string {{TeamID}}" $ARCHIVE_PLIST
         PlistBuddy -x -c "Add :ArchiveVersion integer 2" $ARCHIVE_PLIST
         PlistBuddy -x -c "Add :CreationDate date \"`date +'%c'`\"" $ARCHIVE_PLIST

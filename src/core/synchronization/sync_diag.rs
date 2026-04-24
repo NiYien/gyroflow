@@ -62,10 +62,10 @@ struct FusionDecisionRecord {
     fused_offset_ms: f64,
     refined_cost: f64,
     // Plan B additions:
-    rs_argmin_ms: f64,        // full_sync's cost global argmin
-    rs_2nd_over_best: f64,    // rs-sync 2nd_best_cost / best_cost
-    rs_refined_ms: f64,       // Path B fine-search result (otherwise NaN)
-    path_taken: String,       // "rssync_trusted" | "ncc_window_refine" | "ncc_peak_only" | "fallback_initial" | "motion_too_weak" | "ncc_fft_failed" | "weak_signal" | ...
+    rs_argmin_ms: f64,     // full_sync's cost global argmin
+    rs_2nd_over_best: f64, // rs-sync 2nd_best_cost / best_cost
+    rs_refined_ms: f64,    // Path B fine-search result (otherwise NaN)
+    path_taken: String, // "rssync_trusted" | "ncc_window_refine" | "ncc_peak_only" | "fallback_initial" | "motion_too_weak" | "ncc_fft_failed" | "weak_signal" | ...
     fallback_reason: Option<String>,
 }
 
@@ -362,10 +362,8 @@ pub fn analyze_curve_and_record(
     let baseline = costs[(costs.len() as f64 * 0.75) as usize];
 
     // Estimate step_ms (median of adjacent-point gaps)
-    let mut step_ms_samples: Vec<f64> = sorted
-        .windows(2)
-        .map(|w| (w[1].0 - w[0].0).abs())
-        .collect();
+    let mut step_ms_samples: Vec<f64> =
+        sorted.windows(2).map(|w| (w[1].0 - w[0].0).abs()).collect();
     step_ms_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let step_ms = if step_ms_samples.is_empty() {
         5.0
@@ -415,9 +413,7 @@ pub fn analyze_curve_and_record(
         .unwrap();
     let sharpest_min = minima
         .iter()
-        .max_by(|a, b| {
-            a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal)
-        })
+        .max_by(|a, b| a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal))
         .copied()
         .unwrap();
 
@@ -437,8 +433,16 @@ pub fn analyze_curve_and_record(
                 depth: m.3,
                 width_ms: m.4,
                 sharpness: m.5,
-                is_final: if (m.1 - final_min.1).abs() < 1e-9 { 1 } else { 0 },
-                is_sharpest: if (m.1 - sharpest_min.1).abs() < 1e-9 { 1 } else { 0 },
+                is_final: if (m.1 - final_min.1).abs() < 1e-9 {
+                    1
+                } else {
+                    0
+                },
+                is_sharpest: if (m.1 - sharpest_min.1).abs() < 1e-9 {
+                    1
+                } else {
+                    0
+                },
             });
         }
         s.sharpness_summary.push(SharpnessSummaryRecord {
@@ -595,9 +599,9 @@ fn nearest_raw(raw: &[(f64, [f64; 3])], ts_ms: f64, tol_ms: f64) -> Option<[f64;
     if raw.is_empty() {
         return None;
     }
-    let idx = match raw.binary_search_by(|p| {
-        p.0.partial_cmp(&ts_ms).unwrap_or(std::cmp::Ordering::Equal)
-    }) {
+    let idx = match raw
+        .binary_search_by(|p| p.0.partial_cmp(&ts_ms).unwrap_or(std::cmp::Ordering::Equal))
+    {
         Ok(i) => i,
         Err(i) => i,
     };
@@ -876,7 +880,10 @@ fn write_summary(s: &DiagSession) -> std::io::Result<()> {
         )?;
     }
     writeln!(w)?;
-    writeln!(w, "Sharpness analysis (depth = baseline_p75 - cost; width = span where cost < min*(1+0.05); sharpness = depth/width)")?;
+    writeln!(
+        w,
+        "Sharpness analysis (depth = baseline_p75 - cost; width = span where cost < min*(1+0.05); sharpness = depth/width)"
+    )?;
     writeln!(
         w,
         "{:<10} {:>5} {:>10} {:>14} {:>10} {:>10} {:>10} | {:>14} {:>10} {:>10} {:>10} | {:>10} {:>6} {:>14}",
@@ -1112,8 +1119,7 @@ pub fn ncc_fft_align(
         // bias drift. Synthetic sine signals (min 0.8 Hz) are unaffected.
         let cutoff_freq_hz = 0.3;
         let sample_rate_hz = 1000.0 / dt_ms;
-        let cutoff_bin =
-            ((cutoff_freq_hz * n_fft as f64) / sample_rate_hz).ceil() as usize;
+        let cutoff_bin = ((cutoff_freq_hz * n_fft as f64) / sample_rate_hz).ceil() as usize;
         let cutoff_bin = cutoff_bin.max(1).min(n_fft / 2 - 1);
         for i in 0..=cutoff_bin {
             x[i] = Complex::default();
@@ -1139,10 +1145,7 @@ pub fn ncc_fft_align(
         // rustfft's IFFT has no 1/N scaling; divide each element by N
         let scale = 1.0 / (n_fft as f64);
         let axis_ncc: Vec<f64> = cross.iter().map(|c| c.re * scale / denom).collect();
-        let peak_val = axis_ncc
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
+        let peak_val = axis_ncc.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         peak_per_axis[axis] = peak_val;
         ncc_per_axis[axis] = axis_ncc;
     }
@@ -1152,8 +1155,7 @@ pub fn ncc_fft_align(
     // restore to [-1, 1].
     let mut ncc_total: Vec<f64> = vec![0.0; n_fft];
     for k in 0..n_fft {
-        ncc_total[k] =
-            (ncc_per_axis[0][k] + ncc_per_axis[1][k] + ncc_per_axis[2][k]) / 3.0;
+        ncc_total[k] = (ncc_per_axis[0][k] + ncc_per_axis[1][k] + ncc_per_axis[2][k]) / 3.0;
     }
 
     // Map k → τ_samples (with sign), confine peak search within search_radius.

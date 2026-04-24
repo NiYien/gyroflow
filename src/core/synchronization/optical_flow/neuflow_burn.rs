@@ -13,7 +13,11 @@ pub(super) struct BurnSampledResult {
 /// Run Burn inference with GPU-side sparse sampling on preprocessed CHW tensors.
 /// chw0/chw1 are moved (owned) into Burn's TensorData for zero-copy.
 pub(super) fn neuflow_inference_burn_sampled(
-    chw0: Vec<f32>, chw1: Vec<f32>, gray0: &[u8], proc_h: usize, proc_w: usize,
+    chw0: Vec<f32>,
+    chw1: Vec<f32>,
+    gray0: &[u8],
+    proc_h: usize,
+    proc_w: usize,
 ) -> Result<BurnSampledResult, String> {
     // Compute texture-aware grid points from gray0
     let (grid_points, linear_indices) = {
@@ -34,14 +38,23 @@ pub(super) fn neuflow_inference_burn_sampled(
             crate::synchronization::sync_perf::Stage::InferAndSample,
         );
         crate::neuflow_burn::infer_and_sample(
-            chw0, chw1, proc_h, proc_w,
-            grid_points, linear_indices,
+            chw0,
+            chw1,
+            proc_h,
+            proc_w,
+            grid_points,
+            linear_indices,
         )?
     };
 
     let elapsed = start.elapsed();
-    log::debug!("NeuFlow Burn inference+sample: {}x{} ({} pts) in {:?}",
-        proc_w, proc_h, sampled.grid_points.len(), elapsed);
+    log::debug!(
+        "NeuFlow Burn inference+sample: {}x{} ({} pts) in {:?}",
+        proc_w,
+        proc_h,
+        sampled.grid_points.len(),
+        elapsed
+    );
 
     // Convert SampledFlow to point pairs
     let mut from_pts = Vec::with_capacity(sampled.grid_points.len());
@@ -105,7 +118,9 @@ fn texture_variance(gray: &[u8], x: usize, y: usize, w: usize, h: usize, patch: 
             count += 1.0;
         }
     }
-    if count == 0.0 { return 0.0; }
+    if count == 0.0 {
+        return 0.0;
+    }
     let mean = sum / count;
     sum_sq / count - mean * mean
 }

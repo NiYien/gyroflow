@@ -11,14 +11,53 @@ MenuItem {
     opened: false;
     objectName: "nlePlugins";
 
-    property string latest_version: "";
-    property bool openfx_latest: false;
-    property bool adobe_latest: false;
-    property string openfx_version: controller.nle_plugins("detect", "openfx");
-    property string adobe_version: controller.nle_plugins("detect", "adobe");
+    property var openfx_status: ({});
+    property var adobe_status: ({});
 
     Component.onCompleted: {
-        controller.nle_plugins("latest_version", "");
+        refreshStatuses();
+    }
+    function refreshStatuses() {
+        controller.nle_plugins("status", "openfx");
+        controller.nle_plugins("status", "adobe");
+    }
+    function parseStatus(result: string): var {
+        try {
+            return JSON.parse(result);
+        } catch (e) {
+            return ({});
+        }
+    }
+    function statusFor(type: string): var {
+        return type === "openfx" ? openfx_status : adobe_status;
+    }
+    function installedVersion(type: string): string {
+        const status = statusFor(type);
+        return status.installed_version || "";
+    }
+    function isLatest(type: string): bool {
+        return Boolean(statusFor(type).is_latest);
+    }
+    function needsUpdate(type: string): bool {
+        const status = statusFor(type);
+        if (!status || Object.keys(status).length === 0) {
+            return false;
+        }
+        return Boolean(status.update_available);
+    }
+    function statusColor(type: string): string {
+        const version = installedVersion(type);
+        if (!version) {
+            return "";
+        }
+        return isLatest(type)? "#10ee14" : "red";
+    }
+    function latestSuffix(type: string): string {
+        const status = statusFor(type);
+        if (status.latest_source_mode === "artifact" || status.latest_source_mode === "nightly") {
+            return qsTr("(nightly)");
+        }
+        return "";
     }
     function selectFolder(type: string, folder: string) {
         const dialog = Qt.createQmlObject("import QtQuick.Dialogs; FolderDialog {}", root, "selectFolderNle");
@@ -42,30 +81,14 @@ MenuItem {
 
     Connections {
         target: controller;
-        function compare_ver(version: string, existing: string): bool {
-            const last_part = existing.split(".").pop();
-            const is_app_nightly = +version == version;
-            if (+last_part > 100) {
-                // Nightly plugin is installed
-                if (is_app_nightly) {
-                    return +last_part >= +version;
-                } else {
-                    return true;
-                }
-            } else {
-                // Stable plugin is installed
-                if (is_app_nightly) {
-                    return false;
-                } else {
-                    return version == existing || version + ".0" == existing;
-                }
-            }
-        }
         function onNle_plugins_result(command: string, result: string) {
-            if (command == "latest_version") {
-                latest_version = result;
-                openfx_latest = openfx_version && compare_ver(latest_version, openfx_version);
-                adobe_latest  = adobe_version && compare_ver(latest_version, adobe_version);
+            if (command == "status") {
+                const status = parseStatus(result);
+                if (status.typ === "openfx") {
+                    openfx_status = status;
+                } else if (status.typ === "adobe") {
+                    adobe_status = status;
+                }
             }
             if (command == "install") {
                 if (result.startsWith("An error occured")) {
@@ -75,10 +98,7 @@ MenuItem {
                         const to = parts[1].split("\\\": Error").shift();
 
                         const mb = messageBox(Modal.Error, qsTr("Unable to copy the plugin due to sandbox limitations.\nOpen <b>Terminal</b> and enter the following command:"), [ { text: qsTr("Ok"), accent: true, clicked: () => {
-                            openfx_version = controller.nle_plugins("detect", "openfx");
-                            adobe_version = controller.nle_plugins("detect", "adobe");
-                            openfx_latest = openfx_version && compare_ver(latest_version, openfx_version);
-                            adobe_latest  = adobe_version && compare_ver(latest_version, adobe_version);
+                            refreshStatuses();
                             root.loader = false;
                         } } ]);
                         mb.isWide = true;
@@ -89,10 +109,7 @@ MenuItem {
                         messageBox(Modal.Error, result, [ { text: qsTr("Ok"), accent: true } ]);
                     }
                 }
-                openfx_version = controller.nle_plugins("detect", "openfx");
-                adobe_version = controller.nle_plugins("detect", "adobe");
-                openfx_latest = openfx_version && compare_ver(latest_version, openfx_version);
-                adobe_latest  = adobe_version && compare_ver(latest_version, adobe_version);
+                refreshStatuses();
                 root.loader = false;
             }
         }
@@ -100,14 +117,14 @@ MenuItem {
 
     Row {
         BasicText {
-            text: 'Adobe: <b><font color="%1">%2</font></b> %3'.arg(adobe_version && latest_version? adobe_latest? "#10ee14" : "red" : "").arg(adobe_version? adobe_version : "---").arg(+adobe_version.split(".").pop() > 70? "(nightly)" : "").trim();
+            text: 'Adobe: <b><font color="%1">%2</font></b> %3'.arg(statusColor("adobe")).arg(installedVersion("adobe")? installedVersion("adobe") : "---").arg(latestSuffix("adobe")).trim();
             textFormat: Text.StyledText;
             anchors.verticalCenter: parent.verticalCenter;
         }
         LinkButton {
             enabled: !root.loader;
-            visible: !adobe_latest;
-            text: adobe_version? qsTr("Update") : qsTr("Install");
+            visible: needsUpdate("adobe");
+            text: installedVersion("adobe")? qsTr("Update") : qsTr("Install");
             leftPadding: 7 * dpiScale;
             rightPadding: 7 * dpiScale;
             onClicked: {
@@ -127,15 +144,15 @@ MenuItem {
 
     Row {
         BasicText {
-            text: 'OpenFX: <b><font color="%1">%2</font></b> %3'.arg(openfx_version && latest_version? openfx_latest? "#10ee14" : "red" : "").arg(openfx_version? openfx_version : "---").arg(+openfx_version.split(".").pop() > 70? "(nightly)" : "").trim();
+            text: 'DaVinci: <b><font color="%1">%2</font></b> %3'.arg(statusColor("openfx")).arg(installedVersion("openfx")? installedVersion("openfx") : "---").arg(latestSuffix("openfx")).trim();
             textFormat: Text.StyledText;
             anchors.verticalCenter: parent.verticalCenter;
         }
         LinkButton {
             id: openfxInstall;
             enabled: !root.loader;
-            visible: !openfx_latest;
-            text: openfx_version? qsTr("Update") : qsTr("Install");
+            visible: needsUpdate("openfx");
+            text: installedVersion("openfx")? qsTr("Update") : qsTr("Install");
             leftPadding: 7 * dpiScale;
             rightPadding: 7 * dpiScale;
             onClicked: {

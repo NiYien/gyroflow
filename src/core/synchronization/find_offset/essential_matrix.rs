@@ -76,9 +76,13 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                         crate::synchronization::sync_perf::Stage::FindOffPrep,
                     );
                     let sample_rate = raw_imu_len as f64 / (gyro.duration_ms / 1000.0);
+                    let _ = Lowpass::filter_gyro_forward_backward(
+                        20.0,
+                        params.scaled_fps,
+                        &mut of_item,
+                    );
                     let _ =
-                        Lowpass::filter_gyro_forward_backward(20.0, params.scaled_fps, &mut of_item);
-                    let _ = Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
+                        Lowpass::filter_gyro_forward_backward(20.0, sample_rate, &mut gyro_item);
                     gyro_item
                         .into_iter()
                         .map(|x| ((x.timestamp_ms * 1000.0) as usize, x))
@@ -147,8 +151,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                         let cost_steps = (sync_params.search_size as usize) * 2;
                         let curve: Vec<(f64, f64)> = (0..cost_steps)
                             .map(|k| {
-                                let offs = sync_params.initial_offset
-                                    - sync_params.search_size
+                                let offs = sync_params.initial_offset - sync_params.search_size
                                     + (k as f64);
                                 (offs, calculate_cost(offs, &of_item, &gyro_bintree))
                             })
@@ -159,16 +162,17 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                                 continue;
                             }
                             let est = o.gyro.unwrap_or([0.0; 3]);
-                            let raw = gyro_at_timestamp(
-                                o.timestamp_ms - lowest.0,
-                                &gyro_bintree,
-                            )
-                            .and_then(|g| g.gyro)
-                            .unwrap_or([0.0; 3]);
+                            let raw = gyro_at_timestamp(o.timestamp_ms - lowest.0, &gyro_bintree)
+                                .and_then(|g| g.gyro)
+                                .unwrap_or([0.0; 3]);
                             crate::synchronization::sync_diag::record_estimated_vs_raw_gyro(
                                 o.timestamp_ms,
-                                est[0], est[1], est[2],
-                                raw[0], raw[1], raw[2],
+                                est[0],
+                                est[1],
+                                est[2],
+                                raw[0],
+                                raw[1],
+                                raw[2],
                             );
                         }
                     }

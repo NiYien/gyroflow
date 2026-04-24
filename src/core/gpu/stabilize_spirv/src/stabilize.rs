@@ -5,7 +5,7 @@ use super::background::*;
 use super::drawing::*;
 use super::lens::*;
 use super::types::*;
-use glam::{Vec2, Vec4, vec2, vec3};
+use glam::{vec2, vec3, Vec2, Vec4};
 
 #[inline(never)]
 fn get_mtrx_param(
@@ -21,7 +21,7 @@ fn get_mtrx_param(
     }
     #[cfg(feature = "for_qtrhi")]
     {
-        use spirv_std::image::{ImageWithMethods, sample_with};
+        use spirv_std::image::{sample_with, ImageWithMethods};
         matrices
             .sample_with(
                 *_sampler,

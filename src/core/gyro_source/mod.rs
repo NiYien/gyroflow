@@ -12,13 +12,13 @@ pub use sony::interpolate_mesh;
 
 use nalgebra::*;
 use parking_lot::RwLock;
-use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::io::{Read, Seek};
 use std::iter::zip;
-use std::sync::{atomic::AtomicBool, Arc};
+use std::sync::{Arc, atomic::AtomicBool};
 use telemetry_parser::tags_impl::{GetWithType, GroupId, TagId, TimeQuaternion, TimeVector3};
-use telemetry_parser::{util, Input, InputOptions, TagFilter};
+use telemetry_parser::{Input, InputOptions, TagFilter, util};
 
 use crate::camera_identifier::CameraIdentifier;
 use crate::stabilization_params::ReadoutDirection;
@@ -442,8 +442,8 @@ pub fn get_camera_db_path() -> Option<String> {
         }
     }
     // 3. build.rs populated snapshot in the repo's resources/ directory (development)
-    let build_snapshot = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../resources/camera_db");
+    let build_snapshot =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../resources/camera_db");
     if build_snapshot.is_dir() {
         return Some(build_snapshot.to_string_lossy().into_owned());
     }

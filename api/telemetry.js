@@ -1,3 +1,5 @@
+const { resolveCountry } = require("./_distribution");
+
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
@@ -5,13 +7,11 @@ module.exports = async function handler(req, res) {
   }
 
   const payload = typeof req.body === "string" ? safeParse(req.body) : req.body || {};
+  const resolvedCountry = await resolveCountry(req);
   const event = {
     ...payload,
-    country:
-      req.headers["x-vercel-ip-country"] ||
-      req.headers["x-country-code"] ||
-      payload.country ||
-      "unknown",
+    country: resolvedCountry.country || payload.country || "unknown",
+    country_source: resolvedCountry.source || "unknown",
     received_at: new Date().toISOString(),
   };
 

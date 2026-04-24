@@ -29,7 +29,10 @@ pub struct AutosyncProcess {
     finished_cb: Option<
         Arc<
             Box<
-                dyn Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
+                dyn Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>)
+                    + Send
+                    + Sync
+                    + 'static,
             >,
         >,
     >,
@@ -266,7 +269,11 @@ impl AutosyncProcess {
                 log::debug!("NeuFlow: passing NV12 directly ({width}x{height}, stride={stride})");
                 Some(Arc::new(pixels[..total_len].to_vec()))
             } else {
-                log::debug!("NeuFlow: NV12 buffer incomplete (pixels.len={}, need={})", pixels.len(), total_len);
+                log::debug!(
+                    "NeuFlow: NV12 buffer incomplete (pixels.len={}, need={})",
+                    pixels.len(),
+                    total_len
+                );
                 None
             }
         } else {
@@ -321,7 +328,16 @@ impl AutosyncProcess {
                     return;
                 }
                 if let Some(img) = img {
-                    estimator.detect_features(frame_no, timestamp_us, img, frame_data, width, height, stride, method);
+                    estimator.detect_features(
+                        frame_no,
+                        timestamp_us,
+                        img,
+                        frame_data,
+                        width,
+                        height,
+                        stride,
+                        method,
+                    );
                     total_detected_frames.fetch_add(1, SeqCst);
 
                     if frame_no % 7 == 0 {
@@ -352,7 +368,8 @@ impl AutosyncProcess {
             let _g = crate::synchronization::sync_perf::StageGuard::new(
                 crate::synchronization::sync_perf::Stage::SpinWait,
             );
-            while self.total_detected_frames.load(SeqCst) < self.total_read_frames.load(SeqCst) - 1 {
+            while self.total_detected_frames.load(SeqCst) < self.total_read_frames.load(SeqCst) - 1
+            {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
@@ -366,7 +383,9 @@ impl AutosyncProcess {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         let t_final = std::time::Instant::now();
-        log::info!("[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames");
+        log::info!(
+            "[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames"
+        );
         self.estimator.process_detected_frames(
             self.org_fps,
             self.scaled_fps,

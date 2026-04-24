@@ -14,10 +14,10 @@ pub use opencv_pyrlk::*;
 mod neuflow;
 #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
 pub use self::neuflow::*;
-#[cfg(feature = "neuflow-ort")]
-mod neuflow_ort;
 #[cfg(feature = "neuflow-burn")]
 mod neuflow_burn;
+#[cfg(feature = "neuflow-ort")]
+mod neuflow_ort;
 
 #[enum_delegate::register]
 pub trait OpticalFlowTrait {
@@ -26,7 +26,9 @@ pub trait OpticalFlowTrait {
     fn optical_flow_to(&self, to: &OpticalFlowMethod) -> OpticalFlowPair;
     fn cleanup(&mut self);
     fn can_cleanup(&self) -> bool;
-    fn has_data(&self) -> bool { true }
+    fn has_data(&self) -> bool {
+        true
+    }
 }
 
 #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]

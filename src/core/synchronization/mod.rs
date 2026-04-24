@@ -27,8 +27,8 @@ use super::gyro_source::TimeIMU;
 
 mod autosync;
 pub mod optimsync;
-pub mod sync_perf;
 pub mod sync_diag;
+pub mod sync_perf;
 use crate::util::MapClosest;
 pub use autosync::{AutosyncProcess, describe_autosync_init_failure};
 
@@ -194,11 +194,9 @@ impl PoseEstimator {
         let use_serial_neuflow = {
             let l = results.read();
             frames_to_process.iter().any(|(ts, next_ts)| {
-                l.get(ts)
-                    .zip(l.get(next_ts))
-                    .is_some_and(|(curr, next)| {
-                        is_neuflow_method(&curr.of_method) || is_neuflow_method(&next.of_method)
-                    })
+                l.get(ts).zip(l.get(next_ts)).is_some_and(|(curr, next)| {
+                    is_neuflow_method(&curr.of_method) || is_neuflow_method(&next.of_method)
+                })
             })
         };
 
@@ -231,13 +229,7 @@ impl PoseEstimator {
                             let _g = crate::synchronization::sync_perf::StageGuard::new(
                                 crate::synchronization::sync_perf::Stage::EstimatePose,
                             );
-                            pose.estimate_pose(
-                                &of_result,
-                                curr_of.size(),
-                                params,
-                                *ts,
-                                *next_ts,
-                            )
+                            pose.estimate_pose(&of_result, curr_of.size(), params, *ts, *next_ts)
                         };
 
                         if let Some(rot) = rot_opt {
@@ -298,9 +290,7 @@ impl PoseEstimator {
                     let l = self.sync_results.read();
                     l.iter()
                         .filter_map(|(k, v)| {
-                            if v.rotation.is_none()
-                                && v.frame_size.0 > 0
-                                && v.of_method.has_data()
+                            if v.rotation.is_none() && v.frame_size.0 > 0 && v.of_method.has_data()
                             {
                                 l.range(k..)
                                     .find(|(_, next)| {

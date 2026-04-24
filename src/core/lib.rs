@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-pub mod niyien_lens_presets;
 #[cfg(feature = "opencv")]
 pub mod calibration;
 pub mod camera_identifier;
@@ -11,6 +10,7 @@ pub mod imu_integration;
 pub mod keyframes;
 pub mod lens_profile;
 pub mod lens_profile_database;
+pub mod niyien_lens_presets;
 pub mod stabilization;
 pub mod stmap;
 pub mod synchronization;
@@ -32,7 +32,6 @@ pub mod neuflow_burn;
 pub mod stabilization_params;
 pub mod util;
 
-use niyien_lens_presets::{LensGroupConfig, LensGroupStatus};
 use camera_identifier::CameraIdentifier;
 use gpu::Buffers;
 use gpu::drawing::*;
@@ -41,6 +40,7 @@ use keyframes::*;
 use lens_profile::LensProfile;
 use lens_profile_database::LensProfileDatabase;
 use nalgebra::Vector4;
+use niyien_lens_presets::{LensGroupConfig, LensGroupStatus};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use smoothing::Smoothing;
 pub use stabilization::PixelType;
@@ -167,6 +167,11 @@ pub struct StabilizationManager {
 
     pub lens_group_config: Arc<RwLock<Vec<LensGroupConfig>>>,
     pub lens_group_status: Arc<RwLock<Vec<LensGroupStatus>>>,
+    // Global "Manual edit" toggle for the lens group panel. When off, every group
+    // follows the auto (telemetry-derived) calibration path. When on, a group's
+    // focal length / anamorphic override is applied iff its telemetry can't satisfy
+    // auto by itself — see `should_use_manual_config`.
+    pub lens_group_manual_edit: Arc<AtomicBool>,
     // Snapshot of the lens profile taken the first time anamorphic is enabled, used to
     // restore the original fx/fy/cx/cy/distortion when anamorphic is switched off again.
     // Not serialized — purely runtime UI state.
@@ -206,12 +211,23 @@ impl Default for StabilizationManager {
             lens_profile_db: Arc::new(RwLock::new(LensProfileDatabase::default())),
 
             input_file: Arc::new(RwLock::new(InputFile::default())),
-            lens_group_config: Arc::new(RwLock::new(
-                niyien_lens_presets::default_lens_group_configs(),
-            )),
+            lens_group_config: Arc::new(RwLock::new({
+                // Restore persisted per-group lens configs (focal length, anamorphic, manual flag)
+                // so user-made settings survive across sessions.
+                let stored = settings::get_str("lens_group_configs_v1", "");
+                if stored.is_empty() {
+                    niyien_lens_presets::default_lens_group_configs()
+                } else {
+                    niyien_lens_presets::lens_group_configs_from_json(&stored)
+                }
+            })),
             lens_group_status: Arc::new(RwLock::new(
                 niyien_lens_presets::default_lens_group_statuses(),
             )),
+            lens_group_manual_edit: Arc::new(AtomicBool::new(settings::get_bool(
+                "lens_group_manual_edit",
+                false,
+            ))),
             pre_anamorphic_backup: Arc::new(RwLock::new(None)),
 
             #[cfg(feature = "opencv")]
@@ -367,6 +383,27 @@ impl StabilizationManager {
         if should_build_synthetic {
             let synthetic = build_synthetic_lens_profile(md, size);
             *self.lens.write() = synthetic;
+        }
+
+        // Manual lens-group override. Applied after the auto/db path so the manual profile
+        // can use the auto-resolved lens as a fallback (distortion, readout, camera id...),
+        // only replacing fx/fy/cx/cy + anamorphic stretch per the user's configuration.
+        let manual_edit = self.lens_group_manual_edit.load(SeqCst);
+        if let Some(lens_index) = niyien_lens_presets::extract_lens_index(&md.additional_data) {
+            let group_cfg = self.lens_group_config.read().get(lens_index).cloned();
+            if let Some(cfg) = group_cfg {
+                if niyien_lens_presets::should_use_manual_config(manual_edit, &cfg, md) {
+                    let baseline = self.lens.read().clone();
+                    if let Some(profile) = niyien_lens_presets::build_lens_profile(
+                        md,
+                        size,
+                        Some(&cfg),
+                        Some(&baseline),
+                    ) {
+                        *self.lens.write() = profile;
+                    }
+                }
+            }
         }
 
         if let Some(md_fps) = md.frame_rate {
@@ -726,7 +763,9 @@ impl StabilizationManager {
             // lens.camera_matrix when sampling (otherwise the preview keeps sampling
             // against stale cx/cy after anamorphic squeezes the output dimension).
             let compute_params = stabilization::ComputeParams::from_manager(self);
-            self.stabilization.write().set_compute_params(compute_params);
+            self.stabilization
+                .write()
+                .set_compute_params(compute_params);
 
             self.invalidate_smoothing();
         }
@@ -1656,7 +1695,23 @@ impl StabilizationManager {
     }
 
     pub fn set_lens_group_config_json(&self, json: &str) {
-        *self.lens_group_config.write() = niyien_lens_presets::lens_group_configs_from_json(json);
+        let configs = niyien_lens_presets::lens_group_configs_from_json(json);
+        // Persist normalized JSON (not the raw input — raw input may be stale or malformed).
+        let normalized = niyien_lens_presets::lens_group_config_to_json(&configs);
+        *self.lens_group_config.write() = configs;
+        settings::set(
+            "lens_group_configs_v1",
+            serde_json::Value::String(normalized),
+        );
+    }
+
+    pub fn set_lens_group_manual_edit(&self, enabled: bool) {
+        self.lens_group_manual_edit.store(enabled, SeqCst);
+        settings::set("lens_group_manual_edit", serde_json::Value::Bool(enabled));
+    }
+
+    pub fn get_lens_group_manual_edit(&self) -> bool {
+        self.lens_group_manual_edit.load(SeqCst)
     }
 
     /// Apply one lens group config (focal length + anamorphic squeeze) to the main
@@ -1673,12 +1728,24 @@ impl StabilizationManager {
         };
         let cfg = cfg?;
 
+        // Gate live preview on the same manual/auto decision the render path uses,
+        // so the canvas doesn't drift away from what will actually be rendered.
+        let manual_edit = self.lens_group_manual_edit.load(SeqCst);
+        let should_apply_manual = {
+            let gyro = self.gyro.read();
+            let md = gyro.file_metadata.read();
+            niyien_lens_presets::should_use_manual_config(manual_edit, &cfg, &md)
+        };
+        if !should_apply_manual {
+            // Manual off (or exception rule kicking in): reset any prior per-group
+            // correction override back to 100% and leave the auto-generated lens alone.
+            self.set_lens_correction_amount(1.0);
+            return None;
+        }
+
         // 1. Focal length — reuses set_user_focal_length so file_metadata.lens_params
         //    and lens.camera_matrix / fisheye_params.camera_matrix all get updated.
-        if let Some(fl) = cfg
-            .focal_length_mm
-            .filter(|v| v.is_finite() && *v > 0.0)
-        {
+        if let Some(fl) = cfg.focal_length_mm.filter(|v| v.is_finite() && *v > 0.0) {
             self.set_user_focal_length(fl);
         }
 
@@ -1843,6 +1910,7 @@ impl StabilizationManager {
             input_file: Arc::new(RwLock::new(self.input_file.read().clone())),
             lens_group_config: self.lens_group_config.clone(),
             lens_group_status: self.lens_group_status.clone(),
+            lens_group_manual_edit: self.lens_group_manual_edit.clone(),
             lens_profile_db: self.lens_profile_db.clone(),
 
             // NOT cloned:

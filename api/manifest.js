@@ -4,14 +4,15 @@ const {
   loadDistributionConfig,
   loadReleasePolicy,
   readJsonIfExists,
-  getCountry,
+  resolveCountry,
   selectSource,
 } = require("./_distribution");
 
 module.exports = async function handler(req, res) {
   const config = loadDistributionConfig();
   const releasePolicy = loadReleasePolicy();
-  const country = getCountry(req);
+  const resolvedCountry = await resolveCountry(req);
+  const country = resolvedCountry.country;
   const source = selectSource(config, country);
   const platform = (req.query.platform || "windows").toString();
 
@@ -48,6 +49,7 @@ module.exports = async function handler(req, res) {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.status(200).json({
     country,
+    country_source: resolvedCountry.source,
     region: country === "CN" ? "cn" : "global",
     app: {
       version: autoEntry ? autoEntry.version : "",
