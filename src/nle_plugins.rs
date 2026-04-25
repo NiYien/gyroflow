@@ -9,8 +9,6 @@ use std::path::Path;
 use std::process::Command;
 use zip_extensions::zip_archive_extensions::ZipArchiveExtensions;
 
-const DEFAULT_NIGHTLY_PLUGINS_BASE: &str =
-    "https://nightly.link/gyroflow/gyroflow-plugins/workflows/release/main";
 const DEFAULT_RELEASE_PLUGINS_BASE: &str =
     "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download";
 
@@ -239,121 +237,98 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
 }
 
 pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
+    // Single base for all plugin downloads — manifest.plugins_base when present,
+    // GitHub releases as offline fallback. Filenames are fixed and match
+    // _scripts/publish_pan123_release.py PLUGIN_ASSET_NAMES (release naming,
+    // shared across CI / tag-release pipelines — there is no separate nightly
+    // naming on the server).
     let normalized_custom_base = plugins_base.trim().trim_end_matches('/').to_owned();
-    let custom_base = (!normalized_custom_base.is_empty()).then_some(normalized_custom_base);
-    let nightly_base = custom_base
-        .as_ref()
-        .map(|s| format!("{s}/"))
-        .unwrap_or_else(|| format!("{DEFAULT_NIGHTLY_PLUGINS_BASE}/"));
-    let release_base = custom_base
-        .as_ref()
-        .map(|s| format!("{s}/"))
-        .unwrap_or_else(|| format!("{DEFAULT_RELEASE_PLUGINS_BASE}/"));
+    let base = if normalized_custom_base.is_empty() {
+        format!("{DEFAULT_RELEASE_PLUGINS_BASE}/")
+    } else {
+        format!("{normalized_custom_base}/")
+    };
     let (download_url, extract_path) = match typ {
         "openfx" => {
             if cfg!(target_os = "windows") {
-                if is_nightly() {
-                    (
-                        format!("{nightly_base}Gyroflow-OpenFX-windows.zip"),
-                        "C:/Program Files/Common Files/OFX/Plugins/",
-                    )
-                } else {
-                    (
-                        format!("{release_base}Gyroflow-OpenFX-windows.zip"),
-                        "C:/Program Files/Common Files/OFX/Plugins/",
-                    )
-                }
+                (
+                    format!("{base}Gyroflow-OpenFX-windows.zip"),
+                    "C:/Program Files/Common Files/OFX/Plugins/",
+                )
             } else {
-                if is_nightly() {
-                    (
-                        format!("{nightly_base}Gyroflow-OpenFX-macos-zip.zip"),
-                        "/Library/OFX/Plugins/",
-                    )
-                } else {
-                    (
-                        format!("{release_base}Gyroflow-OpenFX-macos.zip"),
-                        "/Library/OFX/Plugins/",
-                    )
-                }
+                (
+                    format!("{base}Gyroflow-OpenFX-macos.zip"),
+                    "/Library/OFX/Plugins/",
+                )
             }
         }
         "adobe" => {
             if cfg!(target_os = "windows") {
-                if is_nightly() {
-                    (
-                        format!("{nightly_base}Gyroflow-Adobe-windows.zip"),
-                        "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
-                    )
-                } else {
-                    (
-                        format!("{release_base}Gyroflow-Adobe-windows.aex"),
-                        "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
-                    )
-                }
+                (
+                    format!("{base}Gyroflow-Adobe-windows.aex"),
+                    "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
+                )
             } else {
-                if is_nightly() {
-                    (
-                        format!("{nightly_base}Gyroflow-Adobe-macos-zip.zip"),
-                        "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
-                    )
-                } else {
-                    (
-                        format!("{release_base}Gyroflow-Adobe-macos.zip"),
-                        "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
-                    )
-                }
+                (
+                    format!("{base}Gyroflow-Adobe-macos.zip"),
+                    "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
+                )
             }
         }
         _ => unreachable!(),
     };
 
-    if let Ok(mut reader) = ureq::get(&download_url)
-        .call()
-        .map(|x| x.into_body().into_reader())
-    {
-        use std::io::Read;
-        let mut content = Vec::new();
-        reader.read_to_end(&mut content)?;
-
-        let tempdir = tempfile::tempdir()?;
-        if download_url.ends_with(".zip") {
-            let mut archive = zip::ZipArchive::new(Cursor::new(content))?;
-            let mut inner = Vec::new();
-
-            if archive
-                .name_for_index(0)
-                .map(|x| x.ends_with(".zip"))
-                .unwrap_or_default()
-            {
-                archive.extract_file_to_memory(0, &mut inner)?;
-                let mut archive2 = zip::ZipArchive::new(Cursor::new(inner))?;
-                archive2.extract(tempdir.path())?;
-            } else {
-                archive.extract(tempdir.path())?;
-            }
-            let result = copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ);
-            if let Err(e) = result {
-                if e.kind() == std::io::ErrorKind::PermissionDenied {
-                    // Don't delete tempdir if permission was denied
-                    let _tmpdir = tempdir.keep();
-                }
-                return Err(e);
-            }
-        } else {
-            let tempfile = tempdir
-                .path()
-                .join(download_url.split('/').rev().next().unwrap());
-            std::fs::write(tempfile, content)?;
-            copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ)?;
+    // Surface network / HTTP errors instead of swallowing them. The previous
+    // `if let Ok(...)` skipped the entire download block on any ureq failure,
+    // leaving detect() to return Ok("") and the UI showing no feedback.
+    let mut reader = match ureq::get(&download_url).call() {
+        Ok(resp) => resp.into_body().into_reader(),
+        Err(e) => {
+            ::log::error!("Failed to download plugin from {download_url}: {e}");
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Failed to download {download_url}: {e}"),
+            ));
         }
+    };
+    use std::io::Read;
+    let mut content = Vec::new();
+    reader.read_to_end(&mut content)?;
+
+    let tempdir = tempfile::tempdir()?;
+    if download_url.ends_with(".zip") {
+        let mut archive = zip::ZipArchive::new(Cursor::new(content))?;
+        let mut inner = Vec::new();
+
+        if archive
+            .name_for_index(0)
+            .map(|x| x.ends_with(".zip"))
+            .unwrap_or_default()
+        {
+            archive.extract_file_to_memory(0, &mut inner)?;
+            let mut archive2 = zip::ZipArchive::new(Cursor::new(inner))?;
+            archive2.extract(tempdir.path())?;
+        } else {
+            archive.extract(tempdir.path())?;
+        }
+        let result = copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ);
+        if let Err(e) = result {
+            if e.kind() == std::io::ErrorKind::PermissionDenied {
+                // Don't delete tempdir if permission was denied
+                let _tmpdir = tempdir.keep();
+            }
+            return Err(e);
+        }
+    } else {
+        let tempfile = tempdir
+            .path()
+            .join(download_url.split('/').rev().next().unwrap());
+        std::fs::write(tempfile, content)?;
+        copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ)?;
     }
     let detected = detect(typ)?;
     remember_installed_plugin(typ, &detected, &latest_plugin_info());
     Ok(detected)
-}
-
-fn is_nightly() -> bool {
-    crate::util::get_version().contains("(gh") || crate::util::get_version().contains("(dev")
 }
 
 pub fn is_nle_installed(typ: &str) -> bool {
@@ -477,42 +452,11 @@ fn latest_plugin_info() -> LatestPluginInfo {
         };
     }
 
-    if is_nightly() {
-        let body =
-            match ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/actions/runs")
-                .call()
-                .ok()
-                .and_then(|response| response.into_body().read_to_string().ok())
-            {
-                Some(body) => body,
-                None => return LatestPluginInfo::default(),
-            };
-        let value: serde_json::Value = match serde_json::from_str(&body) {
-            Ok(value) => value,
-            Err(_) => return LatestPluginInfo::default(),
-        };
-        if let Some(workflow_runs) = value.get("workflow_runs").and_then(|item| item.as_array()) {
-            for obj in workflow_runs {
-                let Some(obj) = obj.as_object() else { continue };
-                if obj.get("conclusion").and_then(|x| x.as_str()) != Some("success") {
-                    continue;
-                }
-                let Some(run_number) = obj.get("run_number").and_then(|x| x.as_u64()) else {
-                    continue;
-                };
-                let source_ref = format!("run-{run_number}");
-                return LatestPluginInfo {
-                    version: source_ref.clone(),
-                    source_ref: source_ref.clone(),
-                    source_tag: source_ref,
-                    source_base: DEFAULT_NIGHTLY_PLUGINS_BASE.to_owned(),
-                    source_mode: "nightly".to_owned(),
-                };
-            }
-        }
-        return LatestPluginInfo::default();
-    }
-
+    // Manifest doesn't carry source metadata — fall back to GitHub releases as the
+    // single source of truth. The historical nightly / actions-runs branch was
+    // removed because the deploy side (publish_pan123_release.py) now ships one
+    // fixed release naming for both CI runs and tag releases, so the client
+    // doesn't need a parallel nightly path.
     let body = match ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/releases")
         .call()
         .ok()

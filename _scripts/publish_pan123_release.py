@@ -193,7 +193,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lens-owner", default=os.environ.get("NIYIEN_LENS_DATA_OWNER", "NiYien"))
     parser.add_argument("--lens-repo", default=os.environ.get("NIYIEN_LENS_DATA_REPO", "niyien-lens-data"))
     parser.add_argument("--lens-tag", default=os.environ.get("NIYIEN_LENS_DATA_TAG", "").strip())
-    parser.add_argument("--plugins-owner", default=os.environ.get("NIYIEN_PLUGINS_OWNER", "gyroflow"))
+    parser.add_argument("--plugins-owner", default=os.environ.get("NIYIEN_PLUGINS_OWNER", "NiYien"))
     parser.add_argument("--plugins-repo", default=os.environ.get("NIYIEN_PLUGINS_REPO", "gyroflow-plugins"))
     parser.add_argument("--plugins-tag", default=os.environ.get("NIYIEN_PLUGINS_TAG", "").strip())
     parser.add_argument(
