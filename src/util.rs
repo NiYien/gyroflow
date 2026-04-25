@@ -347,6 +347,71 @@ pub fn init_logging() {
     });
 }
 
+/// Invalidate Qt RHI pipeline cache and QML bytecode cache when the host application's
+/// version (Cargo.toml `version`) changes. Qt's auto-managed ABI tag pins to CPU /
+/// endianness / data-model only — it does not bind to gyroflow's build, shader source,
+/// or Controller QMetaObject layout. A cache from a previous build can corrupt heap
+/// during deserialization and crash V4 in unrelated places (e.g. AV in
+/// QV4::warnAboutCoercionToVoid). Wipe both caches whenever CARGO_PKG_VERSION moves.
+///
+/// Must run before Qt's first RHI-aware QQuickWindow is shown (which is when the
+/// cache files are read). Currently invoked right after init_logging — comfortably
+/// ahead of QmlEngine::new() and main_window.qml load.
+pub fn invalidate_qt_cache_if_version_changed() {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+    let cache_dir = gyroflow_core::settings::data_dir().join("cache");
+    let stamp_file = cache_dir.join(".gyroflow-qt-cache-stamp");
+    let prev = std::fs::read_to_string(&stamp_file).ok().unwrap_or_default();
+    if prev.trim() == VERSION {
+        return;
+    }
+    let mut wiped: Vec<String> = Vec::new();
+    let mut had_failures = false;
+    if let Ok(entries) = std::fs::read_dir(&cache_dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Match all Qt RHI pipeline cache variants (Windows -llp64, *nix -lp64,
+            // arm64 / future Qt versions ...), the older qtshadercache name, plus
+            // the QML bytecode cache. All can hold meta-id offsets / PSO blobs that
+            // go stale across builds.
+            let is_target = name_str.starts_with("qtpipelinecache-")
+                || name_str.starts_with("qtshadercache")
+                || name_str == "qmlcache";
+            if !is_target {
+                continue;
+            }
+            match std::fs::remove_dir_all(entry.path()) {
+                Ok(()) => wiped.push(name_str.into_owned()),
+                Err(e) => {
+                    had_failures = true;
+                    ::log::warn!(
+                        "Failed to wipe stale Qt cache entry {}: {e}",
+                        entry.path().display()
+                    );
+                }
+            }
+        }
+    }
+    let _ = std::fs::create_dir_all(&cache_dir);
+    // Update the stamp even if some removals failed: blocking the stamp write would
+    // leave us retrying every launch with no progress. The warn above gives the user
+    // a signal that something needs manual cleanup (e.g. another Gyroflow instance
+    // holding the files open).
+    let _ = std::fs::write(&stamp_file, VERSION);
+    if had_failures {
+        ::log::warn!(
+            "Qt cache partially invalidated (stamp {prev:?} -> {VERSION:?}); wiped {wiped:?} under {} — some entries could not be removed, see warnings above",
+            cache_dir.display()
+        );
+    } else {
+        ::log::info!(
+            "Qt cache invalidated (stamp {prev:?} -> {VERSION:?}); wiped {wiped:?} under {}",
+            cache_dir.display()
+        );
+    }
+}
+
 pub fn install_crash_handler() -> std::io::Result<()> {
     let cur_dir = std::env::current_dir()?;
 

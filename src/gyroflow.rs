@@ -76,6 +76,9 @@ fn entry() {
 
     let _ = util::install_crash_handler();
     util::init_logging();
+    // Wipe Qt RHI / QML caches when CARGO_PKG_VERSION changes; stale caches across
+    // builds can corrupt heap and crash V4 in unrelated places. See util.rs for details.
+    util::invalidate_qt_cache_if_version_changed();
     util::update_rlimit();
     util::set_android_context();
     log_panics::init();
