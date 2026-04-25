@@ -116,7 +116,28 @@ function renderDashboard(state) {
       pluginMeta.innerHTML = `${short} ${sourceTag(state.plugin.source)}`;
     } else {
       pluginEl.textContent = state.plugin.tag || '-';
-      pluginMeta.innerHTML = `release mode ${sourceTag(state.plugin.source)}`;
+      let pluginMetaHtml = `release mode ${sourceTag(state.plugin.source)}`;
+      let pluginTitle = state.plugin.tag || '';
+      if (state.plugin.missing_from_github) {
+        pluginMetaHtml += ` <span class="text-red-600 font-semibold">· ⚠ tag 已从 GitHub 删除</span>`;
+      }
+      // pan123 probe (parallel to SDK card). Same red/amber/green ladder:
+      //   non-empty missing_files = directory exists but missing some files
+      //   pan123_error            = probe failed (no creds / no content_tag / network)
+      //   empty missing_files     = full set present on pan123
+      const pluginMissing = state.plugin.missing_files;
+      const pluginExpected = state.plugin.expected_count || 0;
+      if (Array.isArray(pluginMissing) && pluginMissing.length > 0) {
+        pluginMetaHtml += ` <span class="text-red-600 font-semibold">· ⚠ pan123 缺失 ${pluginMissing.length} 个 plugin 文件</span>`;
+        pluginTitle += '\n\nMissing on pan123:\n  ' + pluginMissing.join('\n  ');
+      } else if (state.plugin.pan123_error) {
+        pluginMetaHtml += ` <span class="text-amber-600 text-[11px]">· pan123 探测失败</span>`;
+        pluginTitle += '\n\npan123 probe error: ' + state.plugin.pan123_error;
+      } else if (Array.isArray(pluginMissing) && pluginExpected > 0) {
+        pluginMetaHtml += ` <span class="text-emerald-600 text-[11px]">· pan123 ${pluginExpected}/${pluginExpected} 完整</span>`;
+      }
+      pluginEl.title = pluginTitle;
+      pluginMeta.innerHTML = pluginMetaHtml;
     }
   } else {
     pluginEl.textContent = '-';
@@ -135,8 +156,28 @@ function renderDashboard(state) {
     const base = state.sdk.base;
     const short = base.length > 26 ? base.slice(0, 23) + '...' : base;
     sdkEl.textContent = short;
-    sdkEl.title = base;
-    sdkMeta.innerHTML = `source base ${sourceTag(state.sdk.source)}`;
+    let sdkTitle = base;
+    let sdkMetaHtml = `source base ${sourceTag(state.sdk.source)}`;
+    // pan123 probe — non-empty missing_files means the SDK directory on
+    // pan123 is incomplete (user manually deleted a file, or upload skipped).
+    // pan123_error covers both "creds missing" and "network/list failure".
+    const missing = state.sdk.missing_files;
+    const sdkExpected = state.sdk.expected_count || 0;
+    if (Array.isArray(missing) && missing.length > 0) {
+      sdkMetaHtml += ` <span class="text-red-600 font-semibold">· ⚠ pan123 缺失 ${missing.length} 个 SDK 文件</span>`;
+      sdkTitle = base + '\n\nMissing on pan123:\n  ' + missing.join('\n  ');
+    } else if (state.sdk.pan123_error) {
+      // probe didn't yield a definitive list — show as a softer warning
+      sdkMetaHtml += ` <span class="text-amber-600 text-[11px]">· pan123 探测失败</span>`;
+      sdkTitle = base + '\n\npan123 probe error: ' + state.sdk.pan123_error;
+    } else if (Array.isArray(missing) && sdkExpected > 0) {
+      // empty array = full set present; expected_count comes from publish
+      // script (live), so the ratio updates automatically when new SDK
+      // versions are added there.
+      sdkMetaHtml += ` <span class="text-emerald-600 text-[11px]">· pan123 ${sdkExpected}/${sdkExpected} 完整</span>`;
+    }
+    sdkEl.title = sdkTitle;
+    sdkMeta.innerHTML = sdkMetaHtml;
   } else {
     sdkEl.textContent = '-';
     sdkMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag('none');

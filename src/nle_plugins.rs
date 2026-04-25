@@ -148,12 +148,24 @@ fn query_file_version_from_plist(path: &str) -> Option<String> {
 }
 
 fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
+    ::log::info!(
+        "[nle copy_files] start typ={typ:?} tempdir={tempdir:?} extract_path={extract_path:?} extract_path_exists={}",
+        Path::new(extract_path).exists()
+    );
     let output = if cfg!(target_os = "windows") {
-        Command::new("xcopy")
+        let xcopy_out = Command::new("xcopy")
             .args(&[tempdir, extract_path, "/Y", "/E", "/H", "/I"])
-            .output()?
-            .status
-            .success()
+            .output()?;
+        let stdout = String::from_utf8_lossy(&xcopy_out.stdout);
+        let stderr = String::from_utf8_lossy(&xcopy_out.stderr);
+        ::log::info!(
+            "[nle copy_files] xcopy(direct) status={:?} success={} stdout={:?} stderr={:?}",
+            xcopy_out.status.code(),
+            xcopy_out.status.success(),
+            stdout.trim(),
+            stderr.trim()
+        );
+        xcopy_out.status.success()
     } else if cfg!(target_os = "macos") {
         if gyroflow_core::filesystem::is_sandboxed() {
             let macosname = match typ {
@@ -212,9 +224,14 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     // let stderr = String::from_utf8_lossy(&output.stderr);
 
     if output {
+        ::log::info!("[nle copy_files] direct copy succeeded, no UAC needed");
         Ok(())
     } else {
-        // Retry with elevated privileges
+        ::log::warn!(
+            "[nle copy_files] direct copy failed, escalating to UAC/sudo retry (typ={typ:?})"
+        );
+        // Retry with elevated privileges. On Windows this triggers a UAC prompt;
+        // on macOS osascript shows an admin auth dialog.
         let status = if cfg!(target_os = "windows") {
             runas::Command::new("xcopy")
                 .args(&[tempdir, extract_path, "/Y", "/E", "/H", "/I"])
@@ -225,6 +242,11 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
             return Err(io::Error::new(io::ErrorKind::Other, "Unsupported OS"));
         }?;
 
+        ::log::info!(
+            "[nle copy_files] elevated retry returned status={:?} success={}",
+            status.code(),
+            status.success()
+        );
         if status.success() {
             Ok(())
         } else {
@@ -277,14 +299,27 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
         }
         _ => unreachable!(),
     };
+    ::log::info!(
+        "[nle install] start typ={typ:?} plugins_base={plugins_base:?} effective_base={base:?} download_url={download_url:?} extract_path={extract_path:?}"
+    );
 
     // Surface network / HTTP errors instead of swallowing them. The previous
     // `if let Ok(...)` skipped the entire download block on any ureq failure,
     // leaving detect() to return Ok("") and the UI showing no feedback.
     let mut reader = match ureq::get(&download_url).call() {
-        Ok(resp) => resp.into_body().into_reader(),
+        Ok(resp) => {
+            ::log::info!(
+                "[nle install] HTTP ok status={} content_len_hdr={:?}",
+                resp.status(),
+                resp.headers()
+                    .get("content-length")
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_owned())
+            );
+            resp.into_body().into_reader()
+        }
         Err(e) => {
-            ::log::error!("Failed to download plugin from {download_url}: {e}");
+            ::log::error!("[nle install] Failed to download plugin from {download_url}: {e}");
             return Err(io::Error::new(
                 io::ErrorKind::Other,
                 format!("Failed to download {download_url}: {e}"),
@@ -294,10 +329,32 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     use std::io::Read;
     let mut content = Vec::new();
     reader.read_to_end(&mut content)?;
+    ::log::info!(
+        "[nle install] body read_to_end bytes={} sniff={:02x?}",
+        content.len(),
+        &content[..content.len().min(16)]
+    );
 
     let tempdir = tempfile::tempdir()?;
-    if download_url.ends_with(".zip") {
-        let mut archive = zip::ZipArchive::new(Cursor::new(content))?;
+    ::log::info!("[nle install] tempdir created at {:?}", tempdir.path());
+    let take_zip_path = download_url.ends_with(".zip");
+    ::log::info!(
+        "[nle install] branch={}",
+        if take_zip_path { "zip" } else { "raw_file" }
+    );
+    if take_zip_path {
+        let mut archive = match zip::ZipArchive::new(Cursor::new(content)) {
+            Ok(a) => a,
+            Err(e) => {
+                ::log::error!("[nle install] zip open failed: {e}");
+                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("zip open: {e}")));
+            }
+        };
+        ::log::info!(
+            "[nle install] zip outer entries={} first={:?}",
+            archive.len(),
+            archive.name_for_index(0).map(|s| s.to_owned())
+        );
         let mut inner = Vec::new();
 
         if archive
@@ -305,29 +362,63 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
             .map(|x| x.ends_with(".zip"))
             .unwrap_or_default()
         {
+            ::log::info!("[nle install] outer zip wraps an inner .zip — unwrapping one layer");
             archive.extract_file_to_memory(0, &mut inner)?;
             let mut archive2 = zip::ZipArchive::new(Cursor::new(inner))?;
+            ::log::info!(
+                "[nle install] zip inner entries={} first={:?}",
+                archive2.len(),
+                archive2.name_for_index(0).map(|s| s.to_owned())
+            );
             archive2.extract(tempdir.path())?;
         } else {
             archive.extract(tempdir.path())?;
         }
+        match std::fs::read_dir(tempdir.path()) {
+            Ok(rd) => {
+                let names: Vec<String> = rd
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect();
+                ::log::info!("[nle install] tempdir contents after extract: {names:?}");
+            }
+            Err(e) => ::log::warn!("[nle install] read_dir tempdir failed: {e}"),
+        }
         let result = copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ);
         if let Err(e) = result {
+            ::log::error!("[nle install] copy_files (zip branch) returned Err: {e:?}");
             if e.kind() == std::io::ErrorKind::PermissionDenied {
                 // Don't delete tempdir if permission was denied
                 let _tmpdir = tempdir.keep();
             }
             return Err(e);
         }
+        ::log::info!("[nle install] copy_files (zip branch) OK");
     } else {
         let tempfile = tempdir
             .path()
             .join(download_url.split('/').rev().next().unwrap());
-        std::fs::write(tempfile, content)?;
-        copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ)?;
+        std::fs::write(&tempfile, &content)?;
+        ::log::info!(
+            "[nle install] wrote raw file to {:?} ({} bytes)",
+            tempfile,
+            content.len()
+        );
+        match copy_files(tempdir.path().to_str().unwrap(), &extract_path, typ) {
+            Ok(()) => ::log::info!("[nle install] copy_files (raw branch) OK"),
+            Err(e) => {
+                ::log::error!("[nle install] copy_files (raw branch) returned Err: {e:?}");
+                return Err(e);
+            }
+        }
     }
     let detected = detect(typ)?;
+    ::log::info!(
+        "[nle install] detect after install: typ={typ:?} -> version={detected:?} extract_path_exists={}",
+        Path::new(extract_path).exists()
+    );
     remember_installed_plugin(typ, &detected, &latest_plugin_info());
+    ::log::info!("[nle install] done typ={typ:?} returning Ok({detected:?})");
     Ok(detected)
 }
 
@@ -408,27 +499,40 @@ pub fn status_json(typ: &str) -> io::Result<String> {
 
 pub fn detect(typ: &str) -> io::Result<String> {
     let path = get_path(typ);
+    ::log::info!(
+        "[nle detect] typ={typ:?} get_path={path:?} exists={}",
+        if path.is_empty() { false } else { Path::new(path).exists() }
+    );
     #[cfg(target_os = "windows")]
     {
         if !path.is_empty() && Path::new(path).exists() {
-            Ok(query_file_version(&if typ == "openfx" {
+            let probe_path = if typ == "openfx" {
                 format!("{path}/Contents/Win64/Gyroflow.ofx")
             } else {
                 path.to_owned()
-            })
-            .unwrap_or_default())
+            };
+            let probe_exists = Path::new(&probe_path).exists();
+            let version = query_file_version(&probe_path);
+            ::log::info!(
+                "[nle detect] windows probe_path={probe_path:?} probe_exists={probe_exists} query_file_version={version:?}"
+            );
+            Ok(version.unwrap_or_default())
         } else {
+            ::log::info!("[nle detect] windows: path missing or empty, returning empty version");
             Ok(String::new())
         }
     }
     #[cfg(target_os = "macos")]
     {
         if Path::new(path).exists() {
-            Ok(
-                query_file_version_from_plist(&format!("{path}/Contents/Info.plist"))
-                    .unwrap_or_default(),
-            )
+            let plist_path = format!("{path}/Contents/Info.plist");
+            let version = query_file_version_from_plist(&plist_path);
+            ::log::info!(
+                "[nle detect] macos plist_path={plist_path:?} query_result={version:?}"
+            );
+            Ok(version.unwrap_or_default())
         } else {
+            ::log::info!("[nle detect] macos: path missing, returning empty version");
             Ok(String::new())
         }
     }

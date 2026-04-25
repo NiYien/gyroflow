@@ -7,6 +7,7 @@ exception plumbing through the bridge.
 
 from __future__ import annotations
 
+import importlib.util as _impl_util
 import os
 import re
 import subprocess
@@ -15,6 +16,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
+from . import cargo as cargo_ops
 from . import config as config_module
 from . import git as git_ops
 from . import telemetry as telemetry_api
@@ -42,12 +44,126 @@ EXPECTED_APP_ASSETS = (
 CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"
 
 
+def _load_publish_script_constants():
+    """Load `_scripts/publish_pan123_release.py` as an importable module so
+    we can read its `SDK_FILENAMES` / `PLUGIN_ASSET_NAMES` tuples without
+    duplicating them. The publish script is the source of truth — those
+    lists grow as new SDK / plugin filenames ship, and this dashboard probe
+    must track those changes automatically (no hardcoded mirror in api.py).
+
+    `_scripts/` is not a Python package, so plain `from ... import ...`
+    won't work; we load by file path via importlib. The publish script is
+    safe to import: module-level only imports stdlib + requests (no env
+    vars / network at import time), and `if __name__ == "__main__"` (line
+    1895) guards the CLI entrypoint.
+    """
+    pub_path = REPO_ROOT / "_scripts" / "publish_pan123_release.py"
+    spec = _impl_util.spec_from_file_location(
+        "publish_pan123_release_static", pub_path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot prepare module spec for {pub_path}")
+    module = _impl_util.module_from_spec(spec)
+    # Register in sys.modules BEFORE exec_module — the publish script uses
+    # @dataclass, and dataclass introspection internally calls
+    # `sys.modules.get(cls.__module__).__dict__`. If the freshly-built
+    # module hasn't been registered yet, that lookup returns None and the
+    # @dataclass decorator dies with `AttributeError: 'NoneType' object
+    # has no attribute '__dict__'`.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+try:
+    _PUB_MODULE = _load_publish_script_constants()
+    EXPECTED_SDK_ASSETS = tuple(_PUB_MODULE.SDK_FILENAMES)
+    EXPECTED_PLUGIN_ASSETS = tuple(_PUB_MODULE.PLUGIN_ASSET_NAMES)
+    _PUB_LOAD_ERROR: str | None = None
+except Exception as _e:
+    # Keep the dashboard usable if the publish script ever becomes
+    # unimportable (e.g. a syntax error in a future edit). The probes
+    # below detect empty constant tuples and report "publish 脚本未加载"
+    # instead of crashing the whole get_dashboard_state call.
+    EXPECTED_SDK_ASSETS = ()
+    EXPECTED_PLUGIN_ASSETS = ()
+    _PUB_LOAD_ERROR = f"{_e.__class__.__name__}: {_e}"
+
+
 def _error(exc: Exception, context: str) -> dict:
     return {
         "ok": False,
         "error": f"{context}: {exc}",
         "type": exc.__class__.__name__,
     }
+
+
+def _bump_cargo_and_commit_if_needed(
+    workdir: Path, remote: str, target_version: str
+) -> str | None:
+    """Sync `[workspace.package].version` in `workdir/Cargo.toml` to `target_version`,
+    then commit + push if a change was needed.
+
+    Used right before `git tag` so the build that the tag triggers embeds the
+    correct PE FileVersion (build.rs reads CARGO_PKG_VERSION). Without this
+    sync, a stale Cargo.toml means the released binary's internal version
+    does not match the git tag (see v2.1.2 plugin incident, 2026-04-25).
+
+    Returns:
+      None — if Cargo.toml is missing, not a Rust workspace, or already at target.
+      "<old> -> <new>" — when a bump + commit + push completed successfully.
+
+    Raises subprocess.CalledProcessError on git failure (caller wraps into _error).
+    Raises RuntimeError when the version line cannot be located in Cargo.toml.
+    """
+    cargo_path = workdir / "Cargo.toml"
+    current = cargo_ops.read_workspace_version(cargo_path)
+    if current is None or current == target_version:
+        return None
+    if not cargo_ops.write_workspace_version(cargo_path, target_version):
+        raise RuntimeError(
+            f"Failed to rewrite [workspace.package].version in {cargo_path!s} "
+            f"(current={current!r}, target={target_version!r}) — pattern not matched"
+        )
+    # File is now dirty on disk. If anything below fails before the commit lands,
+    # we must `git checkout -- Cargo.toml` to roll back; otherwise a retry would
+    # see the file already at target_version and skip the bump path entirely,
+    # leaving an unpushed local commit + a tag referencing it (orphan tag risk).
+    cargo_dirty = True
+    try:
+        branch = git_ops.get_current_branch(workdir)
+        if not branch:
+            raise RuntimeError(
+                f"Cannot determine current branch in {workdir!s} (detached HEAD?). "
+                f"Cargo.toml has been edited — please resolve manually."
+            )
+        # `commit -- Cargo.toml` commits this path's current state without
+        # depending on the staging area, so any unrelated `git add`-ed files
+        # the user has staged elsewhere are NOT swept into this version-bump
+        # commit. Once it returns 0 the working tree is clean for Cargo.toml.
+        git_ops.run_git(
+            workdir,
+            "commit",
+            "-m",
+            f"chore: bump workspace version to {target_version}",
+            "--",
+            "Cargo.toml",
+        )
+        cargo_dirty = False
+        git_ops.run_git(workdir, "push", remote, branch)
+    except (subprocess.CalledProcessError, RuntimeError):
+        # Best-effort rollback so the next retry restarts from a clean state.
+        # If the commit succeeded but `push` failed (cargo_dirty is False at
+        # that point), we deliberately leave the local commit in place — the
+        # user must `git push` manually or `git reset --hard HEAD~1` to undo.
+        if cargo_dirty:
+            try:
+                git_ops.run_git(workdir, "checkout", "--", "Cargo.toml")
+            except Exception:
+                # Surface the original error; rollback failure is best-effort.
+                pass
+        raise
+    return f"{current} -> {target_version}"
 
 
 class Api:
@@ -215,6 +331,14 @@ class Api:
             "tag": plugin_tag,
             "artifact_name": plugin_artifact,
             "source": "vercel" if has_plugin_env else ("defaults" if (plugin_tag or plugin_artifact or plugin_mode_env) else "none"),
+            # Filled below by the plugin pan123 probe (parallel to the SDK probe).
+            # None = probe didn't run; [] = all expected files present;
+            # non-empty list = filenames missing from
+            # `releases/<content_tag>/plugins/` on pan123.
+            "missing_files": None,
+            "pan123_error": None,
+            "content_tag": "",
+            "expected_count": len(EXPECTED_PLUGIN_ASSETS),
         }
 
         sdk_base_env = str(envs.get("NIYIEN_SDK_BASE", "")).strip()
@@ -222,7 +346,112 @@ class Api:
         state["sdk"] = {
             "base": sdk_base,
             "source": "vercel" if sdk_base_env else ("defaults" if sdk_base else "none"),
+            # Filled below by the pan123 probe. None = probe didn't run (no creds
+            # / network error); [] = all expected SDK files present; non-empty
+            # list = filenames missing from `releases/sdk/` on pan123.
+            "missing_files": None,
+            "pan123_error": None,
+            "expected_count": len(EXPECTED_SDK_ASSETS),
         }
+
+        # --- pan123 probe: detect missing SDK assets in `releases/sdk/` ---
+        # Cross-check against EXPECTED_SDK_ASSETS (sourced live from the publish
+        # script — see _load_publish_script_constants). Failure here is isolated
+        # — sdk metadata above stays usable even if the probe blows up (no
+        # creds, network down, pan123 down, publish script unimportable).
+        try:
+            if not EXPECTED_SDK_ASSETS:
+                state["sdk"]["pan123_error"] = (
+                    f"publish 脚本未加载 (跳过 SDK 探测): {_PUB_LOAD_ERROR}"
+                )
+            else:
+                cid = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=envs, cfg=cfg)
+                csec = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=envs, cfg=cfg)
+                root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=envs)
+                if cid and csec and root_id:
+                    client = Pan123Client(
+                        cid, csec, proxy_url=str(cfg.get("network_proxy", "") or "")
+                    )
+                    sdk_entry = client.find_child(root_id, "sdk", is_dir=True)
+                    if not sdk_entry:
+                        # No `sdk/` directory at all — every expected file is missing.
+                        state["sdk"]["missing_files"] = list(EXPECTED_SDK_ASSETS)
+                        state["sdk"]["pan123_error"] = "pan123 上 releases/sdk/ 目录不存在"
+                    else:
+                        sdk_dir_id = Pan123Client._entry_id(sdk_entry)
+                        files = client.list_directory(sdk_dir_id)
+                        present = {
+                            str(item.get("filename") or item.get("name") or "").strip()
+                            for item in files
+                        }
+                        state["sdk"]["missing_files"] = [
+                            name for name in EXPECTED_SDK_ASSETS if name not in present
+                        ]
+                else:
+                    state["sdk"]["pan123_error"] = "pan123 凭据未配置 (无法探测 SDK)"
+        except Exception as e:
+            state["sdk"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
+
+        # --- pan123 probe: detect missing plugin assets in
+        # `releases/<content_tag>/plugins/` ---
+        # Parallel to the SDK probe above. content_tag comes from the same
+        # vercel env (`NIYIEN_CONTENT_RELEASE_TAG`) the manifest endpoint uses
+        # to address per-release content bundles. EXPECTED_PLUGIN_ASSETS comes
+        # from the publish script (live, not duplicated). Failure here is
+        # isolated from the SDK probe — independent Pan123Client instances.
+        content_tag = str(envs.get("NIYIEN_CONTENT_RELEASE_TAG", "")).strip()
+        state["plugin"]["content_tag"] = content_tag
+        try:
+            if not EXPECTED_PLUGIN_ASSETS:
+                state["plugin"]["pan123_error"] = (
+                    f"publish 脚本未加载 (跳过 plugin 探测): {_PUB_LOAD_ERROR}"
+                )
+            else:
+                cid = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=envs, cfg=cfg)
+                csec = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=envs, cfg=cfg)
+                root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=envs)
+                if not (cid and csec and root_id):
+                    state["plugin"]["pan123_error"] = "pan123 凭据未配置 (无法探测 plugin)"
+                elif not content_tag:
+                    state["plugin"]["pan123_error"] = (
+                        "无 content_tag (NIYIEN_CONTENT_RELEASE_TAG 未设置)"
+                    )
+                else:
+                    client = Pan123Client(
+                        cid, csec, proxy_url=str(cfg.get("network_proxy", "") or "")
+                    )
+                    content_entry = client.find_child(root_id, content_tag, is_dir=True)
+                    if not content_entry:
+                        # content_tag directory doesn't exist on pan123 yet —
+                        # treat every expected plugin file as missing so the
+                        # UI flags this clearly.
+                        state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
+                        state["plugin"]["pan123_error"] = (
+                            f"pan123 上 releases/{content_tag}/ 目录不存在"
+                        )
+                    else:
+                        content_dir_id = Pan123Client._entry_id(content_entry)
+                        plugins_entry = client.find_child(
+                            content_dir_id, "plugins", is_dir=True
+                        )
+                        if not plugins_entry:
+                            state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
+                            state["plugin"]["pan123_error"] = (
+                                f"pan123 上 releases/{content_tag}/plugins/ 目录不存在"
+                            )
+                        else:
+                            plugins_dir_id = Pan123Client._entry_id(plugins_entry)
+                            files = client.list_directory(plugins_dir_id)
+                            present = {
+                                str(item.get("filename") or item.get("name") or "").strip()
+                                for item in files
+                            }
+                            state["plugin"]["missing_files"] = [
+                                name for name in EXPECTED_PLUGIN_ASSETS
+                                if name not in present
+                            ]
+        except Exception as e:
+            state["plugin"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
 
         # --- GitHub recent releases (top 3) + cross-check app.tag existence ---
         try:
@@ -289,9 +518,12 @@ class Api:
             state["errors"]["lens_update"] = f"{e.__class__.__name__}: {e}"
 
         try:
-            # Plugin update detection only meaningful in release mode —
-            # artifact mode tracks Action runs by id, not release tag.
+            # Plugin update detection + missing-from-github check. Both rely on
+            # listing the upstream plugin repo's releases — artifact mode tracks
+            # Action runs by id rather than release tag, so neither check is
+            # meaningful in that mode.
             plugin_state = state.get("plugin") or {}
+            plugin_state["missing_from_github"] = False
             if str(plugin_state.get("mode", "")).lower() == "release":
                 pl_owner = str(cfg.get("plugins_owner", "")).strip()
                 pl_repo = str(cfg.get("plugins_repo", "")).strip()
@@ -299,6 +531,16 @@ class Api:
                     pl_releases = self._gh_for(pl_owner, pl_repo, cfg).list_repo_releases(
                         pl_owner, pl_repo,
                     )
+                    # Cross-check: is the currently-pushed plugin tag still on
+                    # GitHub? (User may have manually deleted the release.)
+                    current_tag = str(plugin_state.get("tag", "")).strip()
+                    if current_tag:
+                        all_tag_names = {
+                            str(r.get("tag_name", "")).strip() for r in pl_releases
+                        }
+                        plugin_state["missing_from_github"] = (
+                            current_tag not in all_tag_names
+                        )
                     latest_pl = next(
                         (r for r in pl_releases
                          if not r.get("draft") and not r.get("prerelease")),
@@ -306,7 +548,6 @@ class Api:
                     )
                     if latest_pl:
                         latest_tag = str(latest_pl.get("tag_name", "")).strip()
-                        current_tag = str(plugin_state.get("tag", "")).strip()
                         if latest_tag and latest_tag != current_tag:
                             state["updates_available"]["plugin"] = {
                                 "latest_tag": latest_tag,
@@ -502,28 +743,76 @@ class Api:
             tag = f"v{major}.{minor}.{patch}"
             cfg = config_module.load_config()
             remote = (cfg.get("git_remote", "origin") or "origin").strip()
+            stale_cleanup: str | None = None
             if git_ops.local_tag_exists(REPO_ROOT, tag):
-                # Give enough context to decide: is this the same commit we're on? or a legacy upstream tag?
-                try:
-                    existing_sha = git_ops.run_git(REPO_ROOT, "rev-list", "-n", "1", tag).stdout.strip()[:8]
-                except Exception:
-                    existing_sha = "unknown"
-                head_sha = git_ops.get_head_commit_sha(REPO_ROOT)[:8]
+                # Decide whether the local tag is actually stale (remote already
+                # cleared it — typical when the user deleted the GitHub release
+                # with "Also delete tag" checked, then wants to redo the same
+                # version) or genuinely conflicts with remote.
                 remote_has = git_ops.remote_tag_exists(REPO_ROOT, remote, tag)
-                hint = "与当前 HEAD 一致" if existing_sha == head_sha else f"指向历史 commit (当前 HEAD 是 {head_sha})"
-                remote_note = f"{remote} 远端{'已有' if remote_has else '没有'}此 tag"
+                if not remote_has:
+                    # Stale: remote is the source of truth. Drop the local ref
+                    # so the retry can proceed without forcing the user to
+                    # `git tag -d` by hand.
+                    try:
+                        git_ops.run_git(REPO_ROOT, "tag", "-d", tag)
+                    except subprocess.CalledProcessError as e:
+                        return {
+                            "ok": False,
+                            "error": (
+                                f"清理 stale 本地 tag {tag} 失败: "
+                                f"{e.stderr or e.stdout or str(e)};请手动 `git tag -d {tag}` 后重试"
+                            ),
+                        }
+                    stale_cleanup = f"已清理 stale 本地 tag {tag} (远端已不存在)"
+                else:
+                    # Genuine conflict — both sides have it. Give the user the
+                    # context they need to decide (different commit? same?).
+                    try:
+                        existing_sha = git_ops.run_git(REPO_ROOT, "rev-list", "-n", "1", tag).stdout.strip()[:8]
+                    except Exception:
+                        existing_sha = "unknown"
+                    head_sha = git_ops.get_head_commit_sha(REPO_ROOT)[:8]
+                    hint = "与当前 HEAD 一致" if existing_sha == head_sha else f"指向历史 commit (当前 HEAD 是 {head_sha})"
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"本地与远端都已存在 tag {tag} → commit {existing_sha} ({hint})。\n"
+                            f"处理方式: (1) 换版本号 (默认建议已 +1);或 (2) 若要覆盖:"
+                            f"先在 GitHub 上删 release+tag, 然后 `git tag -d {tag}` 删本地后再点打 tag"
+                        ),
+                    }
+            if git_ops.remote_tag_exists(REPO_ROOT, remote, tag):
+                return {"ok": False, "error": f"远端 {remote} 已存在 Tag: {tag}"}
+            target_version = f"{major}.{minor}.{patch}"
+            try:
+                bump_diff = _bump_cargo_and_commit_if_needed(
+                    REPO_ROOT, remote, target_version
+                )
+            except subprocess.CalledProcessError as e:
                 return {
                     "ok": False,
                     "error": (
-                        f"本地已存在 tag {tag} → commit {existing_sha} ({hint});{remote_note}。\n"
-                        f"处理方式: (1) 换版本号 (默认建议已 +1);或 (2) 若要覆盖:"
-                        f"`git tag -d {tag}` 删本地后再点打 tag"
+                        f"Cargo.toml bump 失败 (git): {e.stderr or e.stdout or str(e)};"
+                        f" Cargo.toml 可能已被本地修改但未提交,请手动检查 git status"
                     ),
                 }
-            if git_ops.remote_tag_exists(REPO_ROOT, remote, tag):
-                return {"ok": False, "error": f"远端 {remote} 已存在 Tag: {tag}"}
+            except RuntimeError as e:
+                return {"ok": False, "error": f"Cargo.toml bump 失败: {e}"}
             git_ops.create_and_push_tag(REPO_ROOT, remote, tag)
-            return {"ok": True, "tag": tag, "message": f"Tag {tag} 已推送到 {remote}"}
+            parts = []
+            if stale_cleanup:
+                parts.append(stale_cleanup)
+            if bump_diff:
+                parts.append(f"Cargo.toml workspace.version 已同步 ({bump_diff}) 并提交")
+            parts.append(f"Tag {tag} 已推送到 {remote}")
+            return {
+                "ok": True,
+                "tag": tag,
+                "cargo_bump": bump_diff,
+                "stale_cleanup": stale_cleanup,
+                "message": ";".join(parts),
+            }
         except subprocess.CalledProcessError as e:
             return {
                 "ok": False,
@@ -651,64 +940,157 @@ class Api:
         except Exception as e:
             return _error(e, "get_plugin_latest_tag_suggestion")
 
-    def _push_tag_via_api_or_clone(self, repo_folder_name: str, owner: str, repo: str, tag: str, cfg: dict) -> dict:
+    def _push_tag_via_api_or_clone(
+        self,
+        repo_folder_name: str,
+        owner: str,
+        repo: str,
+        tag: str,
+        cfg: dict,
+        *,
+        bump_cargo_to: str | None = None,
+    ) -> dict:
         """Preferred: GitHub API (zero local dependency).
         Fallback: local clone + git push (reuses system git credentials).
-        """
-        # --- Try API first ---
-        api_error: str | None = None
-        try:
-            gh = self._gh_for(owner, repo, cfg)
-            sha = gh.get_default_branch_sha(owner, repo)
-            if not sha:
-                raise RuntimeError(f"{owner}/{repo} 默认分支 HEAD sha 读取失败")
-            gh.create_remote_tag(owner, repo, tag, sha)
-            return {
-                "ok": True,
-                "tag": tag,
-                "repo": f"{owner}/{repo}",
-                "via": "api",
-                "sha": sha,
-                "message": f"已通过 GitHub API 为 {owner}/{repo} 创建 tag {tag}",
-            }
-        except Exception as e:
-            api_error = f"{e.__class__.__name__}: {e}"
 
-        # --- Fallback: local clone ---
+        When `bump_cargo_to` is set, the GitHub API path is skipped — editing a
+        file (Cargo.toml) requires a local checkout. The local clone path then
+        bumps `[workspace.package].version` if it does not already match
+        `bump_cargo_to`, commits the change, and pushes before tagging.
+        """
+        api_error: str | None = None
+        if bump_cargo_to is None:
+            # --- Try API first (no Cargo edit needed) ---
+            try:
+                gh = self._gh_for(owner, repo, cfg)
+                sha = gh.get_default_branch_sha(owner, repo)
+                if not sha:
+                    raise RuntimeError(f"{owner}/{repo} 默认分支 HEAD sha 读取失败")
+                gh.create_remote_tag(owner, repo, tag, sha)
+                return {
+                    "ok": True,
+                    "tag": tag,
+                    "repo": f"{owner}/{repo}",
+                    "via": "api",
+                    "sha": sha,
+                    "message": f"已通过 GitHub API 为 {owner}/{repo} 创建 tag {tag}",
+                }
+            except Exception as e:
+                api_error = f"{e.__class__.__name__}: {e}"
+
+        # --- Local clone path (forced when bump_cargo_to is set) ---
         local = self._find_local_clone(repo_folder_name)
         if not local:
+            if bump_cargo_to is not None:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"需要本地 clone {repo_folder_name}/ 来同步 Cargo.toml workspace.version"
+                        f" 到 {bump_cargo_to},但未找到。请先 clone {owner}/{repo} 到 {repo_folder_name}/。"
+                    ),
+                }
             return {
                 "ok": False,
                 "error": f"API 失败 ({api_error}),且未找到本地 clone {repo_folder_name}/",
             }
         remote = (cfg.get("git_remote", "origin") or "origin").strip()
+        stale_cleanup: str | None = None
         if git_ops.local_tag_exists(local, tag):
-            return {"ok": False, "error": f"本地 {local.name} 已存在 tag: {tag} (API 错误: {api_error})"}
-        if git_ops.remote_tag_exists(local, remote, tag):
-            return {"ok": False, "error": f"{owner}/{repo} 远端已存在 tag: {tag} (API 错误: {api_error})"}
+            # Same logic as the main repo path: if the remote already cleared
+            # the tag (typical when the user deleted the GitHub release with
+            # "Also delete tag" checked, then wants to redo the same version),
+            # the local ref is stale — drop it and continue.
+            if not git_ops.remote_tag_exists(local, remote, tag):
+                try:
+                    git_ops.run_git(local, "tag", "-d", tag)
+                except subprocess.CalledProcessError as e:
+                    return {
+                        "ok": False,
+                        "error": (
+                            f"清理 stale 本地 tag {tag} ({local.name}) 失败: "
+                            f"{e.stderr or e.stdout or str(e)};"
+                            f" 请手动 `git tag -d {tag}` 后重试"
+                        ),
+                    }
+                stale_cleanup = f"已清理 stale 本地 tag {tag} (远端已不存在)"
+            else:
+                note = "" if bump_cargo_to is None else " (Cargo.toml 未做改动)"
+                return {
+                    "ok": False,
+                    "error": (
+                        f"本地与 {owner}/{repo} 远端都已存在 tag: {tag}{note}。"
+                        f"请先在 GitHub 上删 release+tag, 然后 `git tag -d {tag}` 删本地后重试"
+                        + (f" (API 错误: {api_error})" if api_error else "")
+                    ),
+                }
+        elif git_ops.remote_tag_exists(local, remote, tag):
+            note = "" if bump_cargo_to is None else " (Cargo.toml 未做改动)"
+            return {
+                "ok": False,
+                "error": (
+                    f"{owner}/{repo} 远端已存在 tag: {tag}{note}"
+                    + (f" (API 错误: {api_error})" if api_error else "")
+                ),
+            }
+        bump_diff: str | None = None
+        if bump_cargo_to is not None:
+            try:
+                bump_diff = _bump_cargo_and_commit_if_needed(
+                    local, remote, bump_cargo_to
+                )
+            except subprocess.CalledProcessError as e:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Cargo.toml bump 失败 (git): {e.stderr or e.stdout or str(e)};"
+                        f" 本地 {local!s} 的 Cargo.toml 可能已被改动但未提交,请手动 git status / checkout 处理"
+                    ),
+                }
+            except RuntimeError as e:
+                return {"ok": False, "error": f"Cargo.toml bump 失败: {e}"}
         try:
             git_ops.create_and_push_tag(local, remote, tag)
         except subprocess.CalledProcessError as e:
-            return {
-                "ok": False,
-                "error": f"API 失败 ({api_error});本地 git 也失败: {e.stderr or e.stdout or str(e)}",
-            }
-        return {
+            err_msg = (
+                f"本地 git 失败: {e.stderr or e.stdout or str(e)}"
+                if bump_cargo_to is not None
+                else f"API 失败 ({api_error});本地 git 也失败: {e.stderr or e.stdout or str(e)}"
+            )
+            return {"ok": False, "error": err_msg}
+        result = {
             "ok": True,
             "tag": tag,
             "repo": f"{owner}/{repo}",
-            "via": "local-clone-fallback",
+            "via": "local-clone" if bump_cargo_to is not None else "local-clone-fallback",
             "workdir": str(local),
-            "api_error": api_error,
-            "message": f"API 失败({api_error}),已 fallback 到本地 {local.name} 打 tag 并 push 到 {remote}",
+            "cargo_bump": bump_diff,
+            "stale_cleanup": stale_cleanup,
         }
+        if bump_cargo_to is not None:
+            parts: list[str] = []
+            if stale_cleanup:
+                parts.append(stale_cleanup)
+            if bump_diff:
+                parts.append(f"Cargo.toml workspace.version 已同步 ({bump_diff}) 并提交")
+            parts.append(f"已在本地 {local.name} 打 tag {tag} 并 push 到 {remote}")
+            result["message"] = "; ".join(parts)
+        else:
+            result["api_error"] = api_error
+            cleanup_prefix = f"{stale_cleanup}; " if stale_cleanup else ""
+            result["message"] = (
+                f"{cleanup_prefix}API 失败({api_error}),"
+                f"已 fallback 到本地 {local.name} 打 tag 并 push 到 {remote}"
+            )
+        return result
 
     def create_plugin_tag(self, major: int, minor: int, patch: int) -> dict:
         """Create `v<major>.<minor>.<patch>` tag on plugin repo.
 
-        Prefers local clone at `<gyroflow parent>/gyroflow-plugins` + git push
-        (reusing the system git credentials you already use for gyroflow).
-        Falls back to GitHub API if the local clone isn't present.
+        Forces the local-clone path (bypassing the GitHub API tag shortcut) so we
+        can sync `[workspace.package].version` in the plugin repo's Cargo.toml
+        before tagging. plugin build.rs reads CARGO_PKG_VERSION at compile time
+        to embed the PE FileVersion — without this sync the tagged release
+        carries a stale internal version (see v2.1.2 incident on 2026-04-25).
         """
         try:
             for v in (major, minor, patch):
@@ -719,7 +1101,15 @@ class Api:
             repo = str(cfg.get("plugins_repo", "")).strip()
             if not (owner and repo):
                 return {"ok": False, "error": "config 里缺少 plugins_owner / plugins_repo"}
-            return self._push_tag_via_api_or_clone(repo, owner, repo, f"v{major}.{minor}.{patch}", cfg)
+            target_version = f"{major}.{minor}.{patch}"
+            return self._push_tag_via_api_or_clone(
+                repo,
+                owner,
+                repo,
+                f"v{target_version}",
+                cfg,
+                bump_cargo_to=target_version,
+            )
         except Exception as e:
             return _error(e, "create_plugin_tag")
 

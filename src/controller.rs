@@ -4051,18 +4051,28 @@ impl Controller {
         {
             let typ = typ.to_string();
             let command = command.to_string();
+            ::log::info!("[nle controller] enter command={command:?} typ={typ:?}");
             let result = match command.as_ref() {
                 "install" | "latest_version" | "status" => {
                     let command2 = QString::from(command.clone());
                     let signal = util::qt_queued_callback_mut(
                         QPointer::from(self as &Self),
                         move |this, r: String| {
+                            ::log::info!(
+                                "[nle controller] signal -> QML command={:?} result_len={} preview={:?}",
+                                command2.to_string(),
+                                r.len(),
+                                r.chars().take(200).collect::<String>()
+                            );
                             this.nle_plugins_result(command2.clone(), QString::from(r));
                         },
                     );
                     core::run_threaded(move || {
                         let started = std::time::Instant::now();
                         let plugins_base = crate::distribution::plugin_source_base();
+                        ::log::info!(
+                            "[nle controller thread] dispatch command={command:?} typ={typ:?} plugins_base={plugins_base:?}"
+                        );
                         let result = match command.as_ref() {
                             "install" => crate::nle_plugins::install(&typ, plugins_base),
                             "latest_version" => {
@@ -4077,6 +4087,14 @@ impl Controller {
                                 format!("Unknown command {command}"),
                             )),
                         };
+                        ::log::info!(
+                            "[nle controller thread] command={command:?} typ={typ:?} elapsed_ms={} result_kind={}",
+                            started.elapsed().as_millis(),
+                            match &result {
+                                Ok(_) => "Ok",
+                                Err(_) => "Err",
+                            }
+                        );
                         match result {
                             Ok(r) => {
                                 if command == "install" {
