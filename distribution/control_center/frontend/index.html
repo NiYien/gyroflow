@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>NiYien 发布中心</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-slate-50 text-slate-900 antialiased">
+
+<div id="app" class="min-h-screen flex">
+  <!-- Sidebar -->
+  <aside class="w-56 bg-slate-900 text-slate-100 p-4 flex flex-col">
+    <div class="mb-6">
+      <div class="text-xl font-bold">NiYien</div>
+      <div class="text-xs text-slate-400">Control Center</div>
+    </div>
+    <nav class="flex-1 space-y-1 text-sm">
+      <button data-view="dashboard" class="nav-btn active w-full text-left px-3 py-2 rounded-md bg-slate-800">Dashboard</button>
+      <button data-view="resources" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">资源编排</button>
+      <button data-view="stats" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">统计</button>
+      <button data-view="settings" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">设置</button>
+    </nav>
+    <div class="text-[11px] text-slate-500 mt-4">POC 阶段</div>
+  </aside>
+
+  <!-- Main -->
+  <main class="flex-1 p-6 overflow-y-auto">
+    <!-- Dashboard view -->
+    <section data-view="dashboard" class="view">
+      <header class="flex items-baseline justify-between mb-4">
+        <div>
+          <h1 class="text-2xl font-semibold">Dashboard</h1>
+          <p class="text-sm text-slate-500" id="conn-status">连接检查中...</p>
+        </div>
+        <button id="refresh-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-900 text-white hover:bg-slate-700">刷新</button>
+      </header>
+
+      <!-- Status cards -->
+      <div class="grid grid-cols-2 gap-3 mb-6">
+        <div class="p-4 bg-white rounded-lg border-l-4 border-blue-500 shadow-sm">
+          <div class="text-[11px] font-semibold text-blue-600 tracking-wider">GYROFLOW APP</div>
+          <div class="text-lg font-semibold mt-1" id="app-version">-</div>
+          <div class="text-xs text-slate-500 mt-0.5" id="app-meta">&nbsp;</div>
+        </div>
+        <div class="p-4 bg-white rounded-lg border-l-4 border-amber-500 shadow-sm">
+          <div class="text-[11px] font-semibold text-amber-600 tracking-wider">LENS</div>
+          <div class="text-lg font-semibold mt-1" id="lens-version">-</div>
+          <div class="text-xs text-slate-500 mt-0.5" id="lens-meta">&nbsp;</div>
+        </div>
+        <div class="p-4 bg-white rounded-lg border-l-4 border-emerald-500 shadow-sm">
+          <div class="text-[11px] font-semibold text-emerald-600 tracking-wider">PLUGIN</div>
+          <div class="text-lg font-semibold mt-1" id="plugin-version">-</div>
+          <div class="text-xs text-slate-500 mt-0.5" id="plugin-meta">&nbsp;</div>
+        </div>
+        <div class="p-4 bg-white rounded-lg border-l-4 border-violet-500 shadow-sm">
+          <div class="text-[11px] font-semibold text-violet-600 tracking-wider">SDK</div>
+          <div class="text-lg font-semibold mt-1" id="sdk-version">-</div>
+          <div class="text-xs text-slate-500 mt-0.5" id="sdk-meta">&nbsp;</div>
+        </div>
+      </div>
+
+      <!-- Main actions -->
+      <h2 class="text-sm font-semibold text-slate-600 mb-2">主要操作</h2>
+      <div class="grid grid-cols-3 gap-3 mb-6">
+        <button data-action-nav="publish" class="p-4 bg-white rounded-lg shadow-sm hover:bg-slate-100 text-left border border-transparent hover:border-blue-400">
+          <div class="font-semibold">▸ 发布新版本</div>
+          <div class="text-xs text-slate-500 mt-1">打 tag / 触发构建 / 发布已有源</div>
+        </button>
+        <button data-action-nav="resources" class="p-4 bg-white rounded-lg shadow-sm hover:bg-slate-100 text-left border border-transparent hover:border-blue-400">
+          <div class="font-semibold">▸ 更新资源</div>
+          <div class="text-xs text-slate-500 mt-1">Lens / Plugin / SDK 版本切换</div>
+        </button>
+        <button id="open-manifest-modal-btn" class="p-4 bg-white rounded-lg shadow-sm hover:bg-slate-100 text-left border border-transparent hover:border-blue-400">
+          <div class="font-semibold">▸ 预览中国区 manifest</div>
+          <div class="text-xs text-slate-500 mt-1">排查用户下载问题</div>
+        </button>
+      </div>
+
+      <!-- 123 网盘资源状态 -->
+      <div class="flex items-center justify-between mb-2">
+        <h2 class="text-sm font-semibold text-slate-600">123 网盘资源状态</h2>
+        <div class="flex items-center gap-2">
+          <span id="dash-pan123-summary" class="text-xs text-slate-500"></span>
+          <label class="flex items-center gap-1 text-xs text-slate-500 cursor-pointer" title="勾选后每次刷新 dashboard 都自动扫,慢于手动按钮 (~1-3s)">
+            <input id="dash-pan123-auto" type="checkbox" class="h-3 w-3 rounded">
+            <span>自动扫</span>
+          </label>
+          <button id="dash-pan123-refresh-btn" class="text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">扫描</button>
+        </div>
+      </div>
+      <div id="dash-pan123-status" class="mb-6 text-xs text-slate-500 italic p-3 bg-slate-50 rounded">点"扫描"检查 policy.versions[] 在 123 网盘上的文件齐不齐</div>
+
+      <!-- Recent releases -->
+      <h2 class="text-sm font-semibold text-slate-600 mb-2">最近 Releases</h2>
+      <div id="recent-releases" class="mb-6">
+        <div class="text-xs text-slate-500 p-3">加载中...</div>
+      </div>
+
+      <!-- Debug bridge -->
+      <details class="p-4 bg-slate-100 rounded-lg text-sm">
+        <summary class="cursor-pointer font-semibold select-none">调试 · pywebview 桥接</summary>
+        <div class="mt-3">
+          <div class="flex gap-2 mb-2">
+            <button id="ping-btn" class="px-3 py-1.5 bg-slate-900 text-white rounded-md">ping</button>
+            <button id="config-btn" class="px-3 py-1.5 bg-slate-900 text-white rounded-md">读 config.json</button>
+            <button id="policy-btn" class="px-3 py-1.5 bg-slate-900 text-white rounded-md">读线上 policy</button>
+          </div>
+          <pre id="poc-output" class="bg-white p-3 rounded text-xs overflow-auto max-h-40 font-mono">等待交互...</pre>
+        </div>
+      </details>
+    </section>
+
+    <!-- Publish view (发布新版本) -->
+    <section data-view="publish" class="view hidden">
+      <header class="flex items-baseline justify-between mb-4">
+        <div>
+          <h1 class="text-2xl font-semibold">发布新版本</h1>
+          <p class="text-sm text-slate-500">选择操作模式,只显示对应字段</p>
+        </div>
+        <button data-action-nav="dashboard" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">返回 Dashboard</button>
+      </header>
+
+      <!-- Mode selector: 3 top-level choices -->
+      <div class="mb-6">
+        <label class="text-sm font-semibold text-slate-600 mb-2 block">操作模式</label>
+        <div class="grid grid-cols-3 gap-2">
+          <button data-mode="trigger" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
+            <div class="font-semibold text-sm">① 仅触发构建</div>
+            <div class="text-xs text-slate-500 mt-1">dispatch GitHub Action,不打 tag,不发版</div>
+          </button>
+          <button data-mode="tag" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
+            <div class="font-semibold text-sm">② 创建并推送 Tag</div>
+            <div class="text-xs text-slate-500 mt-1">打 tag → GitHub 自动 release build</div>
+          </button>
+          <button data-mode="select" class="mode-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
+            <div class="font-semibold text-sm">③ 选已有源发版</div>
+            <div class="text-xs text-slate-500 mt-1">从 Release 或 Action Artifact 选版本推送</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Mode 1: Trigger only -->
+      <div data-mode-panel="trigger" class="mode-panel hidden bg-white p-5 rounded-lg shadow-sm">
+        <h2 class="font-semibold mb-2">仅触发 Action 编译</h2>
+        <p class="text-sm text-slate-500 mb-4">不打 tag,不生成 release。只触发 GitHub 工作流开始编译,用于验证当前分支构建是否成功。</p>
+        <label class="text-sm text-slate-600 block mb-1">构建标题 (Action run 里显示此标签)</label>
+        <input id="trigger-build-label" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm mb-3" placeholder="默认为当前 HEAD 的 commit 标题">
+        <div class="flex gap-2 items-center">
+          <button id="trigger-action-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">触发 Action 编译</button>
+          <span id="trigger-action-result" class="text-sm text-slate-600"></span>
+        </div>
+      </div>
+
+      <!-- Mode 2: Push tag -->
+      <div data-mode-panel="tag" class="mode-panel hidden bg-white p-5 rounded-lg shadow-sm">
+        <h2 class="font-semibold mb-2">创建并推送 Tag</h2>
+        <p class="text-sm text-slate-500 mb-4">在本地仓库创建 <code class="bg-slate-100 px-1 rounded">v&lt;major&gt;.&lt;minor&gt;.&lt;patch&gt;</code> 格式的 tag 并推送到 GitHub。GitHub Action 会自动开始 release build。</p>
+        <label class="text-sm font-semibold text-slate-600 mb-2 block">主版本号</label>
+        <div class="flex items-center gap-1 text-2xl mb-4">
+          <input id="tag-major" type="number" min="0" max="999" class="w-20 text-center border border-slate-300 rounded-md py-1" value="1">
+          <span class="text-slate-400">.</span>
+          <input id="tag-minor" type="number" min="0" max="999" class="w-20 text-center border border-slate-300 rounded-md py-1" value="6">
+          <span class="text-slate-400">.</span>
+          <input id="tag-patch" type="number" min="0" max="999" class="w-20 text-center border border-slate-300 rounded-md py-1" value="3">
+          <span class="ml-4 text-sm text-slate-500">→ tag: <code id="tag-preview" class="bg-slate-100 px-2 py-1 rounded">v1.6.3</code></span>
+        </div>
+        <div class="flex gap-2 items-center">
+          <button id="push-tag-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700">创建并推送 Tag</button>
+          <span id="push-tag-result" class="text-sm text-slate-600"></span>
+        </div>
+      </div>
+
+      <!-- Mode 3: Select source + publish -->
+      <div data-mode-panel="select" class="mode-panel hidden bg-white p-5 rounded-lg shadow-sm">
+        <h2 class="font-semibold mb-2">选已有源发版</h2>
+
+        <!-- Source type: Release vs Artifact -->
+        <label class="text-sm font-semibold text-slate-600 mb-2 block">来源类型</label>
+        <div class="flex gap-2 mb-4">
+          <button data-source="release" class="source-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">GitHub Release</button>
+          <button data-source="artifact" class="source-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Action Artifact</button>
+          <button data-source="orphan" class="source-btn px-3 py-1.5 text-sm rounded-md border border-amber-300 bg-amber-50 text-amber-800 hover:border-amber-500" title="policy.versions[] 里 GitHub 已经没有对应 release 的残留条目">Policy 残留</button>
+        </div>
+
+        <!-- Source list -->
+        <div class="mb-4">
+          <div class="flex items-center justify-between mb-1">
+            <label class="text-sm font-semibold text-slate-600">版本列表</label>
+            <button id="reload-sources-btn" class="text-xs text-blue-600 hover:text-blue-800">刷新</button>
+          </div>
+          <div id="source-list" class="border border-slate-200 rounded-md max-h-48 overflow-y-auto bg-white">
+            <div class="p-3 text-xs text-slate-500">选择来源类型后加载列表</div>
+          </div>
+        </div>
+
+        <!-- Version number (auto-filled, editable for release; computed from run_number for artifact) -->
+        <div class="mb-4">
+          <label class="text-sm font-semibold text-slate-600 mb-2 block">发布版本号</label>
+          <div class="flex items-center gap-1 text-lg">
+            <input id="pub-major" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1" value="1">
+            <span class="text-slate-400">.</span>
+            <input id="pub-minor" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1" value="6">
+            <span class="text-slate-400">.</span>
+            <input id="pub-patch" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1" value="3">
+            <span id="pub-suffix" class="text-sm text-slate-500 ml-2"></span>
+          </div>
+          <div class="text-xs text-slate-500 mt-1">
+            最终版本号:<code id="pub-final" class="bg-slate-100 px-2 py-0.5 rounded ml-1">1.6.3</code>
+          </div>
+        </div>
+
+        <!-- Changelog -->
+        <div class="mb-4">
+          <label class="text-sm font-semibold text-slate-600 mb-1 block">更新说明</label>
+          <textarea id="pub-changelog" rows="3" class="w-full border border-slate-300 rounded-md p-2 text-sm font-mono" placeholder="选中 release/artifact 后自动填充,可编辑"></textarea>
+        </div>
+
+        <!-- Recommended -->
+        <div class="mb-4 flex items-center gap-2">
+          <input id="pub-recommended" type="checkbox" checked class="h-4 w-4 rounded border-slate-300">
+          <label for="pub-recommended" class="text-sm">推荐给用户升级(客户端更新检查时提示)</label>
+        </div>
+
+        <!-- Action dropdown -->
+        <div class="mb-4">
+          <label class="text-sm font-semibold text-slate-600 mb-1 block">发布动作</label>
+          <select id="pub-action" class="w-full border border-slate-300 rounded-md p-2 text-sm">
+            <option value="manual_only">加入手动版本列表(不推送)</option>
+            <option value="publish_and_push">发布并立即自动推送</option>
+            <option value="switch_auto">切换当前推送为此版本</option>
+            <option value="rollback_auto">回滚自动推送(此版本)</option>
+            <option value="hide_version">隐藏版本</option>
+          </select>
+          <p id="pub-action-hint" class="text-xs text-slate-500 mt-1"></p>
+        </div>
+
+        <!-- Execute -->
+        <div class="flex gap-2 items-center">
+          <button id="execute-publish-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-slate-300" disabled>执行发布动作</button>
+          <span id="execute-publish-result" class="text-sm text-slate-600">先选一个版本</span>
+        </div>
+
+        <!-- Pan123 sync progress (auto-shown after publish_and_push / switch_auto / rollback_auto) -->
+        <div id="pan123-progress-panel" class="hidden mt-5 p-4 bg-slate-50 rounded-lg border border-slate-200">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-semibold text-sm">123 网盘同步</h3>
+            <button id="pan123-cancel-btn" class="text-xs px-2 py-1 rounded text-red-600 hover:bg-red-50">取消</button>
+          </div>
+          <div id="pan123-phase-line" class="text-sm text-slate-700 mb-1">等待启动...</div>
+          <div class="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+            <div id="pan123-progress-bar" class="bg-emerald-500 h-2 transition-all" style="width:0%"></div>
+          </div>
+          <div class="flex items-center justify-between mt-1 text-xs text-slate-500">
+            <span id="pan123-progress-meta"></span>
+            <span id="pan123-elapsed"></span>
+          </div>
+          <details class="mt-2">
+            <summary class="text-xs text-slate-500 cursor-pointer hover:text-slate-700">日志输出 (展开)</summary>
+            <pre id="pan123-log" class="text-xs font-mono bg-white border border-slate-200 rounded p-2 mt-1 max-h-48 overflow-y-auto whitespace-pre-wrap"></pre>
+          </details>
+        </div>
+
+        <!-- Pan123 inventory status — show which policy.versions[] entries
+             have full filesets on 123 网盘 -->
+        <div class="mt-5">
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="font-semibold text-sm">123 网盘版本清单</h3>
+            <button id="pan123-inventory-refresh-btn" class="text-xs px-2 py-1 rounded bg-slate-100 hover:bg-slate-200">扫描</button>
+          </div>
+          <div id="pan123-inventory" class="text-xs text-slate-500 italic">点"扫描"列出每个版本在 123 网盘上的文件齐不齐</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Resources view -->
+    <section data-view="resources" class="view hidden">
+      <header class="flex items-baseline justify-between mb-4">
+        <div>
+          <h1 class="text-2xl font-semibold">资源编排</h1>
+          <p class="text-sm text-slate-500">Lens / Plugin / SDK 版本管理,选操作后只显示相关字段</p>
+        </div>
+        <button id="resources-reload-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">重新读取</button>
+      </header>
+      <p id="resources-status" class="text-sm mb-4"></p>
+
+      <!-- Operation selector -->
+      <div class="mb-4">
+        <label class="text-sm font-semibold text-slate-600 mb-2 block">操作类型</label>
+        <div class="grid grid-cols-2 gap-2">
+          <button data-res-op="apply" class="res-op-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
+            <div class="font-semibold text-sm">① 立即切换当前内容版本</div>
+            <div class="text-xs text-slate-500 mt-1">upsert 到 Vercel 环境变量,立刻对用户生效</div>
+          </button>
+          <button data-res-op="save" class="res-op-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
+            <div class="font-semibold text-sm">② 保存为下次发版默认</div>
+            <div class="text-xs text-slate-500 mt-1">写到 control_center.config.json,下次发版时自动填入</div>
+          </button>
+        </div>
+      </div>
+
+      <!-- Form (shared between both operations) -->
+      <div data-res-form class="bg-white rounded-lg shadow-sm p-5 mb-4 hidden">
+        <h2 id="res-form-title" class="font-semibold mb-3"></h2>
+
+        <div class="space-y-3">
+          <!-- Lens Tag -->
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">Lens / CameraDB Tag</label>
+            <input id="res-lens-tag" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: data-v20260421.1">
+          </div>
+
+          <!-- Plugin mode + conditional tag / artifact_name -->
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">Plugin 来源</label>
+            <div class="flex gap-2 mb-2">
+              <button data-plugin-mode="release" class="plugin-mode-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Release</button>
+              <button data-plugin-mode="artifact" class="plugin-mode-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Action Artifact</button>
+            </div>
+
+            <div data-plugin-mode-panel="release" class="plugin-mode-panel hidden">
+              <label class="text-xs text-slate-500 block mb-1">Plugin Release Tag</label>
+              <input id="res-plugin-tag" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: v1.6.1">
+            </div>
+
+            <div data-plugin-mode-panel="artifact" class="plugin-mode-panel hidden">
+              <label class="text-xs text-slate-500 block mb-1">Plugin Artifact 名称 <span class="text-[11px] text-slate-400">(可留空自动取最新)</span></label>
+              <input id="res-plugin-artifact" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="Gyroflow-frei0r-windows 等 CSV">
+              <!-- Current plugin artifact source run (only visible inside artifact panel) -->
+              <div id="plugin-run-status" class="mt-2 bg-emerald-50 border border-emerald-200 rounded-md p-3 text-sm hidden">
+                <div class="font-semibold text-emerald-800 mb-1">当前 Plugin Artifact 使用的 Action run</div>
+                <div id="plugin-run-detail" class="text-xs text-slate-700">加载中...</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SDK base -->
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">SDK 下载源</label>
+            <input id="res-sdk-base" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="https://api.gyroflow.xyz/sdk/">
+          </div>
+        </div>
+
+        <div class="mt-4 flex gap-2 items-center">
+          <button id="resources-execute-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"></button>
+          <span id="resources-execute-result" class="text-sm text-slate-600"></span>
+        </div>
+      </div>
+
+      <!-- Publish new resource version: plugin / lens tag push -->
+      <div class="bg-white rounded-lg shadow-sm p-5 mb-4">
+        <h2 class="font-semibold mb-2">发布新资源版本</h2>
+        <p class="text-xs text-slate-500 mb-4">通过 GitHub API 给 plugin / lens 仓库远程打 tag,触发其 workflow 自动 build + 创建 release。不需要本地克隆这两个仓库。</p>
+        <div class="grid grid-cols-2 gap-4">
+          <!-- Plugin tag -->
+          <div class="border border-slate-200 rounded-md p-4">
+            <div class="text-sm font-semibold mb-2">Plugin 仓库打 tag</div>
+            <p class="text-xs text-slate-500 mb-3" id="plugin-repo-hint">NiYien/gyroflow-plugins</p>
+            <label class="text-xs text-slate-600 block mb-1">主版本号</label>
+            <div class="flex items-center gap-1 mb-3">
+              <input id="plugin-tag-major" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="1">
+              <span class="text-slate-400">.</span>
+              <input id="plugin-tag-minor" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="6">
+              <span class="text-slate-400">.</span>
+              <input id="plugin-tag-patch" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="1">
+              <span class="ml-2 text-xs text-slate-500">→ <code id="plugin-tag-preview" class="bg-slate-100 px-1 rounded">v1.6.1</code></span>
+            </div>
+            <button id="create-plugin-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
+            <div id="plugin-tag-result" class="mt-2 text-xs"></div>
+          </div>
+
+          <!-- Lens tag -->
+          <div class="border border-slate-200 rounded-md p-4">
+            <div class="text-sm font-semibold mb-2">Lens 仓库打 tag</div>
+            <p class="text-xs text-slate-500 mb-3" id="lens-repo-hint">NiYien/niyien-lens-data</p>
+            <label class="text-xs text-slate-600 block mb-1">日期 / 序号</label>
+            <div class="flex items-center gap-1 mb-3 text-sm">
+              <span class="text-slate-500">data-v</span>
+              <input id="lens-tag-date" class="w-24 text-center border border-slate-300 rounded-md py-1 font-mono" value="" maxlength="8">
+              <span class="text-slate-400">.</span>
+              <input id="lens-tag-suffix" type="number" min="1" max="99" class="w-14 text-center border border-slate-300 rounded-md py-1" value="1">
+              <span class="ml-2 text-xs text-slate-500">→ <code id="lens-tag-preview" class="bg-slate-100 px-1 rounded">data-v....1</code></span>
+            </div>
+            <button id="create-lens-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
+            <div id="lens-tag-result" class="mt-2 text-xs"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Current state snapshot -->
+      <details class="bg-slate-100 rounded-lg p-4 text-sm">
+        <summary class="cursor-pointer font-semibold select-none">当前线上状态 (Vercel envs 只读)</summary>
+        <p class="mt-3 text-xs text-slate-500 border-l-2 border-slate-400 pl-2">
+          说明:这些 env 是客户端拉取 manifest 时的<strong>覆盖项</strong>,未设置 = 客户端使用 policy.auto_version 对应 versions 记录里的默认值。没设不是错误。
+        </p>
+        <div id="resources-current" class="mt-3 space-y-1 font-mono text-xs text-slate-600">加载中...</div>
+      </details>
+    </section>
+    <section data-view="stats" class="view hidden">
+      <header class="mb-4">
+        <h1 class="text-2xl font-semibold">统计</h1>
+        <p class="text-sm text-slate-500">telemetry 查询 · product_id 固定为 <code>gyroflow_niyien</code></p>
+      </header>
+
+      <div class="bg-white rounded-lg shadow-sm p-5 mb-4">
+        <h2 class="font-semibold mb-3">查询</h2>
+        <div class="flex flex-wrap gap-3 items-end mb-3">
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">天数</label>
+            <input id="stats-days" type="number" min="1" max="365" value="7" class="w-24 border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+          </div>
+          <div class="flex-1 min-w-0">
+            <label class="text-sm text-slate-600 block mb-1">event 过滤 <span class="text-xs text-slate-400">(可选)</span></label>
+            <input id="stats-event" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: app_start">
+          </div>
+          <button id="stats-fetch-btn" class="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700">获取</button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-lg shadow-sm p-5 mb-4">
+        <div class="flex items-center justify-between mb-2">
+          <h2 class="font-semibold">结果</h2>
+          <span id="stats-status" class="text-xs text-slate-500"></span>
+        </div>
+        <pre id="stats-result" class="bg-slate-50 p-3 rounded text-xs overflow-auto max-h-96 font-mono">点"获取"查询</pre>
+      </div>
+
+      <details class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm">
+        <summary class="cursor-pointer font-semibold select-none text-amber-800">Telemetry Rebuild (危险操作)</summary>
+        <div class="mt-3">
+          <p class="text-xs text-amber-800 mb-3">会重建指定日期范围的统计聚合。只在 telemetry 数据出问题时使用。需要 <code>telemetry_rebuild_token</code>。</p>
+          <div class="flex gap-3 items-end mb-3">
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">开始日期</label>
+              <input id="rebuild-start" type="date" class="border border-slate-300 rounded-md px-2 py-1 text-sm">
+            </div>
+            <div>
+              <label class="text-xs text-slate-600 block mb-1">结束日期</label>
+              <input id="rebuild-end" type="date" class="border border-slate-300 rounded-md px-2 py-1 text-sm">
+            </div>
+            <button id="rebuild-btn" class="px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">触发 Rebuild</button>
+          </div>
+          <pre id="rebuild-result" class="bg-white border border-amber-200 p-2 rounded text-xs max-h-48 overflow-auto"></pre>
+        </div>
+      </details>
+    </section>
+    <section data-view="settings" class="view hidden">
+      <header class="flex items-baseline justify-between mb-4">
+        <div>
+          <h1 class="text-2xl font-semibold">设置</h1>
+          <p class="text-sm text-slate-500">control_center.config.json 的字段。8 项 owner/repo 常量已隐藏(需要改直接编辑 JSON)</p>
+        </div>
+        <div class="flex gap-2">
+          <button id="settings-reload-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">重新读取</button>
+          <button id="settings-save-btn" class="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700">保存修改</button>
+        </div>
+      </header>
+      <p id="settings-status" class="text-sm mb-4"></p>
+
+      <!-- Runtime group -->
+      <div class="bg-white rounded-lg shadow-sm p-5 mb-4">
+        <h2 class="font-semibold mb-3">运行时常改</h2>
+        <div class="space-y-3">
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">网络代理 (host:port 或 http://...)</label>
+            <input data-cfg-key="network_proxy" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="127.0.0.1:6063">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">SDK 下载源 (sdk_base)</label>
+            <input data-cfg-key="publish_defaults.sdk_base" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="https://api.gyroflow.xyz/sdk/">
+          </div>
+        </div>
+      </div>
+
+      <!-- First-time config group -->
+      <details class="bg-white rounded-lg shadow-sm p-5 mb-4">
+        <summary class="cursor-pointer font-semibold select-none">首次配置 · Token / Secret</summary>
+        <div class="mt-4 space-y-3">
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">Vercel Token <span class="text-xs text-slate-400">(显示时已脱敏,保存时写明文)</span></label>
+            <input data-cfg-key="vercel_token" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">Vercel Project ID / Name</label>
+            <input data-cfg-key="vercel_project_id_or_name" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">Vercel Team ID <span class="text-xs text-slate-400">(可选)</span></label>
+            <input data-cfg-key="vercel_team_id" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">GitHub Token</label>
+            <input data-cfg-key="github_token" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div class="pt-2 border-t border-slate-100">
+            <label class="text-sm text-slate-600 block mb-1">PAN123 Client ID</label>
+            <input data-cfg-key="pan123_client_id" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">PAN123 Client Secret</label>
+            <input data-cfg-key="pan123_client_secret" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">PAN123 Releases Root Folder ID</label>
+            <input data-cfg-key="pan123_releases_root_id" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div class="pt-2 border-t border-slate-100">
+            <label class="text-sm text-slate-600 block mb-1">Telemetry Stats Token (查询权限)</label>
+            <input data-cfg-key="telemetry_stats_token" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div>
+            <label class="text-sm text-slate-600 block mb-1">Telemetry Rebuild Token (rebuild 权限)</label>
+            <input data-cfg-key="telemetry_rebuild_token" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+          <div class="pt-2 border-t border-slate-100">
+            <label class="text-sm text-slate-600 block mb-1">Deploy Hook URL</label>
+            <input data-cfg-key="deploy_hook_url" type="password" class="cfg-input w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono">
+          </div>
+        </div>
+      </details>
+
+      <!-- Read-only constants -->
+      <details class="bg-slate-100 rounded-lg p-4 text-sm">
+        <summary class="cursor-pointer font-semibold select-none">只读常量 (需要改时直接编辑 control_center.config.json)</summary>
+        <div id="settings-constants" class="mt-3 font-mono text-xs space-y-1 text-slate-600"></div>
+      </details>
+    </section>
+  </main>
+</div>
+
+<!-- Manifest preview modal -->
+<div id="manifest-modal" class="hidden fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-6">
+  <div class="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[85vh] flex flex-col">
+    <header class="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
+      <h2 class="font-semibold">预览 manifest — 调用线上 /api/manifest</h2>
+      <button id="close-manifest-modal-btn" class="text-slate-400 hover:text-slate-700 text-xl leading-none">&times;</button>
+    </header>
+    <div class="p-5">
+      <div class="flex gap-3 items-end mb-4">
+        <div>
+          <label class="text-sm text-slate-600 block mb-1">国家代码</label>
+          <input id="manifest-country" class="w-24 border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono uppercase" value="CN" maxlength="2">
+        </div>
+        <div>
+          <label class="text-sm text-slate-600 block mb-1">平台</label>
+          <select id="manifest-platform" class="border border-slate-300 rounded-md px-3 py-1.5 text-sm">
+            <option>windows</option>
+            <option>macos</option>
+            <option>linux</option>
+            <option>android</option>
+            <option>ios</option>
+          </select>
+        </div>
+        <button id="manifest-fetch-btn" class="px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700">查询</button>
+        <span id="manifest-status" class="text-xs text-slate-500"></span>
+      </div>
+      <pre id="manifest-result" class="bg-slate-50 p-3 rounded text-xs overflow-auto max-h-[50vh] font-mono">选择参数后点"查询"</pre>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

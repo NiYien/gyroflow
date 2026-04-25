@@ -102,17 +102,19 @@
 
 本地配置文件路径：
 
-- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.config.json`
+- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.config.json`
 
 如果没有，可以参考模板：
 
-- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.example.json`
+- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.example.json`
 
-填好之后运行：
+填好之后运行（pywebview 新版 UI）：
 
 ```powershell
-python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
+python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center\control_center.py
 ```
+
+> 旧版 Tkinter UI 作为备份保留在 `distribution/control_center/_legacy/control_center_legacy_tkinter.py`。
 
 本地配置里需要包含：
 
@@ -219,19 +221,19 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
 
 如果你填的是：
 
-- `版本号 = 1.6.3-niyien.1`
+- `版本号 = 1.6.3`（只填主版本，即 major.minor.patch）
 
 那控制中心会自动生成：
 
-- `Tag = v1.6.3-niyien.1`
+- `Tag = v1.6.3`
 
-然后直接创建并推送。
+然后直接创建并推送。**注意**：打 tag 时不带 `-0.ni.N` 后缀 —— 该后缀是 `build.rs` 对非 tag 构建（Action workflow_dispatch）自动追加的，用户无需手填。
 
 #### 方式 B：直接填 Tag
 
 如果你自己手动填：
 
-- `Tag = v1.6.3-niyien.1`
+- `Tag = v1.6.3`
 
 那控制中心就会直接按这个 Tag 创建并推送。
 
@@ -407,11 +409,11 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center.py
 
 文件路径：
 
-- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.config.json`
+- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.config.json`
 
 参考模板：
 
-- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.example.json`
+- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.example.json`
 
 ---
 
@@ -1081,11 +1083,11 @@ GitHub 现在主要有两种 PAT：
 
 文件路径：
 
-- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.config.json`
+- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.config.json`
 
 参考模板：
 
-- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.example.json`
+- `C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.example.json`
 
 ---
 

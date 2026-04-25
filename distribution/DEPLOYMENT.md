@@ -115,25 +115,30 @@ https://download.niyien.com/releases/<tag>/...
 
 ```json
 {
-  "auto_version": "1.6.3-niyien.1",
+  "auto_version": "1.6.3",
   "versions": [
     {
-      "version": "1.6.3-niyien.1",
-      "tag": "v1.6.3-niyien.1",
+      "version": "1.6.3",
+      "tag": "v1.6.3",
       "channels": ["auto", "manual"],
-      "changelog": "稳定版",
+      "changelog": "稳定版 (GitHub tag build)",
       "recommended": true
     },
     {
-      "version": "1.6.3-niyien.2",
-      "tag": "v1.6.3-niyien.2",
+      "version": "1.6.3-0.ni.7",
+      "tag": "run-12345678",
       "channels": ["manual"],
-      "changelog": "小更新，仅手动可见",
+      "changelog": "小更新，仅手动可见 (GitHub Action artifact)",
       "recommended": false
     }
   ]
 }
 ```
+
+> 版本号格式说明：`build.rs:57-83` 生成的 canonical 有两种 —
+> tag 构建用纯主版本 `1.6.3`；Action 构建用 `<major>.<minor>.<patch>-0.ni.<GITHUB_RUN_NUMBER>`。
+> `control_center` 发布到 `NIYIEN_RELEASE_POLICY_JSON` 的 `version` 字段必须严格采用这两种格式之一，
+> 否则客户端 `distribution.rs::has_app_update()` 会走 semver pre-release 比较，导致每次启动都误报"有新版"。
 
 ## 5. 首次部署
 
@@ -214,8 +219,10 @@ NIYIEN_MIRROR_PATH=/data/www/download.niyien.com/releases
 示例：
 
 ```text
-v1.6.3-niyien.1
+v1.6.3
 ```
+
+（打 tag 时不带 `-0.ni.N` 后缀。`-0.ni.<RUN_NUMBER>` 是 build.rs 对非 tag 构建自动追加的，用户无需也不应该在 tag 名里手动写。）
 
 产物：
 
@@ -262,29 +269,33 @@ data-v20260411.1
 
 ## 6. 控制中心
 
-控制中心程序：
+控制中心程序（pywebview 新版）：
 
-- [distribution/control_center.py](C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.py)
+- [distribution/control_center/control_center.py](C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.py)
 
 配置示例：
 
-- [distribution/control_center.example.json](C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center.example.json)
+- [distribution/control_center/control_center.example.json](C:/Users/Jhe/Desktop/github/gyroflow/distribution/control_center/control_center.example.json)
 
 本地实际配置文件：
 
-- `distribution/control_center.config.json`
+- `distribution/control_center/control_center.config.json`
 
 建议安装依赖：
 
 ```powershell
-pip install requests
+pip install requests pywebview
 ```
 
-运行：
+运行（pywebview 新版 UI）：
 
 ```powershell
-python distribution/control_center.py
+python distribution/control_center/control_center.py
 ```
+
+需要 DevTools 调试时设环境变量 `CONTROL_CENTER_DEBUG=1` 后再启动。
+
+旧版 Tkinter UI 作为备份保留在 `distribution/control_center/_legacy/control_center_legacy_tkinter.py`，可通过 `python distribution/control_center/_legacy/control_center_legacy_tkinter.py` 启动（仅作回滚用途）。
 
 ### 控制中心分区
 

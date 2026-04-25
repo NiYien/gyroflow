@@ -22,9 +22,15 @@ except ModuleNotFoundError:  # pragma: no cover
 import requests
 
 
-ROOT = Path(__file__).resolve().parent.parent
-CONFIG_FILE = Path(__file__).with_suffix(".config.json")
-EXAMPLE_CONFIG_FILE = Path(__file__).with_name("control_center.example.json")
+# After relocation into distribution/control_center/_legacy/,
+#   __file__              = distribution/control_center/_legacy/control_center_legacy_tkinter.py
+#   parent                = distribution/control_center/_legacy/
+#   parent.parent         = distribution/control_center/    (where the shared config lives)
+#   parent.parent.parent  = distribution/                    (not the repo root — use parent.parent.parent.parent)
+_PKG_DIR = Path(__file__).resolve().parent.parent
+ROOT = _PKG_DIR.parent.parent  # gyroflow/ repo root
+CONFIG_FILE = _PKG_DIR / "control_center.config.json"
+EXAMPLE_CONFIG_FILE = _PKG_DIR / "control_center.example.json"
 RELEASE_SUMMARY_ASSET_NAME = "gyroflow-niyien-release-summary.json"
 DEFAULT_GLOBAL_SDK_BASE = "https://api.gyroflow.xyz/sdk/"
 DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download/"

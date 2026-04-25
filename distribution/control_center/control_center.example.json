@@ -23,6 +23,6 @@
     "plugins_source_mode": "release",
     "plugins_tag": "",
     "plugins_artifact_name": "",
-    "sdk_base": "https://api.gyroflow.xyz/sdk/"
+    "sdk_base": "https://download.niyien.com/releases/sdk/"
   }
 }

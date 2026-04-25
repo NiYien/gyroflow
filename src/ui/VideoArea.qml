@@ -516,27 +516,50 @@ Item {
     function loadMultipleFiles(urls: list<url>, skip_detection: bool): void {
         if (urls.length == 1) {
             root.loadFile(urls[0], skip_detection);
-        } else if (urls.length > 1) {
-            // 过滤掉 .gyroflow 文件，同时拖入时以视频为主
-            let videoUrls = [];
-            for (const url of urls) {
-                if (!filesystem.get_filename(url).toLowerCase().endsWith(".gyroflow")) {
-                    videoUrls.push(url);
-                }
-            }
-            if (videoUrls.length === 0) {
-                // 全是 .gyroflow 文件，加载第一个
-                root.loadFile(urls[0], skip_detection);
-            } else if (videoUrls.length === 1) {
-                // 过滤后只剩一个视频：在主界面加载
-                root.loadFile(videoUrls[0], skip_detection);
-            } else {
-                // 多个视频：批量加入渲染队列
-                const urlsCopy = [...videoUrls];
-                queue.item.dt.loadFiles(urlsCopy);
-                queue.item.shown = true;
+            return;
+        }
+        if (urls.length < 1) return;
+
+        // Drop .gyroflow files that have a same-stem video sibling in this
+        // batch: keep the video so add_file's video branch (or single-file
+        // loadFile) runs telemetry-parser and produces creation_date_utc for
+        // batch-gyro-match. Lone .gyroflow files (no matching video) are
+        // preserved and load as project/preset.
+        let effective = urls;
+        try {
+            const filteredJson = render_queue.filter_paired_gyroflow_siblings(
+                JSON.stringify(urls.map(u => u.toString())),
+                JSON.stringify(fileDialog.extensions)
+            );
+            effective = JSON.parse(filteredJson);
+        } catch (e) {
+            console.log("filter_paired_gyroflow_siblings failed:", e);
+        }
+
+        if (effective.length === 1) {
+            root.loadFile(effective[0], skip_detection);
+            return;
+        }
+
+        // If nothing remains except .gyroflow files (no matching videos in list),
+        // preserve legacy behavior: load the first one in the main area.
+        let anyNonGyroflow = false;
+        for (const u of effective) {
+            if (!filesystem.get_filename(u).toLowerCase().endsWith(".gyroflow")) {
+                anyNonGyroflow = true;
+                break;
             }
         }
+        if (!anyNonGyroflow) {
+            root.loadFile(effective[0], skip_detection);
+            return;
+        }
+
+        // Multiple items → batch into render queue. queue.item.dt.loadFiles
+        // handles .gyroflow (project or preset) and video URLs uniformly.
+        const urlsCopy = [...effective];
+        queue.item.dt.loadFiles(urlsCopy);
+        queue.item.shown = true;
     }
 
     function askForOutputLocation(folder: url, filename: string, choice: bool, cb: var): void {
@@ -930,8 +953,21 @@ Item {
                 for (const url of drop.urls) {
                     const fname = filesystem.get_filename(url).toLowerCase();
                     if (!fname.includes(".")) {
-                        // 无扩展名，可能是文件夹，交给 Rust 端判断
+                        // No extension: treat as folder. Scan gyro .bin files AND
+                        // recursively scan video files (max depth 3, max 600 videos,
+                        // extension-filtered, excluding files whose stem ends with
+                        // the configured output suffix, e.g. _stabilized).
                         render_queue.add_gyro_folder(url.toString());
+                        try {
+                            const jsonStr = render_queue.list_video_files_in_folder(
+                                url.toString(),
+                                JSON.stringify(fileDialog.extensions)
+                            );
+                            const more = JSON.parse(jsonStr);
+                            for (const v of more) fileUrls.push(v);
+                        } catch (e) {
+                            console.log("list_video_files_in_folder failed:", e);
+                        }
                         hasFolder = true;
                     } else {
                         fileUrls.push(url);

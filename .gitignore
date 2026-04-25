@@ -34,3 +34,20 @@ AGENTS.md
 /.agents
 /sync_diag_output
 /_scripts/__pycache__
+distribution/control_center.config.json
+distribution/control_center.example.json
+distribution/control_center.example.json
+distribution/control_center.py
+# New control_center/ subfolder layout — config has live secrets,
+# never commit. The .example.json template stays tracked.
+distribution/control_center/control_center.config.json
+/distribution/control_center/_deployment
+/distribution/control_center/_publish_local
+/distribution/__pycache__
+/.codex-tmp
+test_block_question.pdb
+/_deployment/_publish_local
+/.superpowers
+/distribution/control_center/backend/__pycache__
+/distribution/control_center/__pycache__
+/distribution/control_center/_cache

@@ -64,7 +64,13 @@ module.exports = async function handler(req, res) {
       url: `${source.base}/${contentTag}/${config.data.lens.asset_name}`,
       sha256: process.env.NIYIEN_LENS_SHA256 || legacyLensSha || lensMeta.sha256 || "",
     },
-    sdk_base: `${source.base}/${contentTag}/sdk/`,
+    // SDK is shared across releases — uploaded to a flat `releases/sdk/`
+    // directory by publish_pan123_release.py (since the decoupling change),
+    // so its URL does NOT include the per-release content_tag. Filenames
+    // carry their version (e.g. `RED_SDK_Windows_9.1.2.tar.gz`), so a
+    // newer SDK shows up as a new filename without invalidating older
+    // clients that still ask for the old filename.
+    sdk_base: `${source.base}/sdk/`,
     plugins_base: `${source.base}/${contentTag}/plugins/`,
   });
 };

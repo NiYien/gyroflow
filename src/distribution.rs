@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -110,10 +110,27 @@ pub struct DataSyncResult {
 
 lazy_static::lazy_static! {
     static ref MANIFEST_CACHE: RwLock<Option<CachedManifest>> = RwLock::new(None);
+    // Single-flight lock: at startup multiple modules concurrently call
+    // fetch_manifest before any thread has populated the cache, which
+    // used to fan out into 4-5 parallel HTTP fetches. This Mutex
+    // serializes the actual fetch path; threads waiting on it then hit
+    // the freshly-populated cache via the second cache check below.
+    static ref FETCH_LOCK: Mutex<()> = Mutex::new(());
 }
 
 pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
     const TTL: Duration = Duration::from_secs(300);
+    if !force {
+        if let Some(entry) = MANIFEST_CACHE.read().clone() {
+            if entry.fetched_at.elapsed() < TTL {
+                return Ok(entry.manifest);
+            }
+        }
+    }
+
+    // Serialize the fetch path. Re-check cache after acquiring the lock
+    // — if another thread fetched while we were waiting, just reuse it.
+    let _fetch_guard = FETCH_LOCK.lock();
     if !force {
         if let Some(entry) = MANIFEST_CACHE.read().clone() {
             if entry.fetched_at.elapsed() < TTL {

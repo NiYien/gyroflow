@@ -1468,11 +1468,38 @@ Item {
                 if (fname.endsWith(".bin")) {
                     render_queue.add_gyro_file(url.toString());
                 } else if (!fname.includes(".")) {
-                    // 无扩展名，可能是文件夹，交给 Rust 端判断
+                    // No extension: treat as folder. Let Rust recursively scan for
+                    // gyro .bin files AND video files (max depth 3, max 600 videos,
+                    // filtered by fileDialog.extensions, excluding files whose stem
+                    // ends with the configured output suffix, e.g. _stabilized).
                     render_queue.add_gyro_folder(url.toString());
+                    try {
+                        const jsonStr = render_queue.list_video_files_in_folder(
+                            url.toString(),
+                            JSON.stringify(fileDialog.extensions)
+                        );
+                        const more = JSON.parse(jsonStr);
+                        for (const v of more) videoUrls.push(v);
+                    } catch (e) {
+                        console.log("list_video_files_in_folder failed:", e);
+                    }
                 } else {
                     videoUrls.push(url);
                 }
+            }
+            if (!videoUrls.length) return;
+            // After folder expansion, drop .gyroflow files that have a same-stem
+            // video sibling in videoUrls: keep the video so add_file's video
+            // branch runs telemetry-parser and produces creation_date_utc for
+            // batch-gyro-match. Lone .gyroflow (no matching video) preserved.
+            try {
+                const filteredJson = render_queue.filter_paired_gyroflow_siblings(
+                    JSON.stringify(videoUrls.map(u => u.toString())),
+                    JSON.stringify(fileDialog.extensions)
+                );
+                videoUrls = JSON.parse(filteredJson);
+            } catch (e) {
+                console.log("filter_paired_gyroflow_siblings failed:", e);
             }
             if (!videoUrls.length) return;
             if (filesystem.get_filename(videoUrls[0]).toLowerCase().endsWith(".gyroflow")) {

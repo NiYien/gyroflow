@@ -1,0 +1,87 @@
+/* Custom styles — most handled by Tailwind CDN */
+
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+  /* WebView2 / pywebview defaults to user-select:none on Windows for some
+     versions, which makes log panels uncopyable. Force text selection on
+     for the whole app — non-text widgets (buttons, etc.) still get the
+     UA default click behavior. */
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Log / output panels must always be selectable so the operator can copy
+   error traces, file lists, etc. */
+pre,
+code,
+#pan123-log,
+#poc-output,
+#stats-result,
+#rebuild-result,
+#manifest-result,
+#resources-current {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+/* The pan123 sync panel — phase line / progress meta / elapsed / etc. —
+   often contains error stack traces the operator needs to copy. The
+   error message lives in a <div>, not a <pre>, so the rule above
+   doesn't catch it. Force selectability on the whole panel except
+   buttons (which keep their click affordance). */
+#pan123-progress-panel,
+#pan123-progress-panel * {
+  -webkit-user-select: text;
+  user-select: text;
+}
+#pan123-progress-panel button {
+  -webkit-user-select: none;
+  user-select: none;
+  cursor: pointer;
+}
+#pan123-phase-line,
+#pan123-progress-meta,
+#pan123-elapsed,
+#execute-publish-result,
+#trigger-action-result,
+#push-tag-result,
+#plugin-tag-result,
+#lens-tag-result,
+#resources-execute-result,
+#resources-status,
+#dash-pan123-status {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+
+.nav-btn.active {
+  background-color: rgb(30 41 59);
+  color: white;
+}
+
+.view.hidden { display: none; }
+.mode-panel.hidden { display: none; }
+
+.mode-btn.active,
+.source-btn.active {
+  border-color: rgb(59 130 246);
+  background-color: rgb(239 246 255);
+}
+.source-item.active {
+  background-color: rgb(239 246 255);
+}
+.source-item {
+  cursor: pointer;
+  padding: 8px 12px;
+  border-bottom: 1px solid rgb(241 245 249);
+  font-size: 13px;
+}
+.source-item:hover { background-color: rgb(248 250 252); }
+.source-item:last-child { border-bottom: 0; }
+
+/* Scrollbar — subtle */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.3); }

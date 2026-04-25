@@ -246,16 +246,21 @@ class GitHubClient:
         if token:
             self.session.headers["Authorization"] = f"Bearer {token}"
 
-    def _get(self, url: str, *, params: dict[str, Any] | None = None, stream: bool = False, timeout: int = 60):
-        response = self.session.get(url, params=params, timeout=timeout, stream=stream)
+    def _get(self, url: str, *, params: dict[str, Any] | None = None, stream: bool = False, timeout: int = 60,
+             extra_headers: dict[str, str] | None = None):
+        headers = dict(extra_headers) if extra_headers else None
+        response = self.session.get(url, params=params, timeout=timeout, stream=stream, headers=headers)
         if response.status_code in {403, 404} and "Authorization" in self.session.headers:
             response.close()
+            unauth_headers = dict(self.base_headers)
+            if extra_headers:
+                unauth_headers.update(extra_headers)
             response = requests.get(
                 url,
                 params=params,
                 timeout=timeout,
                 stream=stream,
-                headers=self.base_headers,
+                headers=unauth_headers,
             )
         return response
 
@@ -269,8 +274,16 @@ class GitHubClient:
         return response.json()
 
     def download_asset(self, asset_url: str, destination: Path) -> None:
+        # Force identity transfer — proxies in the wild (Clash, V2Ray)
+        # sometimes strip Content-Encoding while keeping a compressed body,
+        # which then lands as raw zlib bytes that requests can't unwrap.
+        # Telling GitHub "don't compress" makes the wire bytes match what
+        # we expect to write to disk regardless of what the proxy does.
         self._download_stream_with_retry(
-            lambda: self._get(asset_url, timeout=300, stream=True),
+            lambda: self._get(
+                asset_url, timeout=300, stream=True,
+                extra_headers={"Accept-Encoding": "identity"},
+            ),
             destination,
             label=asset_url,
         )
@@ -312,30 +325,110 @@ class GitHubClient:
         return [item for item in artifacts or [] if isinstance(item, dict)]
 
     def download_artifact_archive(self, archive_url: str, destination: Path) -> None:
+        # See download_asset for why Accept-Encoding: identity is forced.
+        # Cache-Control / Pragma defeat any proxy that may be returning
+        # a stale cached body for this signed URL.
         self._download_stream_with_retry(
-            lambda: self._get(archive_url, timeout=300, stream=True),
+            lambda: self._get(
+                archive_url, timeout=300, stream=True,
+                extra_headers={
+                    "Accept-Encoding": "identity",
+                    "Cache-Control": "no-cache, no-store",
+                    "Pragma": "no-cache",
+                },
+            ),
             destination,
             label=archive_url,
         )
 
     def _download_stream_with_retry(self, opener, destination: Path, *, label: str) -> None:
         last_error = ""
+
+        def _safe_unlink(path: Path) -> None:
+            # On Windows the AV / a previous handle from this same process
+            # may briefly hold the file. Retry a few times before giving up;
+            # don't fail the whole publish over a stale temp file.
+            for _ in range(8):
+                try:
+                    path.unlink(missing_ok=True)
+                    return
+                except PermissionError:
+                    time.sleep(0.25)
+            # Last resort: fall through; the open(..., "wb") below will
+            # truncate-or-overwrite the file content, which is what we want.
+
         for attempt in range(1, DEFAULT_DOWNLOAD_RETRIES + 1):
             destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.unlink(missing_ok=True)
+            _safe_unlink(destination)
+            attempt_label = f" attempt {attempt}/{DEFAULT_DOWNLOAD_RETRIES}" if attempt > 1 else ""
+            start_ts = time.time()
             try:
                 with opener() as response:
                     response.raise_for_status()
+                    total_bytes = int(response.headers.get("Content-Length", 0) or 0)
+                    total_mb = total_bytes / (1024 * 1024) if total_bytes else 0
+                    pretty_total = f"{total_mb:.1f} MB" if total_bytes else "?"
+                    # Diagnostic: surface what the proxy/server is actually
+                    # claiming about content encoding + which final URL
+                    # we ended up at after redirects. If the final URL
+                    # isn't on pipelines.actions.githubusercontent.com (or
+                    # objects-origin.githubusercontent.com), a proxy or
+                    # CDN may have rewritten the redirect.
+                    ce_header = response.headers.get("Content-Encoding", "")
+                    ct_header = response.headers.get("Content-Type", "")
+                    final_url = str(getattr(response, "url", "") or "")
+                    final_url_short = final_url[:120] + "..." if len(final_url) > 120 else final_url
+                    emit_log(
+                        f"GET {label}{attempt_label} (size={pretty_total}, "
+                        f"Content-Type={ct_header or '(none)'}, "
+                        f"Content-Encoding={ce_header or '(none)'}, "
+                        f"status={response.status_code}, redirected_to={final_url_short})"
+                    )
+                    emit_progress(
+                        phase="download",
+                        label=destination.name,
+                        message=f"download start (size={pretty_total})",
+                        current=0,
+                        total=max(total_bytes, 1),
+                    )
+                    written = 0
+                    last_emit = 0
                     with destination.open("wb") as fh:
                         for chunk in response.iter_content(chunk_size=1024 * 1024):
                             if chunk:
                                 fh.write(chunk)
+                                written += len(chunk)
+                                # Throttle: emit every 4 MB or once per chunk
+                                # if total unknown, to keep UI snappy without
+                                # spamming the JSONL stream.
+                                if written - last_emit >= 4 * 1024 * 1024 or total_bytes == 0:
+                                    last_emit = written
+                                    emit_progress(
+                                        phase="download",
+                                        label=destination.name,
+                                        message=(
+                                            f"{written / 1024 / 1024:.1f}/{total_mb:.1f} MB"
+                                            if total_bytes
+                                            else f"{written / 1024 / 1024:.1f} MB (size unknown)"
+                                        ),
+                                        current=written,
+                                        total=max(total_bytes, written + 1),
+                                    )
                 if destination.exists() and destination.stat().st_size > 0:
+                    file_mb = destination.stat().st_size / 1024 / 1024
+                    elapsed_s = max(time.time() - start_ts, 0.001)
+                    speed_mbps = file_mb / elapsed_s
+                    emit_log(
+                        f"Downloaded {destination.name}: {file_mb:.1f} MB in {elapsed_s:.1f}s "
+                        f"= {speed_mbps:.2f} MB/s "
+                        f"({'⚠ SLOW — check proxy' if speed_mbps < 0.5 else 'OK'})"
+                    )
                     return
                 last_error = "downloaded file is empty"
             except Exception as err:
                 last_error = str(err)
-            destination.unlink(missing_ok=True)
+                emit_log(f"Download attempt {attempt} failed: {err}")
+            _safe_unlink(destination)
             if attempt < DEFAULT_DOWNLOAD_RETRIES:
                 time.sleep(min(2 * attempt, 10))
         raise RuntimeError(f"Failed to download {label}: {last_error}")
@@ -347,7 +440,11 @@ class Pan123Client:
         self.client_secret = client_secret.strip()
         self.releases_root_id = int(releases_root_id)
         self.session = requests.Session()
-        self.session.trust_env = True
+        # Disable env-based proxies for 123 网盘 — GitHub uploads/downloads
+        # may need a proxy to bypass GFW, but 123 网盘 is fastest direct.
+        # Mixing both in the same subprocess env (HTTP_PROXY=...) would
+        # otherwise route 123 traffic through the proxy too.
+        self.session.trust_env = False
         self.session.headers.update({"User-Agent": "niyien-pan123-publisher"})
         self._token = ""
         self._token_expires_at = 0.0
@@ -453,9 +550,12 @@ class Pan123Client:
                                 f"123 upload_complete pending: file={remote_name}, "
                                 f"attempt={finalize_attempt}/120, detail={last_error}"
                             )
-                        if "20103" in last_error:
-                            raise
-                        time.sleep(1)
+                        # 20103 = 文件正在校验中,请稍后 — explicitly the
+                        # retry-friendly case. Service is hashing slices
+                        # server-side; back off slightly longer so we
+                        # don't hammer the API.
+                        sleep_s = 2.0 if "20103" in last_error else 1.0
+                        time.sleep(sleep_s)
                         continue
                     if bool(complete_data.get("completed")) and int(complete_data.get("fileID", 0)) > 0:
                         emit_log(
@@ -714,6 +814,16 @@ def main() -> int:
         f"plugins_artifact_name={args.plugins_artifact_name or 'auto-latest'}, sdk_base={args.sdk_base}"
     )
 
+    # Diagnostic: surface proxy state. GitHub uploads/downloads honor
+    # HTTP_PROXY (trust_env=True default); 123 网盘 client has trust_env=False
+    # so it bypasses the proxy regardless. If GitHub downloads are slow,
+    # the proxy is the first thing to check.
+    http_proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or ""
+    if http_proxy:
+        emit_log(f"Proxy active: GitHub via {http_proxy} | Pan123 direct (bypassed)")
+    else:
+        emit_log("Proxy: NOT SET — GitHub will go direct (likely slow if behind GFW)")
+
     github = GitHubClient(os.environ.get("GITHUB_TOKEN", "").strip())
     pan123 = Pan123Client(
         client_id=require_env("PAN123_CLIENT_ID"),
@@ -761,7 +871,7 @@ def main() -> int:
             artifact_name=args.plugins_artifact_name,
         )
 
-        downloaded_content = download_content_assets(
+        downloaded_content, sdk_files = download_content_assets(
             github=github,
             session=session,
             temp_root=temp_root,
@@ -780,6 +890,9 @@ def main() -> int:
             )
         )
 
+        # content_manifest hashes lens + plugin only (SDK is shared across
+        # releases now, so including it would inflate content_tag churn for
+        # no benefit).
         content_manifest, content_tag = build_content_manifest(
             app_tag=args.app_tag,
             app_source_mode=args.app_source_mode,
@@ -807,6 +920,34 @@ def main() -> int:
         emit_log("Uploading content bundle")
         content_dir_id = pan123.ensure_release_dir(content_tag)
         upload_content_bundle(pan123, content_dir_id, downloaded_content, content_manifest_path)
+
+        # SDK uploads — flat into RELEASES_ROOT/sdk/. Filenames carry their
+        # version, so a new SDK doesn't displace what older clients are
+        # still asking for. Skip files that already exist (find_child by
+        # name) — also a fast path beyond the per-file MD5 dedup that
+        # upload_file does internally.
+        if sdk_files:
+            emit_log("Uploading SDK assets to flat releases/sdk/")
+            sdk_dir_id = pan123.ensure_release_dir("sdk")
+            total_sdk = len(sdk_files)
+            for index, item in enumerate(sdk_files, start=1):
+                # logical_path is "sdk/<filename>"; strip the prefix
+                sdk_filename = Path(item.logical_path).name
+                emit_progress(
+                    phase="upload",
+                    label=sdk_filename,
+                    message=f"sdk {index}/{total_sdk}",
+                    current=index,
+                    total=max(total_sdk, 1),
+                )
+                # Cheap pre-check: same filename already there → skip even
+                # the create_v2 call. (upload_file would still detect via
+                # MD5 dedup, but this avoids hashing the local copy.)
+                existing = pan123.find_child(sdk_dir_id, sdk_filename, expected_type=0)
+                if existing:
+                    emit_log(f"SDK reused (skip): {sdk_filename}")
+                    continue
+                pan123.upload_file(sdk_dir_id, item.local_path, sdk_filename)
 
         summary = build_release_summary(
             app_tag=args.app_tag,
@@ -837,6 +978,28 @@ def main() -> int:
 
         emit_log("Publish finished")
         emit_progress(phase="finalize", message="publish finished")
+        # Emit a structured summary event so control_center can pick up
+        # the runtime-computed content_tag, lens version/sha256 etc. and
+        # write them back to policy entry / Vercel envs (these aren't
+        # known at execute_app_action time because they're derived from
+        # the actual files being published).
+        plugin_release_tag = (
+            str(plugin_source.release.get("tag_name", "")).strip()
+            if plugin_source.release else ""
+        )
+        emit_event({
+            "phase": "finalize_summary",
+            "content_tag": content_tag,
+            "app_tag": args.app_tag,
+            "lens_release_tag": str(lens_release.get("tag_name", "")).strip(),
+            "lens_version": lens_metadata.get("version"),
+            "lens_sha256": lens_metadata.get("sha256"),
+            "plugins_release_tag": plugin_release_tag,
+            "plugin_source_mode": plugin_source.mode,
+            "plugin_source_ref": plugin_source.source_ref,
+            "plugin_source_tag": plugin_source.display_name,
+            "global_sdk_base": f"{args.sdk_base.rstrip('/')}/",
+        })
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
     return 0
@@ -936,8 +1099,20 @@ def download_content_assets(
     lens_release: dict[str, Any],
     plugin_source: PluginSource,
     sdk_base: str,
-) -> list[DownloadedFile]:
+) -> tuple[list[DownloadedFile], list[DownloadedFile]]:
+    """Resolve content + SDK assets locally.
+
+    Returns (content_assets, sdk_assets):
+    - `content_assets` (lens + plugin) goes into the per-release content bundle
+      whose dir name is hash-derived (`content-{hash}/`)
+    - `sdk_assets` is uploaded separately to a flat `releases/sdk/` directory
+      so SDK binaries are not duplicated for every release. Filenames carry
+      their version (e.g. `Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz`), so a
+      newer SDK simply gets a new filename and old gyroflow clients keep
+      reading the old one via their hard-coded filename constant.
+    """
     downloads: list[DownloadedFile] = []
+    sdk_downloads: list[DownloadedFile] = []
     total_items = 2 + len(PLUGIN_ASSET_NAMES) + len(SDK_FILENAMES)
     completed = 0
 
@@ -1010,23 +1185,49 @@ def download_content_assets(
     sdk_base = normalize_base_url(sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
     for filename in SDK_FILENAMES:
         destination = temp_root / "sdk" / filename
-        emit_progress(
-            phase="download",
-            label=filename,
-            message="download sdk asset",
-            current=completed + 1,
-            total=total_items,
-        )
-        resolved_url = download_sdk_to_path(
-            session=session,
-            sdk_base=sdk_base,
-            logical_filename=filename,
-            destination=destination,
-        )
+        # SDK filenames carry their version (e.g. *_5.0.0.tar.gz), so once
+        # we've downloaded a copy that matches the expected base+name, it
+        # never needs to be redownloaded for subsequent publish runs. Cache
+        # key includes sdk_base so a base URL change does force re-fetch.
+        expected_sdk = {
+            "kind": "sdk_asset",
+            "asset_name": filename,
+            "sdk_base": sdk_base,
+        }
+        if is_cached_file_match(destination, expected_sdk):
+            emit_log(f"Reusing local SDK asset: {filename}")
+            emit_progress(
+                phase="download",
+                label=filename,
+                message="cache hit, skip download",
+                current=completed + 1,
+                total=total_items,
+            )
+            source_tag = sdk_base
+        else:
+            emit_progress(
+                phase="download",
+                label=filename,
+                message="download sdk asset",
+                current=completed + 1,
+                total=total_items,
+            )
+            resolved_url = download_sdk_to_path(
+                session=session,
+                sdk_base=sdk_base,
+                logical_filename=filename,
+                destination=destination,
+            )
+            write_cached_metadata(destination, expected_sdk)
+            source_tag = resolved_url
         completed += 1
-        downloads.append(build_downloaded_file(f"sdk/{filename}", destination, "sdk", resolved_url))
+        # SDKs go to their own list — uploaded to flat `releases/sdk/`, not
+        # into the content bundle.
+        sdk_downloads.append(
+            build_downloaded_file(f"sdk/{filename}", destination, "sdk", source_tag)
+        )
 
-    return downloads
+    return downloads, sdk_downloads
 
 
 def resolve_plugin_source(
@@ -1269,28 +1470,34 @@ def resolve_app_assets_from_artifacts(
     artifacts: list[dict[str, Any]],
     source_ref: str,
 ) -> dict[str, Path]:
-    archives_root = temp_root / "app_artifacts" / str(run_id)
-    extract_root = temp_root / "app_extract" / str(run_id)
+    """Resolve app installers from a workflow run's artifacts.
+
+    The release workflow uses `actions/upload-artifact@v7` with
+    `archive: false` (.github/workflows/release.yml:122,131) so each
+    artifact's `name` is exactly the final asset filename
+    (e.g. `gyroflow-niyien-windows64.zip` /
+    `gyroflow-niyien-mac-universal.dmg`) and the downloaded body is the
+    raw asset — no outer zip wrapper, no extraction needed.
+    """
     app_root = temp_root / "app"
     artifact_signatures = sorted(
         f"{int(item.get('id', 0) or 0)}:{str(item.get('digest', '')).strip()}:{str(item.get('name', '')).strip()}"
         for item in artifacts
     )
-    required_assets: set[str] = set()
-    for artifact in artifacts:
-        artifact_name = str(artifact.get("name", "")).strip().lower()
-        if "windows" in artifact_name:
-            required_assets.add("gyroflow-niyien-windows64.zip")
-        if "mac" in artifact_name:
-            required_assets.add("gyroflow-niyien-mac-universal.dmg")
-        if "linux" in artifact_name:
-            required_assets.add("gyroflow-niyien-linux64.AppImage")
-        if "android" in artifact_name or "apk" in artifact_name:
-            required_assets.add("gyroflow-niyien.apk")
 
+    valid_artifacts = [
+        a for a in artifacts
+        if str(a.get("archive_download_url", "")).strip()
+        and str(a.get("name", "")).strip()
+    ]
+    if not valid_artifacts:
+        raise RuntimeError(f"No usable artifacts in run {run_id}")
+
+    # Cache reuse: every artifact already on disk with matching signature?
     resolved: dict[str, Path] = {}
     reusable = True
-    for asset_name in required_assets:
+    for artifact in valid_artifacts:
+        asset_name = str(artifact["name"]).strip()
         destination = app_root / asset_name
         expected = {
             "kind": "app_artifact_output",
@@ -1304,44 +1511,26 @@ def resolve_app_assets_from_artifacts(
             reusable = False
             break
     if reusable and resolved:
-        for asset_name in APP_ASSET_NAMES:
-            destination = app_root / asset_name
-            expected = {
-                "kind": "app_artifact_output",
-                "source_ref": source_ref,
-                "artifact_signatures": artifact_signatures,
-                "asset_name": asset_name,
-            }
-            if asset_name not in resolved and is_cached_file_match(destination, expected):
-                resolved[asset_name] = destination
         emit_log(f"Reusing local app artifact outputs: {source_ref}")
         return resolved
 
-    shutil.rmtree(archives_root, ignore_errors=True)
-    shutil.rmtree(extract_root, ignore_errors=True)
-    archives_root.mkdir(parents=True, exist_ok=True)
-    extract_root.mkdir(parents=True, exist_ok=True)
-
-    for index, artifact in enumerate(artifacts, start=1):
-        archive_url = str(artifact.get("archive_download_url", "")).strip()
-        artifact_name = str(artifact.get("name", "")).strip() or f"artifact-{index}"
-        if not archive_url:
-            continue
-        archive_path = archives_root / f"{index:02d}-{artifact_name}.zip"
-        github.download_artifact_archive(archive_url, archive_path)
-        artifact_extract_dir = extract_root / f"{index:02d}-{artifact_name}"
-        artifact_extract_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(archive_path, "r") as zip_file:
-            zip_file.extractall(artifact_extract_dir)
-
+    # Fresh download — straight to the final asset filename.
     app_root.mkdir(parents=True, exist_ok=True)
     resolved = {}
-    for asset_name in APP_ASSET_NAMES:
-        matches = sorted(extract_root.rglob(asset_name))
-        if not matches:
-            continue
+    total = len(valid_artifacts)
+    emit_log(f"Resolved {total} app artifacts from run {run_id}, downloading via GitHub")
+    for index, artifact in enumerate(valid_artifacts, start=1):
+        asset_name = str(artifact["name"]).strip()
+        archive_url = str(artifact["archive_download_url"]).strip()
         destination = app_root / asset_name
-        copy_file(matches[0], destination)
+        emit_progress(
+            phase="resolve",
+            label=asset_name,
+            message=f"download artifact {index}/{total}",
+            current=index - 1,
+            total=total,
+        )
+        github.download_artifact_archive(archive_url, destination)
         write_cached_metadata(
             destination,
             {
@@ -1352,10 +1541,12 @@ def resolve_app_assets_from_artifacts(
             },
         )
         resolved[asset_name] = destination
-
-    if not resolved:
-        raise RuntimeError(
-            f"No app files were found in artifact source {source_ref}"
+        emit_progress(
+            phase="resolve",
+            label=asset_name,
+            message=f"artifact ready {index}/{total}",
+            current=index,
+            total=total,
         )
 
     return resolved

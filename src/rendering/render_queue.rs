@@ -586,6 +586,8 @@ pub struct RenderQueue {
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
+    list_video_files_in_folder: qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
+    filter_paired_gyroflow_siblings: qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
     remove_gyro_file: qt_method!(fn(&mut self, index: usize)),
     clear_gyro_files: qt_method!(fn(&mut self)),
     get_gyro_file_count: qt_method!(fn(&self) -> usize),
@@ -3559,6 +3561,158 @@ impl RenderQueue {
         result
     }
 
+    // Recursively list video files under a folder, filtered by extension whitelist
+    // and excluding files whose stem ends with the configured default output suffix
+    // (e.g. "_stabilized"). Returns a JSON array of URL strings.
+    fn list_video_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
+        const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
+        const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
+
+        let path = filesystem::url_to_path(&folder_url);
+        let dir = std::path::Path::new(&path);
+        if !dir.is_dir() {
+            ::log::warn!("[list_video_files_in_folder] not a directory: {}", path);
+            return QString::from("[]");
+        }
+
+        let exts_lower: Vec<String> = serde_json::from_str::<Vec<String>>(&extensions_json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.to_ascii_lowercase())
+            .collect();
+
+        let suffix_lower = self.default_suffix.to_string().to_ascii_lowercase();
+
+        let mut found: Vec<std::path::PathBuf> = Vec::new();
+        Self::scan_video_folder(
+            dir,
+            0,
+            MAX_VIDEO_FOLDER_DEPTH,
+            MAX_VIDEO_FOLDER_RESULTS,
+            &exts_lower,
+            &suffix_lower,
+            &mut found,
+        );
+
+        let urls: Vec<String> = found
+            .iter()
+            .map(|p| filesystem::path_to_url(&p.to_string_lossy()))
+            .collect();
+
+        ::log::info!(
+            "[list_video_files_in_folder] root={}, returned {} videos (max_depth={}, cap={})",
+            path,
+            urls.len(),
+            MAX_VIDEO_FOLDER_DEPTH,
+            MAX_VIDEO_FOLDER_RESULTS
+        );
+        QString::from(serde_json::to_string(&urls).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    fn scan_video_folder(
+        dir: &std::path::Path,
+        depth: usize,
+        max_depth: usize,
+        max_results: usize,
+        exts_lower: &[String],
+        suffix_lower: &str,
+        out: &mut Vec<std::path::PathBuf>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        if out.len() >= max_results {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                ::log::warn!("[scan_video_folder] cannot read dir {}: {:?}", dir.display(), e);
+                return;
+            }
+        };
+
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                subdirs.push(p);
+            } else if p.is_file() {
+                files.push(p);
+            }
+        }
+        files.sort();
+        subdirs.sort();
+
+        for p in files {
+            if out.len() >= max_results {
+                return;
+            }
+            let ext_ok = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| {
+                    let el = e.to_ascii_lowercase();
+                    exts_lower.iter().any(|x| x == &el)
+                })
+                .unwrap_or(false);
+            if !ext_ok {
+                continue;
+            }
+            if !suffix_lower.is_empty() {
+                let stem_matches = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_ascii_lowercase().ends_with(suffix_lower))
+                    .unwrap_or(false);
+                if stem_matches {
+                    continue;
+                }
+            }
+            out.push(p);
+        }
+
+        for d in subdirs {
+            if out.len() >= max_results {
+                return;
+            }
+            Self::scan_video_folder(&d, depth + 1, max_depth, max_results, exts_lower, suffix_lower, out);
+        }
+    }
+
+    // Given a JSON array of URLs, drop any .gyroflow whose stem matches a
+    // sibling video URL in the same batch (same directory, same stem — case-
+    // sensitive, OS-agnostic). Keep the video so add_file runs its video
+    // branch, invokes stab.load_gyro_data, and triggers telemetry-parser to
+    // extract creation_date_utc — which batch-gyro-match needs for timestamp
+    // alignment. Lone .gyroflow files (no matching video in batch) are
+    // preserved and go through the project/preset branch as usual.
+    //
+    // `extensions_json` is the caller's video-extension whitelist (typically
+    // `fileDialog.extensions` from QML — single source of truth). "gyroflow"
+    // is always treated as the project extension regardless of whether it
+    // appears in the list.
+    fn filter_paired_gyroflow_siblings(
+        &self,
+        urls_json: String,
+        extensions_json: String,
+    ) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let extensions: Vec<String> = serde_json::from_str(&extensions_json).unwrap_or_default();
+        let result = filter_paired_gyroflow_siblings_impl(&urls, &extensions);
+        let dropped = urls.len().saturating_sub(result.len());
+        if dropped > 0 {
+            ::log::info!(
+                "[filter_paired_gyroflow_siblings] dropped {} .gyroflow siblings ({} → {} urls)",
+                dropped,
+                urls.len(),
+                result.len()
+            );
+        }
+        QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
+    }
+
     fn remove_gyro_file(&mut self, index: usize) {
         if index < self.gyro_files.len() {
             self.gyro_files.remove(index);
@@ -5803,6 +5957,56 @@ fn parse_gyro_metadata(
     Ok((created_at, duration, md.detected_source))
 }
 
+// Pure-function core of `filter_paired_gyroflow_siblings`. Exposed as a free
+// fn so it is callable from unit tests without needing a RenderQueue instance.
+// Rules:
+//   - Group URLs by everything before the final '.' (key is case-sensitive
+//     to stay correct on case-sensitive filesystems).
+//   - Within a group, if a .gyroflow *and* a video (extension ∈ `extensions`
+//     after lowercasing, minus "gyroflow") both exist, drop the .gyroflow.
+//   - Lone .gyroflow (no sibling video) is preserved.
+//   - URLs with no extension, or whose dot sits inside the directory part,
+//     are passed through untouched.
+//   - Output preserves the original order.
+fn filter_paired_gyroflow_siblings_impl(urls: &[String], extensions: &[String]) -> Vec<String> {
+    if urls.len() <= 1 {
+        return urls.to_vec();
+    }
+    let video_exts: std::collections::HashSet<String> = extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+        .filter(|e| e != "gyroflow")
+        .collect();
+
+    let mut groups: std::collections::HashMap<String, (Option<String>, Option<String>)> =
+        std::collections::HashMap::new();
+    for u in urls {
+        let Some(dot) = u.rfind('.') else { continue };
+        let slash_idx = u.rfind(['/', '\\']).unwrap_or(0);
+        if dot <= slash_idx {
+            continue;
+        }
+        let ext_lower = u[dot + 1..].to_ascii_lowercase();
+        let key = u[..dot].to_string();
+        let entry = groups.entry(key).or_insert((None, None));
+        if ext_lower == "gyroflow" {
+            entry.1 = Some(u.clone());
+        } else if video_exts.contains(&ext_lower) {
+            entry.0 = Some(u.clone());
+        }
+    }
+    let mut drop_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for (_, (video, gyroflow)) in &groups {
+        if let (Some(_), Some(g)) = (video, gyroflow) {
+            drop_set.insert(g.clone());
+        }
+    }
+    urls.iter()
+        .filter(|u| !drop_set.contains(*u))
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5965,6 +6169,7 @@ mod tests {
             queue_index: 0,
             render_options: RenderOptions::default(),
             base_render_output_size: None,
+            original_output_size: (0, 0),
             auto_rotate: false,
             additional_data: String::new(),
             cancel_flag: Default::default(),
@@ -5984,5 +6189,117 @@ mod tests {
         let effective = effective_lens_group_configs(&job, &global);
         assert_eq!(effective[0].focal_length_mm, Some(24.0));
         assert_eq!(effective[1].focal_length_mm, Some(50.0));
+    }
+
+    fn default_exts() -> Vec<String> {
+        vec![
+            "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng",
+            "braw", "r3d", "nev",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect()
+    }
+
+    #[test]
+    fn filter_pairs_drops_gyroflow_when_sibling_video_present() {
+        let urls = vec![
+            "file:///C:/clips/a.mp4".to_string(),
+            "file:///C:/clips/a.gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(out, vec!["file:///C:/clips/a.mp4".to_string()]);
+    }
+
+    #[test]
+    fn filter_pairs_preserves_lone_gyroflow_without_sibling_video() {
+        let urls = vec![
+            "file:///C:/clips/preset.gyroflow".to_string(),
+            "file:///C:/clips/clip1.mp4".to_string(),
+            "file:///C:/clips/clip2.mp4".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(out, urls, "lone preset.gyroflow must be preserved");
+    }
+
+    #[test]
+    fn filter_pairs_does_not_match_across_directories() {
+        let urls = vec![
+            "file:///C:/a/clip.mp4".to_string(),
+            "file:///C:/b/clip.gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(out, urls, "different dirs must not be paired");
+    }
+
+    #[test]
+    fn filter_pairs_preserves_input_order() {
+        let urls = vec![
+            "file:///C:/x/c.mp4".to_string(),
+            "file:///C:/x/a.mp4".to_string(),
+            "file:///C:/x/a.gyroflow".to_string(),
+            "file:///C:/x/b.mp4".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/x/c.mp4".to_string(),
+                "file:///C:/x/a.mp4".to_string(),
+                "file:///C:/x/b.mp4".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn filter_pairs_is_case_insensitive_on_extension_only() {
+        let urls = vec![
+            "file:///C:/x/Clip.MP4".to_string(),
+            "file:///C:/x/Clip.Gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(out, vec!["file:///C:/x/Clip.MP4".to_string()]);
+    }
+
+    #[test]
+    fn filter_pairs_case_sensitive_on_stem_for_posix_safety() {
+        // Stem is compared case-sensitive so `Clip.mp4` and `clip.gyroflow`
+        // on a case-sensitive filesystem are not wrongly paired.
+        let urls = vec![
+            "file:///srv/x/Clip.mp4".to_string(),
+            "file:///srv/x/clip.gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(out, urls);
+    }
+
+    #[test]
+    fn filter_pairs_ignores_unknown_extensions() {
+        let urls = vec![
+            "file:///C:/x/a.txt".to_string(),
+            "file:///C:/x/a.gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        assert_eq!(out, urls, ".txt is not a video, so .gyroflow is not paired");
+    }
+
+    #[test]
+    fn filter_pairs_empty_and_single_are_noop() {
+        assert!(filter_paired_gyroflow_siblings_impl(&[], &default_exts()).is_empty());
+        let one = vec!["file:///C:/a.mp4".to_string()];
+        assert_eq!(filter_paired_gyroflow_siblings_impl(&one, &default_exts()), one);
+    }
+
+    #[test]
+    fn filter_pairs_respects_custom_extensions_whitelist() {
+        // Caller can pass a narrower list; any ext outside it is treated as
+        // non-video and won't pair.
+        let urls = vec![
+            "file:///C:/x/a.r3d".to_string(),
+            "file:///C:/x/a.gyroflow".to_string(),
+        ];
+        let narrow = vec!["mp4".to_string(), "gyroflow".to_string()];
+        let out = filter_paired_gyroflow_siblings_impl(&urls, &narrow);
+        assert_eq!(out, urls, "r3d not in narrow whitelist → no pair");
     }
 }
