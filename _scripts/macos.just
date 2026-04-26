@@ -314,6 +314,23 @@ deploy *param:
         rm -f $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks/.empty
         rm -f $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks/mdk.framework/Versions/A/libass.dylib
 
+        # Bundle BRAW and RED SDK so users don't hit a runtime download.
+        # Mirrors upstream gyroflow `_scripts/macos.just::bundle`; placed before
+        # codesign here so the SDK dylibs are signed + notarized together with the app.
+        FrameworksDir="$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks"
+        : "${SDK_BASE:=https://api.gyroflow.xyz/sdk}"
+        if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
+            curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.1.2.tar.gz" -o /tmp/red_sdk.tar.gz
+            tar -xzf /tmp/red_sdk.tar.gz -C "$FrameworksDir/"
+            rm -f /tmp/red_sdk.tar.gz
+        fi
+        if [ ! -f "$FrameworksDir/BlackmagicRawAPI.framework/Versions/A/BlackmagicRawAPI" ]; then
+            curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
+            tar -xzf /tmp/braw_sdk.tar.gz -C "$FrameworksDir/"
+            rm -f /tmp/braw_sdk.tar.gz
+        fi
+        chmod -R 0755 "$FrameworksDir"/*
+
         if [ "$SIGNING_FINGERPRINT" != "" ]; then
             # Certificate needs to be "Developer ID Application"
 

@@ -205,11 +205,15 @@ Item {
                 externalSdkModal.loader.progress = percent;
                 externalSdkModal.loader.text = qsTr("Downloading %1 (%2)").arg(sdk_name);
                 if (percent >= 1) {
+                    const successCallback = externalSdkSuccessCallback;
+                    externalSdkSuccessCallback = null;
                     externalSdkModal.close();
                     externalSdkModal = null;
                     window.isDialogOpened = false;
                     if (!error_string) {
-                        if (url == "ffmpeg_gpl") {
+                        if (successCallback) {
+                            successCallback(url);
+                        } else if (url == "ffmpeg_gpl") {
                             messageBox(Modal.Success, qsTr("Component was installed successfully.\nYou need to restart Gyroflow for changes to take effect.\nYour render queue and current file is saved automatically."), [ { text: qsTr("Ok") } ]);
                         } else {
                             loadFile(url, false);
@@ -345,6 +349,7 @@ Item {
         }
     }
     property Modal externalSdkModal: null;
+    property var externalSdkSuccessCallback: null;
 
     function loadFile(url: url, skip_detection: bool, queueJobId: int): void {
         let filename = filesystem.get_filename(url);
@@ -378,6 +383,7 @@ Item {
         stabEnabledBtn.checked = false;
 
         if (controller.check_external_sdk(filename)) {
+            externalSdkSuccessCallback = null;
             const dlg = messageBox(Modal.Info, qsTr("This format requires an external SDK. Do you want to download it now?"), [
                 { text: qsTr("Yes"), accent: true, clicked: function() {
                     dlg.btnsRow.children[0].enabled = false;
@@ -386,6 +392,7 @@ Item {
                 } },
                 { text: qsTr("Cancel"), clicked: function() {
                     externalSdkModal = null;
+                    externalSdkSuccessCallback = null;
                 } },
             ]);
             externalSdkModal = dlg;

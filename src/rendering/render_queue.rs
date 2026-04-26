@@ -588,6 +588,7 @@ pub struct RenderQueue {
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
     list_video_files_in_folder: qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
     filter_paired_gyroflow_siblings: qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    first_file_requiring_external_sdk: qt_method!(fn(&self, urls_json: String) -> QString),
     remove_gyro_file: qt_method!(fn(&mut self, index: usize)),
     clear_gyro_files: qt_method!(fn(&mut self)),
     get_gyro_file_count: qt_method!(fn(&self) -> usize),
@@ -3713,6 +3714,14 @@ impl RenderQueue {
         QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
     }
 
+    fn first_file_requiring_external_sdk(&self, urls_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let result = first_url_requiring_external_sdk_impl(&urls, |filename| {
+            crate::external_sdk::requires_install(filename)
+        });
+        QString::from(result.unwrap_or_default())
+    }
+
     fn remove_gyro_file(&mut self, index: usize) {
         if index < self.gyro_files.len() {
             self.gyro_files.remove(index);
@@ -6007,6 +6016,19 @@ fn filter_paired_gyroflow_siblings_impl(urls: &[String], extensions: &[String]) 
         .collect()
 }
 
+fn first_url_requiring_external_sdk_impl<F>(
+    urls: &[String],
+    mut requires_install: F,
+) -> Option<String>
+where
+    F: FnMut(&str) -> bool,
+{
+    urls.iter().find_map(|url| {
+        let filename = filesystem::get_filename(url);
+        requires_install(&filename).then(|| url.clone())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6301,5 +6323,23 @@ mod tests {
         let narrow = vec!["mp4".to_string(), "gyroflow".to_string()];
         let out = filter_paired_gyroflow_siblings_impl(&urls, &narrow);
         assert_eq!(out, urls, "r3d not in narrow whitelist → no pair");
+    }
+
+    #[test]
+    fn first_url_requiring_external_sdk_preserves_queue_order_and_passes_filename() {
+        let urls = vec![
+            "file:///C:/clips/a.mp4".to_string(),
+            "file:///C:/clips/needs-red.R3D".to_string(),
+            "file:///C:/clips/needs-braw.braw".to_string(),
+        ];
+        let mut checked = Vec::new();
+
+        let out = first_url_requiring_external_sdk_impl(&urls, |filename| {
+            checked.push(filename.to_string());
+            filename.eq_ignore_ascii_case("needs-red.r3d")
+        });
+
+        assert_eq!(out, Some("file:///C:/clips/needs-red.R3D".to_string()));
+        assert_eq!(checked, vec!["a.mp4", "needs-red.R3D"]);
     }
 }

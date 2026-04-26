@@ -19,6 +19,32 @@ Item {
     // (simple-mode only). Cleared on queue_finished / clear / stop so the next batch re-asks.
     property string pendingConvertFormatChoice: ""
 
+    function ensureExternalSdkForQueue(urls, continuation) {
+        const sdkUrl = render_queue.first_file_requiring_external_sdk(JSON.stringify(urls.map(u => u.toString())));
+        if (!sdkUrl) return true;
+
+        if (window.videoArea.externalSdkModal !== null) return false;
+
+        const dlg = messageBox(Modal.Info, qsTr("This format requires an external SDK. Do you want to download it now?"), [
+            { text: qsTr("Yes"), accent: true, clicked: function() {
+                dlg.btnsRow.children[0].enabled = false;
+                window.videoArea.externalSdkSuccessCallback = function(_) {
+                    Qt.callLater(continuation);
+                };
+                controller.install_external_sdk(sdkUrl.toString());
+                return false;
+            } },
+            { text: qsTr("Cancel"), clicked: function() {
+                window.videoArea.externalSdkModal = null;
+                window.videoArea.externalSdkSuccessCallback = null;
+            } },
+        ]);
+        window.videoArea.externalSdkModal = dlg;
+        window.videoArea.externalSdkSuccessCallback = null;
+        dlg.addLoader();
+        return false;
+    }
+
     Connections {
         target: render_queue;
         function onQueue_finished(): void { root.pendingConvertFormatChoice = ""; }
@@ -1436,6 +1462,22 @@ Item {
                         outputFile.selectFolder(folder, function(_) { if (!remaining) add(outFolder, urls); });
                     }
                 }
+                return;
+            }
+            let urlsReady = [];
+            let urlsRequiringSdk = [];
+            for (const url of urls) {
+                if (controller.check_external_sdk(filesystem.get_filename(url))) {
+                    urlsRequiringSdk.push(url);
+                } else {
+                    urlsReady.push(url);
+                }
+            }
+            if (urlsRequiringSdk.length > 0) {
+                if (urlsReady.length > 0) {
+                    add(outFolder, urlsReady);
+                }
+                root.ensureExternalSdkForQueue(urlsRequiringSdk, function() { add(outFolder, urlsRequiringSdk); });
                 return;
             }
             additional = JSON.stringify(additional);

@@ -291,6 +291,25 @@ deploy:
         Invoke-WebRequest -URI "https://api.gyroflow.xyz/sdk/shaderc_shared.dll" -OutFile "$TargetDir\shaderc_shared.dll"
     }
 
+    # Bundle BRAW and RED SDK so users don't hit a runtime download.
+    # Mirrors upstream gyroflow `_scripts/windows.just::bundle`; placed before
+    # the zip step here so the SDK DLLs ship inside the release archive.
+    if ("{{Arch}}" -eq "x86_64") {
+        if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://api.gyroflow.xyz/sdk" }
+        if (-not (Test-Path -Path "$TargetDir\REDR3D-x64.dll")) {
+            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.1.2.tar.gz" -OutFile tmp.tar.gz
+            7z x -aoa tmp.tar.gz
+            7z x -aoa -o"$TargetDir" tmp.tar
+            Remove-Item tmp.tar.gz, tmp.tar -Force
+        }
+        if (-not (Test-Path -Path "$TargetDir\BlackmagicRawAPI.dll")) {
+            Invoke-WebRequest -URI "$Env:SDK_BASE/Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz" -OutFile tmp.tar.gz
+            7z x -aoa tmp.tar.gz
+            7z x -aoa -o"$TargetDir" tmp.tar
+            Remove-Item tmp.tar.gz, tmp.tar -Force
+        }
+    }
+
     7z a $ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}-{{NameSuffix}}.zip $TargetDir\*
 
 [no-cd]

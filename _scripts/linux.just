@@ -340,6 +340,23 @@ deploy *param:
         curl -L https://api.gyroflow.xyz/sdk/libshaderc_shared.so -o "$TARGET/lib/libshaderc_shared.so"
     fi
 
+    # Bundle BRAW and RED SDK so users don't hit a runtime download.
+    # Mirrors macos/windows deploy; SDK shared objects go into $TARGET/lib/
+    # which matches Rust-side `external_sdk::SDK_PATH` on Linux (exe_dir/lib/).
+    if [ "{{Arch}}" == "x86_64" ]; then
+        : "${SDK_BASE:=https://api.gyroflow.xyz/sdk}"
+        if [ ! -f "$TARGET/lib/REDR3D-x64.so" ]; then
+            curl -fSL "$SDK_BASE/RED_SDK_Linux_9.1.2.tar.gz" -o /tmp/red_sdk.tar.gz
+            tar -xzf /tmp/red_sdk.tar.gz -C "$TARGET/lib/"
+            rm -f /tmp/red_sdk.tar.gz
+        fi
+        if [ ! -f "$TARGET/lib/libBlackmagicRawAPI.so" ]; then
+            curl -fSL "$SDK_BASE/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz" -o /tmp/braw_sdk.tar.gz
+            tar -xzf /tmp/braw_sdk.tar.gz -C "$TARGET/lib/"
+            rm -f /tmp/braw_sdk.tar.gz
+        fi
+    fi
+
     cp -f "$CARGO_TARGET/gyroflow"                         "$TARGET/"
     strip "$TARGET/gyroflow"
 
