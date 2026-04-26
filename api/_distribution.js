@@ -2,6 +2,7 @@ const fs = require("fs");
 const path = require("path");
 
 const COUNTRY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const DEFAULT_DOWNLOAD_API_BASE = "https://www.niyien.com/api/download";
 const countryCache = new Map();
 const pendingCountryLookups = new Map();
 
@@ -179,7 +180,13 @@ async function getCountry(req) {
 
 function selectSource(config, country) {
   const cnCountries = config.routing?.cn_countries || [];
-  return cnCountries.includes(country) ? config.sources.cn : config.sources.global;
+  const region = cnCountries.includes(country) ? "cn" : "global";
+  const source = region === "cn" ? config.sources.cn : config.sources.global;
+  return {
+    ...source,
+    region,
+    selectedSource: region,
+  };
 }
 
 function getDefaultAppVersion() {
@@ -196,19 +203,45 @@ function getDefaultReleaseTag(version) {
 }
 
 function normalizeChannels(channels) {
-  if (!Array.isArray(channels)) return ["manual"];
-  return channels.filter((item) => typeof item === "string" && item.length > 0);
+  if (!Array.isArray(channels) || !channels.length) return ["manual"];
+  const values = Array.from(
+    new Set(
+      channels
+        .map((item) => String(item || "").trim().toLowerCase())
+        .filter((item) => item === "auto" || item === "manual")
+    )
+  );
+  return values.length ? values : ["manual"];
 }
 
 function normalizePolicyEntry(entry) {
   if (!entry || typeof entry !== "object") return null;
-  if (!entry.version || !entry.tag) return null;
+  const version = String(entry.version || "").trim();
+  const tag = String(entry.tag || (version ? `v${version}` : "")).trim();
+  if (!version || !tag) return null;
   return {
-    version: String(entry.version),
-    tag: String(entry.tag),
+    version,
+    tag,
     channels: normalizeChannels(entry.channels),
-    changelog: typeof entry.changelog === "string" ? entry.changelog : "",
+    changelog: typeof entry.changelog === "string" ? entry.changelog.trim() : "",
     recommended: Boolean(entry.recommended),
+    app_source_mode:
+      typeof entry.app_source_mode === "string" && entry.app_source_mode.trim()
+        ? entry.app_source_mode.trim().toLowerCase()
+        : "release",
+    app_urls: normalizeAppUrls(entry.app_urls),
+    packages: normalizePackages(entry.packages),
+    content_tag: typeof entry.content_tag === "string" ? entry.content_tag.trim() : "",
+    plugins_source_mode:
+      typeof entry.plugins_source_mode === "string" && entry.plugins_source_mode.trim()
+        ? entry.plugins_source_mode.trim().toLowerCase()
+        : "",
+    plugins_source_ref:
+      typeof entry.plugins_source_ref === "string" ? entry.plugins_source_ref.trim() : "",
+    plugins_source_tag:
+      typeof entry.plugins_source_tag === "string" ? entry.plugins_source_tag.trim() : "",
+    global_plugins_base:
+      typeof entry.global_plugins_base === "string" ? entry.global_plugins_base.trim() : "",
   };
 }
 
@@ -256,8 +289,30 @@ function loadReleasePolicy() {
   }
 }
 
+function normalizePlatform(value) {
+  const platform = String(value || "").trim().toLowerCase();
+  if (platform === "macos" || platform === "linux" || platform === "android") {
+    return platform;
+  }
+  return "windows";
+}
+
 function appAssetName(platform) {
-  switch (platform) {
+  switch (normalizePlatform(platform)) {
+    case "macos":
+      return "gyroflow-niyien-mac-universal.dmg";
+    case "linux":
+      return "gyroflow-niyien-linux64.AppImage";
+    case "android":
+      return "gyroflow-niyien.apk";
+    case "windows":
+    default:
+      return "gyroflow-niyien-windows64-setup.exe";
+  }
+}
+
+function appPackageAssetName(platform) {
+  switch (normalizePlatform(platform)) {
     case "macos":
       return "gyroflow-niyien-mac-universal.dmg";
     case "linux":
@@ -270,18 +325,249 @@ function appAssetName(platform) {
   }
 }
 
+function appInstallerAssetName(platform) {
+  return normalizePlatform(platform) === "windows" ? "gyroflow-niyien-windows64-setup.exe" : "";
+}
+
 function buildAppUrl(sourceBase, tag, platform) {
-  return `${sourceBase}/${tag}/${appAssetName(platform)}`;
+  return buildReleaseAssetUrl(sourceBase, tag, appAssetName(platform));
+}
+
+function buildReleaseAssetUrl(sourceBase, tag, filename) {
+  if (!sourceBase || !tag || !filename) {
+    return "";
+  }
+  return `${stripTrailingSlash(sourceBase)}/${tag}/${filename}`;
+}
+
+function normalizeAppUrls(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const result = {};
+  for (const [platform, rawValue] of Object.entries(value)) {
+    const key = normalizePlatform(platform);
+    if (typeof rawValue === "string") {
+      const packageUrl = rawValue.trim();
+      if (packageUrl) {
+        result[key] = { package_url: packageUrl };
+      }
+      continue;
+    }
+    if (rawValue && typeof rawValue === "object") {
+      const installerUrl = String(rawValue.installer_url || "").trim();
+      const packageUrl = String(rawValue.package_url || rawValue.url || "").trim();
+      if (installerUrl || packageUrl) {
+        result[key] = {};
+        if (installerUrl) result[key].installer_url = installerUrl;
+        if (packageUrl) result[key].package_url = packageUrl;
+      }
+    }
+  }
+  return result;
+}
+
+function normalizePackages(value) {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+  const result = {};
+  for (const [platform, rawValue] of Object.entries(value)) {
+    const key = normalizePlatform(platform);
+    if (!rawValue || typeof rawValue !== "object") {
+      continue;
+    }
+    result[key] = {
+      kind: String(rawValue.kind || defaultPackageKind(key)).trim(),
+      installer_filename: String(rawValue.installer_filename || "").trim(),
+      installer_sha256: String(rawValue.installer_sha256 || "").trim().toLowerCase(),
+      installer_size: coercePositiveInteger(rawValue.installer_size),
+      package_filename: String(rawValue.package_filename || "").trim(),
+      package_sha256: String(rawValue.package_sha256 || "").trim().toLowerCase(),
+      package_size: coercePositiveInteger(rawValue.package_size),
+    };
+  }
+  return result;
+}
+
+function buildPlatformPackage(req, entry, source, platform) {
+  const key = normalizePlatform(platform);
+  if (!entry) {
+    return {};
+  }
+
+  const metadata = entry.packages?.[key] || {};
+  const urls = resolvePlatformPackageUrls(req, entry, source, key, metadata);
+
+  if (key === "windows") {
+    return withAbsolutePackageUrls(req, {
+      kind: metadata.kind || "web_installer_zip",
+      installer_url: urls.installer_url || "",
+      installer_sha256: metadata.installer_sha256 || "",
+      installer_size: metadata.installer_size || 0,
+      package_url: urls.package_url || "",
+      package_sha256: metadata.package_sha256 || "",
+      package_size: metadata.package_size || 0,
+    });
+  }
+
+  return withAbsolutePackageUrls(req, {
+    kind: metadata.kind || defaultPackageKind(key),
+    package_url: urls.package_url || "",
+    package_sha256: metadata.package_sha256 || "",
+    package_size: metadata.package_size || 0,
+  });
+}
+
+function resolvePlatformPackageUrls(req, entry, source, platform, metadata) {
+  if (!entry?.tag) {
+    return {};
+  }
+
+  if (source.region === "cn") {
+    return {
+      installer_url: appInstallerAssetName(platform)
+        ? buildDownloadApiUrl(req, "app", entry.tag, metadata.installer_filename || appInstallerAssetName(platform))
+        : "",
+      package_url: buildDownloadApiUrl(
+        req,
+        "app",
+        entry.tag,
+        metadata.package_filename || appPackageAssetName(platform)
+      ),
+    };
+  }
+
+  if (String(entry.app_source_mode || "").trim().toLowerCase() === "artifact") {
+    const artifactUrls = entry.app_urls?.[platform] || {};
+    return {
+      installer_url: artifactUrls.installer_url || "",
+      package_url: artifactUrls.package_url || "",
+    };
+  }
+
+  return {
+    installer_url: appInstallerAssetName(platform)
+      ? buildReleaseAssetUrl(source.base, entry.tag, metadata.installer_filename || appInstallerAssetName(platform))
+      : "",
+    package_url: buildReleaseAssetUrl(
+      source.base,
+      entry.tag,
+      metadata.package_filename || appPackageAssetName(platform)
+    ),
+  };
+}
+
+function withAbsolutePackageUrls(req, platformPackage) {
+  if (!platformPackage || typeof platformPackage !== "object") {
+    return {};
+  }
+  const result = { ...platformPackage };
+  if ("installer_url" in result) {
+    result.installer_url = toAbsoluteManifestUrl(req, result.installer_url || "");
+  }
+  if ("package_url" in result) {
+    result.package_url = toAbsoluteManifestUrl(req, result.package_url || "");
+  }
+  return result;
+}
+
+function defaultPackageKind(platform) {
+  return normalizePlatform(platform) === "windows" ? "web_installer_zip" : "dmg";
+}
+
+function coercePositiveInteger(value) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || numeric <= 0) {
+    return 0;
+  }
+  return Math.trunc(numeric);
+}
+
+function stripTrailingSlash(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function getRequestOrigin(req) {
+  const host = String(req?.headers?.host || "").trim();
+  const protocol = String(req?.headers?.["x-forwarded-proto"] || "https")
+    .split(",")[0]
+    .trim();
+  if (!host) {
+    return "https://www.niyien.com";
+  }
+  return `${protocol || "https"}://${host}`;
+}
+
+function getManifestUrlOrigin(req) {
+  const envBase = stripTrailingSlash(process.env.NIYIEN_DOWNLOAD_API_BASE || "");
+  if (envBase) {
+    try {
+      return new URL(envBase).origin;
+    } catch (_) {}
+  }
+  return stripTrailingSlash(getRequestOrigin(req));
+}
+
+function getDownloadApiBase(req) {
+  const envBase = stripTrailingSlash(process.env.NIYIEN_DOWNLOAD_API_BASE || "");
+  if (envBase) {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(envBase)) {
+      return envBase;
+    }
+    const origin = getManifestUrlOrigin(req);
+    if (envBase.startsWith("/")) {
+      return `${origin}${envBase}`;
+    }
+    return `${origin}/${envBase.replace(/^\/+/, "")}`;
+  }
+  return DEFAULT_DOWNLOAD_API_BASE;
+}
+
+function toAbsoluteManifestUrl(req, value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return "";
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) {
+    return raw;
+  }
+
+  const origin = getManifestUrlOrigin(req);
+  if (raw.startsWith("/api/download/") || raw.startsWith("/")) {
+    return `${origin}${raw}`;
+  }
+  return `${getDownloadApiBase(req)}/${raw.replace(/^\/+/, "")}`;
+}
+
+function buildDownloadApiUrl(req, scope, tag, relativePath) {
+  if (!scope || !tag || !relativePath) {
+    return "";
+  }
+  const encodedTag = encodeURIComponent(String(tag).trim());
+  const encodedPath = String(relativePath)
+    .split("/")
+    .map((item) => encodeURIComponent(String(item)))
+    .join("/");
+  return `${getDownloadApiBase(req)}/${scope}/${encodedTag}/${encodedPath}`;
 }
 
 module.exports = {
+  appInstallerAssetName,
   appAssetName,
+  appPackageAssetName,
+  buildDownloadApiUrl,
   buildAppUrl,
+  buildPlatformPackage,
+  buildReleaseAssetUrl,
   getDefaultAppVersion,
+  getDownloadApiBase,
   loadDistributionConfig,
   loadReleasePolicy,
+  normalizePlatform,
   readJsonIfExists,
   getCountry,
   resolveCountry,
   selectSource,
+  toAbsoluteManifestUrl,
 };

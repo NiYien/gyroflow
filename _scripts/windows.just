@@ -18,6 +18,56 @@ install-deps:
     mkdir "{{ExtDir}}" -ErrorAction SilentlyContinue
     cd {{ExtDir}}
 
+    function Test-InnoSetupCompiler {
+        param([Parameter(Mandatory=$true)] [string] $Path)
+        if (-not (Test-Path -LiteralPath $Path)) { return $false }
+        $Item = Get-Item -LiteralPath $Path
+        foreach ($VersionText in @($Item.VersionInfo.ProductVersion, $Item.VersionInfo.FileVersion)) {
+            if ($VersionText -match '(\d+)\.(\d+)\.(\d+)') {
+                $Version = [version]"$($matches[1]).$($matches[2]).$($matches[3])"
+                if ($Version -ge [version]"6.5.0" -and $Version -lt [version]"7.0.0") {
+                    return $true
+                }
+            }
+        }
+
+        return (
+            $Item.FullName -like "*\Inno Setup 6\ISCC.exe" -and
+            $Item.VersionInfo.ProductName -eq "Inno Setup" -and
+            $Item.VersionInfo.FileDescription -eq "Inno Setup Command-Line Compiler"
+        )
+    }
+
+    function Get-InnoSetupCompiler {
+        $Candidates = @()
+        $Command = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+        if ($Command) { $Candidates += $Command.Source }
+        $Candidates += @(
+            "${Env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$Env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$Env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+        )
+
+        foreach ($Candidate in $Candidates) {
+            if (Test-InnoSetupCompiler $Candidate) {
+                return (Resolve-Path -LiteralPath $Candidate).Path
+            }
+        }
+        return $null
+    }
+
+    if (-not (Get-InnoSetupCompiler)) {
+        $InnoInstaller = Join-Path (Resolve-Path "{{ExtDir}}") "innosetup-6.7.1.exe"
+        if (-not (Test-Path -LiteralPath $InnoInstaller)) {
+            echo "Downloading Inno Setup 6.7.1"
+            Invoke-WebRequest -URI "https://github.com/jrsoftware/issrc/releases/download/is-6_7_1/innosetup-6.7.1.exe" -OutFile $InnoInstaller
+        }
+        Start-Process -FilePath $InnoInstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CURRENTUSER") -Wait -WindowStyle Hidden
+        if (-not (Get-InnoSetupCompiler)) {
+            throw "Inno Setup 6.5+ compiler (ISCC.exe) was not found after installation"
+        }
+    }
+
     $Python = "python";
     if (Get-Command "python3.10.exe" -ErrorAction SilentlyContinue) {
         $Python = "python3.10";
@@ -137,6 +187,74 @@ profile *param:
 deploy:
     #!powershell
     $ErrorActionPreference = 'Stop'
+
+    function Test-InnoSetupCompiler {
+        param([Parameter(Mandatory=$true)] [string] $Path)
+        if (-not (Test-Path -LiteralPath $Path)) { return $false }
+        $Item = Get-Item -LiteralPath $Path
+        foreach ($VersionText in @($Item.VersionInfo.ProductVersion, $Item.VersionInfo.FileVersion)) {
+            if ($VersionText -match '(\d+)\.(\d+)\.(\d+)') {
+                $Version = [version]"$($matches[1]).$($matches[2]).$($matches[3])"
+                if ($Version -ge [version]"6.5.0" -and $Version -lt [version]"7.0.0") {
+                    return $true
+                }
+            }
+        }
+
+        return (
+            $Item.FullName -like "*\Inno Setup 6\ISCC.exe" -and
+            $Item.VersionInfo.ProductName -eq "Inno Setup" -and
+            $Item.VersionInfo.FileDescription -eq "Inno Setup Command-Line Compiler"
+        )
+    }
+
+    function Get-InnoSetupCompiler {
+        $Candidates = @()
+        $Command = Get-Command "ISCC.exe" -ErrorAction SilentlyContinue
+        if ($Command) { $Candidates += $Command.Source }
+        $Candidates += @(
+            "${Env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$Env:ProgramFiles\Inno Setup 6\ISCC.exe",
+            "$Env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"
+        )
+
+        foreach ($Candidate in $Candidates) {
+            if (Test-InnoSetupCompiler $Candidate) {
+                return (Resolve-Path -LiteralPath $Candidate).Path
+            }
+        }
+        return $null
+    }
+
+    function New-IsppStringDefine {
+        param(
+            [Parameter(Mandatory=$true)] [string] $Name,
+            [Parameter(Mandatory=$true)] [string] $Value
+        )
+        $Escaped = $Value.Replace('"', '""')
+        return "/D$Name=`"$Escaped`""
+    }
+
+    function Get-Sha256Hex {
+        param([Parameter(Mandatory=$true)] [string] $Path)
+        $ResolvedPath = (Resolve-Path -LiteralPath $Path).Path
+        if (Get-Command "Get-FileHash" -ErrorAction SilentlyContinue) {
+            return (Get-FileHash -Algorithm SHA256 -LiteralPath $ResolvedPath).Hash.ToLowerInvariant()
+        }
+
+        $Stream = [System.IO.File]::OpenRead($ResolvedPath)
+        try {
+            $Sha256 = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                $HashBytes = $Sha256.ComputeHash($Stream)
+                return -join ($HashBytes | ForEach-Object { $_.ToString("x2") })
+            } finally {
+                $Sha256.Dispose()
+            }
+        } finally {
+            $Stream.Dispose()
+        }
+    }
 
     $ProjectDir = resolve-path "{{ProjectDir}}"
     cd $ProjectDir
@@ -310,7 +428,54 @@ deploy:
         }
     }
 
-    7z a $ProjectDir\_deployment\_binaries\{{ArtifactPrefix}}-{{NameSuffix}}.zip $TargetDir\*
+    $PackageName = "{{ArtifactPrefix}}-{{NameSuffix}}.zip"
+    $PackagePath = "$ProjectDir\_deployment\_binaries\$PackageName"
+    7z a $PackagePath $TargetDir\*
+
+    if ("{{Arch}}" -eq "x86_64") {
+        # Current release matrix produces gyroflow-niyien-windows64-setup.exe.
+        $SetupBaseName = "{{ArtifactPrefix}}-{{NameSuffix}}-setup"
+        $SetupPath = "$ProjectDir\_deployment\_binaries\$SetupBaseName.exe"
+        $PackageSha256 = Get-Sha256Hex $PackagePath
+        $PackageSize = (Get-Item -LiteralPath $PackagePath).Length
+        $PackageExternalSize = [int64]((Get-ChildItem -Path $TargetDir -Recurse -File | Measure-Object -Property Length -Sum).Sum)
+        $AppVersion = python "$ProjectDir\_scripts\niyien_version.py" base --repo-root "$ProjectDir"
+        $AppFileVersion = python "$ProjectDir\_scripts\niyien_version.py" file --repo-root "$ProjectDir"
+        $CanonicalVersion = python "$ProjectDir\_scripts\niyien_version.py" canonical --repo-root "$ProjectDir"
+        if ($CanonicalVersion.StartsWith("v")) {
+            $PackageTag = $CanonicalVersion
+        } else {
+            $PackageTag = "v$CanonicalVersion"
+        }
+        $DefaultPackageUrl = $Env:NIYIEN_SETUP_PACKAGE_URL
+        if (-not $DefaultPackageUrl) {
+            $DefaultPackageUrl = "https://www.niyien.com/api/download/app/$PackageTag/$PackageName"
+        }
+
+        $Iscc = Get-InnoSetupCompiler
+        if (-not $Iscc) {
+            throw "Inno Setup 6.5+ compiler (ISCC.exe) is required to build $SetupBaseName.exe. Run `just install-deps` first."
+        }
+
+        Remove-Item -LiteralPath $SetupPath -Force -ErrorAction SilentlyContinue
+        $IsccArgs = @(
+            (New-IsppStringDefine "AppVersion" $AppVersion),
+            "/DAppFileVersion=$AppFileVersion",
+            (New-IsppStringDefine "PackageFilename" $PackageName),
+            (New-IsppStringDefine "PackageUrl" $DefaultPackageUrl),
+            (New-IsppStringDefine "PackageSha256" $PackageSha256),
+            "/DPackageSize=$PackageSize",
+            "/DPackageExternalSize=$PackageExternalSize",
+            (New-IsppStringDefine "OutputBaseFilename" $SetupBaseName),
+            "$ProjectDir\_deployment\windows\gyroflow-niyien-setup.iss"
+        )
+        & $Iscc @IsccArgs
+        if (-not (Test-Path -LiteralPath $SetupPath)) {
+            throw "Inno Setup did not produce $SetupPath"
+        }
+    } else {
+        echo "Skipping Windows setup.exe build for Arch={{Arch}}"
+    }
 
 [no-cd]
 bundle:

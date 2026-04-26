@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tarfile
@@ -14,23 +15,72 @@ from urllib.parse import quote, urlparse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import requests
 
 
 APP_ASSET_NAMES = (
+    "gyroflow-niyien-windows64-setup.exe",
     "gyroflow-niyien-windows64.zip",
     "gyroflow-niyien-mac-universal.dmg",
     "gyroflow-niyien-linux64.AppImage",
     "gyroflow-niyien.apk",
 )
 APP_ASSET_PLATFORM_BY_NAME = {
+    "gyroflow-niyien-windows64-setup.exe": "windows",
     "gyroflow-niyien-windows64.zip": "windows",
     "gyroflow-niyien-mac-universal.dmg": "macos",
     "gyroflow-niyien-linux64.AppImage": "linux",
     "gyroflow-niyien.apk": "android",
 }
+APP_ASSET_ROLE_BY_NAME = {
+    "gyroflow-niyien-windows64-setup.exe": "installer",
+    "gyroflow-niyien-windows64.zip": "package",
+    "gyroflow-niyien-mac-universal.dmg": "package",
+    "gyroflow-niyien-linux64.AppImage": "package",
+    "gyroflow-niyien.apk": "package",
+}
+APP_ASSET_NAMES_BY_PLATFORM = {
+    "windows": (
+        "gyroflow-niyien-windows64-setup.exe",
+        "gyroflow-niyien-windows64.zip",
+    ),
+    "macos": ("gyroflow-niyien-mac-universal.dmg",),
+    "linux": ("gyroflow-niyien-linux64.AppImage",),
+    "android": ("gyroflow-niyien.apk",),
+}
+
+
+def derive_required_app_asset_names(
+    *,
+    workflow_text: str | None = None,
+    workflow_path: Path | None = None,
+) -> tuple[str, ...]:
+    if workflow_text is None:
+        path = workflow_path or Path(__file__).resolve().parents[1] / ".github" / "workflows" / "release.yml"
+        try:
+            workflow_text = path.read_text(encoding="utf-8")
+        except OSError:
+            return tuple(APP_ASSET_NAMES)
+
+    active_platforms: list[str] = []
+    for match in re.finditer(r"\btype:\s*([A-Za-z0-9_-]+)", workflow_text):
+        platform = match.group(1).strip().lower()
+        if platform in APP_ASSET_NAMES_BY_PLATFORM and platform not in active_platforms:
+            active_platforms.append(platform)
+
+    if not active_platforms:
+        return tuple(APP_ASSET_NAMES)
+
+    required: list[str] = []
+    for platform in ("windows", "macos", "linux", "android"):
+        if platform in active_platforms:
+            required.extend(APP_ASSET_NAMES_BY_PLATFORM[platform])
+    return tuple(name for name in required if name in APP_ASSET_NAMES)
+
+
+REQUIRED_APP_ASSET_NAMES = derive_required_app_asset_names()
 
 PLUGIN_ASSET_NAMES = (
     "GyroflowNiyien-OpenFX-windows.zip",
@@ -88,7 +138,6 @@ DEFAULT_PLUGINS_SOURCE_MODE = "release"
 PLUGIN_SOURCE_MODES = {"release", "artifact"}
 DEFAULT_APP_SOURCE_MODE = "release"
 APP_SOURCE_MODES = {"release", "artifact"}
-DEFAULT_NIGHTLY_LINK_BASE = "https://nightly.link"
 DEFAULT_DOWNLOAD_RETRIES = 5
 PROGRESS_EVENT_PREFIX = "@@CC_EVENT@@"
 PROGRESS_MODE = os.environ.get("NIYIEN_PROGRESS_MODE", "").strip().lower()
@@ -844,6 +893,7 @@ def main() -> int:
     )
     if not app_assets:
         raise RuntimeError("No app artifacts were found after downloading build outputs")
+    app_packages = build_app_packages_metadata(app_assets)
     emit_log("App artifacts ready")
     emit_progress(phase="resolve", message="app artifacts ready")
     app_source_ref, global_app_urls = resolve_app_source(
@@ -954,6 +1004,7 @@ def main() -> int:
             app_source_mode=args.app_source_mode,
             app_source_ref=app_source_ref,
             global_app_urls=global_app_urls,
+            packages=app_packages,
             content_tag=content_tag,
             lens_release=lens_release,
             plugin_source=plugin_source,
@@ -999,6 +1050,7 @@ def main() -> int:
             "plugin_source_ref": plugin_source.source_ref,
             "plugin_source_tag": plugin_source.display_name,
             "global_sdk_base": f"{args.sdk_base.rstrip('/')}/",
+            "packages": app_packages,
         })
         print(json.dumps(summary, indent=2, ensure_ascii=False))
 
@@ -1012,6 +1064,24 @@ def discover_app_assets(workspace: Path) -> dict[str, Path]:
         if matches:
             found[asset_name] = matches[0]
     return found
+
+
+def missing_required_app_assets(
+    app_assets: dict[str, Path],
+    required_assets: Iterable[str] = REQUIRED_APP_ASSET_NAMES,
+) -> list[str]:
+    return [asset_name for asset_name in required_assets if asset_name not in app_assets]
+
+
+def ensure_required_app_assets(
+    app_assets: dict[str, Path],
+    *,
+    context: str,
+    required_assets: Iterable[str] = REQUIRED_APP_ASSET_NAMES,
+) -> None:
+    missing = missing_required_app_assets(app_assets, required_assets)
+    if missing:
+        raise RuntimeError(f"Missing required app assets in {context}: {', '.join(missing)}")
 
 
 def resolve_app_asset_files(
@@ -1031,20 +1101,24 @@ def resolve_app_asset_files(
         allowed=APP_SOURCE_MODES,
     )
     if mode == "release":
-        return discover_app_assets(workspace)
+        app_assets = discover_app_assets(workspace)
+        ensure_required_app_assets(app_assets, context="release workspace")
+        return app_assets
     if not app_owner or not app_repo or app_run_id <= 0:
         raise RuntimeError("Artifact app source requires app owner, repo, and run id")
     artifacts = github.list_workflow_run_artifacts(app_owner, app_repo, app_run_id)
     valid_artifacts = [item for item in artifacts if not bool(item.get("expired"))]
     if not valid_artifacts:
         raise RuntimeError(f"No app artifacts available for run {app_run_id}")
-    return resolve_app_assets_from_artifacts(
+    app_assets = resolve_app_assets_from_artifacts(
         github=github,
         temp_root=temp_root,
         run_id=app_run_id,
         artifacts=valid_artifacts,
         source_ref=f"actions-run-{app_run_id}",
     )
+    ensure_required_app_assets(app_assets, context=f"workflow run {app_run_id}")
+    return app_assets
 
 
 def resolve_app_source(
@@ -1055,7 +1129,7 @@ def resolve_app_source(
     app_repo: str,
     app_run_id: int,
     app_assets: dict[str, Path],
-) -> tuple[str, dict[str, str]]:
+) -> tuple[str, dict[str, dict[str, str]]]:
     mode = normalize_choice(
         app_source_mode,
         default=DEFAULT_APP_SOURCE_MODE,
@@ -1068,27 +1142,29 @@ def resolve_app_source(
         raise RuntimeError("Artifact app source requires app owner, repo, and run id")
     return (
         f"actions-run-{app_run_id}",
-        build_global_artifact_app_urls(app_owner, app_repo, app_run_id, app_assets),
+        build_global_artifact_app_urls(app_tag, app_assets.keys()),
     )
-    
-    
+
+
 def build_global_artifact_app_urls(
-    owner: str,
-    repo: str,
-    run_id: int,
-    app_assets: dict[str, Path],
-) -> dict[str, str]:
-    urls: dict[str, str] = {}
-    for asset_name in sorted(app_assets.keys()):
+    app_tag: str,
+    asset_names: Iterable[str],
+) -> dict[str, dict[str, str]]:
+    urls: dict[str, dict[str, str]] = {}
+    for asset_name in sorted(asset_names):
         platform = APP_ASSET_PLATFORM_BY_NAME.get(asset_name)
         if not platform:
             continue
-        encoded_name = quote(asset_name, safe="")
-        urls[platform] = (
-            f"{DEFAULT_NIGHTLY_LINK_BASE}/{quote(owner, safe='')}/{quote(repo, safe='')}"
-            f"/actions/runs/{int(run_id)}/{encoded_name}.zip"
-        )
+        role = APP_ASSET_ROLE_BY_NAME.get(asset_name, "package")
+        key = "installer_url" if role == "installer" else "package_url"
+        urls.setdefault(platform, {})[key] = build_download_route_asset_url(app_tag, asset_name)
     return urls
+
+
+def build_download_route_asset_url(app_tag: str, asset_name: str) -> str:
+    if not app_tag or not asset_name:
+        return ""
+    return f"/api/download/app/{quote(app_tag, safe='')}/{quote(asset_name, safe='')}"
 
 
 def download_content_assets(
@@ -1489,9 +1565,10 @@ def resolve_app_assets_from_artifacts(
         a for a in artifacts
         if str(a.get("archive_download_url", "")).strip()
         and str(a.get("name", "")).strip()
+        and str(a.get("name", "")).strip() in APP_ASSET_NAMES
     ]
     if not valid_artifacts:
-        raise RuntimeError(f"No usable artifacts in run {run_id}")
+        raise RuntimeError(f"No usable app artifacts in run {run_id}")
 
     # Cache reuse: every artifact already on disk with matching signature?
     resolved: dict[str, Path] = {}
@@ -1637,12 +1714,84 @@ def build_content_manifest(
     return manifest, content_tag
 
 
+def build_app_packages_metadata(app_assets: dict[str, Path]) -> dict[str, dict[str, Any]]:
+    packages: dict[str, dict[str, Any]] = {}
+
+    windows_setup = app_assets.get("gyroflow-niyien-windows64-setup.exe")
+    windows_zip = app_assets.get("gyroflow-niyien-windows64.zip")
+    if windows_setup or windows_zip:
+        windows: dict[str, Any] = {"kind": "web_installer_zip"}
+        if windows_setup:
+            add_asset_metadata(
+                windows,
+                prefix="installer",
+                asset_name="gyroflow-niyien-windows64-setup.exe",
+                asset_path=windows_setup,
+            )
+        if windows_zip:
+            add_asset_metadata(
+                windows,
+                prefix="package",
+                asset_name="gyroflow-niyien-windows64.zip",
+                asset_path=windows_zip,
+            )
+        packages["windows"] = windows
+
+    macos_dmg = app_assets.get("gyroflow-niyien-mac-universal.dmg")
+    if macos_dmg:
+        macos: dict[str, Any] = {"kind": "dmg"}
+        add_asset_metadata(
+            macos,
+            prefix="package",
+            asset_name="gyroflow-niyien-mac-universal.dmg",
+            asset_path=macos_dmg,
+        )
+        packages["macos"] = macos
+
+    linux_appimage = app_assets.get("gyroflow-niyien-linux64.AppImage")
+    if linux_appimage:
+        linux: dict[str, Any] = {"kind": "appimage"}
+        add_asset_metadata(
+            linux,
+            prefix="package",
+            asset_name="gyroflow-niyien-linux64.AppImage",
+            asset_path=linux_appimage,
+        )
+        packages["linux"] = linux
+
+    android_apk = app_assets.get("gyroflow-niyien.apk")
+    if android_apk:
+        android: dict[str, Any] = {"kind": "apk"}
+        add_asset_metadata(
+            android,
+            prefix="package",
+            asset_name="gyroflow-niyien.apk",
+            asset_path=android_apk,
+        )
+        packages["android"] = android
+
+    return packages
+
+
+def add_asset_metadata(
+    target: dict[str, Any],
+    *,
+    prefix: str,
+    asset_name: str,
+    asset_path: Path,
+) -> None:
+    target[f"{prefix}_filename"] = asset_name
+    target[f"{prefix}_sha256"] = sha256_file(asset_path)
+    target[f"{prefix}_size"] = asset_path.stat().st_size
+
+
 def build_release_summary(
     *,
     app_tag: str,
     app_source_mode: str,
     app_source_ref: str,
-    global_app_urls: dict[str, str],
+    global_app_urls: dict[str, dict[str, str]],
+    packages: dict[str, dict[str, Any]],
     content_tag: str,
     lens_release: dict[str, Any],
     plugin_source: PluginSource,
@@ -1662,6 +1811,7 @@ def build_release_summary(
         "app_source_mode": app_source_mode,
         "app_source_ref": app_source_ref,
         "global_app_urls": global_app_urls,
+        "packages": packages,
         "content_tag": content_tag,
         "lens_version": lens_metadata.get("version", ""),
         "lens_sha256": lens_metadata.get("sha256", ""),

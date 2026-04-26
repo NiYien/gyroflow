@@ -122,6 +122,15 @@ jobs:
           archive: false
           if-no-files-found: error
 
+      - name: Upload Windows setup
+        if: ${{ matrix.targets.type == 'windows' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gyroflow-niyien-windows64-setup.exe
+          path: _deployment/_binaries/gyroflow-niyien-windows64-setup.exe
+          archive: false
+          if-no-files-found: error
+
       - name: Upload macOS package
         if: ${{ matrix.targets.type == 'macos' }}
         uses: actions/upload-artifact@v7
@@ -149,6 +158,7 @@ jobs:
           prerelease: false
           # 临时：仅 windows + mac，linux/android 后续恢复
           files: |
+            ./release_artifacts/gyroflow-niyien-windows64-setup.exe
             ./release_artifacts/gyroflow-niyien-windows64.zip
             ./release_artifacts/gyroflow-niyien-mac-universal.dmg
 

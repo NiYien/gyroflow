@@ -3,21 +3,19 @@
 
 use itertools::{Either, Itertools};
 use nalgebra::Vector4;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use parking_lot::Mutex;
 use qmetaobject::*;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::str::FromStr;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
+use std::sync::Arc;
 
 use qml_video_rs::video_item::MDKVideoItem;
 
 use crate::core;
-use crate::core::StabilizationManager;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
 use crate::core::filesystem;
@@ -25,6 +23,7 @@ use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
 use crate::core::synchronization::AutosyncProcess;
+use crate::core::StabilizationManager;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::niyien_device::{DeviceCommand, DeviceEvent, DeviceManager};
 use crate::qt_gpu::qrhi_undistort;
@@ -293,6 +292,13 @@ pub struct Controller {
     check_updates: qt_method!(fn(&self)),
     fetch_available_versions: qt_method!(fn(&self) -> QString),
     updates_available: qt_signal!(version: QString, changelog: QString, download_url: QString),
+    start_app_update: qt_method!(fn(&self)),
+    open_downloaded_update_and_quit: qt_method!(fn(&self)),
+    app_update_progress: qt_signal!(downloaded: f64, total: f64, message: QString),
+    app_update_ready: qt_signal!(path: QString, platform: QString, message: QString),
+    app_update_error: qt_signal!(message: QString),
+    app_update_handoff_started: qt_signal!(),
+    app_update_state: Arc<Mutex<Option<crate::distribution::PreparedAppUpdate>>>,
     sync_device_time: qt_method!(fn(&mut self, tz_offset_minutes: i32)),
     check_firmware_update: qt_method!(fn(&mut self)),
     start_firmware_update: qt_method!(fn(&mut self)),
@@ -2512,6 +2518,67 @@ impl Controller {
         QString::from(
             serde_json::to_string(&payload).unwrap_or_else(|_| "{\"versions\":[]}".to_owned()),
         )
+    }
+
+    fn start_app_update(&self) {
+        let progress = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, (downloaded, total, message): (u64, u64, String)| {
+                this.app_update_progress(downloaded as f64, total as f64, QString::from(message));
+            },
+        );
+        let ready = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, (path, platform, message): (String, String, String)| {
+                this.app_update_ready(
+                    QString::from(path),
+                    QString::from(platform),
+                    QString::from(message),
+                );
+            },
+        );
+        let error =
+            util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, message: String| {
+                this.app_update_error(QString::from(message));
+            });
+        let state = self.app_update_state.clone();
+        core::run_threaded(move || {
+            let result = (|| -> Result<crate::distribution::PreparedAppUpdate, String> {
+                let manifest = crate::distribution::fetch_manifest(true)?;
+                let selection = crate::distribution::current_platform_app_update_package(&manifest)
+                    .ok_or_else(|| {
+                        "No app update package is available for this platform".to_owned()
+                    })?;
+                crate::distribution::download_app_update(&selection, |downloaded, total, status| {
+                    progress((downloaded, total, status.to_owned()));
+                })
+            })();
+            match result {
+                Ok(prepared) => {
+                    let path = prepared.path.display().to_string();
+                    let platform = prepared.selection.platform.clone();
+                    let message = if platform == "macos" {
+                        "打开 DMG 后请将 Gyroflow.app 拖入 Applications 文件夹".to_owned()
+                    } else {
+                        "Update package is ready".to_owned()
+                    };
+                    *state.lock() = Some(prepared);
+                    ready((path, platform, message));
+                }
+                Err(err) => error(err),
+            }
+        });
+    }
+
+    fn open_downloaded_update_and_quit(&self) {
+        let prepared = self.app_update_state.lock().clone();
+        match prepared {
+            Some(prepared) => match crate::distribution::open_downloaded_update(&prepared) {
+                Ok(()) => self.app_update_handoff_started(),
+                Err(err) => self.app_update_error(QString::from(err)),
+            },
+            None => self.app_update_error(QString::from("No downloaded update is ready")),
+        }
     }
 
     fn sync_device_time(&mut self, tz_offset_minutes: i32) {

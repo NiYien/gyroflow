@@ -35,12 +35,12 @@ PAN123_AUTO_PUBLISH_ACTIONS = {"publish_and_push", "switch_auto", "rollback_auto
 # Asset names expected per release tag — app bundle (the gyroflow installers
 # only). Content bundle (lens/plugin/sdk) lives under a separate `content-*`
 # directory whose name is a hash, so we list it independently.
-EXPECTED_APP_ASSETS = (
+FALLBACK_EXPECTED_APP_ASSETS = (
+    "gyroflow-niyien-windows64-setup.exe",
     "gyroflow-niyien-windows64.zip",
     "gyroflow-niyien-mac-universal.dmg",
-    "gyroflow-niyien-linux64.AppImage",
-    "gyroflow-niyien.apk",
 )
+EXPECTED_APP_ASSETS = FALLBACK_EXPECTED_APP_ASSETS
 CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"
 
 
@@ -77,6 +77,7 @@ def _load_publish_script_constants():
 
 try:
     _PUB_MODULE = _load_publish_script_constants()
+    EXPECTED_APP_ASSETS = tuple(_PUB_MODULE.REQUIRED_APP_ASSET_NAMES)
     EXPECTED_SDK_ASSETS = tuple(_PUB_MODULE.SDK_FILENAMES)
     EXPECTED_PLUGIN_ASSETS = tuple(_PUB_MODULE.PLUGIN_ASSET_NAMES)
     _PUB_LOAD_ERROR: str | None = None
@@ -85,6 +86,7 @@ except Exception as _e:
     # unimportable (e.g. a syntax error in a future edit). The probes
     # below detect empty constant tuples and report "publish 脚本未加载"
     # instead of crashing the whole get_dashboard_state call.
+    EXPECTED_APP_ASSETS = FALLBACK_EXPECTED_APP_ASSETS
     EXPECTED_SDK_ASSETS = ()
     EXPECTED_PLUGIN_ASSETS = ()
     _PUB_LOAD_ERROR = f"{_e.__class__.__name__}: {_e}"
@@ -1615,6 +1617,7 @@ class Api:
                 if not version:
                     continue
                 run_id = int(v.get("run_id", 0) or 0)
+                packages = v.get("packages") if isinstance(v.get("packages"), dict) else {}
                 if not tag:
                     # Legacy artifact-mode entry without a synthetic tag —
                     # can't address a pan123 directory. Newer entries get
@@ -1630,6 +1633,7 @@ class Api:
                         "complete": False,
                         "no_tag": True,
                         "run_id": run_id,
+                        "packages": packages,
                     })
                     continue
                 tag_entry = client.find_child(root_id, tag, is_dir=True)
@@ -1643,6 +1647,7 @@ class Api:
                         "files_missing": list(EXPECTED_APP_ASSETS),
                         "complete": False,
                         "run_id": run_id,
+                        "packages": packages,
                     })
                     continue
                 tag_dir_id = int(tag_entry.get("fileID") or tag_entry.get("fileId") or 0)
@@ -1659,6 +1664,7 @@ class Api:
                     "files_missing": missing,
                     "complete": not missing,
                     "run_id": run_id,
+                    "packages": packages,
                 })
             # ---- Content bundles (lens/plugin/sdk under content-{hash}/) ----
             # content_tag = sha256[:12], immutable — so we cache all derived
@@ -1828,13 +1834,21 @@ class Api:
     @staticmethod
     def _upsert_version_entry(versions: list[dict], version: str, tag: str,
                                changelog: str, recommended: bool, channels: list[str],
-                               run_id: int = 0) -> None:
+                               run_id: int = 0,
+                               app_source_mode: str = "",
+                               app_urls: dict | None = None) -> None:
         """Add or replace the policy entry for `version` in place.
 
         `run_id` is non-zero for artifact-mode entries — it lets later
         operations (e.g. dashboard-triggered pan123 re-sync) reconstruct
         the `--app-source-mode=artifact --app-run-id=N` invocation
         without the user having to re-pick the run.
+
+        `app_source_mode` ("artifact" or "release") + `app_urls`
+        ({platform: {installer_url?, package_url?}}) tell the docs
+        manifest API how to build global-region URLs. Without these,
+        artifact-mode synthetic tags (run-<id>) leak into the
+        release-mode GitHub URL builder and produce a 404.
         """
         entry = {
             "version": version,
@@ -1845,14 +1859,24 @@ class Api:
         }
         if int(run_id or 0) > 0:
             entry["run_id"] = int(run_id)
+        if app_source_mode:
+            entry["app_source_mode"] = app_source_mode
+        if app_urls:
+            entry["app_urls"] = app_urls
         for i, v in enumerate(versions):
             if v.get("version") == version:
                 # Preserve unknown fields (e.g. release_summary fields set previously)
                 merged = dict(v)
                 merged.update(entry)
                 # If we're now release-mode (run_id absent), drop any old run_id
+                # and clear artifact-only fields so the docs API stops treating
+                # this as artifact mode.
                 if int(run_id or 0) <= 0:
                     merged.pop("run_id", None)
+                    if not app_source_mode:
+                        merged.pop("app_source_mode", None)
+                    if not app_urls:
+                        merged.pop("app_urls", None)
                 versions[i] = merged
                 return
         versions.append(entry)
@@ -1908,6 +1932,9 @@ class Api:
                         target["plugins_source_ref"] = str(finalize_summary["plugin_source_ref"])
                     if finalize_summary.get("plugin_source_tag"):
                         target["plugins_source_tag"] = str(finalize_summary["plugin_source_tag"])
+                    packages = finalize_summary.get("packages")
+                    if isinstance(packages, dict):
+                        target["packages"] = packages
                 upsert_map["NIYIEN_RELEASE_POLICY_JSON"] = _json.dumps(
                     policy, ensure_ascii=False, indent=2,
                 )
@@ -1961,7 +1988,7 @@ class Api:
         manual_only       — add version to policy.versions (channels=['manual']), leave auto_version
         publish_and_push  — add + set auto_version to this version (channels=['auto','manual']), clear others' auto
         switch_auto       — version must already be in policy.versions; switch auto_version to it
-        rollback_auto     — same as switch_auto but also forces recommended=True
+        rollback_auto     — legacy action id; same behavior as switch_auto but also forces recommended=True
         hide_version      — remove from policy.versions; if it was auto_version, pick next available
 
         Scope (by design): this method only mutates policy JSON and upserts to Vercel. It
@@ -1994,6 +2021,20 @@ class Api:
             recommended = bool(payload.get("recommended", False))
 
             cfg = config_module.load_config()
+            # Build app_source_mode + app_urls for artifact-mode entries so
+            # docs manifest can serve global users through the 123 download route.
+            # Without these the entry looks like a release-mode entry, and
+            # docs builds github.com/.../releases/download/run-<id>/<asset>
+            # which 404s because the synthetic tag has no GitHub release.
+            app_source_mode_field = ""
+            app_urls_field: dict | None = None
+            if source_kind == "artifact" and run_id > 0:
+                app_source_mode_field = "artifact"
+                if _PUB_MODULE is not None:
+                    app_urls_field = _PUB_MODULE.build_global_artifact_app_urls(
+                        tag,
+                        _PUB_MODULE.REQUIRED_APP_ASSET_NAMES,
+                    )
             vercel = self._vercel(cfg)
             env_records = vercel.list_env_records()
             policy = self._load_current_policy(cfg, vercel, env_records)
@@ -2001,10 +2042,20 @@ class Api:
             already_present = any(v.get("version") == version for v in versions)
 
             if action == "manual_only":
-                self._upsert_version_entry(versions, version, tag, changelog, recommended, ["manual"], run_id=run_id)
+                self._upsert_version_entry(
+                    versions, version, tag, changelog, recommended, ["manual"],
+                    run_id=run_id,
+                    app_source_mode=app_source_mode_field,
+                    app_urls=app_urls_field,
+                )
 
             elif action == "publish_and_push":
-                self._upsert_version_entry(versions, version, tag, changelog, recommended, ["auto", "manual"], run_id=run_id)
+                self._upsert_version_entry(
+                    versions, version, tag, changelog, recommended, ["auto", "manual"],
+                    run_id=run_id,
+                    app_source_mode=app_source_mode_field,
+                    app_urls=app_urls_field,
+                )
                 # Clear auto channel from other versions
                 for v in versions:
                     if v.get("version") != version and "auto" in v.get("channels", []):
@@ -2029,13 +2080,19 @@ class Api:
                             v["tag"] = tag
                         if run_id > 0 and int(v.get("run_id", 0) or 0) <= 0:
                             v["run_id"] = run_id
+                        # Backfill artifact-mode fields for legacy entries
+                        # written before docs needed app_source_mode/app_urls.
+                        if app_source_mode_field and not str(v.get("app_source_mode", "")).strip():
+                            v["app_source_mode"] = app_source_mode_field
+                        if app_urls_field and not v.get("app_urls"):
+                            v["app_urls"] = app_urls_field
                     elif "auto" in v.get("channels", []):
                         v["channels"] = [c for c in v.get("channels", []) if c != "auto"] or ["manual"]
                 policy["auto_version"] = version
 
             elif action == "rollback_auto":
                 if not already_present:
-                    return {"ok": False, "error": f"版本 {version} 不在白名单,无法回滚到此版本"}
+                    return {"ok": False, "error": f"版本 {version} 不在白名单,无法切换到此版本"}
                 for v in versions:
                     if v.get("version") == version:
                         v["channels"] = sorted(set(v.get("channels", []) + ["auto", "manual"]))
@@ -2044,6 +2101,10 @@ class Api:
                             v["tag"] = tag
                         if run_id > 0 and int(v.get("run_id", 0) or 0) <= 0:
                             v["run_id"] = run_id
+                        if app_source_mode_field and not str(v.get("app_source_mode", "")).strip():
+                            v["app_source_mode"] = app_source_mode_field
+                        if app_urls_field and not v.get("app_urls"):
+                            v["app_urls"] = app_urls_field
                     elif "auto" in v.get("channels", []):
                         v["channels"] = [c for c in v.get("channels", []) if c != "auto"] or ["manual"]
                 policy["auto_version"] = version

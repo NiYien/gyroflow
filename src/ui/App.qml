@@ -17,6 +17,9 @@ Rectangle {
     anchors.fill: parent;
 
     property QtObject controller: main_controller;
+    property var appUpdateDialog: null;
+    property var appUpdateProgressBar: null;
+    property string appUpdateReadyMessage: "";
 
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
@@ -51,6 +54,18 @@ Rectangle {
             }
         }
         return false;
+    }
+
+    Component {
+        id: appUpdateProgressBarComponent;
+        QQC.ProgressBar {
+            from: 0;
+            to: 1;
+            value: 0;
+            indeterminate: true;
+            visible: true;
+            width: parent? parent.width : 240 * dpiScale;
+        }
     }
 
     property bool isLandscape: width > height;
@@ -1371,10 +1386,96 @@ Rectangle {
                 Qt.openUrlExternally("https://github.com/gyroflow/gyroflow/releases");
             }
         }
+        function setAppUpdateDialogText(text: string): void {
+            if (appUpdateDialog && appUpdateDialog.t) {
+                appUpdateDialog.t.text = text;
+            }
+        }
+        function closeAppUpdateDialog(): void {
+            if (appUpdateDialog) {
+                appUpdateDialog.close();
+            }
+            appUpdateDialog = null;
+            appUpdateProgressBar = null;
+        }
+        function ensureAppUpdateProgressBar(): var {
+            if (!appUpdateDialog || !appUpdateDialog.mainColumn) {
+                return null;
+            }
+            if (!appUpdateProgressBar || appUpdateProgressBar.parent !== appUpdateDialog.mainColumn) {
+                appUpdateProgressBar = appUpdateProgressBarComponent.createObject(appUpdateDialog.mainColumn);
+            }
+            return appUpdateProgressBar;
+        }
+        function updateAppUpdateProgressBar(downloaded: real, total: real): void {
+            const bar = ensureAppUpdateProgressBar();
+            if (!bar) {
+                return;
+            }
+            if (total > 0) {
+                bar.indeterminate = false;
+                bar.value = Math.max(0, Math.min(1, downloaded / total));
+            } else {
+                bar.indeterminate = true;
+                bar.value = 0;
+            }
+            bar.visible = true;
+        }
+        function showAppUpdateDownloadingDialog(heading: string, changelog: string): void {
+            appUpdateDialog = messageBox(Modal.Info, heading + changelog + "\n\n" + qsTr("Downloading update..."), [
+                { text: qsTr("Close"), clicked: () => { appUpdateDialog = null; appUpdateProgressBar = null; } }
+            ], undefined, Text.MarkdownText);
+            appUpdateDialog.t.horizontalAlignment = Text.AlignLeft;
+            updateAppUpdateProgressBar(0, 0);
+        }
+        function confirmAndOpenDownloadedUpdate(): void {
+            messageBox(Modal.Info, qsTr("安装更新将退出当前软件，请先确认项目已保存。"), [
+                { text: qsTr("Install and quit"), accent: true, clicked: () => controller.open_downloaded_update_and_quit() },
+                { text: qsTr("Close") }
+            ]);
+        }
         function onUpdates_available(version: string, changelog: string, download_url: string): void {
             const heading = "<p align=\"center\">" + qsTr("There's a newer version available: %1.").arg("<b>" + version + "</b>") + "</p>\n\n";
-            const el = messageBox(Modal.Info, heading + changelog, [ { text: qsTr("Download"),accent: true, clicked: () => openUpdatePage(download_url) },{ text: qsTr("Close") }], undefined, Text.MarkdownText);
+            const el = messageBox(Modal.Info, heading + changelog, [
+                { text: qsTr("Install update"), accent: true, clicked: () => {
+                    Qt.callLater(() => {
+                        showAppUpdateDownloadingDialog(heading, changelog);
+                        controller.start_app_update();
+                    });
+                }},
+                { text: qsTr("Download page"), clicked: () => openUpdatePage(download_url) },
+                { text: qsTr("Close") }
+            ], undefined, Text.MarkdownText);
             el.t.horizontalAlignment = Text.AlignLeft;
+        }
+        function onApp_update_progress(downloaded: real, total: real, message: string): void {
+            const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
+            const line = total > 0
+                ? qsTr("Downloading update... %1%").arg(percent)
+                : qsTr("Downloading update...");
+            setAppUpdateDialogText(line);
+            updateAppUpdateProgressBar(downloaded, total);
+        }
+        function onApp_update_ready(path: string, platform: string, message: string): void {
+            appUpdateReadyMessage = message || "";
+            closeAppUpdateDialog();
+            const extra = platform === "macos"
+                ? "\n\n打开 DMG 后请将 Gyroflow.app 拖入 Applications 文件夹"
+                : "";
+            appUpdateDialog = messageBox(Modal.Info, qsTr("Update is ready.") + extra, [
+                { text: platform === "macos" ? qsTr("Open DMG and quit") : qsTr("Install and quit"), accent: true, clicked: confirmAndOpenDownloadedUpdate },
+                { text: qsTr("Close") }
+            ], undefined, Text.MarkdownText);
+        }
+        function onApp_update_error(message: string): void {
+            closeAppUpdateDialog();
+            appUpdateDialog = messageBox(Modal.Error, qsTr("Update failed: %1").arg(message), [
+                { text: qsTr("Close") }
+            ]);
+        }
+        function onApp_update_handoff_started(): void {
+            main_window.closeConfirmed = true;
+            Qt.quit();
         }
         function onRequest_location(url: string, type: string): void {
             gfFileDialog.projectType = type;

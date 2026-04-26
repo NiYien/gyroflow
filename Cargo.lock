@@ -3570,6 +3570,7 @@ dependencies = [
  "walkdir",
  "whoami",
  "windows 0.62.2",
+ "windows-sys 0.61.2",
  "winres",
  "zip 8.4.0",
  "zip-extensions",

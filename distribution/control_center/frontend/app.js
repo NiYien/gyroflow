@@ -300,6 +300,52 @@ async function refreshDashboard() {
 
 // ---- Dashboard pan123 inventory status ----
 
+function formatPackageSize(size) {
+  const n = Number(size || 0);
+  if (!Number.isFinite(n) || n <= 0) return '缺 size';
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function renderPackageMetadata(packages) {
+  if (!packages || !Object.keys(packages).length) {
+    return '<div class="mt-1 text-[11px] text-slate-500">packages metadata: 未写入</div>';
+  }
+  const platformLabel = { windows: 'Windows', macos: 'macOS', linux: 'Linux', android: 'Android' };
+  const rows = [];
+  for (const [platform, meta] of Object.entries(packages)) {
+    if (!meta || typeof meta !== 'object') continue;
+    const label = platformLabel[platform] || platform;
+    const parts = [];
+    if ('installer_filename' in meta || 'installer_sha256' in meta || 'installer_size' in meta) {
+      parts.push(renderPackageMetadataPart('installer', {
+        filename: meta.installer_filename,
+        size: meta.installer_size,
+        sha256: meta.installer_sha256,
+      }));
+    }
+    if ('package_filename' in meta || 'package_sha256' in meta || 'package_size' in meta) {
+      parts.push(renderPackageMetadataPart('package', {
+        filename: meta.package_filename,
+        size: meta.package_size,
+        sha256: meta.package_sha256,
+      }));
+    }
+    rows.push(`<div><span class="font-semibold">${label}</span>: ${parts.join(' · ') || '无 package 字段'}</div>`);
+  }
+  return `<div class="mt-1 text-[11px] text-slate-600">${rows.join('')}</div>`;
+}
+
+function renderPackageMetadataPart(label, item) {
+  const filenameOk = !!String(item.filename || '').trim();
+  const sizeOk = Number(item.size || 0) > 0;
+  const shaOk = /^[a-f0-9]{64}$/i.test(String(item.sha256 || '').trim());
+  const filename = filenameOk ? String(item.filename).trim() : '缺 filename';
+  return `${label}: ${filename} / ${sizeOk ? formatPackageSize(item.size) : '缺 size'} / ${shaOk ? 'sha256 OK' : '缺 sha256'}`;
+}
+
 function dashRenderPan123(items, autoVersion, contentBundles, contentBundlesError) {
   const el = document.getElementById('dash-pan123-status');
   el.classList.remove('italic');
@@ -354,12 +400,13 @@ function dashRenderPan123(items, autoVersion, contentBundles, contentBundlesErro
     const alertLine = alertText
       ? `<div class="mt-1 text-[11px] text-amber-700">${alertText}</div>`
       : '';
+    const packageLine = renderPackageMetadata(it.packages);
     return `<div class="px-3 py-2 mb-1 bg-white border border-slate-200 rounded text-xs">
       <div class="flex items-center justify-between">
         <span class="font-mono">${it.version} <span class="text-slate-400">·</span> ${tagDisplay}${auto}</span>
         <div class="flex items-center">${statusBadge}${uploadBtn}</div>
       </div>
-      ${alertLine}
+      ${alertLine}${packageLine}
     </div>`;
   }).join('');
 
@@ -511,6 +558,10 @@ function showView(target) {
   document.querySelectorAll('.view').forEach(v => {
     v.classList.toggle('hidden', v.dataset.view !== target);
   });
+  // Prefill publish view fields on every entry — covers all paths
+  // (Dashboard card, recent-release list, manual pan123 sync). Idempotent:
+  // user-edited inputs are not overwritten (see prefillPublishView).
+  if (target === 'publish') prefillPublishView();
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -568,20 +619,42 @@ document.getElementById('trigger-action-btn')?.addEventListener('click', async (
   }
 });
 
-// Prefill when publish view is first shown:
+// Prefill publish view fields on every entry (called from showView).
 //   Mode ① build_label ← current HEAD commit subject
 //   Mode ② 3 digits  ← latest gyroflow tag patch+1 (or Cargo.toml version)
-let publishViewInitialized = false;
-async function initPublishViewOnce() {
-  if (publishViewInitialized) return;
-  publishViewInitialized = true;
-  try {
-    const r = await pywebview.api.get_head_commit_subject();
-    if (r.ok && r.subject) {
-      const input = document.getElementById('trigger-build-label');
-      if (input && !input.value) input.value = r.subject;
+// Idempotent: build_label only fills when input is empty so user edits
+// survive view switches; tag digits always refresh to latest suggestion.
+async function prefillPublishView() {
+  // Surface diagnosis on screen + console so silent failures are visible.
+  // Old code swallowed every error which hid pywebview-not-ready / API
+  // shape mismatches from users.
+  const reportDebug = (msg) => {
+    console.error('[prefillPublishView]', msg);
+    const el = document.getElementById('trigger-action-result');
+    if (el) {
+      el.textContent = `[debug] ${msg}`;
+      el.className = 'text-xs text-amber-600';
     }
-  } catch (e) { /* silent */ }
+  };
+  try {
+    if (typeof pywebview === 'undefined' || !pywebview.api) {
+      reportDebug('pywebview.api not ready when prefill ran');
+    } else {
+      const r = await pywebview.api.get_head_commit_subject();
+      if (!r) {
+        reportDebug('get_head_commit_subject returned null/undefined');
+      } else if (!r.ok) {
+        reportDebug(`get_head_commit_subject err: ${r.error || '(no err msg)'}`);
+      } else if (!r.subject) {
+        reportDebug(`get_head_commit_subject empty subject (branch=${r.branch || '?'})`);
+      } else {
+        const input = document.getElementById('trigger-build-label');
+        if (input && !input.value) input.value = r.subject;
+      }
+    }
+  } catch (e) {
+    reportDebug(`get_head_commit_subject threw: ${(e && e.message) || e}`);
+  }
   try {
     const r = await pywebview.api.get_gyroflow_latest_tag_suggestion();
     if (r.ok) {
@@ -589,12 +662,13 @@ async function initPublishViewOnce() {
       document.getElementById('tag-minor').value = String(r.minor);
       document.getElementById('tag-patch').value = String(r.patch);
       updateTagPreview();
+    } else {
+      console.error('[prefillPublishView] tag suggestion err:', r.error);
     }
-  } catch (e) { /* silent */ }
+  } catch (e) {
+    console.error('[prefillPublishView] tag suggestion threw:', e);
+  }
 }
-document.querySelectorAll('[data-action-nav="publish"]').forEach(btn => {
-  btn.addEventListener('click', initPublishViewOnce);
-});
 
 // ---- Mode 2: Push tag ----
 
@@ -642,7 +716,7 @@ const ACTION_HINTS = {
   manual_only: '只把版本加入 policy.versions[] 白名单,客户端手动查找时能找到,但不会主动推送',
   publish_and_push: '加入白名单并立即设为当前自动推送版本,所有客户端升级检查会看到这个新版',
   switch_auto: '把当前自动推送切换为此版本(版本必须已在白名单中)',
-  rollback_auto: '把此版本标记为"已回滚",客户端不再推送这个版',
+  rollback_auto: '切换自动推送到此版本(版本必须已在白名单中)',
   hide_version: '从 policy.versions[] 白名单移除此版本,如果它正在自动推送会切到其他版本',
 };
 
@@ -1034,13 +1108,14 @@ async function loadPan123Inventory() {
       const missingList = (!it.no_tag && it.files_missing.length)
         ? `<div class="mt-1 text-amber-700">缺: ${it.files_missing.join(', ')}</div>`
         : '';
+      const packageLine = renderPackageMetadata(it.packages);
       const tagDisplay = it.tag || '<span class="text-slate-400">(无 tag)</span>';
       return `<div class="px-3 py-2 mb-1 bg-white border border-slate-200 rounded">
         <div class="flex items-center justify-between">
           <span class="font-mono text-sm">${it.version} <span class="text-slate-400">·</span> ${tagDisplay}${auto}</span>
           ${statusBadge}
         </div>
-        ${missingList}${extraNote}
+        ${missingList}${extraNote}${packageLine}
       </div>`;
     }).join('');
   } catch (e) {
