@@ -340,7 +340,13 @@ deploy *param:
 
             codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/MacOS/gyroflow
 
-            codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app
+            # --deep so the nested BlackmagicRawAPI.framework gets re-sealed
+            # after the find/xargs above resigned its inner Libraries/* binaries.
+            # Without --deep, the framework's _CodeSignature/CodeResources still
+            # expects pre-resign hashes and `codesign --deep --verify` below
+            # reports "file modified" for DecoderMetal / DecoderOpenCL /
+            # InstructionSetServicesAVX[2].
+            codesign -vvvv --deep --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app
 
             codesign -vvvv --deep --verify $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app
         fi
