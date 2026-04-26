@@ -33,10 +33,10 @@ APP_ASSET_PLATFORM_BY_NAME = {
 }
 
 PLUGIN_ASSET_NAMES = (
-    "Gyroflow-OpenFX-windows.zip",
-    "Gyroflow-Adobe-windows.aex",
-    "Gyroflow-OpenFX-macos.zip",
-    "Gyroflow-Adobe-macos.zip",
+    "GyroflowNiyien-OpenFX-windows.zip",
+    "GyroflowNiyien-Adobe-windows.aex",
+    "GyroflowNiyien-OpenFX-macos.zip",
+    "GyroflowNiyien-Adobe-macos.zip",
 )
 
 SDK_FILENAMES = (
@@ -80,7 +80,7 @@ LENS_METADATA_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz.json"
 CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"
 RELEASE_SUMMARY_ASSET_NAME = "gyroflow-niyien-release-summary.json"
 DEFAULT_SDK_BASE = "https://api.gyroflow.xyz/sdk"
-DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download"
+DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/NiYien/gyroflow-plugins/releases/latest/download"
 DEFAULT_GITHUB_API = "https://api.github.com"
 DEFAULT_123_API = "https://open-api.123pan.com"
 DEFAULT_PLATFORM = "open_platform"

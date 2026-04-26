@@ -10,7 +10,7 @@ use std::process::Command;
 use zip_extensions::zip_archive_extensions::ZipArchiveExtensions;
 
 const DEFAULT_RELEASE_PLUGINS_BASE: &str =
-    "https://github.com/gyroflow/gyroflow-plugins/releases/latest/download";
+    "https://github.com/NiYien/gyroflow-plugins/releases/latest/download";
 
 #[derive(Debug, Clone, Default, Serialize)]
 struct LatestPluginInfo {
@@ -48,15 +48,15 @@ struct PluginStatus {
 pub fn get_path(typ: &str) -> &'static str {
     if cfg!(target_os = "windows") {
         if typ == "openfx" {
-            return "C:/Program Files/Common Files/OFX/Plugins/Gyroflow.ofx.bundle";
+            return "C:/Program Files/Common Files/OFX/Plugins/GyroflowNiyien.ofx.bundle";
         } else if typ == "adobe" {
-            return "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/Gyroflow-Adobe-windows.aex";
+            return "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien-Adobe-windows.aex";
         }
     } else if cfg!(target_os = "macos") {
         if typ == "openfx" {
-            return "/Library/OFX/Plugins/Gyroflow.ofx.bundle";
+            return "/Library/OFX/Plugins/GyroflowNiyien.ofx.bundle";
         } else if typ == "adobe" {
-            return "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/Gyroflow.plugin";
+            return "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/GyroflowNiyien.plugin";
         }
     }
     ""
@@ -169,8 +169,8 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     } else if cfg!(target_os = "macos") {
         if gyroflow_core::filesystem::is_sandboxed() {
             let macosname = match typ {
-                "openfx" => "Gyroflow.ofx.bundle",
-                "adobe" => "Gyroflow.plugin",
+                "openfx" => "GyroflowNiyien.ofx.bundle",
+                "adobe" => "GyroflowNiyien.plugin",
                 _ => unreachable!(),
             };
             let src = Path::new(tempdir).join(macosname);
@@ -274,12 +274,12 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
         "openfx" => {
             if cfg!(target_os = "windows") {
                 (
-                    format!("{base}Gyroflow-OpenFX-windows.zip"),
+                    format!("{base}GyroflowNiyien-OpenFX-windows.zip"),
                     "C:/Program Files/Common Files/OFX/Plugins/",
                 )
             } else {
                 (
-                    format!("{base}Gyroflow-OpenFX-macos.zip"),
+                    format!("{base}GyroflowNiyien-OpenFX-macos.zip"),
                     "/Library/OFX/Plugins/",
                 )
             }
@@ -287,12 +287,12 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
         "adobe" => {
             if cfg!(target_os = "windows") {
                 (
-                    format!("{base}Gyroflow-Adobe-windows.aex"),
+                    format!("{base}GyroflowNiyien-Adobe-windows.aex"),
                     "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
                 )
             } else {
                 (
-                    format!("{base}Gyroflow-Adobe-macos.zip"),
+                    format!("{base}GyroflowNiyien-Adobe-macos.zip"),
                     "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
                 )
             }
@@ -507,7 +507,7 @@ pub fn detect(typ: &str) -> io::Result<String> {
     {
         if !path.is_empty() && Path::new(path).exists() {
             let probe_path = if typ == "openfx" {
-                format!("{path}/Contents/Win64/Gyroflow.ofx")
+                format!("{path}/Contents/Win64/GyroflowNiyien.ofx")
             } else {
                 path.to_owned()
             };
@@ -561,7 +561,7 @@ fn latest_plugin_info() -> LatestPluginInfo {
     // removed because the deploy side (publish_pan123_release.py) now ships one
     // fixed release naming for both CI runs and tag releases, so the client
     // doesn't need a parallel nightly path.
-    let body = match ureq::get("https://api.github.com/repos/gyroflow/gyroflow-plugins/releases")
+    let body = match ureq::get("https://api.github.com/repos/NiYien/gyroflow-plugins/releases")
         .call()
         .ok()
         .and_then(|response| response.into_body().read_to_string().ok())

@@ -23,25 +23,9 @@ Item {
         const sdkUrl = render_queue.first_file_requiring_external_sdk(JSON.stringify(urls.map(u => u.toString())));
         if (!sdkUrl) return true;
 
-        if (window.videoArea.externalSdkModal !== null) return false;
-
-        const dlg = messageBox(Modal.Info, qsTr("This format requires an external SDK. Do you want to download it now?"), [
-            { text: qsTr("Yes"), accent: true, clicked: function() {
-                dlg.btnsRow.children[0].enabled = false;
-                window.videoArea.externalSdkSuccessCallback = function(_) {
-                    Qt.callLater(continuation);
-                };
-                controller.install_external_sdk(sdkUrl.toString());
-                return false;
-            } },
-            { text: qsTr("Cancel"), clicked: function() {
-                window.videoArea.externalSdkModal = null;
-                window.videoArea.externalSdkSuccessCallback = null;
-            } },
-        ]);
-        window.videoArea.externalSdkModal = dlg;
-        window.videoArea.externalSdkSuccessCallback = null;
-        dlg.addLoader();
+        window.videoArea.promptExternalSdkInstall(sdkUrl, function(_) {
+            Qt.callLater(continuation);
+        });
         return false;
     }
 

@@ -351,6 +351,28 @@ Item {
     property Modal externalSdkModal: null;
     property var externalSdkSuccessCallback: null;
 
+    function promptExternalSdkInstall(url, successCallback): bool {
+        if (externalSdkModal !== null) {
+            return false;
+        }
+
+        externalSdkSuccessCallback = successCallback || null;
+        const dlg = messageBox(Modal.Info, qsTr("This format requires an external SDK. Do you want to download it now?"), [
+            { text: qsTr("Yes"), accent: true, clicked: function() {
+                dlg.btnsRow.children[0].enabled = false;
+                controller.install_external_sdk(url.toString());
+                return false;
+            } },
+            { text: qsTr("Cancel"), clicked: function() {
+                externalSdkModal = null;
+                externalSdkSuccessCallback = null;
+            } },
+        ]);
+        externalSdkModal = dlg;
+        dlg.addLoader();
+        return true;
+    }
+
     function loadFile(url: url, skip_detection: bool, queueJobId: int): void {
         let filename = filesystem.get_filename(url);
         let folder = filesystem.get_folder(url);
@@ -383,20 +405,7 @@ Item {
         stabEnabledBtn.checked = false;
 
         if (controller.check_external_sdk(filename)) {
-            externalSdkSuccessCallback = null;
-            const dlg = messageBox(Modal.Info, qsTr("This format requires an external SDK. Do you want to download it now?"), [
-                { text: qsTr("Yes"), accent: true, clicked: function() {
-                    dlg.btnsRow.children[0].enabled = false;
-                    controller.install_external_sdk(url.toString());
-                    return false;
-                } },
-                { text: qsTr("Cancel"), clicked: function() {
-                    externalSdkModal = null;
-                    externalSdkSuccessCallback = null;
-                } },
-            ]);
-            externalSdkModal = dlg;
-            dlg.addLoader();
+            promptExternalSdkInstall(url, null);
             return;
         }
 
