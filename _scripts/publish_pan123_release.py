@@ -139,6 +139,8 @@ PLUGIN_SOURCE_MODES = {"release", "artifact"}
 DEFAULT_APP_SOURCE_MODE = "release"
 APP_SOURCE_MODES = {"release", "artifact"}
 DEFAULT_DOWNLOAD_RETRIES = 5
+PAN123_GET_REQUEST_RETRIES = 3
+PAN123_GET_REQUEST_RETRY_DELAY_SECONDS = 2.0
 PROGRESS_EVENT_PREFIX = "@@CC_EVENT@@"
 PROGRESS_MODE = os.environ.get("NIYIEN_PROGRESS_MODE", "").strip().lower()
 
@@ -693,20 +695,31 @@ class Pan123Client:
             headers["Content-Type"] = "application/json"
 
         url = f"{DEFAULT_123_API}{path}"
-        try:
-            response = self.session.request(
-                method=method,
-                url=url,
-                params=params,
-                json=json_body,
-                headers=headers,
-                timeout=120,
-            )
-            response.raise_for_status()
-        except requests.RequestException as err:
-            raise RuntimeError(
-                f"123 request failed: {method} {path}, http_error={err}"
-            ) from err
+        method = method.upper()
+        max_attempts = PAN123_GET_REQUEST_RETRIES if method == "GET" else 1
+        for attempt in range(1, max_attempts + 1):
+            try:
+                response = self.session.request(
+                    method=method,
+                    url=url,
+                    params=params,
+                    json=json_body,
+                    headers=headers,
+                    timeout=120,
+                )
+                response.raise_for_status()
+                break
+            except requests.RequestException as err:
+                if attempt < max_attempts and is_retryable_pan123_request_error(err):
+                    emit_log(
+                        f"123 request retry: {method} {path}, "
+                        f"attempt={attempt}/{max_attempts}, detail={err}"
+                    )
+                    time.sleep(min(PAN123_GET_REQUEST_RETRY_DELAY_SECONDS * attempt, 10.0))
+                    continue
+                raise RuntimeError(
+                    f"123 request failed: {method} {path}, http_error={err}"
+                ) from err
         try:
             payload = response.json()
         except ValueError as err:
@@ -831,6 +844,14 @@ class Pan123Client:
                     total=total_slices,
                 )
                 slice_no += 1
+
+
+def is_retryable_pan123_request_error(err: requests.RequestException) -> bool:
+    if isinstance(err, (requests.Timeout, requests.ConnectionError)):
+        return True
+    response = getattr(err, "response", None)
+    status_code = getattr(response, "status_code", 0)
+    return int(status_code or 0) in {429, 500, 502, 503, 504}
 
 
 def main() -> int:
@@ -1153,17 +1174,12 @@ def build_global_artifact_app_urls(
     github_owner: str = "NiYien",
     github_repo: str = "gyroflow",
 ) -> dict[str, dict[str, str]]:
-    # GLOBAL artifact builds do not have a GitHub Release tag. Use
-    # nightly.link for global clients; CN routing still uses the 123-backed
-    # /api/download path from the tag-specific branch in docs.
-    run_id_match = re.match(r"^(?:actions-run-|run-)(\d+)$", app_tag)
-    if not run_id_match:
+    # Artifact builds do not have a GitHub Release asset URL. Use the
+    # 123-backed download route for both global and CN clients so the manifest
+    # points at the bare uploaded asset, not a nightly.link artifact wrapper.
+    if not app_tag:
         return {}
-    run_id = run_id_match.group(1)
-    base = (
-        f"https://nightly.link/{quote(github_owner, safe='')}"
-        f"/{quote(github_repo, safe='')}/actions/runs/{run_id}"
-    )
+    _ = github_owner, github_repo
     urls: dict[str, dict[str, str]] = {}
     for asset_name in sorted(asset_names):
         platform = APP_ASSET_PLATFORM_BY_NAME.get(asset_name)
@@ -1171,7 +1187,7 @@ def build_global_artifact_app_urls(
             continue
         role = APP_ASSET_ROLE_BY_NAME.get(asset_name, "package")
         key = "installer_url" if role == "installer" else "package_url"
-        urls.setdefault(platform, {})[key] = f"{base}/{quote(asset_name, safe='')}.zip"
+        urls.setdefault(platform, {})[key] = build_download_route_asset_url(app_tag, asset_name)
     return urls
 
 

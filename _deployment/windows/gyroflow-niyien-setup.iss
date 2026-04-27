@@ -59,12 +59,12 @@ MinVersion=10.0
 CloseApplications=no
 RestartApplications=no
 SetupLogging=yes
-ArchiveExtraction=enhanced/nopassword
+ArchiveExtraction=basic
 VersionInfoVersion={#AppFileVersion}
 VersionInfoCompany=Niyien
 VersionInfoDescription={#AppDisplayName} web installer
 VersionInfoProductName={#AppDisplayName}
-VersionInfoProductVersion={#AppVersion}
+VersionInfoProductVersion={#AppFileVersion}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -108,12 +108,13 @@ SetupMissingPackageSha256=Missing package SHA256. Provide /PACKAGESHA256=<zip_sh
 SetupDownloadVerifyFailed=Failed to download or verify Gyroflow(NiYien) package.
 SetupMissingPackageFile=Local package file was not found.
 SetupPackageFileVerifyFailed=Failed to verify local Gyroflow(NiYien) package.
+SetupExtractPackageFailed=Failed to extract Gyroflow(NiYien) package.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{tmp}\{#PackageFilename}"; DestDir: "{app}"; ExternalSize: {#PackageExternalSize}; Flags: external extractarchive recursesubdirs createallsubdirs ignoreversion; Check: PackageWasDownloaded
+Source: "{tmp}\package\*"; DestDir: "{app}"; ExternalSize: {#PackageExternalSize}; Flags: external recursesubdirs createallsubdirs ignoreversion; Check: PackageWasDownloaded
 
 [Icons]
 Name: "{userprograms}\{#AppDisplayName}"; Filename: "{app}\Gyroflow.exe"; WorkingDir: "{app}"
@@ -424,6 +425,53 @@ begin
   end;
 end;
 
+function PowerShellSingleQuotedLiteral(const Value: String): String;
+var
+  I: Integer;
+  Ch: String;
+begin
+  Result := #39;
+  for I := 1 to Length(Value) do
+  begin
+    Ch := Copy(Value, I, 1);
+    if Ch = #39 then
+      Result := Result + #39 + #39
+    else
+      Result := Result + Ch;
+  end;
+  Result := Result + #39;
+end;
+
+function ExtractPackageToTempDir: Boolean;
+var
+  ZipPath: String;
+  ExtractDir: String;
+  PowerShellPath: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  ZipPath := ExpandConstant('{tmp}\{#PackageFilename}');
+  ExtractDir := ExpandConstant('{tmp}\package');
+  DelTree(ExtractDir, True, True, True);
+  if not ForceDirectories(ExtractDir) then
+  begin
+    SuppressibleMsgBox(ExpandConstant('{cm:SetupExtractPackageFailed}') + #13#10 + ExtractDir, mbCriticalError, MB_OK, IDOK);
+    Exit;
+  end;
+
+  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  Params := '-NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath ' + PowerShellSingleQuotedLiteral(ZipPath) + ' -DestinationPath ' + PowerShellSingleQuotedLiteral(ExtractDir) + ' -Force"';
+  Log('Extracting Gyroflow package to ' + ExtractDir);
+  if Exec(PowerShellPath, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+  begin
+    PackageWasFetched := True;
+    Result := True;
+  end
+  else
+    SuppressibleMsgBox(ExpandConstant('{cm:SetupExtractPackageFailed}') + #13#10 + 'Exit code: ' + IntToStr(ResultCode), mbCriticalError, MB_OK, IDOK);
+end;
+
 function InitializeSetup: Boolean;
 begin
   IsUpdateMode := IsSwitchEnabled('UPDATE', '0');
@@ -456,7 +504,7 @@ begin
   if CurPageID = wpReady then
   begin
     WaitForUpdateTarget;
-    Result := DownloadAndVerifyPackage;
+    Result := DownloadAndVerifyPackage and ExtractPackageToTempDir;
   end;
 end;
 
