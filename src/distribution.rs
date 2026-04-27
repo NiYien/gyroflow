@@ -86,6 +86,7 @@ pub struct AppUpdateSelection {
 pub struct PreparedAppUpdate {
     pub selection: AppUpdateSelection,
     pub path: PathBuf,
+    pub package_path: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -98,6 +99,8 @@ pub struct ManualAppVersion {
     pub changelog: String,
     #[serde(default)]
     pub recommended: bool,
+    #[serde(default)]
+    pub packages: BTreeMap<String, AppPackageRelease>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -591,19 +594,53 @@ pub fn app_update_package_for_platform(
     platform: &str,
 ) -> Option<AppUpdateSelection> {
     let platform = normalize_app_update_platform(platform);
-    let package = manifest.app.packages.get(platform);
-    let fallback_url = manifest.app.url.trim();
+    app_update_selection_from_package(
+        &manifest.app.version,
+        platform,
+        manifest.app.url.trim(),
+        manifest.app.packages.get(platform),
+    )
+}
 
+pub fn manual_app_update_package_for_platform(
+    manifest: &Manifest,
+    version: &str,
+    platform: &str,
+) -> Option<AppUpdateSelection> {
+    let version = version.trim();
+    if version.is_empty() {
+        return current_platform_app_update_package(manifest);
+    }
+    let platform = normalize_app_update_platform(platform);
+    let manual = manifest
+        .app
+        .manual_versions
+        .iter()
+        .find(|item| item.version.trim() == version)?;
+    app_update_selection_from_package(
+        &manual.version,
+        platform,
+        manual.url.trim(),
+        manual.packages.get(platform),
+    )
+}
+
+fn app_update_selection_from_package(
+    version: &str,
+    platform: &'static str,
+    fallback_url: &str,
+    package: Option<&AppPackageRelease>,
+) -> Option<AppUpdateSelection> {
     let selection = match (platform, package) {
         ("windows", Some(package)) => AppUpdateSelection {
-            version: manifest.app.version.clone(),
+            version: version.to_owned(),
             platform: platform.to_owned(),
             kind: if package.kind.trim().is_empty() {
                 "web_installer_zip".to_owned()
             } else {
                 package.kind.trim().to_owned()
             },
-            download_url: package.installer_url.trim().to_owned(),
+            download_url: first_non_empty(package.installer_url.trim(), fallback_url).to_owned(),
             download_sha256: package.installer_sha256.trim().to_owned(),
             download_size: package.installer_size,
             package_url: package.package_url.trim().to_owned(),
@@ -611,14 +648,14 @@ pub fn app_update_package_for_platform(
             package_size: package.package_size,
         },
         (_, Some(package)) => AppUpdateSelection {
-            version: manifest.app.version.clone(),
+            version: version.to_owned(),
             platform: platform.to_owned(),
             kind: if package.kind.trim().is_empty() {
                 "dmg".to_owned()
             } else {
                 package.kind.trim().to_owned()
             },
-            download_url: package.package_url.trim().to_owned(),
+            download_url: first_non_empty(package.package_url.trim(), fallback_url).to_owned(),
             download_sha256: package.package_sha256.trim().to_owned(),
             download_size: package.package_size,
             package_url: package.package_url.trim().to_owned(),
@@ -626,7 +663,7 @@ pub fn app_update_package_for_platform(
             package_size: package.package_size,
         },
         _ if !fallback_url.is_empty() => AppUpdateSelection {
-            version: manifest.app.version.clone(),
+            version: version.to_owned(),
             platform: platform.to_owned(),
             kind: if platform == "windows" {
                 "web_installer_zip".to_owned()
@@ -646,6 +683,14 @@ pub fn app_update_package_for_platform(
     }
 }
 
+fn first_non_empty<'a>(value: &'a str, fallback: &'a str) -> &'a str {
+    if value.trim().is_empty() {
+        fallback.trim()
+    } else {
+        value.trim()
+    }
+}
+
 pub fn current_platform_app_update_package(manifest: &Manifest) -> Option<AppUpdateSelection> {
     app_update_package_for_platform(manifest, platform_name())
 }
@@ -660,20 +705,82 @@ where
     if selection.download_url.trim().is_empty() {
         return Err("update package url is empty".to_owned());
     }
-    let response = configure_geo_request(ureq::get(selection.download_url.as_str()))
+    let cache_dir = app_update_cache_dir()?;
+    std::fs::create_dir_all(&cache_dir)
+        .map_err(|err| format!("create update cache dir failed: {err}"))?;
+    let path = download_or_reuse_update_file(
+        "app update",
+        &selection.download_url,
+        &selection.download_sha256,
+        selection.download_size,
+        cache_dir.join(app_update_filename(selection)),
+        &mut progress,
+        "downloading",
+    )?;
+    let package_path =
+        if selection.platform == "windows" && !selection.package_url.trim().is_empty() {
+            Some(download_or_reuse_update_file(
+                "app update package",
+                &selection.package_url,
+                &selection.package_sha256,
+                selection.package_size,
+                cache_dir.join(app_update_filename_from_url(
+                    &selection.package_url,
+                    default_windows_package_filename(),
+                )),
+                &mut progress,
+                "downloading_package",
+            )?)
+        } else {
+            None
+        };
+
+    let ready_size = package_path
+        .as_deref()
+        .or(Some(path.as_path()))
+        .and_then(|path| path.metadata().ok())
+        .map(|metadata| metadata.len())
+        .unwrap_or(selection.download_size);
+    progress(ready_size, ready_size, "ready");
+    Ok(PreparedAppUpdate {
+        selection: selection.clone(),
+        path,
+        package_path,
+    })
+}
+
+fn download_or_reuse_update_file<F>(
+    label: &str,
+    url: &str,
+    expected_sha256: &str,
+    expected_size: u64,
+    path: PathBuf,
+    progress: &mut F,
+    progress_status: &str,
+) -> Result<PathBuf, String>
+where
+    F: FnMut(u64, u64, &str),
+{
+    if let Some(cached_size) = cached_update_file_size_if_valid(label, &path, expected_sha256)? {
+        let total = if expected_size > 0 {
+            expected_size
+        } else {
+            cached_size
+        };
+        progress(cached_size, total, "cached");
+        return Ok(path);
+    }
+
+    let response = configure_geo_request(ureq::get(url))
         .call()
-        .map_err(|err| format!("download update failed: {err}"))?;
+        .map_err(|err| format!("download {label} failed: {err}"))?;
     let total = response
         .headers()
         .get("content-length")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok())
-        .unwrap_or(selection.download_size);
+        .unwrap_or(expected_size);
 
-    let cache_dir = app_update_cache_dir()?;
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|err| format!("create update cache dir failed: {err}"))?;
-    let path = cache_dir.join(app_update_filename(selection));
     let temp_path = path.with_extension("download");
     let mut reader = response.into_body().into_reader();
     let mut output = std::fs::File::create(&temp_path)
@@ -693,24 +800,64 @@ where
             .map_err(|err| format!("write update download failed: {err}"))?;
         hasher.update(&buffer[..read]);
         downloaded += read as u64;
-        progress(downloaded, total, "downloading");
+        progress(downloaded, total, progress_status);
     }
     output
         .flush()
         .map_err(|err| format!("flush update download failed: {err}"))?;
+    drop(output);
 
     verify_sha256_hex(
-        "app update",
+        label,
         &hex_digest(hasher.finalize().as_slice()),
-        &selection.download_sha256,
+        expected_sha256,
     )?;
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|err| format!("replace cached update file failed: {err}"))?;
+    }
     std::fs::rename(&temp_path, &path)
         .map_err(|err| format!("activate update download failed: {err}"))?;
-    progress(downloaded, total, "ready");
-    Ok(PreparedAppUpdate {
-        selection: selection.clone(),
-        path,
-    })
+    Ok(path)
+}
+
+fn cached_update_file_size_if_valid(
+    label: &str,
+    path: &Path,
+    expected_sha256: &str,
+) -> Result<Option<u64>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let (actual_sha256, size) =
+        sha256_file_hex(path).map_err(|err| format!("read cached {label} failed: {err}"))?;
+    if expected_sha256.trim().is_empty()
+        || actual_sha256.eq_ignore_ascii_case(expected_sha256.trim())
+    {
+        Ok(Some(size))
+    } else {
+        log::warn!(
+            "cached {label} sha256 mismatch, ignoring {}",
+            path.display()
+        );
+        Ok(None)
+    }
+}
+
+fn sha256_file_hex(path: &Path) -> Result<(String, u64), std::io::Error> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut size = 0_u64;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+        size += read as u64;
+    }
+    Ok((hex_digest(hasher.finalize().as_slice()), size))
 }
 
 pub fn open_downloaded_update(prepared: &PreparedAppUpdate) -> Result<(), String> {
@@ -732,15 +879,21 @@ pub fn windows_setup_update_args(
     wait_pid: Option<String>,
     wait_start: Option<String>,
     wait_handle: Option<String>,
+    package_file: Option<&Path>,
 ) -> Vec<String> {
     let mut args = vec![
         "/UPDATE=1".to_owned(),
         format!("/DIR={}", install_dir.display()),
-        format!("/PACKAGEURL={}", selection.package_url),
         format!("/PACKAGESHA256={}", selection.package_sha256),
         format!("/PACKAGESIZE={}", selection.package_size),
         "/LAUNCH=1".to_owned(),
     ];
+    if !selection.package_url.trim().is_empty() {
+        args.push(format!("/PACKAGEURL={}", selection.package_url));
+    }
+    if let Some(package_file) = package_file {
+        args.push(format!("/PACKAGEFILE={}", package_file.display()));
+    }
     if let Some(handle) = wait_handle.filter(|value| !value.trim().is_empty()) {
         args.push(format!("/WAITHANDLE={}", handle));
     }
@@ -771,20 +924,33 @@ fn app_update_cache_dir() -> Result<PathBuf, String> {
 }
 
 fn app_update_filename(selection: &AppUpdateSelection) -> String {
-    url::Url::parse(selection.download_url.as_str())
+    app_update_filename_from_url(
+        &selection.download_url,
+        default_app_update_filename(&selection.platform),
+    )
+}
+
+fn app_update_filename_from_url(url: &str, fallback_filename: &str) -> String {
+    url::Url::parse(url)
         .ok()
         .and_then(|url| {
             url.path_segments()
                 .and_then(|mut segments| segments.next_back().map(|value| value.to_owned()))
         })
         .filter(|name| !name.trim().is_empty())
-        .unwrap_or_else(|| {
-            if selection.platform == "windows" {
-                "gyroflow-niyien-windows64-setup.exe".to_owned()
-            } else {
-                "gyroflow-niyien-mac-universal.dmg".to_owned()
-            }
-        })
+        .unwrap_or_else(|| fallback_filename.to_owned())
+}
+
+fn default_app_update_filename(platform: &str) -> &'static str {
+    if platform == "windows" {
+        "gyroflow-niyien-windows64-setup.exe"
+    } else {
+        "gyroflow-niyien-mac-universal.dmg"
+    }
+}
+
+fn default_windows_package_filename() -> &'static str {
+    "gyroflow-niyien-windows64.zip"
 }
 
 fn verify_sha256_hex(label: &str, actual: &str, expected: &str) -> Result<(), String> {
@@ -863,6 +1029,7 @@ fn launch_windows_update_impl(prepared: &PreparedAppUpdate) -> Result<(), String
         wait_pid,
         wait_start,
         None,
+        prepared.package_path.as_deref(),
     );
     std::process::Command::new(&prepared.path)
         .args(args)
@@ -942,6 +1109,7 @@ fn launch_windows_setup_with_inherited_handle(
                 wait_pid,
                 wait_start,
                 Some((inherited_handle as usize).to_string()),
+                prepared.package_path.as_deref(),
             );
             let command_line = windows_command_line(&prepared.path, &args);
             let mut command_line_w = wide_null(OsStr::new(&command_line));
@@ -1093,6 +1261,13 @@ pub fn plugin_source_tag() -> String {
 #[cfg(test)]
 mod app_update_tests {
     use super::*;
+    use std::fs;
+
+    fn sha256_hex_for_test(content: &[u8]) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        hex_digest(hasher.finalize().as_slice())
+    }
 
     #[test]
     fn manifest_deserializes_windows_setup_and_zip_packages() {
@@ -1164,6 +1339,144 @@ mod app_update_tests {
     }
 
     #[test]
+    fn download_app_update_reuses_cached_file_when_sha256_matches() {
+        let content = b"cached update payload";
+        let filename = format!(
+            "gyroflow-app-update-cache-test-{}-{}.bin",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let selection = AppUpdateSelection {
+            platform: "macos".to_owned(),
+            download_url: format!("http://127.0.0.1:9/{filename}"),
+            download_sha256: sha256_hex_for_test(content),
+            download_size: content.len() as u64,
+            ..Default::default()
+        };
+        let cache_dir = app_update_cache_dir().unwrap();
+        fs::create_dir_all(&cache_dir).unwrap();
+        let cached_path = cache_dir.join(app_update_filename(&selection));
+        fs::write(&cached_path, content).unwrap();
+
+        let mut progress_events = Vec::new();
+        let prepared = download_app_update(&selection, |downloaded, total, status| {
+            progress_events.push((downloaded, total, status.to_owned()));
+        })
+        .unwrap();
+
+        assert_eq!(prepared.path, cached_path);
+        assert_eq!(fs::read(&prepared.path).unwrap(), content);
+        assert!(progress_events.iter().any(|(downloaded, total, status)| {
+            *downloaded == content.len() as u64
+                && *total == content.len() as u64
+                && status == "ready"
+        }));
+        let _ = fs::remove_file(prepared.path);
+    }
+
+    #[test]
+    fn download_app_update_reuses_cached_windows_package_file() {
+        let setup_content = b"cached setup payload";
+        let package_content = b"cached windows package payload";
+        let id = format!(
+            "{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let selection = AppUpdateSelection {
+            platform: "windows".to_owned(),
+            download_url: format!("http://127.0.0.1:9/gyroflow-cache-test-{id}-setup.exe"),
+            download_sha256: sha256_hex_for_test(setup_content),
+            download_size: setup_content.len() as u64,
+            package_url: format!("http://127.0.0.1:9/gyroflow-cache-test-{id}-windows.zip"),
+            package_sha256: sha256_hex_for_test(package_content),
+            package_size: package_content.len() as u64,
+            ..Default::default()
+        };
+        let cache_dir = app_update_cache_dir().unwrap();
+        fs::create_dir_all(&cache_dir).unwrap();
+        let setup_path = cache_dir.join(app_update_filename_from_url(
+            &selection.download_url,
+            default_app_update_filename(&selection.platform),
+        ));
+        let package_path = cache_dir.join(app_update_filename_from_url(
+            &selection.package_url,
+            default_windows_package_filename(),
+        ));
+        fs::write(&setup_path, setup_content).unwrap();
+        fs::write(&package_path, package_content).unwrap();
+
+        let prepared = download_app_update(&selection, |_, _, _| {}).unwrap();
+
+        assert_eq!(prepared.path, setup_path);
+        assert_eq!(
+            prepared.package_path.as_deref(),
+            Some(package_path.as_path())
+        );
+        assert_eq!(fs::read(&prepared.path).unwrap(), setup_content);
+        assert_eq!(
+            fs::read(prepared.package_path.as_ref().unwrap()).unwrap(),
+            package_content
+        );
+        let _ = fs::remove_file(prepared.path);
+        if let Some(package_path) = prepared.package_path {
+            let _ = fs::remove_file(package_path);
+        }
+    }
+
+    #[test]
+    fn manual_windows_version_selects_its_own_setup_and_zip_package() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9.9.9",
+                    "manual_versions": [
+                        {
+                            "version": "9.9.8-beta",
+                            "url": "https://example.test/run-42/setup.exe",
+                            "packages": {
+                                "windows": {
+                                    "kind": "web_installer_zip",
+                                    "installer_url": "https://example.test/run-42/setup.exe",
+                                    "installer_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                                    "installer_size": 78,
+                                    "package_url": "https://example.test/run-42/windows.zip",
+                                    "package_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                                    "package_size": 90
+                                }
+                            }
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let selected =
+            manual_app_update_package_for_platform(&manifest, "9.9.8-beta", "windows").unwrap();
+        assert_eq!(selected.version, "9.9.8-beta");
+        assert_eq!(selected.kind, "web_installer_zip");
+        assert_eq!(
+            selected.download_url,
+            "https://example.test/run-42/setup.exe"
+        );
+        assert_eq!(selected.download_sha256, "d".repeat(64));
+        assert_eq!(selected.download_size, 78);
+        assert_eq!(
+            selected.package_url,
+            "https://example.test/run-42/windows.zip"
+        );
+        assert_eq!(selected.package_sha256, "e".repeat(64));
+        assert_eq!(selected.package_size, 90);
+    }
+
+    #[test]
     fn windows_setup_args_include_wait_target_and_package_metadata() {
         let selected = AppUpdateSelection {
             version: "9.9.9".to_owned(),
@@ -1182,6 +1495,7 @@ mod app_update_tests {
             Some("42".to_owned()),
             Some("01db000000000000".to_owned()),
             Some("1234".to_owned()),
+            Some(std::path::Path::new("C:/cache/windows.zip")),
         );
 
         assert!(args.iter().any(|arg| arg == "/UPDATE=1"));
@@ -1193,6 +1507,9 @@ mod app_update_tests {
         assert!(args
             .iter()
             .any(|arg| arg == "/PACKAGEURL=https://example.test/windows.zip"));
+        assert!(args
+            .iter()
+            .any(|arg| arg == "/PACKAGEFILE=C:/cache/windows.zip"));
         assert!(args
             .iter()
             .any(|arg| arg == &format!("/PACKAGESHA256={}", "b".repeat(64))));

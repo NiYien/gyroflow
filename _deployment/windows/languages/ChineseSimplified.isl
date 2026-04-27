@@ -422,3 +422,5 @@ SetupDownloadDescription=安装程序正在下载应用程序包，请稍候。
 SetupMissingPackageUrl=缺少应用程序包 URL。请提供 /PACKAGEURL=<zip_url>，或在构建 setup 时设置 PackageUrl。
 SetupMissingPackageSha256=缺少应用程序包 SHA256。请提供 /PACKAGESHA256=<zip_sha256>，或在构建 setup 时设置 PackageSha256。
 SetupDownloadVerifyFailed=下载或校验 Gyroflow(NiYien) 应用程序包失败。
+SetupMissingPackageFile=找不到本地应用程序包文件。
+SetupPackageFileVerifyFailed=校验本地 Gyroflow(NiYien) 应用程序包失败。

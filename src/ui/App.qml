@@ -1428,11 +1428,44 @@ Rectangle {
             appUpdateDialog.t.horizontalAlignment = Text.AlignLeft;
             updateAppUpdateProgressBar(0, 0);
         }
-        function confirmAndOpenDownloadedUpdate(): void {
-            messageBox(Modal.Info, qsTr("安装更新将退出当前软件，请先确认项目已保存。"), [
-                { text: qsTr("Install and quit"), accent: true, clicked: () => controller.open_downloaded_update_and_quit() },
-                { text: qsTr("Close") }
-            ]);
+        function showManualAppVersionsDialog(): void {
+            let versions = [];
+            let error = "";
+            try {
+                const payload = JSON.parse(controller.fetch_available_versions() || "{}");
+                versions = Array.isArray(payload.versions) ? payload.versions : [];
+                error = payload.error || "";
+            } catch (e) {
+                error = "" + e;
+            }
+            if (versions.length === 0) {
+                messageBox(Modal.Error, error ? qsTr("Update failed: %1").arg(error) : qsTr("No versions available."), [
+                    { text: qsTr("Close") }
+                ]);
+                return;
+            }
+
+            const buttons = [];
+            for (const versionInfo of versions) {
+                const versionText = versionInfo.version || "";
+                if (!versionText) {
+                    continue;
+                }
+                const changelogText = versionInfo.changelog || "";
+                buttons.push({
+                    text: versionText,
+                    clicked: () => {
+                        const heading = "<p align=\"center\">" + qsTr("Version: %1").arg("<b>" + versionText + "</b>") + "</p>\n\n";
+                        Qt.callLater(() => {
+                            showAppUpdateDownloadingDialog(heading, changelogText);
+                            controller.start_app_update_version(versionText);
+                        });
+                    }
+                });
+            }
+            buttons.push({ text: qsTr("Close") });
+            const el = messageBox(Modal.Info, qsTr("Select a version"), buttons, undefined, Text.MarkdownText);
+            el.t.horizontalAlignment = Text.AlignLeft;
         }
         function onUpdates_available(version: string, changelog: string, download_url: string): void {
             const heading = "<p align=\"center\">" + qsTr("There's a newer version available: %1.").arg("<b>" + version + "</b>") + "</p>\n\n";
@@ -1443,7 +1476,7 @@ Rectangle {
                         controller.start_app_update();
                     });
                 }},
-                { text: qsTr("Download page"), clicked: () => openUpdatePage(download_url) },
+                { text: qsTr("Version history"), clicked: showManualAppVersionsDialog },
                 { text: qsTr("Close") }
             ], undefined, Text.MarkdownText);
             el.t.horizontalAlignment = Text.AlignLeft;
@@ -1459,11 +1492,12 @@ Rectangle {
         function onApp_update_ready(path: string, platform: string, message: string): void {
             appUpdateReadyMessage = message || "";
             closeAppUpdateDialog();
+            const quitWarning = qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");
             const extra = platform === "macos"
-                ? "\n\n打开 DMG 后请将 Gyroflow.app 拖入 Applications 文件夹"
+                ? "\n\n" + qsTr("After the DMG opens, drag Gyroflow.app to the Applications folder.")
                 : "";
-            appUpdateDialog = messageBox(Modal.Info, qsTr("Update is ready.") + extra, [
-                { text: platform === "macos" ? qsTr("Open DMG and quit") : qsTr("Install and quit"), accent: true, clicked: confirmAndOpenDownloadedUpdate },
+            appUpdateDialog = messageBox(Modal.Info, qsTr("Update is ready.") + "\n\n" + quitWarning + extra, [
+                { text: platform === "macos" ? qsTr("Open DMG and quit") : qsTr("Install and quit"), accent: true, clicked: () => controller.open_downloaded_update_and_quit() },
                 { text: qsTr("Close") }
             ], undefined, Text.MarkdownText);
         }

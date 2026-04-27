@@ -1149,7 +1149,21 @@ def resolve_app_source(
 def build_global_artifact_app_urls(
     app_tag: str,
     asset_names: Iterable[str],
+    *,
+    github_owner: str = "NiYien",
+    github_repo: str = "gyroflow",
 ) -> dict[str, dict[str, str]]:
+    # GLOBAL artifact builds do not have a GitHub Release tag. Use
+    # nightly.link for global clients; CN routing still uses the 123-backed
+    # /api/download path from the tag-specific branch in docs.
+    run_id_match = re.match(r"^(?:actions-run-|run-)(\d+)$", app_tag)
+    if not run_id_match:
+        return {}
+    run_id = run_id_match.group(1)
+    base = (
+        f"https://nightly.link/{quote(github_owner, safe='')}"
+        f"/{quote(github_repo, safe='')}/actions/runs/{run_id}"
+    )
     urls: dict[str, dict[str, str]] = {}
     for asset_name in sorted(asset_names):
         platform = APP_ASSET_PLATFORM_BY_NAME.get(asset_name)
@@ -1157,7 +1171,7 @@ def build_global_artifact_app_urls(
             continue
         role = APP_ASSET_ROLE_BY_NAME.get(asset_name, "package")
         key = "installer_url" if role == "installer" else "package_url"
-        urls.setdefault(platform, {})[key] = build_download_route_asset_url(app_tag, asset_name)
+        urls.setdefault(platform, {})[key] = f"{base}/{quote(asset_name, safe='')}.zip"
     return urls
 
 

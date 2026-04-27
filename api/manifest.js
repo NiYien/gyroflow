@@ -1,12 +1,14 @@
 const path = require("path");
 const {
   buildDownloadApiUrl,
+  buildManualVersionEntry,
   buildPlatformPackage,
   buildReleaseAssetUrl,
   getDownloadApiBase,
   loadDistributionConfig,
   loadReleasePolicy,
   normalizePlatform,
+  packageMapForPlatform,
   readJsonIfExists,
   resolveCountry,
   selectSource,
@@ -33,12 +35,8 @@ module.exports = async function handler(req, res) {
     .filter((item) => item.channels.includes("manual"))
     .map((item) => {
       const manualPackage = buildPlatformPackage(req, item, source, platform);
-      return {
-        version: item.version,
-        url: manualPackage.installer_url || manualPackage.package_url || "",
-        changelog: item.changelog,
-        recommended: item.recommended,
-      };
+      const manualPackages = packageMapForPlatform(platform, manualPackage);
+      return buildManualVersionEntry(item, manualPackage, manualPackages);
     });
   const platformPackage = buildPlatformPackage(req, autoEntry, source, platform);
   const appPackages = Object.keys(platformPackage).length ? { [platform]: platformPackage } : {};

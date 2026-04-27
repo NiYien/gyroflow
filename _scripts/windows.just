@@ -442,15 +442,23 @@ deploy:
         $AppVersion = python "$ProjectDir\_scripts\niyien_version.py" base --repo-root "$ProjectDir"
         $AppFileVersion = python "$ProjectDir\_scripts\niyien_version.py" file --repo-root "$ProjectDir"
         $CanonicalVersion = python "$ProjectDir\_scripts\niyien_version.py" canonical --repo-root "$ProjectDir"
-        if ($CanonicalVersion.StartsWith("v")) {
-            $PackageTag = $CanonicalVersion
-        } else {
-            $PackageTag = "v$CanonicalVersion"
+        $PackageTag = $Env:NIYIEN_SETUP_PACKAGE_TAG
+        if (-not $PackageTag) {
+            if ($Env:GITHUB_REF_TYPE -eq "tag" -and $Env:GITHUB_REF_NAME) {
+                $PackageTag = $Env:GITHUB_REF_NAME
+            } elseif ($Env:GITHUB_RUN_ID) {
+                $PackageTag = "run-$($Env:GITHUB_RUN_ID)"
+            } elseif ($CanonicalVersion.StartsWith("v")) {
+                $PackageTag = $CanonicalVersion
+            } else {
+                $PackageTag = "v$CanonicalVersion"
+            }
         }
         $DefaultPackageUrl = $Env:NIYIEN_SETUP_PACKAGE_URL
         if (-not $DefaultPackageUrl) {
             $DefaultPackageUrl = "https://www.niyien.com/api/download/app/$PackageTag/$PackageName"
         }
+        Write-Host "Windows setup package URL: $DefaultPackageUrl"
 
         $Iscc = Get-InnoSetupCompiler
         if (-not $Iscc) {

@@ -344,6 +344,72 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>关闭</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1425"/>
+        <source>Downloading update...</source>
+        <translation>正在下载更新...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1432"/>
+        <source>Installing the update will quit Gyroflow. Make sure your project is saved before continuing.</source>
+        <translation>安装更新会退出 Gyroflow。继续前请确认项目已保存。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1433"/>
+        <location filename="../../src/ui/App.qml" line="1506"/>
+        <source>Install and quit</source>
+        <translation>安装并退出</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1448"/>
+        <source>Update failed: %1</source>
+        <translation>更新失败：%1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1448"/>
+        <source>No versions available.</source>
+        <translation>没有可用版本。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1464"/>
+        <source>Version: %1</source>
+        <translation>版本：%1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1473"/>
+        <source>Select a version</source>
+        <translation>选择版本</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1480"/>
+        <source>Install update</source>
+        <translation>安装更新</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1485"/>
+        <source>Version history</source>
+        <translation>历史版本</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1494"/>
+        <source>Downloading update... %1%</source>
+        <translation>正在下载更新... %1%</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1503"/>
+        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
+        <translation>打开 DMG 后，请将 Gyroflow.app 拖入 Applications 文件夹。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1505"/>
+        <source>Update is ready.</source>
+        <translation>更新已准备就绪。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1506"/>
+        <source>Open DMG and quit</source>
+        <translation>打开 DMG 并退出</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1492"/>
         <source>`.gyroflow` file already exists, what do you want to do?</source>
         <translation>`.gyroflow` 文件已经存在，您想要做什么？</translation>

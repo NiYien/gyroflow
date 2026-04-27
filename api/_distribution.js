@@ -472,6 +472,22 @@ function withAbsolutePackageUrls(req, platformPackage) {
   return result;
 }
 
+function packageMapForPlatform(platform, platformPackage) {
+  return Object.keys(platformPackage || {}).length
+    ? { [normalizePlatform(platform)]: platformPackage }
+    : {};
+}
+
+function buildManualVersionEntry(item, manualPackage, manualPackages = {}) {
+  return {
+    version: item.version,
+    url: manualPackage.installer_url || manualPackage.package_url || "",
+    changelog: item.changelog,
+    recommended: item.recommended,
+    packages: manualPackages,
+  };
+}
+
 function defaultPackageKind(platform) {
   return normalizePlatform(platform) === "windows" ? "web_installer_zip" : "dmg";
 }
@@ -558,6 +574,7 @@ module.exports = {
   appPackageAssetName,
   buildDownloadApiUrl,
   buildAppUrl,
+  buildManualVersionEntry,
   buildPlatformPackage,
   buildReleaseAssetUrl,
   getDefaultAppVersion,
@@ -565,6 +582,7 @@ module.exports = {
   loadDistributionConfig,
   loadReleasePolicy,
   normalizePlatform,
+  packageMapForPlatform,
   readJsonIfExists,
   getCountry,
   resolveCountry,

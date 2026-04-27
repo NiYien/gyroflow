@@ -106,6 +106,8 @@ SetupDownloadDescription=Please wait while setup downloads the application packa
 SetupMissingPackageUrl=Missing package URL. Provide /PACKAGEURL=<zip_url> or build setup with PackageUrl.
 SetupMissingPackageSha256=Missing package SHA256. Provide /PACKAGESHA256=<zip_sha256> or build setup with PackageSha256.
 SetupDownloadVerifyFailed=Failed to download or verify Gyroflow(NiYien) package.
+SetupMissingPackageFile=Local package file was not found.
+SetupPackageFileVerifyFailed=Failed to verify local Gyroflow(NiYien) package.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -125,7 +127,7 @@ Filename: "{app}\Gyroflow.exe"; Flags: nowait skipifsilent; Check: ShouldLaunchF
 Type: dirifempty; Name: "{app}"
 
 [Code]
-// Command-line switches: /UPDATE=1 /WAITHANDLE=<handle> /WAITPID=<pid> /WAITSTART=<filetime_hex> /DIR=<install_dir> /PACKAGEURL=<zip_url> /PACKAGESHA256=<zip_sha256> /PACKAGESIZE=<zip_size> /LAUNCH=1
+// Command-line switches: /UPDATE=1 /WAITHANDLE=<handle> /WAITPID=<pid> /WAITSTART=<filetime_hex> /DIR=<install_dir> /PACKAGEFILE=<local_zip> /PACKAGEURL=<zip_url> /PACKAGESHA256=<zip_sha256> /PACKAGESIZE=<zip_size> /LAUNCH=1
 type
   TWinFileTime = record
     dwLowDateTime: LongWord;
@@ -145,6 +147,7 @@ var
   LaunchAfterInstall: Boolean;
   ActiveInstallDir: String;
   ActivePackageUrl: String;
+  ActivePackageFile: String;
   ActivePackageSha256: String;
   ActivePackageSize: Int64;
   WaitHandleValue: String;
@@ -350,6 +353,33 @@ begin
     DownloadPage.SetProgress(0, 0);
 end;
 
+function StageLocalPackageFile: Boolean;
+var
+  ZipPath: String;
+  ActualSha256: String;
+begin
+  Result := False;
+  if not FileExists(ActivePackageFile) then
+  begin
+    SuppressibleMsgBox(ExpandConstant('{cm:SetupMissingPackageFile}') + #13#10 + ActivePackageFile, mbCriticalError, MB_OK, IDOK);
+    Exit;
+  end;
+
+  ZipPath := ExpandConstant('{tmp}\{#PackageFilename}');
+  Log('Using local Gyroflow package file ' + ActivePackageFile);
+  try
+    ActualSha256 := LowerCase(GetSHA256OfFile(ActivePackageFile));
+    if ActualSha256 <> LowerCase(ActivePackageSha256) then
+      RaiseException('Local package SHA256 mismatch.');
+    if not FileCopy(ActivePackageFile, ZipPath, False) then
+      RaiseException('Failed to stage local package file.');
+    PackageWasFetched := True;
+    Result := True;
+  except
+    SuppressibleMsgBox(ExpandConstant('{cm:SetupPackageFileVerifyFailed}') + #13#10 + GetExceptionMessage, mbCriticalError, MB_OK, IDOK);
+  end;
+end;
+
 function DownloadAndVerifyPackage: Boolean;
 var
   ZipPath: String;
@@ -357,7 +387,7 @@ var
 begin
   Result := False;
 
-  if ActivePackageUrl = '' then
+  if (ActivePackageUrl = '') and (ActivePackageFile = '') then
   begin
     SuppressibleMsgBox(ExpandConstant('{cm:SetupMissingPackageUrl}'), mbCriticalError, MB_OK, IDOK);
     Exit;
@@ -366,6 +396,12 @@ begin
   if ActivePackageSha256 = '' then
   begin
     SuppressibleMsgBox(ExpandConstant('{cm:SetupMissingPackageSha256}'), mbCriticalError, MB_OK, IDOK);
+    Exit;
+  end;
+
+  if ActivePackageFile <> '' then
+  begin
+    Result := StageLocalPackageFile;
     Exit;
   end;
 
@@ -393,6 +429,7 @@ begin
   IsUpdateMode := IsSwitchEnabled('UPDATE', '0');
   ActiveInstallDir := GetSwitchValue('DIR', '');
   ActivePackageUrl := GetSwitchValue('PACKAGEURL', '{#PackageUrl}');
+  ActivePackageFile := GetSwitchValue('PACKAGEFILE', '');
   ActivePackageSha256 := GetSwitchValue('PACKAGESHA256', '{#PackageSha256}');
   ActivePackageSize := StrToInt64Def(GetSwitchValue('PACKAGESIZE', '{#PackageSize}'), 0);
   WaitHandleValue := GetSwitchValue('WAITHANDLE', '');
