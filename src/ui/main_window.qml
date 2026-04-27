@@ -84,6 +84,7 @@ Window {
         if (app) {
             close.accepted = closeConfirmed || !app.wasModified;
             if (close.accepted) {
+                settings.flush();
                 ui_tools.closing();
                 main_controller.cancel_current_operation();
                 if (typeof calib_controller !== "undefined")

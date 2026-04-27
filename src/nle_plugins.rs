@@ -347,7 +347,10 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
             Ok(a) => a,
             Err(e) => {
                 ::log::error!("[nle install] zip open failed: {e}");
-                return Err(io::Error::new(io::ErrorKind::InvalidData, format!("zip open: {e}")));
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("zip open: {e}"),
+                ));
             }
         };
         ::log::info!(
@@ -501,7 +504,11 @@ pub fn detect(typ: &str) -> io::Result<String> {
     let path = get_path(typ);
     ::log::info!(
         "[nle detect] typ={typ:?} get_path={path:?} exists={}",
-        if path.is_empty() { false } else { Path::new(path).exists() }
+        if path.is_empty() {
+            false
+        } else {
+            Path::new(path).exists()
+        }
     );
     #[cfg(target_os = "windows")]
     {
@@ -527,9 +534,7 @@ pub fn detect(typ: &str) -> io::Result<String> {
         if Path::new(path).exists() {
             let plist_path = format!("{path}/Contents/Info.plist");
             let version = query_file_version_from_plist(&plist_path);
-            ::log::info!(
-                "[nle detect] macos plist_path={plist_path:?} query_result={version:?}"
-            );
+            ::log::info!("[nle detect] macos plist_path={plist_path:?} query_result={version:?}");
             Ok(version.unwrap_or_default())
         } else {
             ::log::info!("[nle detect] macos: path missing, returning empty version");

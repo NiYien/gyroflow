@@ -314,6 +314,16 @@ impl UITools {
     }
 }
 
+pub fn theme_name_from_index(index: u64) -> &'static str {
+    match index {
+        0 => "light",
+        1 => "dark",
+        2 => "mobile_light",
+        3 => "mobile_dark",
+        _ => "dark",
+    }
+}
+
 pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) -> (String, usize) {
     // Convert the string to a number and find its decimal point
     let number = match num_str.parse::<f64>() {
@@ -404,6 +414,15 @@ pub fn modify_digit_impl(num_str: &str, cursor_position: usize, increase: bool) 
 mod tests {
     use super::*;
     use test_case::test_case;
+
+    #[test_case(0, "light")]
+    #[test_case(1, "dark")]
+    #[test_case(2, "mobile_light")]
+    #[test_case(3, "mobile_dark")]
+    #[test_case(99, "dark")]
+    fn test_theme_name_from_index(index: u64, expected: &str) {
+        assert_eq!(theme_name_from_index(index), expected);
+    }
 
     #[test_case(("0", 0, true), ("1", 0))]
     #[test_case(("0", 0, false), ("-1", 1))]

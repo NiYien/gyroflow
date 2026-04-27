@@ -17,8 +17,8 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
+    Arc,
 };
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
@@ -586,8 +586,17 @@ pub struct RenderQueue {
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
-    list_video_files_in_folder: qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
-    filter_paired_gyroflow_siblings: qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    list_video_files_in_folder:
+        qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
+    filter_paired_gyroflow_siblings:
+        qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    first_renderable_video_file:
+        qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    is_gyro_mix_file: qt_method!(fn(&self, url: String) -> bool),
+    has_supported_drop_item:
+        qt_method!(fn(&self, urls_json: String, extensions_json: String) -> bool),
+    filter_supported_drop_items:
+        qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
     first_file_requiring_external_sdk: qt_method!(fn(&self, urls_json: String) -> QString),
     remove_gyro_file: qt_method!(fn(&mut self, index: usize)),
     clear_gyro_files: qt_method!(fn(&mut self)),
@@ -2998,22 +3007,18 @@ impl RenderQueue {
                                     );
                                     let new_ts = ((x.0 - x.1) * 1000.0) as i64;
                                     let confidence = x.3;
-                                    {
-                                        // Check the offset — confidence ≥ 0.4 bypass rank
-                                        if confidence < 0.4 {
-                                            let sync_data = stab2.sync_data.read();
-                                            if !sync_data.rank.is_empty() {
-                                                let index = ((x.0 - x.1) as f64
-                                                    / (sync_data.ratio * 1000.0))
-                                                    .round()
-                                                    as usize;
-                                                if index < sync_data.rank.len()
-                                                    && sync_data.rank[index] < 13.0
-                                                {
-                                                    continue;
-                                                }
-                                            }
-                                        }
+                                    if confidence < 0.4 {
+                                        // Drop low-confidence sync points unconditionally
+                                        // (NCC fusion's weak_signal pearson_peak can pick
+                                        // noise peaks; previously rank-bypass let stale
+                                        // high-rank entries through after auto sync filled
+                                        // sync_data.rank).
+                                        ::log::info!(
+                                            "Dropping sync point at {:.4}: conf {:.3} < 0.4",
+                                            x.0,
+                                            confidence
+                                        );
+                                        continue;
                                     }
                                     // Remove existing offsets within 100ms range
                                     gyro.remove_offsets_near(new_ts, 100.0);
@@ -3628,7 +3633,11 @@ impl RenderQueue {
         let entries = match std::fs::read_dir(dir) {
             Ok(e) => e,
             Err(e) => {
-                ::log::warn!("[scan_video_folder] cannot read dir {}: {:?}", dir.display(), e);
+                ::log::warn!(
+                    "[scan_video_folder] cannot read dir {}: {:?}",
+                    dir.display(),
+                    e
+                );
                 return;
             }
         };
@@ -3678,7 +3687,15 @@ impl RenderQueue {
             if out.len() >= max_results {
                 return;
             }
-            Self::scan_video_folder(&d, depth + 1, max_depth, max_results, exts_lower, suffix_lower, out);
+            Self::scan_video_folder(
+                &d,
+                depth + 1,
+                max_depth,
+                max_results,
+                exts_lower,
+                suffix_lower,
+                out,
+            );
         }
     }
 
@@ -3711,6 +3728,29 @@ impl RenderQueue {
                 result.len()
             );
         }
+        QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    fn first_renderable_video_file(&self, urls_json: String, extensions_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let extensions: Vec<String> = serde_json::from_str(&extensions_json).unwrap_or_default();
+        QString::from(first_renderable_video_file_impl(&urls, &extensions).unwrap_or_default())
+    }
+
+    fn is_gyro_mix_file(&self, url: String) -> bool {
+        is_gyro_mix_file_url_impl(&url)
+    }
+
+    fn has_supported_drop_item(&self, urls_json: String, extensions_json: String) -> bool {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let extensions: Vec<String> = serde_json::from_str(&extensions_json).unwrap_or_default();
+        has_supported_drop_item_impl(&urls, &extensions)
+    }
+
+    fn filter_supported_drop_items(&self, urls_json: String, extensions_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let extensions: Vec<String> = serde_json::from_str(&extensions_json).unwrap_or_default();
+        let result = filter_supported_drop_items_impl(&urls, &extensions);
         QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
     }
 
@@ -6016,6 +6056,67 @@ fn filter_paired_gyroflow_siblings_impl(urls: &[String], extensions: &[String]) 
         .collect()
 }
 
+fn file_extension(url: &str) -> Option<String> {
+    let dot = url.rfind('.')?;
+    let slash_idx = url.rfind(['/', '\\']).unwrap_or(0);
+    if dot <= slash_idx {
+        return None;
+    }
+    Some(url[dot + 1..].to_ascii_lowercase())
+}
+
+fn first_renderable_video_file_impl(urls: &[String], extensions: &[String]) -> Option<String> {
+    let video_exts: std::collections::HashSet<String> = extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+        .filter(|e| e != "gyroflow")
+        .collect();
+
+    urls.iter().find_map(|url| {
+        file_extension(url)
+            .filter(|ext| video_exts.contains(ext))
+            .map(|_| url.clone())
+    })
+}
+
+fn is_gyro_mix_file_url_impl(url: &str) -> bool {
+    filesystem::get_filename(url)
+        .to_ascii_lowercase()
+        .ends_with("_mix.bin")
+}
+
+fn is_supported_drop_item_impl(url: &str, accepted_exts: &HashSet<String>) -> bool {
+    if is_gyro_mix_file_url_impl(url) {
+        return true;
+    }
+    match file_extension(url) {
+        Some(ext) => ext == "rdc" || accepted_exts.contains(&ext),
+        None => true,
+    }
+}
+
+fn accepted_drop_extensions(extensions: &[String]) -> HashSet<String> {
+    extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+        .collect()
+}
+
+fn filter_supported_drop_items_impl(urls: &[String], extensions: &[String]) -> Vec<String> {
+    let accepted_exts = accepted_drop_extensions(extensions);
+    urls.iter()
+        .filter(|url| is_supported_drop_item_impl(url, &accepted_exts))
+        .cloned()
+        .collect()
+}
+
+fn has_supported_drop_item_impl(urls: &[String], extensions: &[String]) -> bool {
+    let accepted_exts = accepted_drop_extensions(extensions);
+
+    urls.iter()
+        .any(|url| is_supported_drop_item_impl(url, &accepted_exts))
+}
+
 fn first_url_requiring_external_sdk_impl<F>(
     urls: &[String],
     mut requires_install: F,
@@ -6309,7 +6410,10 @@ mod tests {
     fn filter_pairs_empty_and_single_are_noop() {
         assert!(filter_paired_gyroflow_siblings_impl(&[], &default_exts()).is_empty());
         let one = vec!["file:///C:/a.mp4".to_string()];
-        assert_eq!(filter_paired_gyroflow_siblings_impl(&one, &default_exts()), one);
+        assert_eq!(
+            filter_paired_gyroflow_siblings_impl(&one, &default_exts()),
+            one
+        );
     }
 
     #[test]
@@ -6341,5 +6445,73 @@ mod tests {
 
         assert_eq!(out, Some("file:///C:/clips/needs-red.R3D".to_string()));
         assert_eq!(checked, vec!["a.mp4", "needs-red.R3D"]);
+    }
+
+    #[test]
+    fn first_renderable_video_file_uses_later_video_when_first_is_gyroflow() {
+        let urls = vec![
+            "file:///C:/clips/session.gyroflow".to_string(),
+            "file:///C:/clips/clip.mp4".to_string(),
+        ];
+
+        let out = first_renderable_video_file_impl(&urls, &default_exts());
+
+        assert_eq!(out, Some("file:///C:/clips/clip.mp4".to_string()));
+    }
+
+    #[test]
+    fn gyro_mix_file_detection_accepts_only_mix_bin_suffix() {
+        assert!(is_gyro_mix_file_url_impl("file:///C:/clips/cam_mix.bin"));
+        assert!(is_gyro_mix_file_url_impl("file:///C:/clips/CAM_MIX.BIN"));
+        assert!(!is_gyro_mix_file_url_impl("file:///C:/clips/cam.bin"));
+        assert!(!is_gyro_mix_file_url_impl("file:///C:/clips/cam_mix.txt"));
+    }
+
+    #[test]
+    fn supported_drop_item_accepts_mix_bin_when_it_is_first_url() {
+        let urls = vec![
+            "file:///C:/clips/cam_mix.bin".to_string(),
+            "file:///C:/clips/clip.mov".to_string(),
+        ];
+
+        assert!(has_supported_drop_item_impl(&urls, &default_exts()));
+    }
+
+    #[test]
+    fn supported_drop_item_rejects_plain_bin_without_video_or_folder() {
+        let urls = vec!["file:///C:/clips/cam.bin".to_string()];
+
+        assert!(!has_supported_drop_item_impl(&urls, &default_exts()));
+    }
+
+    #[test]
+    fn supported_drop_filter_drops_unknown_file_when_video_is_present() {
+        let urls = vec![
+            "file:///C:/clips/notes.txt".to_string(),
+            "file:///C:/clips/clip.mov".to_string(),
+        ];
+
+        let out = filter_supported_drop_items_impl(&urls, &default_exts());
+
+        assert_eq!(out, vec!["file:///C:/clips/clip.mov".to_string()]);
+    }
+
+    #[test]
+    fn supported_drop_filter_drops_plain_bin_but_keeps_mix_bin() {
+        let urls = vec![
+            "file:///C:/clips/plain.bin".to_string(),
+            "file:///C:/clips/cam_mix.bin".to_string(),
+            "file:///C:/clips/clip.mov".to_string(),
+        ];
+
+        let out = filter_supported_drop_items_impl(&urls, &default_exts());
+
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/clips/cam_mix.bin".to_string(),
+                "file:///C:/clips/clip.mov".to_string(),
+            ]
+        );
     }
 }

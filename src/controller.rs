@@ -622,21 +622,15 @@ impl Controller {
                         );
                         let new_ts = ((x.0 - x.1) * 1000.0) as i64;
                         let confidence = x.3;
-                        {
-                            // Check the offset — when confidence ≥ 0.4 (NCC-verified),
-                            // bypass sync_data.rank filter (NCC is a more reliable quality metric than rank)
-                            if confidence < 0.4 {
-                                let sync_data = this.stabilizer.sync_data.read();
-                                if !sync_data.rank.is_empty() {
-                                    let index = ((x.0 - x.1) as f64 / (sync_data.ratio * 1000.0))
-                                        .round()
-                                        as usize;
-                                    if index < sync_data.rank.len() && sync_data.rank[index] < 13.0
-                                    {
-                                        continue;
-                                    }
-                                }
-                            }
+                        if confidence < 0.4 {
+                            // Drop low-confidence sync points unconditionally
+                            // (see render_queue.rs comment).
+                            ::log::info!(
+                                "Dropping sync point at {:.4}: conf {:.3} < 0.4",
+                                x.0,
+                                confidence
+                            );
+                            continue;
                         }
                         // Remove existing offsets within 100ms range
                         gyro.remove_offsets_near(new_ts, 100.0);

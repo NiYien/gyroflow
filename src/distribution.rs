@@ -1049,12 +1049,12 @@ fn launch_windows_setup_with_inherited_handle(
     use std::mem::{size_of, zeroed};
     use std::ptr::{null, null_mut};
     use windows_sys::Win32::Foundation::{
-        CloseHandle, DuplicateHandle, DUPLICATE_SAME_ACCESS, HANDLE,
+        CloseHandle, DUPLICATE_SAME_ACCESS, DuplicateHandle, HANDLE,
     };
     use windows_sys::Win32::System::Threading::{
-        CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess,
-        InitializeProcThreadAttributeList, UpdateProcThreadAttribute, EXTENDED_STARTUPINFO_PRESENT,
-        PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, STARTUPINFOEXW,
+        CreateProcessW, DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
+        GetCurrentProcess, InitializeProcThreadAttributeList, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        PROCESS_INFORMATION, STARTUPINFOEXW, UpdateProcThreadAttribute,
     };
 
     unsafe {
@@ -1504,15 +1504,18 @@ mod app_update_tests {
         assert!(args.iter().any(|arg| arg == "/WAITPID=42"));
         assert!(args.iter().any(|arg| arg == "/WAITSTART=01db000000000000"));
         assert!(args.iter().any(|arg| arg == "/DIR=C:/Gyroflow"));
-        assert!(args
-            .iter()
-            .any(|arg| arg == "/PACKAGEURL=https://example.test/windows.zip"));
-        assert!(args
-            .iter()
-            .any(|arg| arg == "/PACKAGEFILE=C:/cache/windows.zip"));
-        assert!(args
-            .iter()
-            .any(|arg| arg == &format!("/PACKAGESHA256={}", "b".repeat(64))));
+        assert!(
+            args.iter()
+                .any(|arg| arg == "/PACKAGEURL=https://example.test/windows.zip")
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == "/PACKAGEFILE=C:/cache/windows.zip")
+        );
+        assert!(
+            args.iter()
+                .any(|arg| arg == &format!("/PACKAGESHA256={}", "b".repeat(64)))
+        );
         assert!(args.iter().any(|arg| arg == "/PACKAGESIZE=34"));
     }
 }

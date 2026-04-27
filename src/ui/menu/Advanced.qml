@@ -55,6 +55,30 @@ MenuItem {
         if (obj.hasOwnProperty("background_margin_feather")) featherPixels.value = +obj.background_margin_feather;
         if (obj.hasOwnProperty("background_color")) renderBackground.text = Qt.rgba(obj.background_color[0], obj.background_color[1], obj.background_color[2], obj.background_color[3]).toString();
     }
+    function normalizedThemeIndex(index): int {
+        const count = themeList.model.length;
+        if (count <= 0) return -1;
+
+        const parsed = Math.floor(+index);
+        if (isNaN(parsed) || parsed < 0 || parsed >= count)
+            return Math.min(1, count - 1);
+
+        return parsed;
+    }
+    function setThemeIndex(index, persist): void {
+        const nextIndex = normalizedThemeIndex(index);
+        if (nextIndex < 0) return;
+
+        const themes = ["light", "dark", "mobile_light", "mobile_dark"];
+        themeList.updatingTheme = true;
+        if (themeList.currentIndex !== nextIndex)
+            themeList.currentIndex = nextIndex;
+        themeList.updatingTheme = false;
+
+        ui_tools.set_theme(themes[nextIndex]);
+        if (persist)
+            settings.setValue("theme", nextIndex);
+    }
     function showAvailableVersions(): void {
         const payloadText = controller.fetch_available_versions();
         let payload = { versions: [], error: "" };
@@ -185,6 +209,7 @@ MenuItem {
 
         ComboBox {
             id: themeList;
+            property bool updatingTheme: false;
             model: [];
             font.pixelSize: 12 * dpiScale;
             width: parent.width;
@@ -196,14 +221,13 @@ MenuItem {
                     m.push(QT_TRANSLATE_NOOP("Popup", "Mobile Dark"));
                 }
                 model = m;
-                currentIndex = savedTheme;
+                root.setThemeIndex(savedTheme, false);
             }
             onCurrentIndexChanged: {
-                const themes = ["light", "dark", "mobile_light", "mobile_dark"];
-                let theme = themes[currentIndex];
-                ui_tools.set_theme(theme);
-                settings.setValue("theme", currentIndex);
+                if (!updatingTheme)
+                    root.setThemeIndex(currentIndex, false);
             }
+            onActivated: (index) => root.setThemeIndex(index, true);
         }
     }
     Label {

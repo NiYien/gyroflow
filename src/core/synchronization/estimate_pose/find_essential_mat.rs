@@ -49,15 +49,34 @@ impl EstimatePoseTrait for PoseFindEssentialMat {
 
             let identity = Mat::eye(3, 3, opencv::core::CV_64F)?;
 
+            // Adaptive threshold: 1.0 px / fx (normalized space). Long-focal
+            // lenses get tighter threshold (e.g. f=5000 → 0.0002), short-focal
+            // gets ~0.001. MAGSAC++ marginalizes over thresholds anyway, so
+            // this is fine-tuning. Fallback to 0.001 if fx unavailable.
+            let normalized_threshold: f64 = {
+                let (camera_matrix, _, _, _, _, _) = FrameTransform::get_lens_data_at_timestamp(
+                    params,
+                    timestamp_us as f64 / 1000.0,
+                    false,
+                );
+                let img_dim_ratio = size.0 as f64 / (params.width.max(1)) as f64;
+                let scaled_fx = camera_matrix[(0, 0)] * img_dim_ratio;
+                if scaled_fx > 1.0 {
+                    1.0 / scaled_fx
+                } else {
+                    0.001
+                }
+            };
+
             let mut mask = Mat::default();
             let e = opencv::calib3d::find_essential_mat(
                 &a1_pts,
                 &a2_pts,
                 &identity,
-                opencv::calib3d::LMEDS,
+                opencv::calib3d::USAC_MAGSAC,
                 0.999,
-                0.00001,
-                4000,
+                normalized_threshold,
+                1000, // USAC adaptive sampling early-stops well before this
                 &mut mask,
             )?;
 
@@ -80,6 +99,15 @@ impl EstimatePoseTrait for PoseFindEssentialMat {
             }
 
             let rot = cv_to_na(r1)?;
+            // R direction 4-fold ambiguity (cheirality degeneracy in long-focal
+            // outlier-heavy DIS) is mitigated downstream in rs_sync.rs via:
+            // (a) hybrid cost threshold (cost ≤ 100 trusts rs_argmin which
+            //     itself is cheirality-robust because LBFGS minimizes over
+            //     IMU-driven cost, not vision-only triangulation)
+            // (b) ncc_fusion_decide pearson/ncc fallback for cost > 100 segments
+            // (c) conf-based filter on the upstream consumer side.
+            // Per-frame IMU vote was attempted but found too noisy (frame-pair
+            // R ≈ 1°, dot product noise-dominated under sync chicken-and-egg).
             if crate::synchronization::sync_diag::is_enabled() {
                 let sa = rot.scaled_axis();
                 let angle_rad = sa.norm();

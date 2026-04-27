@@ -557,16 +557,20 @@ Item {
             return;
         }
 
-        // If nothing remains except .gyroflow files (no matching videos in list),
+        // If no renderable video remains and this is only .gyroflow data,
         // preserve legacy behavior: load the first one in the main area.
-        let anyNonGyroflow = false;
+        const firstVideoUrl = render_queue.first_renderable_video_file(
+            JSON.stringify(effective.map(u => u.toString())),
+            JSON.stringify(fileDialog.extensions)
+        );
+        let allGyroflow = true;
         for (const u of effective) {
             if (!filesystem.get_filename(u).toLowerCase().endsWith(".gyroflow")) {
-                anyNonGyroflow = true;
+                allGyroflow = false;
                 break;
             }
         }
-        if (!anyNonGyroflow) {
+        if (!firstVideoUrl && allGyroflow) {
             root.loadFile(effective[0], skip_detection);
             return;
         }
@@ -952,11 +956,12 @@ Item {
 
             onEntered: (drag) => {
                 if (!drag.urls.length) return;
-                const url = drag.urls[0].toString();
-                const ext = url.split(".").pop().toLowerCase();
-                // [queue-pair-ux T6] 无扩展名（可能是文件夹）也允许拖入
-                const hasExtension = url.includes(".");
-                drag.accepted = !hasExtension || fileDialog.extensions.indexOf(ext) > -1 || ext == "rdc";
+                let urlStrings = [];
+                for (const url of drag.urls) urlStrings.push(url.toString());
+                drag.accepted = render_queue.has_supported_drop_item(
+                    JSON.stringify(urlStrings),
+                    JSON.stringify(fileDialog.extensions)
+                );
             }
             onDropped: (drop) => {
                 if (isCalibrator) {
@@ -966,10 +971,27 @@ Item {
                 // [queue-pair-ux T6] 分离文件夹和普通文件
                 let fileUrls = [];
                 let hasFolder = false;
-                for (const url of drop.urls) {
+                let hasGyroFile = false;
+                let filteredUrls = drop.urls;
+                try {
+                    let urlStrings = [];
+                    for (const url of drop.urls) urlStrings.push(url.toString());
+                    filteredUrls = JSON.parse(render_queue.filter_supported_drop_items(
+                        JSON.stringify(urlStrings),
+                        JSON.stringify(fileDialog.extensions)
+                    ));
+                } catch (e) {
+                    console.log("filter_supported_drop_items failed:", e);
+                }
+                for (const url of filteredUrls) {
                     const fname = filesystem.get_filename(url).toLowerCase();
-                    if (!fname.includes(".")) {
-                        // No extension: treat as folder. Scan gyro .bin files AND
+                    if (render_queue.is_gyro_mix_file(url.toString())) {
+                        render_queue.add_gyro_file(url.toString());
+                        hasGyroFile = true;
+                    } else if (fname.endsWith(".bin")) {
+                        continue;
+                    } else if (!fname.includes(".")) {
+                        // No extension: treat as folder. Scan gyro _mix.bin files AND
                         // recursively scan video files (max depth 3, max 600 videos,
                         // extension-filtered, excluding files whose stem ends with
                         // the configured output suffix, e.g. _stabilized).
@@ -990,7 +1012,7 @@ Item {
                     }
                 }
                 // 有文件夹拖入时自动打开渲染队列面板
-                if (hasFolder && queue.item) {
+                if ((hasFolder || hasGyroFile) && queue.item) {
                     queue.item.shown = true;
                 }
                 // 剩余普通文件走原有逻辑

@@ -1192,10 +1192,9 @@ Rectangle {
                             font.pixelSize: 11 * dpiScale;
                             width: parent.width;
                             currentIndex: window.advanced ? window.advanced.themeList.currentIndex : 1;
-                            onCurrentIndexChanged: {
-                                if (window.advanced && window.advanced.themeList.currentIndex !== currentIndex) {
-                                    window.advanced.themeList.currentIndex = currentIndex;
-                                }
+                            onActivated: (index) => {
+                                if (window.advanced)
+                                    window.advanced.setThemeIndex(index, true);
                             }
                         }
                     }

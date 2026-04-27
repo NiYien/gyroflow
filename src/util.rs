@@ -361,7 +361,9 @@ pub fn invalidate_qt_cache_if_version_changed() {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
     let cache_dir = gyroflow_core::settings::data_dir().join("cache");
     let stamp_file = cache_dir.join(".gyroflow-qt-cache-stamp");
-    let prev = std::fs::read_to_string(&stamp_file).ok().unwrap_or_default();
+    let prev = std::fs::read_to_string(&stamp_file)
+        .ok()
+        .unwrap_or_default();
     if prev.trim() == VERSION {
         return;
     }

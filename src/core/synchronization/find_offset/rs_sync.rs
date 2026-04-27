@@ -94,10 +94,15 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
             fs_t0.elapsed().as_secs_f64() * 1000.0,
             offsets.len()
         );
+        let bypass_fusion = std::env::var("GYROFLOW_BYPASS_FUSION")
+            .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
         let use_old_rerank = std::env::var("GYROFLOW_SYNC_OLD_RERANK")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
-        if use_old_rerank {
+        if bypass_fusion {
+            log::info!("[rssync] BYPASS FUSION — using raw full_sync() output (matches upstream main)");
+        } else if use_old_rerank {
             finder.correlation_rerank(&mut offsets, estimator, ranges, params);
         } else {
             finder.ncc_fusion_decide(&mut offsets, estimator, ranges, params);
@@ -329,11 +334,11 @@ impl FindOffsetsRssync<'_> {
             );
             let sync_call_ms = sync_call_t0.elapsed().as_secs_f64() * 1000.0;
             if let Some((delay, curve)) = delay_res {
-                self.presync_curves[range_idx] = curve;
                 let offset = delay.1 * 1000.0;
                 // Only accept offsets that are within 90% of search size range
                 let final_offset_external_ms;
-                if (offset - initial_delay).abs() < presync_radius * 0.9 {
+                let bounded_max = presync_radius * 0.9;
+                if (offset - initial_delay).abs() < bounded_max {
                     let final_offset = -offset - (self.frame_readout_time * 1000.0 / 2.0);
                     final_offset_external_ms = final_offset;
                     offsets.push((
@@ -344,12 +349,47 @@ impl FindOffsetsRssync<'_> {
                     ));
                 } else {
                     log::warn!(
-                        "Sync point out of acceptable range {} < {}",
+                        "LBFGS out of bounds {:.1} > {:.1} — fallback to grid argmin within bounds",
                         (offset - initial_delay).abs(),
-                        presync_radius * 0.9
+                        bounded_max
                     );
-                    final_offset_external_ms = -offset - (self.frame_readout_time * 1000.0 / 2.0);
+                    // Fallback: scan grid curve for lowest cost within bounds.
+                    // curve is Vec<(cost, delay_s)> from full_sync_with_curve's
+                    // pre-search grid (5ms step). delay_s is rs-sync internal
+                    // (pre-frt-comp), same convention as `offset` here.
+                    let mut best: Option<(f64, f64)> = None; // (cost, delay_s)
+                    for &(c, d_s) in curve.iter() {
+                        let off_ms = d_s * 1000.0;
+                        if (off_ms - initial_delay).abs() < bounded_max && c.is_finite() {
+                            match best {
+                                None => best = Some((c, d_s)),
+                                Some((bc, _)) if c < bc => best = Some((c, d_s)),
+                                _ => {}
+                            }
+                        }
+                    }
+                    if let Some((b_cost, b_delay_s)) = best {
+                        let b_offset = b_delay_s * 1000.0;
+                        let final_offset =
+                            -b_offset - (self.frame_readout_time * 1000.0 / 2.0);
+                        log::info!(
+                            "[rssync] grid fallback: offset={:.1}ms cost={:.4}",
+                            -b_offset, b_cost
+                        );
+                        final_offset_external_ms = final_offset;
+                        offsets.push((
+                            (from_ts + to_ts) as f64 / 2.0 / 1000.0,
+                            final_offset,
+                            b_cost,
+                            0.5,
+                        ));
+                    } else {
+                        log::warn!("[rssync] no grid candidate within bounds, segment dropped");
+                        final_offset_external_ms =
+                            -offset - (self.frame_readout_time * 1000.0 / 2.0);
+                    }
                 }
+                self.presync_curves[range_idx] = curve;
 
                 // Note: cost curve scan (5ms step, 600 pre_sync calls) + diag logging
                 // moved to `scan_cost_curve_per_seg` in `ncc_fusion_decide`. Reason:
@@ -694,7 +734,33 @@ impl FindOffsetsRssync<'_> {
         let raw_imu = gyro.raw_imu(&md);
         let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
 
+        // Hybrid cost threshold: per-segment, if rs-sync internal LBFGS cost
+        // is below this, trust raw rs_argmin (skip fusion 4-candidate logic
+        // which can wrongly reject correct rs_argmin in segments where
+        // est_gyro Pearson r is negative due to small frame-pair noise).
+        // Empirical from long-focal video: rs-sync-converged segments cost
+        // 1-100, non-converged cost > 1000. 100 is a clean separator.
+        // Override via GYROFLOW_FUSION_COST_THRESHOLD=<f64>.
+        let fusion_cost_threshold: f64 = std::env::var("GYROFLOW_FUSION_COST_THRESHOLD")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(100.0);
+
         for i in 0..offsets.len() {
+            // Hybrid bypass: trust raw rs_argmin when rs-sync converged well
+            let raw_cost = offsets[i].2;
+            if raw_cost.is_finite() && raw_cost <= fusion_cost_threshold {
+                log::info!(
+                    "[ncc-fuse] seg {}: cost={:.2} ≤ {:.0} → bypass fusion (trust rs_argmin offset={:.1}ms)",
+                    i,
+                    raw_cost,
+                    fusion_cost_threshold,
+                    offsets[i].1
+                );
+                // offsets[i] already (mid_ms, rs_argmin_offset, cost, 0.5);
+                // keep conf=0.5 as raw rs_argmin trust signal.
+                continue;
+            }
             let seg_t0 = std::time::Instant::now();
             let mut tik_ns: u64 = 0;
             let mut cost_scan_ns: u64 = 0;
@@ -1302,13 +1368,20 @@ impl FindOffsetsRssync<'_> {
 
             // Confidence: cluster_fraction × max_pearson_in_cluster, with
             // quality_warn / refine_failed clamped to low confidence for UI filter.
+            // 4-candidate unanimous bonus: when all 4 candidates (rs_argmin,
+            // rs_best_offs, ncc_peak, pearson_peak) cluster within 30ms, the
+            // output is highly trustworthy even if best_r is moderate (e.g.
+            // long-focal weak-signal segments where r naturally caps ~0.35).
+            // Lift conf above 0.4 filter threshold to avoid mis-dropping.
             let cluster_frac = cluster_frac_pre;
             let confidence = if quality_warn.is_some() || !refine_ok {
                 peak_h.min(0.2).max(0.05)
             } else {
                 // Use Pearson r at the refined output (most direct signal-quality
                 // measure), weighted by cluster agreement fraction.
-                (cluster_frac * best_r_refined).clamp(0.05, 1.0)
+                let base = cluster_frac * best_r_refined;
+                let unanimous_bonus = if cluster_frac >= 0.95 { 0.15 } else { 0.0 };
+                (base + unanimous_bonus).clamp(0.05, 1.0)
             };
 
             let path_str_owned = if use_rs_shortcut {

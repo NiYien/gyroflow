@@ -40,7 +40,7 @@ use ui::components::FrequencyGraph::FrequencyGraph;
 use ui::components::Settings::Settings;
 use ui::components::TimelineGyroChart::TimelineGyroChart;
 use ui::components::TimelineKeyframesView::TimelineKeyframesView;
-use ui::ui_tools::UITools;
+use ui::ui_tools::{UITools, theme_name_from_index};
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -257,7 +257,8 @@ fn entry() {
     {
         let mut ui = ui_tools.borrow_mut();
         ui.engine_ptr = Some(&mut engine as *mut _);
-        ui.set_theme("dark".into());
+        let theme = gyroflow_core::settings::get_u64("theme", 1);
+        ui.set_theme(theme_name_from_index(theme).into());
     }
 
     engine.set_property("isStorePackage".into(), util::is_store_package().into());
@@ -352,6 +353,7 @@ fn entry() {
 
     engine.exec();
 
+    gyroflow_core::settings::flush();
     util::unregister_url_handlers();
 }
 

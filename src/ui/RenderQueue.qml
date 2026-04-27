@@ -1407,7 +1407,9 @@ Item {
         color: styleBackground2;
         anchors.margins: 0 * dpiScale;
         anchors.topMargin: lv.y;
-        extensions: fileDialog.extensions.concat(["bin"]);
+        extensions: fileDialog.extensions;
+        acceptedFilenameSuffixes: ["_mix.bin"];
+        acceptAnyMatchingUrl: true;
         visible: !lv.isDragging;
         function add(outFolder: string, urls: list<url>): void {
             let foldersWithoutAccess = [];
@@ -1487,15 +1489,28 @@ Item {
         }
         onLoadFiles: (urls) => {
             if (!urls.length) return;
-            // [queue-pair-ux T4] 分类文件：.bin 为陀螺仪文件，无扩展名尝试作为文件夹，其他为视频
+            // [queue-pair-ux T4] 分类文件：_mix.bin 为陀螺仪文件，无扩展名尝试作为文件夹，其他为视频
+            try {
+                let urlStrings = [];
+                for (const url of urls) urlStrings.push(url.toString());
+                urls = JSON.parse(render_queue.filter_supported_drop_items(
+                    JSON.stringify(urlStrings),
+                    JSON.stringify(fileDialog.extensions)
+                ));
+            } catch (e) {
+                console.log("filter_supported_drop_items failed:", e);
+            }
+            if (!urls.length) return;
             let videoUrls = [];
             for (const url of urls) {
                 const fname = filesystem.get_filename(url).toLowerCase();
-                if (fname.endsWith(".bin")) {
+                if (render_queue.is_gyro_mix_file(url.toString())) {
                     render_queue.add_gyro_file(url.toString());
+                } else if (fname.endsWith(".bin")) {
+                    continue;
                 } else if (!fname.includes(".")) {
                     // No extension: treat as folder. Let Rust recursively scan for
-                    // gyro .bin files AND video files (max depth 3, max 600 videos,
+                    // gyro _mix.bin files AND video files (max depth 3, max 600 videos,
                     // filtered by fileDialog.extensions, excluding files whose stem
                     // ends with the configured output suffix, e.g. _stabilized).
                     render_queue.add_gyro_folder(url.toString());
@@ -1528,7 +1543,11 @@ Item {
                 console.log("filter_paired_gyroflow_siblings failed:", e);
             }
             if (!videoUrls.length) return;
-            if (filesystem.get_filename(videoUrls[0]).toLowerCase().endsWith(".gyroflow")) {
+            const firstVideoUrl = render_queue.first_renderable_video_file(
+                JSON.stringify(videoUrls.map(u => u.toString())),
+                JSON.stringify(fileDialog.extensions)
+            );
+            if (!firstVideoUrl) {
                 add("", videoUrls);
             } else {
                 // [queue-batch-streamline T4] 使用 Export 设置的默认路径，跳过弹窗

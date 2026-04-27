@@ -6,6 +6,8 @@ import QtQuick
 Rectangle {
     id: root;
     property var extensions: [];
+    property var acceptedFilenameSuffixes: [];
+    property bool acceptAnyMatchingUrl: false;
     anchors.fill: parent;
     color: styleBackground;
     radius: 10 * dpiScale;
@@ -34,13 +36,29 @@ Rectangle {
         id: da;
         anchors.fill: parent;
         enabled: root.visible;
+        function acceptsUrl(url: url): bool {
+            const filename = url.toString().split(/[\\/]/).pop().toLowerCase();
+            const hasExtension = filename.includes(".");
+            if (!hasExtension) return true;
+            for (const suffix of root.acceptedFilenameSuffixes) {
+                if (filename.endsWith(suffix.toLowerCase())) return true;
+            }
+            const ext = filename.split(".").pop();
+            return root.extensions.indexOf(ext) > -1;
+        }
         onEntered: (drag) => {
             if (!drag.urls.length) return;
-            const url = drag.urls[0].toString();
-            const ext = url.split(".").pop().toLowerCase();
-            // [queue-pair-ux T5] 无扩展名（可能是文件夹）也允许拖入
-            const hasExtension = url.includes(".");
-            drag.accepted = !hasExtension || root.extensions.indexOf(ext) > -1;
+            if (!root.acceptAnyMatchingUrl) {
+                drag.accepted = acceptsUrl(drag.urls[0]);
+                return;
+            }
+            drag.accepted = false;
+            for (const url of drag.urls) {
+                if (acceptsUrl(url)) {
+                    drag.accepted = true;
+                    break;
+                }
+            }
         }
         onDropped: (drop) => {
             root.loadFiles(drop.urls);
