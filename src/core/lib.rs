@@ -328,7 +328,34 @@ fn build_synthetic_lens_profile(
     lens
 }
 
+fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f64) -> bool {
+    if !effective_fps.is_finite()
+        || effective_fps <= 0.0
+        || !params.fps.is_finite()
+        || params.fps <= 0.0
+    {
+        return false;
+    }
+
+    if (effective_fps - params.fps).abs() > 0.001 {
+        params.fps_scale = Some(effective_fps / params.fps);
+    } else {
+        params.fps_scale = None;
+    }
+    true
+}
+
 impl StabilizationManager {
+    fn apply_effective_video_fps(&self, effective_fps: f64) -> bool {
+        let mut params = self.params.write();
+        if !apply_effective_frame_rate(&mut params, effective_fps) {
+            return false;
+        }
+        self.gyro.write().init_from_params(&params);
+        self.keyframes.write().timestamp_scale = params.fps_scale;
+        true
+    }
+
     pub fn apply_main_video_telemetry(
         &self,
         md: &mut gyro_source::FileMetadata,
@@ -406,11 +433,24 @@ impl StabilizationManager {
             }
         }
 
-        if let Some(md_fps) = md.frame_rate {
-            let fps = self.params.read().fps;
-            if (md_fps - fps).abs() > 1.0 {
-                self.override_video_fps(md_fps, false);
+        let record_fps_applied = md
+            .record_frame_rate
+            .map(|record_fps| self.apply_effective_video_fps(record_fps))
+            .unwrap_or(false);
+
+        if !record_fps_applied {
+            if let Some(md_fps) = md.frame_rate {
+                let fps = self.params.read().fps;
+                if (md_fps - fps).abs() > 1.0 {
+                    self.override_video_fps(md_fps, false);
+                }
             }
+        } else if let Some(record_fps) = md.record_frame_rate {
+            let fps = self.params.read().fps;
+            log::info!(
+                "[video_fps] record_fps={record_fps:.6}, playback_fps={fps:.6}, fps_scale={:?}",
+                self.params.read().fps_scale
+            );
         }
 
         let mut frame_readout_direction = md.frame_readout_direction;
@@ -1959,10 +1999,8 @@ impl StabilizationManager {
     pub fn override_video_fps(&self, fps: f64, recompute: bool) {
         {
             let mut params = self.params.write();
-            if (fps - params.fps).abs() > 0.001 {
-                params.fps_scale = Some(fps / params.fps);
-            } else {
-                params.fps_scale = None;
+            if !apply_effective_frame_rate(&mut params, fps) {
+                return;
             }
             self.gyro.write().init_from_params(&params);
             self.keyframes.write().timestamp_scale = params.fps_scale;
@@ -2011,6 +2049,7 @@ impl StabilizationManager {
     ) -> Result<String, GyroflowCoreError> {
         let gyro = self.gyro.read();
         let params = self.params.read();
+        let record_frame_rate = gyro.file_metadata.read().record_frame_rate;
 
         let (smoothing_name, smoothing_params, horizon_amount, horizon_lock) = {
             let smoothing_lock = self.smoothing.read();
@@ -2072,6 +2111,7 @@ impl StabilizationManager {
                 "fps":         params.fps,
                 "duration_ms": params.duration_ms,
                 "fps_scale":   params.fps_scale,
+                "record_frame_rate": record_frame_rate,
                 "vfr_fps":     params.get_scaled_fps(),
                 "vfr_duration_ms": params.get_scaled_duration_ms(),
                 "created_at"   : params.video_created_at,
@@ -2336,6 +2376,10 @@ impl StabilizationManager {
             *is_preset = org_video_url.is_empty();
 
             if let Some(vid_info) = obj.get("video_info") {
+                let loaded_record_frame_rate = {
+                    let gyro = self.gyro.read();
+                    gyro.file_metadata.read().record_frame_rate
+                };
                 let mut params = self.params.write();
                 if let Some(w) = vid_info.get("width").and_then(|x| x.as_u64()) {
                     if let Some(h) = vid_info.get("height").and_then(|x| x.as_u64()) {
@@ -2357,6 +2401,15 @@ impl StabilizationManager {
                 }
                 if let Some(v) = vid_info.get("fps_scale") {
                     params.fps_scale = v.as_f64();
+                }
+                if params.fps_scale.is_none() {
+                    let record_fps = vid_info
+                        .get("record_frame_rate")
+                        .and_then(|x| x.as_f64())
+                        .or(loaded_record_frame_rate);
+                    if let Some(record_fps) = record_fps {
+                        apply_effective_frame_rate(&mut params, record_fps);
+                    }
                 }
 
                 self.gyro.write().init_from_params(&params);

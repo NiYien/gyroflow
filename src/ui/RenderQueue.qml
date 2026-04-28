@@ -1408,7 +1408,7 @@ Item {
         anchors.margins: 0 * dpiScale;
         anchors.topMargin: lv.y;
         extensions: fileDialog.extensions;
-        acceptedFilenameSuffixes: ["_mix.bin"];
+        acceptedFilenameSuffixes: ["_mix.bin", ".rdc"];
         acceptAnyMatchingUrl: true;
         visible: !lv.isDragging;
         function add(outFolder: string, urls: list<url>): void {
@@ -1508,8 +1508,8 @@ Item {
                     render_queue.add_gyro_file(url.toString());
                 } else if (fname.endsWith(".bin")) {
                     continue;
-                } else if (!fname.includes(".")) {
-                    // No extension: treat as folder. Let Rust recursively scan for
+                } else if (!fname.includes(".") || fname.endsWith(".rdc")) {
+                    // No extension or RED .RDC: treat as folder. Let Rust recursively scan for
                     // gyro _mix.bin files AND video files (max depth 3, max 600 videos,
                     // filtered by fileDialog.extensions, excluding files whose stem
                     // ends with the configured output suffix, e.g. _stabilized).

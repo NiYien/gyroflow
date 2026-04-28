@@ -127,6 +127,7 @@ impl CameraIdentifier {
                             if let Some(v) = tag_map
                                 .get(&GroupId::Lens)
                                 .and_then(|map| map.get_t(TagId::FocalLength) as Option<&f32>)
+                                .filter(|v| **v > 0.0)
                             {
                                 id.lens_info = format!("{:.2} mm", v);
                                 id.focal_length = Some(*v as f64);
@@ -233,15 +234,24 @@ impl CameraIdentifier {
                                     if let Some(v) = v.get("lens_info").and_then(|v| v.as_str()) {
                                         id.lens_info = v.to_string();
                                     }
-                                    if let Some(v) = v.get("focal_length").and_then(|v| v.as_f64())
+                                    if let Some(v) = v
+                                        .get("focal_length")
+                                        .and_then(|v| v.as_f64())
+                                        .filter(|v| *v > 0.0)
                                     {
                                         id.lens_info = format!("{:.2}mm", v);
                                         id.focal_length = Some(v);
                                     }
                                     if let Some(v) = v.get("focal_length").and_then(|v| v.as_str())
                                     {
-                                        id.lens_info = v.to_string();
-                                        id.focal_length = v.replace("mm", "").parse::<f64>().ok();
+                                        let focal_length =
+                                            v.replace("mm", "").trim().parse::<f64>().ok();
+                                        if let Some(focal_length) =
+                                            focal_length.filter(|value| *value > 0.0)
+                                        {
+                                            id.lens_info = v.to_string();
+                                            id.focal_length = Some(focal_length);
+                                        }
                                     }
                                     if let Some(v) = v.get("lens_type").and_then(|v| v.as_str()) {
                                         id.lens_model = v.to_string();

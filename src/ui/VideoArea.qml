@@ -133,7 +133,8 @@ Item {
                     }
                     if (info.hasOwnProperty("duration_ms")) {
                         duration_ms = info.duration_ms;
-                        vidInfo.updateEntry("Duration", vidInfo.getDuration({"stream.video[0].duration": duration_ms}));
+                        const displayDurationMs = info.hasOwnProperty("vfr_duration_ms") && +info.vfr_duration_ms > 0 ? +info.vfr_duration_ms : duration_ms;
+                        vidInfo.updateEntry("Duration", vidInfo.getDuration({"stream.video[0].duration": displayDurationMs}));
                     }
                 }
 
@@ -990,8 +991,8 @@ Item {
                         hasGyroFile = true;
                     } else if (fname.endsWith(".bin")) {
                         continue;
-                    } else if (!fname.includes(".")) {
-                        // No extension: treat as folder. Scan gyro _mix.bin files AND
+                    } else if (!fname.includes(".") || fname.endsWith(".rdc")) {
+                        // No extension or RED .RDC: treat as folder. Scan gyro _mix.bin files AND
                         // recursively scan video files (max depth 3, max 600 videos,
                         // extension-filtered, excluding files whose stem ends with
                         // the configured output suffix, e.g. _stabilized).

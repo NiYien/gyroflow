@@ -17,8 +17,8 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
     Arc,
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
 };
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
@@ -3871,18 +3871,41 @@ impl RenderQueue {
         for (vi, &job_id) in job_ids.iter().enumerate() {
             if let Some(job) = self.jobs.get(&job_id) {
                 if let Some(stab) = &job.stab {
-                    let params = stab.params.read();
-                    let created_at = params.video_created_at;
+                    let (
+                        created_at,
+                        duration_ms,
+                        playback_duration_ms,
+                        playback_fps,
+                        frame_count,
+                        record_frame_rate,
+                    ) = {
+                        let params = stab.params.read();
+                        let gyro = stab.gyro.read();
+                        let md = gyro.file_metadata.read();
+                        (
+                            params.video_created_at,
+                            video_match_duration_ms(&params, &md),
+                            params.duration_ms,
+                            params.fps,
+                            params.frame_count,
+                            md.record_frame_rate,
+                        )
+                    };
                     ::log::info!(
-                        "[batch_match T20] video[{}] job_id={}, created_at={:?}, file={}",
+                        "[batch_match T20] video[{}] job_id={}, created_at={:?}, playback_duration={:.1}ms, match_duration={:.1}ms, playback_fps={:.3}, record_fps={:?}, frames={}, file={}",
                         vi,
                         job_id,
                         created_at,
+                        playback_duration_ms,
+                        duration_ms,
+                        playback_fps,
+                        record_frame_rate,
+                        frame_count,
                         filesystem::get_filename(&stab.input_file.read().url)
                     );
                     videos.push(core::gyro_match::VideoMatchInfo {
                         path: stab.input_file.read().url.clone(),
-                        duration_ms: params.duration_ms,
+                        duration_ms,
                         created_at_ms: created_at,
                         pre_recording_ms: 0.0,
                     });
@@ -5641,6 +5664,37 @@ fn sync_readout_params_from_lens(stab: &StabilizationManager) {
                 ReadoutDirection::TopToBottom
             });
     }
+}
+
+fn video_match_duration_ms(
+    params: &core::stabilization_params::StabilizationParams,
+    md: &core::gyro_source::FileMetadata,
+) -> f64 {
+    let fallback_duration_ms = params.get_scaled_duration_ms();
+
+    if let Some(record_fps) = md.record_frame_rate {
+        if record_fps.is_finite() && record_fps > 0.0 {
+            let duration_ms = if params.frame_count > 0 {
+                Some(params.frame_count as f64 * 1000.0 / record_fps)
+            } else if params.duration_ms.is_finite()
+                && params.duration_ms > 0.0
+                && params.fps.is_finite()
+                && params.fps > 0.0
+            {
+                Some(params.duration_ms * params.fps / record_fps)
+            } else {
+                None
+            };
+
+            if let Some(duration_ms) = duration_ms {
+                if duration_ms.is_finite() && duration_ms > 0.0 {
+                    return duration_ms;
+                }
+            }
+        }
+    }
+
+    fallback_duration_ms
 }
 
 fn normalize_time_range_ms(range: Option<(f64, f64)>) -> Option<(f64, f64)> {

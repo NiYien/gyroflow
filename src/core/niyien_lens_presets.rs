@@ -275,7 +275,13 @@ pub fn should_use_manual_config(
     let auto_has_focal = metadata
         .lens_params
         .values()
-        .any(|lp| lp.focal_length.is_some() || lp.pixel_focal_length.is_some());
+        .any(|lp| {
+            lp.focal_length.map(|value| value > 0.0).unwrap_or(false)
+                || lp
+                    .pixel_focal_length
+                    .map(|value| value > 0.0)
+                    .unwrap_or(false)
+        });
     let manual_focal_sufficient =
         config.focal_length_mm.unwrap_or(0.0) > MANUAL_FOCAL_LENGTH_MIN_MM;
     let fills_missing_focal = !auto_has_focal && manual_focal_sufficient;
