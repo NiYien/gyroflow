@@ -46,11 +46,23 @@ module.exports = async function handler(req, res) {
     platformPackage.installer_url || platformPackage.package_url || ""
   );
   const activeTag = autoEntry ? autoEntry.tag : `v${releasePolicy.auto_version}`;
-  const contentTag =
+  // Decoupled bundle layout: lens lives in `releases/lens-<sha12>/` and plugin
+  // in `releases/plugin-<sha12>/`. legacy fallback: when the new tags are
+  // missing, fall back to the coupled `releases/<content_tag>/[plugins/]`
+  // layout so older policy entries keep working.
+  const legacyContentTag =
     autoEntry?.content_tag ||
     process.env.NIYIEN_CONTENT_RELEASE_TAG ||
     process.env.NIYIEN_DATA_RELEASE_TAG ||
     activeTag;
+  const lensTag =
+    autoEntry?.lens_tag ||
+    process.env.NIYIEN_LENS_RELEASE_TAG ||
+    legacyContentTag;
+  const pluginTag =
+    autoEntry?.plugin_tag ||
+    process.env.NIYIEN_PLUGIN_RELEASE_TAG ||
+    (legacyContentTag ? `${legacyContentTag}/plugins` : "");
   const legacyLensVersion =
     process.env.NIYIEN_WIDE_LENS_VERSION ||
     process.env.NIYIEN_CAMERA_DB_VERSION ||
@@ -62,14 +74,14 @@ module.exports = async function handler(req, res) {
   const lensAssetName = config.data.lens.asset_name;
   const lensUrl =
     source.region === "cn"
-      ? buildDownloadApiUrl(req, "content", contentTag, lensAssetName)
+      ? buildDownloadApiUrl(req, "content", lensTag, lensAssetName)
       : buildReleaseAssetUrl(source.base, activeTag, lensAssetName);
   const sdkBase =
     source.region === "cn" ? `${getDownloadApiBase(req)}/content/sdk/` : `${source.base}/sdk/`;
   const pluginsBase =
     source.region === "cn"
-      ? `${buildDownloadApiUrl(req, "content", contentTag, "plugins")}/`
-      : `${source.base}/${contentTag}/plugins/`;
+      ? `${buildDownloadApiUrl(req, "content", pluginTag, "")}`
+      : `${source.base}/${pluginTag}/`;
 
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.status(200).json({

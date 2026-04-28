@@ -346,32 +346,62 @@ function renderPackageMetadataPart(label, item) {
   return `${label}: ${filename} / ${sizeOk ? formatPackageSize(item.size) : '缺 size'} / ${shaOk ? 'sha256 OK' : '缺 sha256'}`;
 }
 
-function dashRenderPan123(items, autoVersion, contentBundles, contentBundlesError) {
+function dashRenderPan123(payload) {
   const el = document.getElementById('dash-pan123-status');
   el.classList.remove('italic');
   el.classList.remove('bg-slate-50');
-  if (!items || !items.length) {
-    // Even when policy.versions[] is empty, still show content bundles if any
-    let html = '<div class="text-slate-500 mb-3">policy.versions[] 是空的,先发版本后再扫</div>';
-    html += dashRenderContentBundles(contentBundles, contentBundlesError);
-    el.innerHTML = html;
-    document.getElementById('dash-pan123-summary').textContent = '';
-    return;
-  }
-  // Summary stats — no_tag entries are counted separately (they can't be
-  // addressed on 123 网盘 without an --app-run-id, so "missing dir" doesn't apply)
-  const complete = items.filter(it => it.complete).length;
-  const incomplete = items.filter(it => !it.no_tag && it.exists && !it.complete).length;
-  const missingDir = items.filter(it => !it.no_tag && !it.exists).length;
-  const noTag = items.filter(it => it.no_tag).length;
+  const items = payload.app_versions || payload.items || [];
+  const lensBundles = payload.lens_bundles || [];
+  const pluginBundles = payload.plugin_bundles || [];
+  const sdkStatus = payload.sdk_status || null;
+  const scanError = payload.scan_error || '';
+
+  // Summary stats: aggregate across the 4 sections.
   const sumEl = document.getElementById('dash-pan123-summary');
   const summaryParts = [];
-  if (complete) summaryParts.push(`<span class="text-emerald-600">完整 ${complete}</span>`);
-  if (incomplete) summaryParts.push(`<span class="text-amber-600">不全 ${incomplete}</span>`);
-  if (missingDir) summaryParts.push(`<span class="text-red-600">缺目录 ${missingDir}</span>`);
-  if (noTag) summaryParts.push(`<span class="text-slate-500">无 tag ${noTag}</span>`);
+  const appComplete = items.filter(it => it.complete).length;
+  const appIncomplete = items.filter(it => !it.no_tag && it.exists && !it.complete).length;
+  const appMissingDir = items.filter(it => !it.no_tag && !it.exists).length;
+  if (appComplete) summaryParts.push(`<span class="text-emerald-600">App 完整 ${appComplete}</span>`);
+  if (appIncomplete) summaryParts.push(`<span class="text-amber-600">App 不全 ${appIncomplete}</span>`);
+  if (appMissingDir) summaryParts.push(`<span class="text-red-600">App 缺 ${appMissingDir}</span>`);
+  summaryParts.push(`<span class="text-slate-600">Lens ${lensBundles.length}</span>`);
+  summaryParts.push(`<span class="text-slate-600">Plugin ${pluginBundles.length}</span>`);
+  if (sdkStatus) {
+    const sdkBadge = sdkStatus.complete
+      ? `<span class="text-emerald-600">SDK ✓</span>`
+      : `<span class="text-amber-600">SDK 缺 ${(sdkStatus.files_missing || []).length}</span>`;
+    summaryParts.push(sdkBadge);
+  }
   sumEl.innerHTML = summaryParts.join(' · ');
 
+  // Compose 4 sections; if app list is empty, still render lens/plugin/sdk so
+  // the operator can see those even before any policy.versions is set.
+  let html = '';
+  if (!items.length) {
+    html += '<div class="text-slate-500 mb-3">policy.versions[] 是空的,先发版本后再扫</div>';
+  } else {
+    html += dashRenderAppSection(items);
+  }
+  html += dashRenderBundleSection('Lens bundles', lensBundles,
+    payload.current_lens_tag || '', 'lens');
+  html += dashRenderBundleSection('Plugin bundles', pluginBundles,
+    payload.current_plugin_tag || '', 'plugin');
+  html += dashRenderSdkSection(sdkStatus);
+  if (scanError) {
+    html += `<div class="mt-3 text-red-600 text-xs px-3 py-2">扫描局部失败: ${scanError}</div>`;
+  }
+  el.innerHTML = html;
+
+  // Wire up manual upload buttons (kept for app row "missing dir" cases).
+  el.querySelectorAll('.dash-pan123-manual-upload-btn').forEach(btn => {
+    btn.addEventListener('click', () => dashTriggerManualUpload(
+      btn.dataset.tag, btn.dataset.version, parseInt(btn.dataset.runId || '0', 10),
+    ));
+  });
+}
+
+function dashRenderAppSection(items) {
   const itemsHtml = items.map(it => {
     const auto = it.is_auto_version
       ? '<span class="ml-2 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">auto</span>'
@@ -410,34 +440,32 @@ function dashRenderPan123(items, autoVersion, contentBundles, contentBundlesErro
     </div>`;
   }).join('');
 
-  // Compose: header note about scope + per-version app status + content bundles
-  el.innerHTML =
-    '<div class="text-[11px] text-slate-500 mb-1">App 主程序 (gyroflow-niyien-*) — 按 policy.versions[] 逐版本检查</div>' +
-    itemsHtml +
-    dashRenderContentBundles(contentBundles, contentBundlesError);
-
-  // Wire up manual upload buttons
-  el.querySelectorAll('.dash-pan123-manual-upload-btn').forEach(btn => {
-    btn.addEventListener('click', () => dashTriggerManualUpload(
-      btn.dataset.tag, btn.dataset.version, parseInt(btn.dataset.runId || '0', 10),
-    ));
-  });
+  return '<div class="text-[11px] text-slate-500 mb-1">App 主程序 (gyroflow-niyien-*) — 按 policy.versions[] 逐版本检查</div>' +
+    itemsHtml;
 }
 
-function dashRenderContentBundles(contentBundles, error) {
-  const headerNote = '<div class="mt-4 mb-1 text-[11px] text-slate-500">' +
-    'Content bundles (lens / plugin / sdk) — 按 content-{hash} 子目录罗列' +
-    '</div>';
-  if (error) {
-    return headerNote + `<div class="text-red-600 text-xs px-3 py-2">读取失败: ${error}</div>`;
+// kind = "lens" | "plugin"; currentTag = the live NIYIEN_*_RELEASE_TAG value.
+function dashRenderBundleSection(title, bundles, currentTag, kind) {
+  const headerNote = `<div class="mt-4 mb-1 text-[11px] text-slate-500">${title} — `
+    + (kind === 'lens'
+       ? '按 <code>lens-&lt;sha12&gt;/</code> 子目录罗列'
+       : '按 <code>plugin-&lt;sha12&gt;/</code> 子目录罗列')
+    + (currentTag ? ` · 当前: <code class="font-mono">${currentTag}</code>` : ' · <span class="text-amber-600">未设置 current</span>')
+    + `</div>`;
+  if (!bundles || !bundles.length) {
+    return headerNote + `<div class="text-slate-500 italic text-xs px-3 py-2">123 网盘上没有 ${kind}-* 目录</div>`;
   }
-  if (!contentBundles || !contentBundles.length) {
-    return headerNote + '<div class="text-slate-500 italic text-xs px-3 py-2">123 网盘上没有 content-* 目录</div>';
-  }
-  const rows = contentBundles.map(b => {
-    const manifestBadge = b.has_manifest
-      ? '<span class="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">含 manifest</span>'
-      : '<span class="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">⚠ 缺 manifest</span>';
+  const rows = bundles.map(b => {
+    let statusBadge;
+    if (b.complete) {
+      statusBadge = '<span class="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">完整</span>';
+    } else {
+      const total = (b.files_present || []).length + (b.files_missing || []).length;
+      statusBadge = `<span class="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">缺 ${(b.files_missing||[]).length}/${total}</span>`;
+    }
+    const currentBadge = b.is_current
+      ? '<span class="ml-1 px-1.5 py-0.5 bg-emerald-600 text-white rounded text-[10px]" title="当前 manifest 指向此 bundle">current</span>'
+      : '';
     const cacheBadge = b.from_cache
       ? '<span class="ml-1 px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded text-[10px]">cache</span>'
       : '';
@@ -445,23 +473,23 @@ function dashRenderContentBundles(contentBundles, error) {
       ? `${b.total_size_mb} MB`
       : `${Math.round((b.total_size_mb || 0) * 1024)} KB`;
 
-    // Manifest version fields — only shown when present
     const versionLines = [];
-    if (b.manifest_app_tag) {
-      const mode = b.manifest_app_source_mode ? ` (${b.manifest_app_source_mode})` : '';
-      versionLines.push(`<div><span class="text-slate-500">App:</span> <span class="font-mono">${b.manifest_app_tag}</span>${mode}</div>`);
+    if (kind === 'lens' && b.manifest_lens_release_tag) {
+      versionLines.push(`<div><span class="text-slate-500">Lens release:</span> <span class="font-mono">${b.manifest_lens_release_tag}</span></div>`);
     }
-    if (b.manifest_lens_release_tag) {
-      versionLines.push(`<div><span class="text-slate-500">Lens:</span> <span class="font-mono">${b.manifest_lens_release_tag}</span></div>`);
-    }
-    if (b.manifest_plugins_release_tag || b.manifest_plugin_source_ref) {
+    if (kind === 'plugin') {
       const ptag = b.manifest_plugins_release_tag || b.manifest_plugin_source_ref || '';
-      const pmode = b.manifest_plugin_source_mode ? ` (${b.manifest_plugin_source_mode})` : '';
-      versionLines.push(`<div><span class="text-slate-500">Plugin:</span> <span class="font-mono">${ptag}</span>${pmode}</div>`);
+      if (ptag) {
+        const pmode = b.manifest_plugin_source_mode ? ` (${b.manifest_plugin_source_mode})` : '';
+        versionLines.push(`<div><span class="text-slate-500">Plugin source:</span> <span class="font-mono">${ptag}</span>${pmode}</div>`);
+      }
     }
     if (b.manifest_generated_at) {
       versionLines.push(`<div><span class="text-slate-500">生成:</span> ${b.manifest_generated_at}</div>`);
     }
+    const missingLine = (b.files_missing && b.files_missing.length)
+      ? `<div class="mt-1 text-[11px] text-amber-700">⚠ 缺: ${b.files_missing.join(', ')}</div>`
+      : '';
     if (b.manifest_error) {
       versionLines.push(`<div class="text-red-600">manifest 解析失败: ${b.manifest_error}</div>`);
     }
@@ -469,23 +497,54 @@ function dashRenderContentBundles(contentBundles, error) {
       ? `<div class="mt-1 text-[11px] space-y-0.5">${versionLines.join('')}</div>`
       : '';
 
-    const dupBadge = b.is_duplicate
-      ? '<span class="ml-1 px-1.5 py-0.5 bg-orange-100 text-orange-700 rounded text-[10px]" title="同 name 出现多个 fileID,可能是 race condition 留下的脏目录,需手动清理">⚠ 重复</span>'
-      : '';
     const fidLine = b.fileID ? ` <span class="text-slate-400">(fileId=${b.fileID})</span>` : '';
-    return `<div class="px-3 py-2 mb-1 bg-white border border-slate-200 rounded text-xs">
+    const rowBg = b.is_current ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200';
+    return `<div class="px-3 py-2 mb-1 ${rowBg} border rounded text-xs">
       <div class="flex items-center justify-between">
-        <span class="font-mono">${b.tag}${fidLine}${cacheBadge}${dupBadge}</span>
-        ${manifestBadge}
+        <span class="font-mono">${b.tag}${fidLine}${currentBadge}${cacheBadge}</span>
+        ${statusBadge}
       </div>
       <div class="mt-1 text-[11px] text-slate-500">
-        ${b.file_count || 0} 文件 · ${b.subdir_count || 0} 子目录 · ${sizeText}
+        ${b.file_count || 0}/${b.expected_count || '?'} 文件 · ${sizeText}
         ${b.created_at ? ' · ' + b.created_at : ''}
       </div>
-      ${versionsBlock}
+      ${missingLine}${versionsBlock}
     </div>`;
   }).join('');
   return headerNote + rows;
+}
+
+function dashRenderSdkSection(sdk) {
+  const headerNote = '<div class="mt-4 mb-1 text-[11px] text-slate-500">SDK — '
+    + '<code>releases/sdk/</code> 扁平目录,跨版本共享</div>';
+  if (!sdk || !sdk.exists) {
+    return headerNote + '<div class="text-red-600 italic text-xs px-3 py-2">123 网盘上没有 sdk/ 目录</div>';
+  }
+  const sizeText = sdk.total_size_mb >= 1
+    ? `${sdk.total_size_mb} MB`
+    : `${Math.round((sdk.total_size_mb || 0) * 1024)} KB`;
+  let statusBadge;
+  if (sdk.complete) {
+    statusBadge = '<span class="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">完整</span>';
+  } else {
+    const total = (sdk.files_present || []).length + (sdk.files_missing || []).length;
+    statusBadge = `<span class="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">缺 ${(sdk.files_missing||[]).length}/${total}</span>`;
+  }
+  const missingLine = (sdk.files_missing && sdk.files_missing.length)
+    ? `<div class="mt-1 text-[11px] text-amber-700">⚠ 缺: ${sdk.files_missing.join(', ')}</div>`
+    : '';
+  const fidLine = sdk.fileID ? ` <span class="text-slate-400">(fileId=${sdk.fileID})</span>` : '';
+  const rowBg = sdk.complete ? 'bg-white border-slate-200' : 'bg-amber-50 border-amber-300';
+  return headerNote + `<div class="px-3 py-2 mb-1 ${rowBg} border rounded text-xs">
+    <div class="flex items-center justify-between">
+      <span class="font-mono">sdk${fidLine}</span>
+      ${statusBadge}
+    </div>
+    <div class="mt-1 text-[11px] text-slate-500">
+      ${sdk.file_count || 0}/${sdk.expected_count || '?'} 文件 · ${sizeText}
+    </div>
+    ${missingLine}
+  </div>`;
 }
 
 async function loadDashboardPan123Status() {
@@ -499,12 +558,7 @@ async function loadDashboardPan123Status() {
       el.innerHTML = `<div class="text-red-600">扫描失败: ${r.error}</div>`;
       return;
     }
-    dashRenderPan123(
-      r.items || [],
-      r.auto_version || '',
-      r.content_bundles || [],
-      r.content_bundles_error || '',
-    );
+    dashRenderPan123(r);
   } catch (e) {
     el.innerHTML = `<div class="text-red-600">调用失败: ${e}</div>`;
   }
@@ -1320,6 +1374,91 @@ document.getElementById('resources-execute-btn')?.addEventListener('click', asyn
   } catch (e) {
     resultEl.textContent = `✗ 调用失败: ${e}`;
     resultEl.className = 'text-sm text-red-600';
+  }
+});
+
+// Scoped publish to 123 — push only lens or only plugin without re-uploading
+// the other component. Backend defers the actual upload to publish_pan123_release
+// with --scope=lens|plugin. Requires both NIYIEN_LENS_RELEASE_TAG and
+// NIYIEN_PLUGIN_RELEASE_TAG to be seeded by a prior full publish.
+async function resTriggerScopedPublish(scope, label) {
+  const resultEl = document.getElementById('resources-publish-result');
+  if (!confirm(`将启动「仅 ${label}」推送到 123 网盘。\n\n` +
+               `当前 ${label} tag/artifact 已 upsert 到 Vercel 后才会被脚本拉取 — ` +
+               `如果改了表单还没点「立即切换」,请先点。\n\n` +
+               `点确定后会跳转到「发布版本」视图看实时进度。`)) return;
+  resultEl.textContent = `启动中 (${label})...`;
+  resultEl.className = 'text-xs text-slate-600';
+  try {
+    const r = await pywebview.api.start_pan123_publish_manual('', '', 0, [scope]);
+    if (!r.ok) {
+      resultEl.textContent = `✗ ${r.error}`;
+      resultEl.className = 'text-xs text-red-600';
+      return;
+    }
+    resultEl.textContent = `✓ 已启动 (token=${(r.token || '').slice(0, 12)}...)`;
+    resultEl.className = 'text-xs text-emerald-600';
+    showView('publish');
+    document.querySelector('.mode-btn[data-mode="select"]')?.click();
+    pan123StartPolling(r.token);
+  } catch (e) {
+    resultEl.textContent = `✗ 调用失败: ${e}`;
+    resultEl.className = 'text-xs text-red-600';
+  }
+}
+document.getElementById('resources-publish-lens-btn')?.addEventListener('click',
+  () => resTriggerScopedPublish('lens', 'Lens'));
+document.getElementById('resources-publish-plugin-btn')?.addEventListener('click',
+  () => resTriggerScopedPublish('plugin', 'Plugin'));
+
+// Full-scope publish — looks up policy.auto_version to recover the right
+// app tag + run_id, then dispatches start_pan123_publish_manual without a
+// scope arg (backend defaults to all three: app + lens + plugin).
+document.getElementById('resources-publish-all-btn')?.addEventListener('click', async () => {
+  const resultEl = document.getElementById('resources-publish-result');
+  resultEl.textContent = '读取 policy.auto_version...';
+  resultEl.className = 'text-xs text-slate-600';
+  let tag = '', version = '', runId = 0;
+  try {
+    const pr = await pywebview.api.get_current_policy();
+    if (!pr.ok) throw new Error(pr.error);
+    const policy = pr.policy || {};
+    const autoV = String(policy.auto_version || '').trim();
+    const entry = (policy.versions || []).find(v => String(v.version || '') === autoV);
+    if (!entry || !entry.tag) {
+      resultEl.textContent = '✗ 找不到 auto_version 对应的 app tag,先在 policy 里设一个';
+      resultEl.className = 'text-xs text-red-600';
+      return;
+    }
+    tag = String(entry.tag);
+    version = String(entry.version || autoV);
+    runId = parseInt(entry.run_id || 0, 10) || 0;
+  } catch (e) {
+    resultEl.textContent = `✗ 读取 policy 失败: ${e}`;
+    resultEl.className = 'text-xs text-red-600';
+    return;
+  }
+  const modeLabel = runId ? `artifact (run=${runId})` : 'release';
+  if (!confirm(`将启动「全量」推送到 123 网盘:\n\n` +
+               `App tag: ${tag} [${modeLabel}]\n` +
+               `Lens / Plugin 按当前 Vercel envs 拉取\n\n` +
+               `已存在的文件会自动跳过 (123 API MD5 去重 + bundle hash 复用)。`)) return;
+  resultEl.textContent = '启动中 (全量)...';
+  try {
+    const r = await pywebview.api.start_pan123_publish_manual(tag, version, runId);
+    if (!r.ok) {
+      resultEl.textContent = `✗ ${r.error}`;
+      resultEl.className = 'text-xs text-red-600';
+      return;
+    }
+    resultEl.textContent = `✓ 已启动 (token=${(r.token || '').slice(0, 12)}...)`;
+    resultEl.className = 'text-xs text-emerald-600';
+    showView('publish');
+    document.querySelector('.mode-btn[data-mode="select"]')?.click();
+    pan123StartPolling(r.token);
+  } catch (e) {
+    resultEl.textContent = `✗ 调用失败: ${e}`;
+    resultEl.className = 'text-xs text-red-600';
   }
 });
 

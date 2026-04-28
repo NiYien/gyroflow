@@ -80,6 +80,13 @@ try:
     EXPECTED_APP_ASSETS = tuple(_PUB_MODULE.REQUIRED_APP_ASSET_NAMES)
     EXPECTED_SDK_ASSETS = tuple(_PUB_MODULE.SDK_FILENAMES)
     EXPECTED_PLUGIN_ASSETS = tuple(_PUB_MODULE.PLUGIN_ASSET_NAMES)
+    # Decoupled bundle filename lists (include the per-bundle manifest).
+    EXPECTED_LENS_FILENAMES = tuple(_PUB_MODULE.EXPECTED_LENS_FILENAMES)
+    EXPECTED_PLUGIN_FILENAMES = tuple(_PUB_MODULE.EXPECTED_PLUGIN_FILENAMES)
+    LENS_ASSET_NAME = str(_PUB_MODULE.LENS_ASSET_NAME)
+    LENS_METADATA_ASSET_NAME = str(_PUB_MODULE.LENS_METADATA_ASSET_NAME)
+    LENS_MANIFEST_ASSET_NAME = str(_PUB_MODULE.LENS_MANIFEST_ASSET_NAME)
+    PLUGIN_MANIFEST_ASSET_NAME = str(_PUB_MODULE.PLUGIN_MANIFEST_ASSET_NAME)
     _PUB_LOAD_ERROR: str | None = None
 except Exception as _e:
     # Keep the dashboard usable if the publish script ever becomes
@@ -89,6 +96,12 @@ except Exception as _e:
     EXPECTED_APP_ASSETS = FALLBACK_EXPECTED_APP_ASSETS
     EXPECTED_SDK_ASSETS = ()
     EXPECTED_PLUGIN_ASSETS = ()
+    EXPECTED_LENS_FILENAMES = ()
+    EXPECTED_PLUGIN_FILENAMES = ()
+    LENS_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz"
+    LENS_METADATA_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz.json"
+    LENS_MANIFEST_ASSET_NAME = "gyroflow-niyien-lens-manifest.json"
+    PLUGIN_MANIFEST_ASSET_NAME = "gyroflow-niyien-plugin-manifest.json"
     _PUB_LOAD_ERROR = f"{_e.__class__.__name__}: {_e}"
 
 
@@ -315,10 +328,18 @@ class Api:
         # Lens/Plugin/SDK: fallback to publish_defaults if Vercel envs missing
         lens_tag_env = str(envs.get("NIYIEN_LENS_DATA_TAG", "")).strip()
         lens_tag = lens_tag_env or str(defaults.get("lens_data_tag", "")).strip()
+        # NIYIEN_LENS_RELEASE_TAG = the bundle directory name on 123 网盘
+        # (`lens-<sha12>/`). Set by the publish script's finalize_summary.
+        lens_release_tag = str(envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip()
         state["lens"] = {
             "tag": lens_tag,
             "version": str(envs.get("NIYIEN_LENS_VERSION", "")).strip(),
             "source": "vercel" if lens_tag_env else ("defaults" if lens_tag else "none"),
+            # Pan123 probe results (parallel to plugin / sdk probes).
+            "missing_files": None,
+            "pan123_error": None,
+            "release_tag": lens_release_tag,
+            "expected_count": len(EXPECTED_LENS_FILENAMES),
         }
 
         plugin_mode_env = str(envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "")).strip().lower()
@@ -328,6 +349,14 @@ class Api:
         plugin_artifact_env = str(envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip()
         plugin_artifact = plugin_artifact_env or str(defaults.get("plugins_artifact_name", "")).strip()
         has_plugin_env = bool(plugin_mode_env or plugin_tag_env or plugin_artifact_env)
+        # NIYIEN_PLUGIN_RELEASE_TAG = the bundle directory name on 123 网盘
+        # (`plugin-<sha12>/`). Set by the publish script's finalize_summary.
+        plugin_release_tag = str(envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip()
+        # Legacy fallback: old deployments still hold a content_tag pointing
+        # at the coupled `content-<x>/` layout. Keep reading it so the probe
+        # below can fall back to the legacy plugins/ subdirectory until the
+        # operator runs at least one decoupled publish.
+        legacy_content_tag = str(envs.get("NIYIEN_CONTENT_RELEASE_TAG", "")).strip()
         state["plugin"] = {
             "mode": plugin_mode,
             "tag": plugin_tag,
@@ -335,11 +364,12 @@ class Api:
             "source": "vercel" if has_plugin_env else ("defaults" if (plugin_tag or plugin_artifact or plugin_mode_env) else "none"),
             # Filled below by the plugin pan123 probe (parallel to the SDK probe).
             # None = probe didn't run; [] = all expected files present;
-            # non-empty list = filenames missing from
-            # `releases/<content_tag>/plugins/` on pan123.
+            # non-empty list = filenames missing from `releases/plugin-<x>/`
+            # (or `releases/<content_tag>/plugins/` in legacy mode).
             "missing_files": None,
             "pan123_error": None,
-            "content_tag": "",
+            "release_tag": plugin_release_tag,
+            "legacy_content_tag": legacy_content_tag,
             "expected_count": len(EXPECTED_PLUGIN_ASSETS),
         }
 
@@ -394,15 +424,56 @@ class Api:
         except Exception as e:
             state["sdk"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
 
-        # --- pan123 probe: detect missing plugin assets in
-        # `releases/<content_tag>/plugins/` ---
-        # Parallel to the SDK probe above. content_tag comes from the same
-        # vercel env (`NIYIEN_CONTENT_RELEASE_TAG`) the manifest endpoint uses
-        # to address per-release content bundles. EXPECTED_PLUGIN_ASSETS comes
-        # from the publish script (live, not duplicated). Failure here is
-        # isolated from the SDK probe — independent Pan123Client instances.
-        content_tag = str(envs.get("NIYIEN_CONTENT_RELEASE_TAG", "")).strip()
-        state["plugin"]["content_tag"] = content_tag
+        # --- pan123 probe: lens bundle in `releases/<lens_release_tag>/` ---
+        # New decoupled layout. Falls back to legacy
+        # `releases/<content_tag>/<lens_files>` if NIYIEN_LENS_RELEASE_TAG
+        # isn't set yet (operator hasn't run a decoupled publish).
+        try:
+            cid = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=envs, cfg=cfg)
+            csec = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=envs, cfg=cfg)
+            root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=envs)
+            if not (cid and csec and root_id):
+                state["lens"]["pan123_error"] = "pan123 凭据未配置 (无法探测 lens)"
+            elif lens_release_tag:
+                client = Pan123Client(
+                    cid, csec, proxy_url=str(cfg.get("network_proxy", "") or "")
+                )
+                lens_entry = client.find_child(root_id, lens_release_tag, is_dir=True)
+                if not lens_entry:
+                    expected = list(EXPECTED_LENS_FILENAMES) if EXPECTED_LENS_FILENAMES \
+                        else [LENS_ASSET_NAME, LENS_METADATA_ASSET_NAME]
+                    state["lens"]["missing_files"] = expected
+                    state["lens"]["pan123_error"] = (
+                        f"pan123 上 releases/{lens_release_tag}/ 目录不存在"
+                    )
+                else:
+                    lens_dir_id = Pan123Client._entry_id(lens_entry)
+                    files = client.list_directory(lens_dir_id)
+                    present = {
+                        str(item.get("filename") or item.get("name") or "").strip()
+                        for item in files
+                    }
+                    expected = list(EXPECTED_LENS_FILENAMES) if EXPECTED_LENS_FILENAMES \
+                        else [LENS_ASSET_NAME, LENS_METADATA_ASSET_NAME]
+                    state["lens"]["missing_files"] = [
+                        name for name in expected if name not in present
+                    ]
+            elif legacy_content_tag:
+                # Legacy layout: lens cbor lives flat in content-<x>/
+                state["lens"]["pan123_error"] = (
+                    "未设置 NIYIEN_LENS_RELEASE_TAG (legacy 模式: lens 仍混在 content-<x>/ 内)"
+                )
+            else:
+                state["lens"]["pan123_error"] = (
+                    "无 NIYIEN_LENS_RELEASE_TAG (运行一次「全量」发布以初始化)"
+                )
+        except Exception as e:
+            state["lens"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
+
+        # --- pan123 probe: plugin bundle in `releases/<plugin_release_tag>/` ---
+        # New decoupled layout (flat — no `plugins/` subdir). Falls back to
+        # legacy `releases/<content_tag>/plugins/` when NIYIEN_PLUGIN_RELEASE_TAG
+        # isn't set yet. EXPECTED_PLUGIN_ASSETS comes from the publish script.
         try:
             if not EXPECTED_PLUGIN_ASSETS:
                 state["plugin"]["pan123_error"] = (
@@ -414,22 +485,37 @@ class Api:
                 root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=envs)
                 if not (cid and csec and root_id):
                     state["plugin"]["pan123_error"] = "pan123 凭据未配置 (无法探测 plugin)"
-                elif not content_tag:
-                    state["plugin"]["pan123_error"] = (
-                        "无 content_tag (NIYIEN_CONTENT_RELEASE_TAG 未设置)"
-                    )
-                else:
+                elif plugin_release_tag:
                     client = Pan123Client(
                         cid, csec, proxy_url=str(cfg.get("network_proxy", "") or "")
                     )
-                    content_entry = client.find_child(root_id, content_tag, is_dir=True)
-                    if not content_entry:
-                        # content_tag directory doesn't exist on pan123 yet —
-                        # treat every expected plugin file as missing so the
-                        # UI flags this clearly.
+                    plugin_entry = client.find_child(root_id, plugin_release_tag, is_dir=True)
+                    if not plugin_entry:
                         state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
                         state["plugin"]["pan123_error"] = (
-                            f"pan123 上 releases/{content_tag}/ 目录不存在"
+                            f"pan123 上 releases/{plugin_release_tag}/ 目录不存在"
+                        )
+                    else:
+                        plugin_dir_id = Pan123Client._entry_id(plugin_entry)
+                        files = client.list_directory(plugin_dir_id)
+                        present = {
+                            str(item.get("filename") or item.get("name") or "").strip()
+                            for item in files
+                        }
+                        state["plugin"]["missing_files"] = [
+                            name for name in EXPECTED_PLUGIN_ASSETS
+                            if name not in present
+                        ]
+                elif legacy_content_tag:
+                    # Legacy layout: plugin assets in content-<x>/plugins/.
+                    client = Pan123Client(
+                        cid, csec, proxy_url=str(cfg.get("network_proxy", "") or "")
+                    )
+                    content_entry = client.find_child(root_id, legacy_content_tag, is_dir=True)
+                    if not content_entry:
+                        state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
+                        state["plugin"]["pan123_error"] = (
+                            f"pan123 上 releases/{legacy_content_tag}/ 目录不存在 (legacy)"
                         )
                     else:
                         content_dir_id = Pan123Client._entry_id(content_entry)
@@ -439,7 +525,7 @@ class Api:
                         if not plugins_entry:
                             state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
                             state["plugin"]["pan123_error"] = (
-                                f"pan123 上 releases/{content_tag}/plugins/ 目录不存在"
+                                f"pan123 上 releases/{legacy_content_tag}/plugins/ 目录不存在 (legacy)"
                             )
                         else:
                             plugins_dir_id = Pan123Client._entry_id(plugins_entry)
@@ -452,6 +538,10 @@ class Api:
                                 name for name in EXPECTED_PLUGIN_ASSETS
                                 if name not in present
                             ]
+                else:
+                    state["plugin"]["pan123_error"] = (
+                        "无 NIYIEN_PLUGIN_RELEASE_TAG (运行一次「全量」发布以初始化)"
+                    )
         except Exception as e:
             state["plugin"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
 
@@ -1315,7 +1405,11 @@ class Api:
                 "ok": True,
                 "defaults": defaults,
                 "current": {
+                    # Legacy single-tag (kept for legacy fallback rendering).
                     "NIYIEN_CONTENT_RELEASE_TAG": envs.get("NIYIEN_CONTENT_RELEASE_TAG", ""),
+                    # Decoupled bundle tags (`lens-<sha12>` / `plugin-<sha12>`).
+                    "NIYIEN_LENS_RELEASE_TAG": envs.get("NIYIEN_LENS_RELEASE_TAG", ""),
+                    "NIYIEN_PLUGIN_RELEASE_TAG": envs.get("NIYIEN_PLUGIN_RELEASE_TAG", ""),
                     "NIYIEN_LENS_VERSION": envs.get("NIYIEN_LENS_VERSION", ""),
                     "NIYIEN_LENS_DATA_TAG": envs.get("NIYIEN_LENS_DATA_TAG", ""),
                     "NIYIEN_PLUGINS_SOURCE_MODE": envs.get("NIYIEN_PLUGINS_SOURCE_MODE", ""),
@@ -1479,13 +1573,19 @@ class Api:
 
     def _build_pan123_publish_command(self, *, app_tag: str, cfg: dict,
                                       vercel_envs: dict, output_dir: Path,
-                                      app_run_id: int = 0) -> list[str]:
+                                      app_run_id: int = 0,
+                                      scope: list[str] | None = None) -> list[str]:
         """Construct the publish_pan123_release.py CLI.
 
         `app_run_id > 0` switches to artifact mode (`--app-source-mode=artifact
         --app-run-id=N`); zero stays release mode. The `app_tag` is still
         required in either mode because the script uses it to name the 123
-        网盘 directory (`pan123.ensure_release_dir(app_tag)` at script L795).
+        网盘 directory (`pan123.ensure_release_dir(app_tag)`).
+
+        `scope` selects which bundles to publish; defaults to all three
+        (app + lens + plugin). When narrower (e.g. ["plugin"]) the script
+        skips other downloads/uploads and `finalize_summary` only carries
+        the published component's tags.
         """
         script_path = REPO_ROOT / "_scripts" / "publish_pan123_release.py"
         # Lens / plugin / sdk pulled from current Vercel env values (same as
@@ -1522,6 +1622,8 @@ class Api:
             "--plugins-repo", str(cfg.get("plugins_repo", "")).strip(),
             "--plugins-source-mode", plugins_mode,
         ]
+        if scope:
+            cmd.extend(["--scope", ",".join(scope)])
         if app_source_mode == "artifact":
             cmd.extend(["--app-run-id", str(int(app_run_id))])
         if lens_tag:
@@ -1536,11 +1638,17 @@ class Api:
 
     def _start_pan123_publish(self, *, app_tag: str, app_version: str,
                               app_run_id: int = 0,
+                              scope: list[str] | None = None,
                               on_finalize=None) -> dict:
         """Submit a pan123 publish task. Returns {ok, token} or {ok:False, error}.
 
         Spawns publish_pan123_release.py in a worker thread; the frontend
         polls poll_publish_progress(token) for live updates.
+
+        `scope` is a subset of {"app","lens","plugin"} (default: all three).
+        Narrow scopes are rejected when NIYIEN_LENS_RELEASE_TAG /
+        NIYIEN_PLUGIN_RELEASE_TAG aren't seeded yet — first publish on the
+        decoupled layout must run full to initialize those envs.
         """
         try:
             cfg = config_module.load_config()
@@ -1562,10 +1670,28 @@ class Api:
                              + " — 在 Vercel envs / 系统环境变量 / control_center.config.json 任一处配齐",
                 }
 
+            # Default scope = full publish. Lens-only / plugin-only narrow
+            # scopes need both new envs already populated — otherwise the
+            # manifest URL builder produces broken `lens.url` / `plugins_base`
+            # for the *other* component. App-only scope doesn't touch
+            # lens/plugin URLs, so it doesn't need this guard.
+            full_scope = ["app", "lens", "plugin"]
+            scope_list = list(scope) if scope else list(full_scope)
+            touches_resources = "lens" in scope_list or "plugin" in scope_list
+            is_full = scope_list == full_scope
+            if touches_resources and not is_full:
+                if not str(vercel_envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip() \
+                   or not str(vercel_envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip():
+                    return {
+                        "ok": False,
+                        "error": "首次解耦发布请先用「推送全量」初始化 NIYIEN_LENS_RELEASE_TAG / "
+                                 "NIYIEN_PLUGIN_RELEASE_TAG,然后再用「仅 Lens」或「仅 Plugin」",
+                    }
+
             output_dir = REPO_ROOT / "_deployment" / "_publish_local" / app_tag
             command = self._build_pan123_publish_command(
                 app_tag=app_tag, cfg=cfg, vercel_envs=vercel_envs, output_dir=output_dir,
-                app_run_id=app_run_id,
+                app_run_id=app_run_id, scope=scope_list,
             )
 
             # Build env: copy os.environ + inject required secrets + proxy
@@ -1612,7 +1738,9 @@ class Api:
                     finalize_summary = summary.get("finalize_summary") or {}
                     if finalize_summary:
                         reporter.log(
-                            f"finalize_summary: content_tag={finalize_summary.get('content_tag')}, "
+                            f"finalize_summary: scope={finalize_summary.get('scope')}, "
+                            f"lens_tag={finalize_summary.get('lens_tag') or '(skipped)'}, "
+                            f"plugin_tag={finalize_summary.get('plugin_tag') or '(skipped)'}, "
                             f"lens_version={finalize_summary.get('lens_version')}, "
                             f"lens_sha256={(finalize_summary.get('lens_sha256') or '')[:16]}..."
                         )
@@ -1632,27 +1760,81 @@ class Api:
 
     # ---- Public API for frontend ----
 
-    def start_pan123_publish_manual(self, tag: str, version: str = "", run_id: int = 0) -> dict:
+    def start_pan123_publish_manual(self, tag: str = "", version: str = "",
+                                    run_id: int = 0,
+                                    scope: list[str] | None = None) -> dict:
         """User-initiated retry of pan123 sync for a specific tag.
 
         `run_id > 0` triggers artifact-mode (--app-source-mode=artifact
-        --app-run-id=N). Used by the dashboard "手动上传" button when the
+        --app-run-id=N). `scope` selects which bundles to publish (default:
+        all three). When scope omits 'app', `tag` may be empty — the script
+        won't touch any app installer directory in that case.
+
+        Used by the dashboard "手动上传" button (full scope) and by the
         inventory shows a missing/incomplete tag dir. Returns {ok, token}
         or {ok:False, error}. Single-task model — refuses if another
         publish is already running.
         """
         tag = str(tag or "").strip()
-        if not tag:
-            return {"ok": False, "error": "tag 必填"}
+        scope_list = list(scope) if scope else ["app", "lens", "plugin"]
+        if "app" in scope_list and not tag:
+            return {"ok": False, "error": "tag 必填 (当 scope 包含 app 时)"}
         try:
             run_id_int = int(run_id or 0)
         except (TypeError, ValueError):
             run_id_int = 0
+        # Manual publish runs need a finalize callback too — without it the
+        # newly-uploaded lens_tag / plugin_tag would never get persisted to
+        # Vercel envs, leaving manifest API stuck on the old (or empty)
+        # values. policy is NOT touched (that's execute_app_action's job).
+        cfg_capture = config_module.load_config()
+        def _on_resource_finalize(finalize_summary: dict) -> str:
+            return self._finalize_resource_envs_to_vercel(cfg_capture, finalize_summary)
         return self._start_pan123_publish(
             app_tag=tag,
             app_version=str(version or "").strip(),
             app_run_id=run_id_int,
+            scope=scope_list,
+            on_finalize=_on_resource_finalize,
         )
+
+    def _finalize_resource_envs_to_vercel(self, cfg: dict, finalize_summary: dict) -> str:
+        """Upsert lens/plugin/lens-version envs after a manual publish.
+
+        Same retry behaviour as `_finalize_publish_to_manifest`, but doesn't
+        touch NIYIEN_RELEASE_POLICY_JSON. Used by `start_pan123_publish_manual`
+        (dashboard "手动上传" + resources-view scoped publishes) — those
+        flows must not move auto_version or rewrite policy entries.
+        """
+        import time as _time
+        upsert: dict[str, str] = {}
+        if finalize_summary.get("lens_tag"):
+            upsert["NIYIEN_LENS_RELEASE_TAG"] = str(finalize_summary["lens_tag"])
+        if finalize_summary.get("plugin_tag"):
+            upsert["NIYIEN_PLUGIN_RELEASE_TAG"] = str(finalize_summary["plugin_tag"])
+        if finalize_summary.get("lens_version") is not None:
+            upsert["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
+        if finalize_summary.get("lens_sha256"):
+            upsert["NIYIEN_LENS_SHA256"] = str(finalize_summary["lens_sha256"])
+        if not upsert:
+            return "no resource env to upsert (scope=app only?)"
+        last_err: Exception | None = None
+        for attempt in range(3):
+            try:
+                self._vercel(cfg).upsert_envs(upsert)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    _time.sleep(1.5 * (2 ** attempt))
+        if last_err is not None:
+            raise RuntimeError(f"upsert resource envs failed after 3 attempts: {last_err}")
+        try:
+            hook_note = self._trigger_deploy_hook(cfg)
+            return f"resource envs upserted ({', '.join(upsert.keys())}); {hook_note}"
+        except Exception as e:
+            return f"resource envs upserted but deploy hook failed: {e}"
 
     def poll_publish_progress(self, token: str) -> dict:
         """Frontend polls this every ~500ms while a publish task is running."""
@@ -1676,7 +1858,15 @@ class Api:
             vercel = self._vercel(cfg)
             env_records = vercel.list_env_records()
             policy = self._load_current_policy(cfg, vercel, env_records)
-            vercel_envs = {k: r.get("value", "") for k, r in env_records.items()}
+            # IMPORTANT: list_env_records returns raw `value` field which is
+            # the encrypted envelope (`{"v":"v2","c":"..."}` or its base64
+            # form starting with `eyJ`) for any env with `type=encrypted`.
+            # NIYIEN_LENS_RELEASE_TAG / NIYIEN_PLUGIN_RELEASE_TAG are written
+            # as encrypted (upsert_envs default), so we must use
+            # list_envs_decrypted which falls back to the single-env decrypt
+            # endpoint per record. Without this, dashboard surfaces the raw
+            # envelope blob as "current: <ciphertext>".
+            vercel_envs = vercel.list_envs_decrypted()
 
             cid = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=vercel_envs, cfg=cfg)
             csec = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=vercel_envs, cfg=cfg)
@@ -1744,136 +1934,183 @@ class Api:
                     "run_id": run_id,
                     "packages": packages,
                 })
-            # ---- Content bundles (lens/plugin/sdk under content-{hash}/) ----
-            # content_tag = sha256[:12], immutable — so we cache all derived
-            # fields (app_tag, lens_release_tag, total_size, ...) keyed by
-            # content_tag and never re-fetch the manifest after the first
-            # successful read.
-            content_bundles: list[dict] = []
-            content_bundles_error = ""
+            # ---- Decoupled bundle scan: lens-* / plugin-* / sdk/ ----
+            # Per-component bundle directories are hash-named (immutable
+            # contents), so we cache derived fields keyed by `<name>#<fileID>`
+            # and re-use across refreshes. SDK is a single flat directory.
+            current_lens_tag = str(vercel_envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip()
+            current_plugin_tag = str(vercel_envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip()
+            lens_bundles: list[dict] = []
+            plugin_bundles: list[dict] = []
+            sdk_status: dict = {
+                "exists": False,
+                "files_present": [],
+                "files_missing": list(EXPECTED_SDK_ASSETS),
+                "complete": False,
+                "total_size_mb": 0.0,
+                "file_count": 0,
+            }
+            scan_error = ""
             try:
                 bundle_cache = load_bundle_cache()
                 cache_dirty = False
 
                 root_children = client.list_directory(root_id)
-                # Dedupe top-level content-* directories by fileID. Multiple
-                # dirs with the same name but different fileIDs ARE possible
-                # (123 网盘 doesn't enforce uniqueness on concurrent creates)
-                # — surface them as duplicates so the operator can clean up.
-                seen_dir_ids: set[int] = set()
-                name_count: dict[str, int] = {}  # how many fileIDs share this name
-                for child in root_children:
-                    if int(child.get("type", -1)) != 1:
-                        continue
-                    name = str(child.get("filename") or child.get("name") or "").strip()
-                    if name.startswith("content-"):
-                        name_count[name] = name_count.get(name, 0) + 1
 
-                for child in root_children:
-                    if int(child.get("type", -1)) != 1:
-                        continue
+                def _scan_bundle(child: dict, expected_filenames: tuple,
+                                 manifest_filename: str, current_tag: str) -> dict:
+                    """Scan a single bundle directory; reuse cached manifest fields."""
                     name = str(child.get("filename") or child.get("name") or "").strip()
-                    if not name.startswith("content-"):
-                        continue
                     bundle_dir_id = client._entry_id(child)
-                    if not bundle_dir_id or bundle_dir_id in seen_dir_ids:
-                        continue
-                    seen_dir_ids.add(bundle_dir_id)
-                    is_duplicate = name_count.get(name, 0) > 1
-
-                    # Cache key: name + fileID (different fileIDs may have
-                    # different manifest content even with the same name).
                     cache_key = f"{name}#{bundle_dir_id}"
                     cached = bundle_cache.get(cache_key)
-                    # Only honor cache if it has a clean manifest (no error).
-                    # Otherwise we'd permanently latch on a transient failure.
-                    if cached and not cached.get("manifest_error"):
-                        bundle = dict(cached)
-                        bundle["tag"] = name
-                        bundle["fileID"] = bundle_dir_id
-                        bundle["is_duplicate"] = is_duplicate
-                        bundle["from_cache"] = True
-                        bundle.setdefault("created_at", str(child.get("createAt") or child.get("createTime") or ""))
-                        content_bundles.append(bundle)
-                        continue
-
-                    # Cache miss (or stale failed cache) — scan
+                    # Cache stores manifest_* fields only — file presence still
+                    # has to be re-verified each scan because partial uploads
+                    # can leave a directory in a half-populated state that the
+                    # cache can't observe.
                     bundle_entries = client.list_directory(bundle_dir_id)
-                    top_files = {
-                        str(f.get("filename") or f.get("name") or "").strip(): f
+                    file_names = {
+                        str(f.get("filename") or f.get("name") or "").strip()
                         for f in bundle_entries
                         if int(f.get("type", -1)) == 0
                     }
-                    sub_dir_count = sum(1 for f in bundle_entries if int(f.get("type", -1)) == 1)
-                    has_manifest = CONTENT_MANIFEST_ASSET_NAME in top_files
-
+                    files_present = [n for n in expected_filenames if n in file_names]
+                    files_missing = [n for n in expected_filenames if n not in file_names]
+                    has_manifest = manifest_filename in file_names
                     total_size, file_count = client.directory_total_size(bundle_dir_id)
 
                     manifest_fields: dict = {}
                     manifest_clean = False
-                    if has_manifest:
+                    if cached and not cached.get("manifest_error"):
+                        manifest_fields = {k: v for k, v in cached.items()
+                                           if k.startswith("manifest_")}
+                        manifest_clean = True
+                    elif has_manifest:
                         try:
-                            manifest_fid = client._entry_id(top_files[CONTENT_MANIFEST_ASSET_NAME])
-                            text = client.fetch_file_text(manifest_fid)
-                            import json as _json
-                            parsed = _json.loads(text)
-                            if isinstance(parsed, dict):
-                                manifest_fields = {
-                                    "manifest_app_tag": parsed.get("app_tag", ""),
-                                    "manifest_app_source_mode": parsed.get("app_source_mode", ""),
-                                    "manifest_app_source_ref": parsed.get("app_source_ref", ""),
-                                    "manifest_lens_release_tag": parsed.get("lens_release_tag", ""),
-                                    "manifest_plugins_release_tag": parsed.get("plugins_release_tag", ""),
-                                    "manifest_plugin_source_mode": parsed.get("plugin_source_mode", ""),
-                                    "manifest_plugin_source_ref": parsed.get("plugin_source_ref", ""),
-                                    "manifest_content_hash": parsed.get("content_hash", ""),
-                                    "manifest_generated_at": parsed.get("generated_at", ""),
-                                }
-                                manifest_clean = True
+                            manifest_entry = next(
+                                (f for f in bundle_entries
+                                 if str(f.get("filename") or f.get("name") or "").strip() == manifest_filename
+                                 and int(f.get("type", -1)) == 0),
+                                None,
+                            )
+                            if manifest_entry:
+                                manifest_fid = client._entry_id(manifest_entry)
+                                text = client.fetch_file_text(manifest_fid)
+                                import json as _json
+                                parsed = _json.loads(text)
+                                if isinstance(parsed, dict):
+                                    # Surface the manifest fields useful to ops.
+                                    # Both lens and plugin manifests share these
+                                    # keys in the new schema (see publish
+                                    # script's build_lens_manifest /
+                                    # build_plugin_manifest).
+                                    for k in (
+                                        "lens_tag", "lens_hash", "lens_release_tag",
+                                        "plugin_tag", "plugin_hash",
+                                        "plugin_source_mode", "plugin_source_ref",
+                                        "plugins_release_tag",
+                                        "generated_at", "kind",
+                                    ):
+                                        if k in parsed:
+                                            manifest_fields[f"manifest_{k}"] = parsed[k]
+                                    manifest_clean = True
                         except Exception as merr:
                             manifest_fields = {"manifest_error": str(merr)}
 
                     bundle = {
                         "tag": name,
                         "fileID": bundle_dir_id,
-                        "is_duplicate": is_duplicate,
-                        "file_count": file_count,
-                        "subdir_count": sub_dir_count,
+                        "is_current": bool(current_tag) and name == current_tag,
+                        "files_present": files_present,
+                        "files_missing": files_missing,
+                        "complete": not files_missing,
                         "has_manifest": has_manifest,
+                        "file_count": file_count,
+                        "expected_count": len(expected_filenames),
                         "total_size_mb": round(total_size / 1024 / 1024, 2),
                         "created_at": str(child.get("createAt") or child.get("createTime") or ""),
-                        "from_cache": False,
+                        "from_cache": bool(cached and not cached.get("manifest_error")),
                         **manifest_fields,
                     }
-                    content_bundles.append(bundle)
-                    # Only cache successful manifest reads — a transient
-                    # download failure shouldn't poison cache forever.
-                    if manifest_clean:
-                        cache_entry = dict(bundle)
-                        cache_entry.pop("tag", None)
-                        cache_entry.pop("fileID", None)
-                        cache_entry.pop("is_duplicate", None)
-                        cache_entry.pop("from_cache", None)
+                    if manifest_clean and not cached:
+                        # Only cache when the manifest read succeeded fresh.
+                        cache_entry = {k: v for k, v in bundle.items()
+                                       if k.startswith("manifest_")}
                         bundle_cache[cache_key] = cache_entry
+                        nonlocal cache_dirty
                         cache_dirty = True
+                    return bundle
+
+                for child in root_children:
+                    if int(child.get("type", -1)) != 1:
+                        continue
+                    name = str(child.get("filename") or child.get("name") or "").strip()
+                    if name.startswith("lens-"):
+                        if EXPECTED_LENS_FILENAMES:
+                            lens_bundles.append(_scan_bundle(
+                                child, EXPECTED_LENS_FILENAMES,
+                                LENS_MANIFEST_ASSET_NAME, current_lens_tag,
+                            ))
+                    elif name.startswith("plugin-"):
+                        if EXPECTED_PLUGIN_FILENAMES:
+                            plugin_bundles.append(_scan_bundle(
+                                child, EXPECTED_PLUGIN_FILENAMES,
+                                PLUGIN_MANIFEST_ASSET_NAME, current_plugin_tag,
+                            ))
+                    elif name == "sdk":
+                        # SDK = flat dir at releases/sdk/. Files carry version
+                        # in their filename so older clients still find their
+                        # version even after a new SDK was uploaded.
+                        sdk_dir_id = client._entry_id(child)
+                        sdk_entries = client.list_directory(sdk_dir_id)
+                        sdk_names = {
+                            str(f.get("filename") or f.get("name") or "").strip()
+                            for f in sdk_entries
+                            if int(f.get("type", -1)) == 0
+                        }
+                        total_size, file_count = client.directory_total_size(sdk_dir_id)
+                        present = [n for n in EXPECTED_SDK_ASSETS if n in sdk_names]
+                        missing = [n for n in EXPECTED_SDK_ASSETS if n not in sdk_names]
+                        sdk_status = {
+                            "exists": True,
+                            "fileID": sdk_dir_id,
+                            "files_present": present,
+                            "files_missing": missing,
+                            "complete": not missing,
+                            "expected_count": len(EXPECTED_SDK_ASSETS),
+                            "total_size_mb": round(total_size / 1024 / 1024, 2),
+                            "file_count": file_count,
+                        }
 
                 if cache_dirty:
                     save_bundle_cache(bundle_cache)
 
-                # Sort: manifest_generated_at desc, then created_at, then tag
-                content_bundles.sort(
-                    key=lambda b: (b.get("manifest_generated_at") or b.get("created_at") or b.get("tag")),
-                    reverse=True,
-                )
+                # Sort each bundle list: current first, then by
+                # manifest_generated_at desc / tag asc.
+                def _bundle_sort_key(b: dict):
+                    return (
+                        not b.get("is_current"),  # current first (False sorts before True)
+                        -1 * (1 if b.get("manifest_generated_at") else 0),
+                        b.get("manifest_generated_at") or "",
+                        b.get("tag") or "",
+                    )
+                lens_bundles.sort(key=_bundle_sort_key)
+                plugin_bundles.sort(key=_bundle_sort_key)
             except Exception as exc:
-                content_bundles_error = f"{exc.__class__.__name__}: {exc}"
+                scan_error = f"{exc.__class__.__name__}: {exc}"
 
             return {
                 "ok": True,
                 "auto_version": auto_version,
+                "current_lens_tag": current_lens_tag,
+                "current_plugin_tag": current_plugin_tag,
+                "app_versions": out,
+                # `items` kept as alias for older clients that still call it.
                 "items": out,
-                "content_bundles": content_bundles,
-                "content_bundles_error": content_bundles_error,
+                "lens_bundles": lens_bundles,
+                "plugin_bundles": plugin_bundles,
+                "sdk_status": sdk_status,
+                "scan_error": scan_error,
             }
         except Exception as e:
             return _error(e, "get_pan123_inventory")
@@ -1982,8 +2219,13 @@ class Api:
         import json as _json
         import time as _time
 
-        # Merge runtime-only fields (content_tag, lens metadata, plugin
-        # source refs) into the policy entry for `auto_version`.
+        # Merge runtime-only fields (lens_tag/plugin_tag, lens metadata,
+        # plugin source refs) into the policy entry for `auto_version`.
+        # Decoupled layout: lens_tag and plugin_tag are independent and
+        # may be missing from finalize_summary when scope was narrower
+        # (e.g. scope=["plugin"] only carries plugin_tag). We mutate
+        # only fields actually present so a partial publish doesn't
+        # clobber the other component's existing tag.
         upsert_map = {"NIYIEN_RELEASE_POLICY_JSON": policy_json}
         if finalize_summary:
             try:
@@ -1994,10 +2236,12 @@ class Api:
                     None,
                 )
                 if target is not None:
-                    if finalize_summary.get("content_tag"):
-                        target["content_tag"] = str(finalize_summary["content_tag"])
+                    if finalize_summary.get("lens_tag"):
+                        target["lens_tag"] = str(finalize_summary["lens_tag"])
+                    if finalize_summary.get("plugin_tag"):
+                        target["plugin_tag"] = str(finalize_summary["plugin_tag"])
                     if finalize_summary.get("lens_release_tag"):
-                        target["lens_tag"] = str(finalize_summary["lens_release_tag"])
+                        target["lens_release_tag"] = str(finalize_summary["lens_release_tag"])
                     if finalize_summary.get("lens_version") is not None:
                         target["lens_version"] = finalize_summary["lens_version"]
                     if finalize_summary.get("lens_sha256"):
@@ -2023,9 +2267,13 @@ class Api:
                 # publish.
                 pass
 
-            # Top-level envs that the manifest API also consults.
-            if finalize_summary.get("content_tag"):
-                upsert_map["NIYIEN_CONTENT_RELEASE_TAG"] = str(finalize_summary["content_tag"])
+            # Top-level envs that the manifest API also consults. Only
+            # write the ones that the publish actually produced — a
+            # plugin-only publish must not nuke NIYIEN_LENS_RELEASE_TAG.
+            if finalize_summary.get("lens_tag"):
+                upsert_map["NIYIEN_LENS_RELEASE_TAG"] = str(finalize_summary["lens_tag"])
+            if finalize_summary.get("plugin_tag"):
+                upsert_map["NIYIEN_PLUGIN_RELEASE_TAG"] = str(finalize_summary["plugin_tag"])
             if finalize_summary.get("lens_version") is not None:
                 upsert_map["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
             if finalize_summary.get("lens_sha256"):
@@ -2242,8 +2490,16 @@ class Api:
                         cfg_for_finalize, policy_to_push, finalize_summary,
                     )
 
+                # Strict scope: app-only. execute_app_action publishes a new
+                # gyroflow version — lens / plugin are managed independently
+                # via the resources-view scoped publish buttons. Without this,
+                # an app release would also re-pull whatever NIYIEN_LENS_DATA_TAG
+                # currently points at and overwrite NIYIEN_LENS_RELEASE_TAG /
+                # NIYIEN_PLUGIN_RELEASE_TAG, leaking unrelated resource changes
+                # into an app-only release.
                 pan_result = self._start_pan123_publish(
                     app_tag=tag, app_version=version, app_run_id=effective_run_id,
+                    scope=["app"],
                     on_finalize=_on_pan123_finalize,
                 )
                 if pan_result.get("ok"):
