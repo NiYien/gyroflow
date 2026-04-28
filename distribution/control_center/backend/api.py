@@ -1085,6 +1085,74 @@ class Api:
             )
         return result
 
+    def get_plugin_head_commit_subject(self) -> dict:
+        """Return remote default branch HEAD commit subject for the plugin repo.
+
+        Plugin repo is not locally cloned (per setup convention), so we hit
+        GitHub `/repos/{owner}/{repo}/commits/{default_branch}` and take the
+        first line of the commit message. Matches the prefill semantics of
+        gyroflow's own `get_head_commit_subject` (which uses `git log`).
+        """
+        try:
+            cfg = config_module.load_config()
+            owner = str(cfg.get("plugins_owner", "")).strip()
+            repo = str(cfg.get("plugins_repo", "")).strip()
+            if not (owner and repo):
+                return {"ok": False, "error": "config 里缺少 plugins_owner / plugins_repo"}
+            gh = self._gh_for(owner, repo, cfg)
+            meta = gh.get_repo(owner, repo)
+            branch = str(meta.get("default_branch", "")).strip() or "main"
+            commit = gh.get_branch_head_commit(owner, repo, branch)
+            message = str((commit.get("commit") or {}).get("message", "")).strip()
+            subject = message.splitlines()[0].strip() if message else ""
+            return {"ok": True, "subject": subject, "branch": branch, "owner": owner, "repo": repo}
+        except Exception as e:
+            return _error(e, "get_plugin_head_commit_subject")
+
+    def trigger_plugin_action_build(self, build_label: str = "") -> dict:
+        """Dispatch the plugin repo's release.yml on its default branch — no tag.
+
+        Mirrors `trigger_action_build` for the plugin repo. There is no local
+        clone to compare HEAD against, so we just dispatch on whatever the
+        remote default branch points at right now. Empty `build_label` falls
+        back to the latest pushed commit's subject (same behavior as the
+        gyroflow trigger).
+        """
+        try:
+            cfg = config_module.load_config()
+            owner = str(cfg.get("plugins_owner", "")).strip()
+            repo = str(cfg.get("plugins_repo", "")).strip()
+            if not (owner and repo):
+                return {"ok": False, "error": "config 里缺少 plugins_owner / plugins_repo"}
+            gh = self._gh_for(owner, repo, cfg)
+            meta = gh.get_repo(owner, repo)
+            branch = str(meta.get("default_branch", "")).strip() or "main"
+            label = str(build_label or "").strip()
+            if not label:
+                try:
+                    commit = gh.get_branch_head_commit(owner, repo, branch)
+                    message = str((commit.get("commit") or {}).get("message", "")).strip()
+                    label = (message.splitlines()[0].strip() if message else "") or branch
+                except Exception:
+                    label = branch
+            gh.dispatch_workflow(
+                APP_BUILD_WORKFLOW_FILE,
+                branch,
+                inputs={"build_label": label[:80]},
+                owner=owner,
+                repo=repo,
+            )
+            return {
+                "ok": True,
+                "branch": branch,
+                "label": label[:80],
+                "owner": owner,
+                "repo": repo,
+                "message": f"已在 {owner}/{repo} 的 {branch} 分支触发 {APP_BUILD_WORKFLOW_FILE}",
+            }
+        except Exception as e:
+            return _error(e, "trigger_plugin_action_build")
+
     def create_plugin_tag(self, major: int, minor: int, patch: int) -> dict:
         """Create `v<major>.<minor>.<patch>` tag on plugin repo.
 
@@ -1422,11 +1490,21 @@ class Api:
         script_path = REPO_ROOT / "_scripts" / "publish_pan123_release.py"
         # Lens / plugin / sdk pulled from current Vercel env values (same as
         # what the manifest API will hand out — keeps cn 123 mirror in sync).
-        lens_tag = str(vercel_envs.get("NIYIEN_LENS_DATA_TAG", "")).strip()
-        plugins_mode = str(vercel_envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "release")).strip().lower() or "release"
-        plugins_tag = str(vercel_envs.get("NIYIEN_PLUGINS_TAG", "")).strip()
-        plugins_artifact = str(vercel_envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip()
-        sdk_base = str(vercel_envs.get("NIYIEN_SDK_BASE", "")).strip()
+        # Fall back to publish_defaults from control_center.config.json when a
+        # Vercel env is missing, so a stale or unset env doesn't silently feed
+        # the publish script empty / outdated artifact names.
+        defaults = dict(cfg.get("publish_defaults") or {})
+        lens_tag = str(vercel_envs.get("NIYIEN_LENS_DATA_TAG", "")).strip() \
+            or str(defaults.get("lens_data_tag", "")).strip()
+        plugins_mode = str(vercel_envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "")).strip().lower() \
+            or str(defaults.get("plugins_source_mode", "")).strip().lower() \
+            or "release"
+        plugins_tag = str(vercel_envs.get("NIYIEN_PLUGINS_TAG", "")).strip() \
+            or str(defaults.get("plugins_tag", "")).strip()
+        plugins_artifact = str(vercel_envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip() \
+            or str(defaults.get("plugins_artifact_name", "")).strip()
+        sdk_base = str(vercel_envs.get("NIYIEN_SDK_BASE", "")).strip() \
+            or str(defaults.get("sdk_base", "")).strip()
 
         app_source_mode = "artifact" if int(app_run_id or 0) > 0 else "release"
         cmd: list[str] = [

@@ -367,6 +367,16 @@
             </div>
             <button id="create-plugin-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
             <div id="plugin-tag-result" class="mt-2 text-xs"></div>
+
+            <!-- Trigger only (workflow_dispatch on default branch, no tag) -->
+            <div class="mt-4 pt-3 border-t border-slate-200">
+              <div class="text-xs font-semibold text-slate-600 mb-1">仅触发构建（不打 tag）</div>
+              <p class="text-[11px] text-slate-500 mb-2">用于 nightly artifact 模式发版,基于远程默认分支当前 HEAD,跳过 release 步骤。</p>
+              <label class="text-[11px] text-slate-600 block mb-1">构建标题</label>
+              <input id="plugin-trigger-build-label" class="w-full border border-slate-300 rounded-md px-2 py-1 text-xs mb-2 font-mono" placeholder="默认为远端 HEAD commit 标题">
+              <button id="trigger-plugin-action-btn" class="w-full px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">触发 plugin Action 编译</button>
+              <div id="trigger-plugin-action-result" class="mt-2 text-xs"></div>
+            </div>
           </div>
 
           <!-- Lens tag -->

@@ -1383,6 +1383,15 @@ async function initResourcesExtrasOnce() {
     }
   } catch (_) { /* silent */ }
 
+  // Plugin trigger build_label prefill (remote default branch HEAD subject)
+  try {
+    const r = await pywebview.api.get_plugin_head_commit_subject();
+    if (r && r.ok && r.subject) {
+      const input = document.getElementById('plugin-trigger-build-label');
+      if (input && !input.value) input.value = r.subject;
+    }
+  } catch (_) { /* silent — not critical */ }
+
   // Repo hints (from config)
   try {
     const r = await pywebview.api.get_config_for_edit();
@@ -1425,6 +1434,26 @@ document.getElementById('create-plugin-tag-btn')?.addEventListener('click', asyn
     const r = await pywebview.api.create_plugin_tag(maj, min, pat);
     if (r.ok) {
       resultEl.innerHTML = `✓ ${r.repo} tag <code class="bg-slate-100 px-1">${r.tag}</code> 已创建`;
+      resultEl.className = 'mt-2 text-xs text-emerald-700';
+    } else {
+      resultEl.textContent = `✗ ${r.error}`;
+      resultEl.className = 'mt-2 text-xs text-red-600';
+    }
+  } catch (e) {
+    resultEl.textContent = `✗ ${e}`;
+    resultEl.className = 'mt-2 text-xs text-red-600';
+  }
+});
+
+document.getElementById('trigger-plugin-action-btn')?.addEventListener('click', async () => {
+  const resultEl = document.getElementById('trigger-plugin-action-result');
+  const label = document.getElementById('plugin-trigger-build-label').value.trim();
+  resultEl.textContent = '触发中...';
+  resultEl.className = 'mt-2 text-xs text-slate-600';
+  try {
+    const r = await pywebview.api.trigger_plugin_action_build(label);
+    if (r.ok) {
+      resultEl.textContent = `✓ ${r.owner}/${r.repo} @ ${r.branch} 已触发 · label=${r.label}`;
       resultEl.className = 'mt-2 text-xs text-emerald-700';
     } else {
       resultEl.textContent = `✗ ${r.error}`;

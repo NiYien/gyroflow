@@ -206,12 +206,28 @@ class GitHubClient:
         response.raise_for_status()
         return response.json()
 
-    def dispatch_workflow(self, workflow: str, ref: str, inputs: dict | None = None) -> bool:
-        """POST /actions/workflows/<workflow>/dispatches — requires write token."""
+    def dispatch_workflow(
+        self,
+        workflow: str,
+        ref: str,
+        inputs: dict | None = None,
+        *,
+        owner: str | None = None,
+        repo: str | None = None,
+    ) -> bool:
+        """POST /actions/workflows/<workflow>/dispatches — requires write token.
+
+        owner/repo default to self.owner/self.repo so existing callers stay
+        unchanged; override them to dispatch into a sibling repository (e.g.
+        plugin builds from the gyroflow-targeted client without spinning up
+        a separate GitHubClient instance).
+        """
         self._ensure_ready()
         if not self.token:
             raise RuntimeError("Missing GitHub token for workflow dispatch")
-        url = f"https://api.github.com/repos/{self.owner}/{self.repo}/actions/workflows/{workflow}/dispatches"
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow}/dispatches"
         response = requests.post(
             url,
             headers=self._headers(),
@@ -220,3 +236,27 @@ class GitHubClient:
         )
         response.raise_for_status()
         return True
+
+    def get_branch_head_commit(
+        self,
+        owner: str | None = None,
+        repo: str | None = None,
+        branch: str = "",
+    ) -> dict:
+        """Fetch /repos/{owner}/{repo}/commits/{branch} payload.
+
+        Useful when the repo is not locally cloned and we need the latest
+        commit message (e.g. to prefill a workflow_dispatch build_label
+        without forcing the operator to clone the plugin / lens repo).
+        """
+        self._ensure_ready()
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        ref = branch.strip()
+        if not ref:
+            meta = self.get_repo(owner, repo)
+            ref = str(meta.get("default_branch", "")).strip() or "main"
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
+        response = self._get(url, timeout=30)
+        response.raise_for_status()
+        return response.json()
