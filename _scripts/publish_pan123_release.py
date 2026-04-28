@@ -139,8 +139,33 @@ SDK_DOWNLOAD_SOURCES = {
 
 LENS_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz"
 LENS_METADATA_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz.json"
-CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"
+# Per-component manifests for the decoupled bundle layout. Each bundle is a
+# self-describing immutable directory whose name is derived from the sha256 of
+# the file contents only. Old `content-manifest.json` is kept as a constant
+# for legacy artifact discovery but is no longer written for new publishes.
+LENS_MANIFEST_ASSET_NAME = "gyroflow-niyien-lens-manifest.json"
+PLUGIN_MANIFEST_ASSET_NAME = "gyroflow-niyien-plugin-manifest.json"
+CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"  # legacy, kept for back-compat
 RELEASE_SUMMARY_ASSET_NAME = "gyroflow-niyien-release-summary.json"
+
+# Publish scope tokens. Allow operators to push only the lens bundle, only the
+# plugin bundle, or the full app+lens+plugin set. Hash-based directory reuse
+# keeps even the "full" path cheap when content didn't change.
+SCOPE_APP = "app"
+SCOPE_LENS = "lens"
+SCOPE_PLUGIN = "plugin"
+PUBLISH_SCOPES = {SCOPE_APP, SCOPE_LENS, SCOPE_PLUGIN}
+DEFAULT_SCOPES: tuple[str, ...] = (SCOPE_APP, SCOPE_LENS, SCOPE_PLUGIN)
+
+# Files expected to live inside each bundle directory once the publish has
+# completed successfully. Used by `bundle_complete()` to skip uploads when a
+# tag-named directory already holds every expected file.
+EXPECTED_LENS_FILENAMES: tuple[str, ...] = (
+    LENS_ASSET_NAME,
+    LENS_METADATA_ASSET_NAME,
+    LENS_MANIFEST_ASSET_NAME,
+)
+EXPECTED_PLUGIN_FILENAMES: tuple[str, ...] = tuple(PLUGIN_ASSET_NAMES) + (PLUGIN_MANIFEST_ASSET_NAME,)
 DEFAULT_SDK_BASE = "https://api.gyroflow.xyz/sdk"
 DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/NiYien/gyroflow-plugins/releases/latest/download"
 DEFAULT_GITHUB_API = "https://api.github.com"
@@ -243,7 +268,10 @@ def parse_csv_list(value: str) -> list[str]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--app-tag", required=True)
+    # `--app-tag` is required only when the publish scope includes "app".
+    # For lens-only or plugin-only publishes, no app installer directory is
+    # touched, so an empty value is fine. Validated in main() against scope.
+    parser.add_argument("--app-tag", default="")
     parser.add_argument("--workspace", default=".")
     parser.add_argument("--output-dir", default="_deployment/_publish")
     parser.add_argument(
@@ -271,7 +299,38 @@ def parse_args() -> argparse.Namespace:
         "--sdk-base",
         default=(os.environ.get("NIYIEN_SDK_BASE", "") or DEFAULT_SDK_BASE),
     )
+    parser.add_argument(
+        "--scope",
+        default=(os.environ.get("NIYIEN_PUBLISH_SCOPE", "") or ",".join(DEFAULT_SCOPES)),
+        help="Comma-separated subset of: app,lens,plugin (default: all three)",
+    )
+    parser.add_argument("--skip-lens", action="store_true",
+                        help="Drop lens from --scope after parsing")
+    parser.add_argument("--skip-plugin", action="store_true",
+                        help="Drop plugin from --scope after parsing")
     return parser.parse_args()
+
+
+def parse_publish_scope(raw: str, *, skip_lens: bool, skip_plugin: bool) -> list[str]:
+    tokens = [item.strip().lower() for item in str(raw or "").split(",") if item.strip()]
+    if not tokens:
+        tokens = list(DEFAULT_SCOPES)
+    invalid = [tok for tok in tokens if tok not in PUBLISH_SCOPES]
+    if invalid:
+        raise RuntimeError(
+            f"Invalid scope tokens {invalid!r}. Allowed: {sorted(PUBLISH_SCOPES)}"
+        )
+    seen: list[str] = []
+    for tok in tokens:
+        if tok not in seen:
+            seen.append(tok)
+    if skip_lens:
+        seen = [tok for tok in seen if tok != SCOPE_LENS]
+    if skip_plugin:
+        seen = [tok for tok in seen if tok != SCOPE_PLUGIN]
+    if not seen:
+        raise RuntimeError("Empty publish scope after applying --skip-* flags")
+    return seen
 
 
 @dataclass
@@ -881,13 +940,19 @@ def main() -> int:
         name="plugin source mode",
         allowed=PLUGIN_SOURCE_MODES,
     )
+    scope = parse_publish_scope(
+        args.scope, skip_lens=args.skip_lens, skip_plugin=args.skip_plugin
+    )
+    if SCOPE_APP in scope and not str(args.app_tag).strip():
+        raise RuntimeError("--app-tag is required when scope includes 'app'")
     workspace = Path(args.workspace).resolve()
     output_dir = (workspace / args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     temp_root = output_dir / "_staging"
     temp_root.mkdir(parents=True, exist_ok=True)
     emit_log(
-        f"Publish start: app_tag={args.app_tag}, app_source_mode={args.app_source_mode}, "
+        f"Publish start: app_tag={args.app_tag}, scope={scope}, "
+        f"app_source_mode={args.app_source_mode}, "
         f"plugins_source_mode={args.plugins_source_mode}, output_dir={output_dir}"
     )
     emit_log(
@@ -913,79 +978,46 @@ def main() -> int:
         releases_root_id=int(require_env("PAN123_RELEASES_ROOT_ID")),
     )
 
-    emit_log("Resolving app artifacts")
-    emit_progress(phase="resolve", message="resolve app artifacts", mode="indeterminate")
-    app_assets = resolve_app_asset_files(
-        github=github,
-        workspace=workspace,
-        temp_root=temp_root,
-        app_source_mode=args.app_source_mode,
-        app_owner=args.app_owner,
-        app_repo=args.app_repo,
-        app_run_id=args.app_run_id,
-    )
-    if not app_assets:
-        raise RuntimeError("No app artifacts were found after downloading build outputs")
-    app_packages = build_app_packages_metadata(app_assets)
-    emit_log("App artifacts ready")
-    emit_progress(phase="resolve", message="app artifacts ready")
-    app_source_ref, global_app_urls = resolve_app_source(
-        app_source_mode=args.app_source_mode,
-        app_tag=args.app_tag,
-        app_owner=args.app_owner,
-        app_repo=args.app_repo,
-        app_run_id=args.app_run_id,
-        app_assets=app_assets,
-    )
+    finalize_event: dict[str, Any] = {
+        "phase": "finalize_summary",
+        "scope": list(scope),
+    }
+    summary_payload: dict[str, Any] = {
+        "schema": 1,
+        "generated_at": utc_now_iso(),
+        "scope": list(scope),
+        "global_sdk_base": f"{args.sdk_base.rstrip('/')}/",
+    }
 
-    with requests.Session() as session:
-        session.trust_env = True
-        session.headers["User-Agent"] = "niyien-pan123-publisher"
-        emit_log("Resolving content assets")
-        emit_progress(phase="resolve", message="resolve content assets", mode="indeterminate")
-        lens_release = github.get_release(args.lens_owner, args.lens_repo, args.lens_tag)
-        plugin_source = resolve_plugin_source(
+    # ---------------- App scope ----------------
+    app_packages: dict[str, dict[str, Any]] = {}
+    app_source_ref = ""
+    global_app_urls: dict[str, dict[str, str]] = {}
+    if SCOPE_APP in scope:
+        emit_log("Resolving app artifacts")
+        emit_progress(phase="resolve", message="resolve app artifacts", mode="indeterminate")
+        app_assets = resolve_app_asset_files(
             github=github,
+            workspace=workspace,
             temp_root=temp_root,
-            owner=args.plugins_owner,
-            repo=args.plugins_repo,
-            source_mode=args.plugins_source_mode,
-            tag=args.plugins_tag,
-            artifact_name=args.plugins_artifact_name,
-        )
-
-        downloaded_content, sdk_files = download_content_assets(
-            github=github,
-            session=session,
-            temp_root=temp_root,
-            lens_release=lens_release,
-            plugin_source=plugin_source,
-            sdk_base=args.sdk_base,
-        )
-        emit_log("Content assets ready")
-        emit_progress(phase="resolve", message="content assets ready")
-
-        lens_metadata = json.loads(
-            next(
-                item.local_path.read_text(encoding="utf-8")
-                for item in downloaded_content
-                if item.logical_path.endswith(LENS_METADATA_ASSET_NAME)
-            )
-        )
-
-        # content_manifest hashes lens + plugin only (SDK is shared across
-        # releases now, so including it would inflate content_tag churn for
-        # no benefit).
-        content_manifest, content_tag = build_content_manifest(
-            app_tag=args.app_tag,
             app_source_mode=args.app_source_mode,
-            app_source_ref=app_source_ref,
-            lens_release=lens_release,
-            plugin_source=plugin_source,
-            downloaded_files=downloaded_content,
+            app_owner=args.app_owner,
+            app_repo=args.app_repo,
+            app_run_id=args.app_run_id,
         )
-        content_manifest_path = output_dir / CONTENT_MANIFEST_ASSET_NAME
-        write_json(content_manifest_path, content_manifest)
+        if not app_assets:
+            raise RuntimeError("No app artifacts were found after downloading build outputs")
+        app_packages = build_app_packages_metadata(app_assets)
+        emit_log("App artifacts ready")
+        emit_progress(phase="resolve", message="app artifacts ready")
+        app_source_ref, global_app_urls = resolve_app_source(
+            app_source_mode=args.app_source_mode,
+            app_tag=args.app_tag,
+            app_owner=args.app_owner,
+            app_repo=args.app_repo,
+            app_run_id=args.app_run_id,
+            app_assets=app_assets,
+        )
 
         emit_log("Uploading app bundle")
         app_dir_id = pan123.ensure_release_dir(args.app_tag)
@@ -1000,92 +1032,171 @@ def main() -> int:
             )
             pan123.upload_file(app_dir_id, asset_path, asset_name)
 
-        emit_log("Uploading content bundle")
-        content_dir_id = pan123.ensure_release_dir(content_tag)
-        upload_content_bundle(pan123, content_dir_id, downloaded_content, content_manifest_path)
+        finalize_event["app_tag"] = args.app_tag
+        finalize_event["packages"] = app_packages
+        summary_payload["app_tag"] = args.app_tag
+        summary_payload["app_source_mode"] = args.app_source_mode
+        summary_payload["app_source_ref"] = app_source_ref
+        summary_payload["global_app_urls"] = global_app_urls
+        summary_payload["packages"] = app_packages
 
-        # SDK uploads — flat into RELEASES_ROOT/sdk/. Filenames carry their
-        # version, so a new SDK doesn't displace what older clients are
-        # still asking for. Skip files that already exist (find_child by
-        # name) — also a fast path beyond the per-file MD5 dedup that
-        # upload_file does internally.
-        if sdk_files:
-            emit_log("Uploading SDK assets to flat releases/sdk/")
-            sdk_dir_id = pan123.ensure_release_dir("sdk")
-            total_sdk = len(sdk_files)
-            for index, item in enumerate(sdk_files, start=1):
-                # logical_path is "sdk/<filename>"; strip the prefix
-                sdk_filename = Path(item.logical_path).name
-                emit_progress(
-                    phase="upload",
-                    label=sdk_filename,
-                    message=f"sdk {index}/{total_sdk}",
-                    current=index,
-                    total=max(total_sdk, 1),
+    with requests.Session() as session:
+        session.trust_env = True
+        session.headers["User-Agent"] = "niyien-pan123-publisher"
+
+        # ---------------- Lens scope ----------------
+        lens_tag = ""
+        lens_metadata: dict[str, Any] = {}
+        if SCOPE_LENS in scope:
+            emit_log("Resolving lens assets")
+            emit_progress(phase="resolve", message="resolve lens assets", mode="indeterminate")
+            lens_release = github.get_release(args.lens_owner, args.lens_repo, args.lens_tag)
+            downloaded_lens = download_lens_assets(
+                github=github, temp_root=temp_root, lens_release=lens_release,
+            )
+            lens_metadata = json.loads(
+                next(
+                    item.local_path.read_text(encoding="utf-8")
+                    for item in downloaded_lens
+                    if item.logical_path == LENS_METADATA_ASSET_NAME
                 )
-                # Cheap pre-check: same filename already there → skip even
-                # the create_v2 call. (upload_file would still detect via
-                # MD5 dedup, but this avoids hashing the local copy.)
-                existing = pan123.find_child(sdk_dir_id, sdk_filename, expected_type=0)
-                if existing:
-                    emit_log(f"SDK reused (skip): {sdk_filename}")
-                    continue
-                pan123.upload_file(sdk_dir_id, item.local_path, sdk_filename)
+            )
+            lens_manifest, lens_tag = build_lens_manifest(
+                lens_release=lens_release, downloaded_lens=downloaded_lens,
+            )
+            lens_manifest_path = output_dir / LENS_MANIFEST_ASSET_NAME
+            write_json(lens_manifest_path, lens_manifest)
 
-        summary = build_release_summary(
-            app_tag=args.app_tag,
-            app_source_mode=args.app_source_mode,
-            app_source_ref=app_source_ref,
-            global_app_urls=global_app_urls,
-            packages=app_packages,
-            content_tag=content_tag,
-            lens_release=lens_release,
-            plugin_source=plugin_source,
-            lens_metadata=lens_metadata,
-            sdk_base=args.sdk_base,
-        )
+            existing_lens = pan123.find_child(
+                pan123.releases_root_id, lens_tag, expected_type=1
+            )
+            if existing_lens and bundle_complete(
+                pan123, int(existing_lens["fileId"]), EXPECTED_LENS_FILENAMES
+            ):
+                emit_log(f"Lens bundle reused (skip upload): {lens_tag}")
+                emit_progress(phase="upload", label=lens_tag, message="lens bundle reused")
+            else:
+                emit_log(f"Uploading lens bundle: {lens_tag}")
+                lens_dir_id = pan123.ensure_release_dir(lens_tag)
+                upload_lens_bundle(pan123, lens_dir_id, downloaded_lens, lens_manifest_path)
+
+            # Stage lens assets for any downstream consumers (workflow logs etc.)
+            copy_file(
+                next(item.local_path for item in downloaded_lens
+                     if item.logical_path == LENS_ASSET_NAME),
+                output_dir / LENS_ASSET_NAME,
+            )
+            copy_file(
+                next(item.local_path for item in downloaded_lens
+                     if item.logical_path == LENS_METADATA_ASSET_NAME),
+                output_dir / LENS_METADATA_ASSET_NAME,
+            )
+
+            finalize_event["lens_tag"] = lens_tag
+            finalize_event["lens_release_tag"] = str(lens_release.get("tag_name", "")).strip()
+            finalize_event["lens_version"] = lens_metadata.get("version")
+            finalize_event["lens_sha256"] = lens_metadata.get("sha256")
+            summary_payload["lens_tag"] = lens_tag
+            summary_payload["lens_release_tag"] = finalize_event["lens_release_tag"]
+            summary_payload["lens_version"] = lens_metadata.get("version", "")
+            summary_payload["lens_sha256"] = lens_metadata.get("sha256", "")
+
+        # ---------------- Plugin scope ----------------
+        plugin_tag = ""
+        plugin_source: PluginSource | None = None
+        if SCOPE_PLUGIN in scope:
+            emit_log("Resolving plugin assets")
+            emit_progress(phase="resolve", message="resolve plugin source", mode="indeterminate")
+            plugin_source = resolve_plugin_source(
+                github=github,
+                temp_root=temp_root,
+                owner=args.plugins_owner,
+                repo=args.plugins_repo,
+                source_mode=args.plugins_source_mode,
+                tag=args.plugins_tag,
+                artifact_name=args.plugins_artifact_name,
+            )
+            downloaded_plugin = download_plugin_assets(
+                github=github, temp_root=temp_root, plugin_source=plugin_source,
+            )
+            plugin_manifest, plugin_tag = build_plugin_manifest(
+                plugin_source=plugin_source, downloaded_plugin=downloaded_plugin,
+            )
+            plugin_manifest_path = output_dir / PLUGIN_MANIFEST_ASSET_NAME
+            write_json(plugin_manifest_path, plugin_manifest)
+
+            existing_plugin = pan123.find_child(
+                pan123.releases_root_id, plugin_tag, expected_type=1
+            )
+            if existing_plugin and bundle_complete(
+                pan123, int(existing_plugin["fileId"]), EXPECTED_PLUGIN_FILENAMES
+            ):
+                emit_log(f"Plugin bundle reused (skip upload): {plugin_tag}")
+                emit_progress(phase="upload", label=plugin_tag, message="plugin bundle reused")
+            else:
+                emit_log(f"Uploading plugin bundle: {plugin_tag}")
+                plugin_dir_id = pan123.ensure_release_dir(plugin_tag)
+                upload_plugin_bundle(pan123, plugin_dir_id, downloaded_plugin, plugin_manifest_path)
+
+            plugin_release_tag = (
+                str(plugin_source.release.get("tag_name", "")).strip()
+                if plugin_source.release else ""
+            )
+            finalize_event["plugin_tag"] = plugin_tag
+            finalize_event["plugins_release_tag"] = plugin_release_tag
+            finalize_event["plugin_source_mode"] = plugin_source.mode
+            finalize_event["plugin_source_ref"] = plugin_source.source_ref
+            finalize_event["plugin_source_tag"] = plugin_source.display_name
+            summary_payload["plugin_tag"] = plugin_tag
+            summary_payload["plugins_release_tag"] = plugin_release_tag
+            summary_payload["plugin_source_mode"] = plugin_source.mode
+            summary_payload["plugin_source_ref"] = plugin_source.source_ref
+
+        # ---------------- SDK (always tag-along) ----------------
+        # SDK is shared across releases. Always upload when the publish has
+        # any content scope; cheap because find_child skips already-present
+        # files. Skip when scope=[app] only.
+        if SCOPE_LENS in scope or SCOPE_PLUGIN in scope:
+            sdk_files = download_sdk_assets(
+                session=session, temp_root=temp_root, sdk_base=args.sdk_base,
+            )
+            if sdk_files:
+                emit_log("Uploading SDK assets to flat releases/sdk/")
+                sdk_dir_id = pan123.ensure_release_dir("sdk")
+                total_sdk = len(sdk_files)
+                for index, item in enumerate(sdk_files, start=1):
+                    sdk_filename = Path(item.logical_path).name
+                    emit_progress(
+                        phase="upload",
+                        label=sdk_filename,
+                        message=f"sdk {index}/{total_sdk}",
+                        current=index,
+                        total=max(total_sdk, 1),
+                    )
+                    existing = pan123.find_child(sdk_dir_id, sdk_filename, expected_type=0)
+                    if existing:
+                        emit_log(f"SDK reused (skip): {sdk_filename}")
+                        continue
+                    pan123.upload_file(sdk_dir_id, item.local_path, sdk_filename)
+
+        # Plugin global URL base — same logic as before, but only when the
+        # plugin scope was actually published. When a non-plugin scope publish
+        # runs, we don't know (and shouldn't overwrite) the global plugin URL.
+        global_plugins_base = ""
+        if plugin_source is not None:
+            global_plugins_base = derive_global_plugins_base(plugin_source)
+            summary_payload["global_plugins_base"] = global_plugins_base
+            finalize_event["global_plugins_base"] = global_plugins_base
+
+        finalize_event["global_sdk_base"] = f"{args.sdk_base.rstrip('/')}/"
+
         summary_path = output_dir / RELEASE_SUMMARY_ASSET_NAME
-        write_json(summary_path, summary)
-
-        copy_file(
-            next(item.local_path for item in downloaded_content if item.logical_path == LENS_ASSET_NAME),
-            output_dir / LENS_ASSET_NAME,
-        )
-        copy_file(
-            next(
-                item.local_path
-                for item in downloaded_content
-                if item.logical_path == LENS_METADATA_ASSET_NAME
-            ),
-            output_dir / LENS_METADATA_ASSET_NAME,
-        )
+        write_json(summary_path, summary_payload)
 
         emit_log("Publish finished")
         emit_progress(phase="finalize", message="publish finished")
-        # Emit a structured summary event so control_center can pick up
-        # the runtime-computed content_tag, lens version/sha256 etc. and
-        # write them back to policy entry / Vercel envs (these aren't
-        # known at execute_app_action time because they're derived from
-        # the actual files being published).
-        plugin_release_tag = (
-            str(plugin_source.release.get("tag_name", "")).strip()
-            if plugin_source.release else ""
-        )
-        emit_event({
-            "phase": "finalize_summary",
-            "content_tag": content_tag,
-            "app_tag": args.app_tag,
-            "lens_release_tag": str(lens_release.get("tag_name", "")).strip(),
-            "lens_version": lens_metadata.get("version"),
-            "lens_sha256": lens_metadata.get("sha256"),
-            "plugins_release_tag": plugin_release_tag,
-            "plugin_source_mode": plugin_source.mode,
-            "plugin_source_ref": plugin_source.source_ref,
-            "plugin_source_tag": plugin_source.display_name,
-            "global_sdk_base": f"{args.sdk_base.rstrip('/')}/",
-            "packages": app_packages,
-        })
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        emit_event(finalize_event)
+        print(json.dumps(summary_payload, indent=2, ensure_ascii=False))
 
     return 0
 
@@ -1221,31 +1332,18 @@ def build_download_route_asset_url(app_tag: str, asset_name: str) -> str:
     return f"/api/download/app/{quote(app_tag, safe='')}/{quote(asset_name, safe='')}"
 
 
-def download_content_assets(
+def download_lens_assets(
     *,
     github: GitHubClient,
-    session: requests.Session,
     temp_root: Path,
     lens_release: dict[str, Any],
-    plugin_source: PluginSource,
-    sdk_base: str,
-) -> tuple[list[DownloadedFile], list[DownloadedFile]]:
-    """Resolve content + SDK assets locally.
+) -> list[DownloadedFile]:
+    """Download the lens cbor + metadata into temp_root, return DownloadedFile list.
 
-    Returns (content_assets, sdk_assets):
-    - `content_assets` (lens + plugin) goes into the per-release content bundle
-      whose dir name is hash-derived (`content-{hash}/`)
-    - `sdk_assets` is uploaded separately to a flat `releases/sdk/` directory
-      so SDK binaries are not duplicated for every release. Filenames carry
-      their version (e.g. `Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz`), so a
-      newer SDK simply gets a new filename and old gyroflow clients keep
-      reading the old one via their hard-coded filename constant.
+    logical_path is the bare filename so the lens bundle can be uploaded
+    flat into `releases/lens-<sha12>/`.
     """
     downloads: list[DownloadedFile] = []
-    sdk_downloads: list[DownloadedFile] = []
-    total_items = 2 + len(PLUGIN_ASSET_NAMES) + len(SDK_FILENAMES)
-    completed = 0
-
     lens_assets = map_assets(lens_release)
     lens_tag = str(lens_release.get("tag_name", "")).strip()
     for asset_name in (LENS_ASSET_NAME, LENS_METADATA_ASSET_NAME):
@@ -1262,56 +1360,49 @@ def download_content_assets(
         }
         if is_cached_file_match(destination, expected):
             emit_log(f"Reusing local asset: {asset_name}")
-            emit_progress(
-                phase="download",
-                label=asset_name,
-                message="cache hit, skip download",
-                current=completed + 1,
-                total=total_items,
-            )
+            emit_progress(phase="download", label=asset_name, message="cache hit, skip download")
         else:
-            emit_progress(
-                phase="download",
-                label=asset_name,
-                message="download lens asset",
-                current=completed + 1,
-                total=total_items,
-            )
+            emit_progress(phase="download", label=asset_name, message="download lens asset")
             github.download_asset(asset["browser_download_url"], destination)
             write_cached_metadata(destination, expected)
-        completed += 1
         downloads.append(build_downloaded_file(asset_name, destination, "lens", lens_tag))
+    return downloads
 
-    emit_progress(
-        phase="extract",
-        label="plugins",
-        message="resolve plugin assets",
-        current=completed,
-        total=total_items,
-        mode="indeterminate",
-    )
+
+def download_plugin_assets(
+    *,
+    github: GitHubClient,
+    temp_root: Path,
+    plugin_source: PluginSource,
+) -> list[DownloadedFile]:
+    """Resolve plugin assets locally, return DownloadedFile list.
+
+    logical_path is the bare filename (no `plugins/` prefix), matching the
+    new flat layout `releases/plugin-<sha12>/<asset>`.
+    """
+    downloads: list[DownloadedFile] = []
+    emit_progress(phase="extract", label="plugins", message="resolve plugin assets",
+                  mode="indeterminate")
     for asset_name, local_path in resolve_plugin_asset_files(
         github=github,
         temp_root=temp_root,
         plugin_source=plugin_source,
     ).items():
-        completed += 1
-        emit_progress(
-            phase="download",
-            label=asset_name,
-            message="plugin asset ready",
-            current=completed,
-            total=total_items,
-        )
+        emit_progress(phase="download", label=asset_name, message="plugin asset ready")
         downloads.append(
-            build_downloaded_file(
-                f"plugins/{asset_name}",
-                local_path,
-                "plugin",
-                plugin_source.source_ref,
-            )
+            build_downloaded_file(asset_name, local_path, "plugin", plugin_source.source_ref)
         )
+    return downloads
 
+
+def download_sdk_assets(
+    *,
+    session: requests.Session,
+    temp_root: Path,
+    sdk_base: str,
+) -> list[DownloadedFile]:
+    """Resolve SDK assets locally. Layout (`releases/sdk/<filename>`) unchanged."""
+    sdk_downloads: list[DownloadedFile] = []
     sdk_base = normalize_base_url(sdk_base, DEFAULT_SDK_BASE, "sdk base URL")
     for filename in SDK_FILENAMES:
         destination = temp_root / "sdk" / filename
@@ -1326,22 +1417,10 @@ def download_content_assets(
         }
         if is_cached_file_match(destination, expected_sdk):
             emit_log(f"Reusing local SDK asset: {filename}")
-            emit_progress(
-                phase="download",
-                label=filename,
-                message="cache hit, skip download",
-                current=completed + 1,
-                total=total_items,
-            )
+            emit_progress(phase="download", label=filename, message="cache hit, skip download")
             source_tag = sdk_base
         else:
-            emit_progress(
-                phase="download",
-                label=filename,
-                message="download sdk asset",
-                current=completed + 1,
-                total=total_items,
-            )
+            emit_progress(phase="download", label=filename, message="download sdk asset")
             resolved_url = download_sdk_to_path(
                 session=session,
                 sdk_base=sdk_base,
@@ -1350,14 +1429,10 @@ def download_content_assets(
             )
             write_cached_metadata(destination, expected_sdk)
             source_tag = resolved_url
-        completed += 1
-        # SDKs go to their own list — uploaded to flat `releases/sdk/`, not
-        # into the content bundle.
         sdk_downloads.append(
             build_downloaded_file(f"sdk/{filename}", destination, "sdk", source_tag)
         )
-
-    return downloads, sdk_downloads
+    return sdk_downloads
 
 
 def resolve_plugin_source(
@@ -1706,89 +1781,149 @@ def resolve_app_assets_from_artifacts(
     return resolved
 
 
-def upload_content_bundle(
+def bundle_complete(
+    pan123: Pan123Client, dir_id: int, expected_filenames: Iterable[str]
+) -> bool:
+    """Return True iff every expected filename is already present in dir_id.
+
+    Bundle directories are hash-named, so contents are immutable. If the
+    directory exists and every expected file is there, the publish can skip
+    the upload entirely (mirrors the SDK reuse pattern at L1029-1032).
+
+    Pan123Client.list_directory walks pages internally, so this is safe for
+    any directory size.
+    """
+    listing = pan123.list_directory(dir_id)
+    present = {
+        str(item.get("filename", "")).strip()
+        for item in listing
+        if int(item.get("trashed", 0)) == 0 and int(item.get("type", -1)) == 0
+    }
+    expected = {name for name in expected_filenames}
+    missing = expected - present
+    if missing:
+        emit_log(f"Bundle dir_id={dir_id} missing files: {sorted(missing)}")
+        return False
+    return True
+
+
+def upload_bundle_flat(
     pan123: Pan123Client,
-    content_dir_id: int,
-    downloaded_content: list[DownloadedFile],
-    content_manifest_path: Path,
+    dir_id: int,
+    downloaded: list[DownloadedFile],
+    manifest_path: Path,
+    manifest_filename: str,
+    *,
+    label: str,
 ) -> None:
-    total_uploads = len(downloaded_content) + 1
+    """Upload a bundle's manifest + downloaded files flat into dir_id.
+
+    Used by both upload_lens_bundle and upload_plugin_bundle. Files are
+    uploaded by their logical_path basename — the new layout has no nested
+    subdirectories inside lens-<x>/ or plugin-<x>/.
+    """
+    total_uploads = len(downloaded) + 1
     emit_progress(
         phase="upload",
-        label=CONTENT_MANIFEST_ASSET_NAME,
-        message="upload content manifest",
+        label=manifest_filename,
+        message=f"upload {label} manifest",
         current=1,
         total=total_uploads,
     )
-    pan123.upload_file(content_dir_id, content_manifest_path, CONTENT_MANIFEST_ASSET_NAME)
-
-    subdir_cache: dict[str, int] = {}
-    for index, item in enumerate(downloaded_content, start=2):
+    pan123.upload_file(dir_id, manifest_path, manifest_filename)
+    for index, item in enumerate(downloaded, start=2):
+        remote_name = Path(item.logical_path).name
         emit_progress(
             phase="upload",
-            label=item.logical_path,
-            message="upload content asset to 123",
+            label=remote_name,
+            message=f"upload {label} asset to 123",
             current=index,
             total=total_uploads,
         )
-        relative_path = Path(item.logical_path)
-        parent_id = content_dir_id
-        if len(relative_path.parts) > 1:
-            for folder in relative_path.parts[:-1]:
-                cache_key = f"{parent_id}:{folder}"
-                if cache_key not in subdir_cache:
-                    subdir_cache[cache_key] = pan123.ensure_release_dir_in(parent_id, folder)
-                parent_id = subdir_cache[cache_key]
-        pan123.upload_file(parent_id, item.local_path, relative_path.name)
+        pan123.upload_file(dir_id, item.local_path, remote_name)
 
 
-def build_content_manifest(
-    *,
-    app_tag: str,
-    app_source_mode: str,
-    app_source_ref: str,
-    lens_release: dict[str, Any],
-    plugin_source: PluginSource,
-    downloaded_files: list[DownloadedFile],
-) -> tuple[dict[str, Any], str]:
+def upload_lens_bundle(
+    pan123: Pan123Client,
+    lens_dir_id: int,
+    downloaded_lens: list[DownloadedFile],
+    lens_manifest_path: Path,
+) -> None:
+    upload_bundle_flat(
+        pan123, lens_dir_id, downloaded_lens, lens_manifest_path,
+        LENS_MANIFEST_ASSET_NAME, label="lens",
+    )
+
+
+def upload_plugin_bundle(
+    pan123: Pan123Client,
+    plugin_dir_id: int,
+    downloaded_plugin: list[DownloadedFile],
+    plugin_manifest_path: Path,
+) -> None:
+    upload_bundle_flat(
+        pan123, plugin_dir_id, downloaded_plugin, plugin_manifest_path,
+        PLUGIN_MANIFEST_ASSET_NAME, label="plugin",
+    )
+
+
+def _hash_file_entries(downloaded: list[DownloadedFile]) -> tuple[list[dict[str, Any]], str]:
+    """Return (sorted file entries, sha256 of canonical JSON of those entries).
+
+    Hash inputs cover ONLY {path, sha256, size}. release tags / source refs
+    are intentionally excluded so that re-running CI on the same binaries
+    (artifact mode) produces a stable bundle tag.
+    """
     file_entries = [
-        {
-            "path": item.logical_path,
-            "sha256": item.sha256,
-            "size": item.size,
-            "source": item.source,
-            "source_tag": item.source_tag,
-        }
-        for item in sorted(downloaded_files, key=lambda entry: entry.logical_path)
+        {"path": Path(item.logical_path).name, "sha256": item.sha256, "size": item.size}
+        for item in sorted(downloaded, key=lambda entry: entry.logical_path)
     ]
-    hash_payload = {
-        "app_tag": app_tag,
-        "app_source_mode": app_source_mode,
-        "app_source_ref": app_source_ref,
-        "lens_release_tag": lens_release.get("tag_name", ""),
-        "plugin_source_mode": plugin_source.mode,
-        "plugin_source_ref": plugin_source.source_ref,
-        "files": file_entries,
-    }
-    manifest_hash = hashlib.sha256(
-        json.dumps(hash_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    payload = {"schema": 2, "files": file_entries}
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
-    content_tag = f"content-{manifest_hash[:12]}"
+    return file_entries, digest
+
+
+def build_lens_manifest(
+    *, lens_release: dict[str, Any], downloaded_lens: list[DownloadedFile]
+) -> tuple[dict[str, Any], str]:
+    file_entries, lens_hash = _hash_file_entries(downloaded_lens)
+    lens_tag = f"lens-{lens_hash[:12]}"
     manifest = {
-        "schema": 1,
+        "schema": 2,
+        "kind": "lens",
         "generated_at": utc_now_iso(),
-        "app_tag": app_tag,
-        "content_tag": content_tag,
-        "content_hash": manifest_hash,
-        "app_source_mode": app_source_mode,
-        "app_source_ref": app_source_ref,
-        "lens_release_tag": lens_release.get("tag_name", ""),
-        "plugin_source_mode": plugin_source.mode,
-        "plugin_source_ref": plugin_source.source_ref,
-        "plugins_release_tag": plugin_source.release.get("tag_name", "") if plugin_source.release else "",
+        "lens_tag": lens_tag,
+        "lens_hash": lens_hash,
+        # Metadata only (does not feed the hash) — useful for ops debugging.
+        "lens_release_tag": str(lens_release.get("tag_name", "")).strip(),
         "files": file_entries,
     }
-    return manifest, content_tag
+    return manifest, lens_tag
+
+
+def build_plugin_manifest(
+    *, plugin_source: PluginSource, downloaded_plugin: list[DownloadedFile]
+) -> tuple[dict[str, Any], str]:
+    file_entries, plugin_hash = _hash_file_entries(downloaded_plugin)
+    plugin_tag = f"plugin-{plugin_hash[:12]}"
+    manifest = {
+        "schema": 2,
+        "kind": "plugin",
+        "generated_at": utc_now_iso(),
+        "plugin_tag": plugin_tag,
+        "plugin_hash": plugin_hash,
+        # Metadata only (does not feed the hash).
+        "plugin_source_mode": plugin_source.mode,
+        "plugin_source_ref": plugin_source.source_ref,
+        "plugins_release_tag": (
+            str(plugin_source.release.get("tag_name", "")).strip()
+            if plugin_source.release else ""
+        ),
+        "files": file_entries,
+    }
+    return manifest, plugin_tag
 
 
 def build_app_packages_metadata(app_assets: dict[str, Path]) -> dict[str, dict[str, Any]]:
@@ -1862,59 +1997,30 @@ def add_asset_metadata(
     target[f"{prefix}_size"] = asset_path.stat().st_size
 
 
-def build_release_summary(
-    *,
-    app_tag: str,
-    app_source_mode: str,
-    app_source_ref: str,
-    global_app_urls: dict[str, dict[str, str]],
-    packages: dict[str, dict[str, Any]],
-    content_tag: str,
-    lens_release: dict[str, Any],
-    plugin_source: PluginSource,
-    lens_metadata: dict[str, Any],
-    sdk_base: str,
-) -> dict[str, Any]:
-    global_plugins_base = f"{DEFAULT_GLOBAL_PLUGINS_BASE}/"
+def derive_global_plugins_base(plugin_source: PluginSource) -> str:
+    """Compose the GitHub-side global URL base for plugin assets.
+
+    `release` mode → releases/latest/download/.
+    `artifact` mode → nightly.link, where the client unwraps the V4 short
+    artifact zip wrapper (see src/nle_plugins.rs::install).
+    """
     if plugin_source.mode == "release" and plugin_source.owner and plugin_source.repo:
-        global_plugins_base = (
+        return (
             f"https://github.com/{quote(plugin_source.owner, safe='')}/"
             f"{quote(plugin_source.repo, safe='')}/releases/latest/download/"
         )
-    elif (
+    if (
         plugin_source.mode == "artifact"
         and plugin_source.owner
         and plugin_source.repo
         and plugin_source.run_id > 0
     ):
-        # Artifact-mode plugin URLs go through nightly.link so global users can
-        # fetch directly from GitHub without authentication. The client side
-        # (`src/nle_plugins.rs::install`) detects the `nightly.link` host,
-        # translates plugin filename → V4 short artifact name → URL, and
-        # unwraps the served zip wrapper.
-        global_plugins_base = (
+        return (
             f"https://nightly.link/{quote(plugin_source.owner, safe='')}/"
             f"{quote(plugin_source.repo, safe='')}/actions/runs/"
             f"{plugin_source.run_id}/"
         )
-    return {
-        "schema": 1,
-        "generated_at": utc_now_iso(),
-        "app_tag": app_tag,
-        "app_source_mode": app_source_mode,
-        "app_source_ref": app_source_ref,
-        "global_app_urls": global_app_urls,
-        "packages": packages,
-        "content_tag": content_tag,
-        "lens_version": lens_metadata.get("version", ""),
-        "lens_sha256": lens_metadata.get("sha256", ""),
-        "lens_source_tag": lens_release.get("tag_name", ""),
-        "plugins_source_mode": plugin_source.mode,
-        "plugins_source_ref": plugin_source.source_ref,
-        "plugins_source_tag": plugin_source.display_name,
-        "global_sdk_base": f"{sdk_base.rstrip('/')}/",
-        "global_plugins_base": global_plugins_base,
-    }
+    return f"{DEFAULT_GLOBAL_PLUGINS_BASE}/"
 
 
 def build_downloaded_file(logical_path: str, local_path: Path, source: str, source_tag: str) -> DownloadedFile:
