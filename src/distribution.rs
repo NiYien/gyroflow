@@ -771,6 +771,18 @@ where
         return Ok(path);
     }
 
+    if is_nightly_link_url(url) {
+        return download_nightly_wrapped_update_file(
+            label,
+            url,
+            expected_sha256,
+            expected_size,
+            path,
+            progress,
+            progress_status,
+        );
+    }
+
     let response = configure_geo_request(ureq::get(url))
         .call()
         .map_err(|err| format!("download {label} failed: {err}"))?;
@@ -819,6 +831,173 @@ where
     std::fs::rename(&temp_path, &path)
         .map_err(|err| format!("activate update download failed: {err}"))?;
     Ok(path)
+}
+
+fn is_nightly_link_url(url: &str) -> bool {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case("nightly.link")))
+        .unwrap_or(false)
+}
+
+// nightly.link serves GitHub Actions artifacts as a one-level zip wrapper that
+// contains exactly one file (per the nightly upload steps in
+// `.github/workflows/release.yml`, which use `actions/upload-artifact@v4` with
+// short artifact names + a single `path:` file). Download the wrapper to a
+// temp file, extract the inner deliverable while computing SHA256 on the raw
+// inner bytes, and rename to the target cache path.
+fn download_nightly_wrapped_update_file<F>(
+    label: &str,
+    url: &str,
+    expected_sha256: &str,
+    expected_size: u64,
+    path: PathBuf,
+    progress: &mut F,
+    progress_status: &str,
+) -> Result<PathBuf, String>
+where
+    F: FnMut(u64, u64, &str),
+{
+    let response = configure_geo_request(ureq::get(url))
+        .call()
+        .map_err(|err| format!("download {label} (nightly wrapper) failed: {err}"))?;
+    let wrapper_total = response
+        .headers()
+        .get("content-length")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    let wrapper_path = path.with_extension("nightly-wrapper.zip");
+    if wrapper_path.exists() {
+        let _ = std::fs::remove_file(&wrapper_path);
+    }
+    let mut reader = response.into_body().into_reader();
+    let mut wrapper_file = std::fs::File::create(&wrapper_path)
+        .map_err(|err| format!("create nightly wrapper temp file failed: {err}"))?;
+    let mut buffer = [0_u8; 128 * 1024];
+    let mut wrapper_downloaded = 0_u64;
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .map_err(|err| format!("read nightly wrapper failed: {err}"))?;
+        if read == 0 {
+            break;
+        }
+        wrapper_file
+            .write_all(&buffer[..read])
+            .map_err(|err| format!("write nightly wrapper failed: {err}"))?;
+        wrapper_downloaded += read as u64;
+        let total = wrapper_total.max(wrapper_downloaded);
+        progress(wrapper_downloaded, total, progress_status);
+    }
+    wrapper_file
+        .flush()
+        .map_err(|err| format!("flush nightly wrapper failed: {err}"))?;
+    drop(wrapper_file);
+
+    let extract_result = extract_nightly_inner_file(
+        label,
+        &wrapper_path,
+        &path,
+        expected_sha256,
+        expected_size,
+        &mut buffer,
+        progress,
+        progress_status,
+    );
+    let _ = std::fs::remove_file(&wrapper_path);
+    extract_result?;
+    Ok(path)
+}
+
+fn extract_nightly_inner_file<F>(
+    label: &str,
+    wrapper_path: &Path,
+    target_path: &Path,
+    expected_sha256: &str,
+    expected_size: u64,
+    buffer: &mut [u8],
+    progress: &mut F,
+    progress_status: &str,
+) -> Result<(), String>
+where
+    F: FnMut(u64, u64, &str),
+{
+    let wrapper_handle = std::fs::File::open(wrapper_path)
+        .map_err(|err| format!("open nightly wrapper failed: {err}"))?;
+    let mut archive = zip::ZipArchive::new(wrapper_handle)
+        .map_err(|err| format!("read nightly wrapper as zip ({label}) failed: {err}"))?;
+    if archive.is_empty() {
+        return Err(format!("nightly wrapper for {label} is empty"));
+    }
+
+    let target_basename = target_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let mut entry_index = 0_usize;
+    for i in 0..archive.len() {
+        if let Ok(entry) = archive.by_index(i) {
+            if entry.is_file() {
+                let name = entry.name();
+                if name == target_basename || name.ends_with(&format!("/{target_basename}")) {
+                    entry_index = i;
+                    break;
+                }
+                entry_index = i;
+            }
+        }
+    }
+    let mut inner = archive
+        .by_index(entry_index)
+        .map_err(|err| format!("open nightly wrapper inner #{entry_index} ({label}): {err}"))?;
+    let inner_size = inner.size();
+    let total = if expected_size > 0 {
+        expected_size
+    } else {
+        inner_size
+    };
+
+    let temp_path = target_path.with_extension("download");
+    let mut output = std::fs::File::create(&temp_path)
+        .map_err(|err| format!("create update temp file failed: {err}"))?;
+    let mut hasher = Sha256::new();
+    let mut downloaded = 0_u64;
+    loop {
+        let read = inner
+            .read(buffer)
+            .map_err(|err| format!("read nightly inner failed: {err}"))?;
+        if read == 0 {
+            break;
+        }
+        output
+            .write_all(&buffer[..read])
+            .map_err(|err| format!("write update download failed: {err}"))?;
+        hasher.update(&buffer[..read]);
+        downloaded += read as u64;
+        progress(downloaded, total, progress_status);
+    }
+    output
+        .flush()
+        .map_err(|err| format!("flush update download failed: {err}"))?;
+    drop(output);
+    drop(inner);
+    drop(archive);
+
+    verify_sha256_hex(
+        label,
+        &hex_digest(hasher.finalize().as_slice()),
+        expected_sha256,
+    )?;
+    if target_path.exists() {
+        std::fs::remove_file(target_path)
+            .map_err(|err| format!("replace cached update file failed: {err}"))?;
+    }
+    std::fs::rename(&temp_path, target_path)
+        .map_err(|err| format!("activate update download failed: {err}"))?;
+    Ok(())
 }
 
 fn cached_update_file_size_if_valid(
@@ -931,6 +1110,14 @@ fn app_update_filename(selection: &AppUpdateSelection) -> String {
 }
 
 fn app_update_filename_from_url(url: &str, fallback_filename: &str) -> String {
+    // For nightly.link wrappers the URL filename is the V4 short artifact name
+    // (e.g. `gyroflow-niyien-win-setup.zip`), which is *not* the extension of
+    // the raw deliverable inside. Use the platform-specific fallback so the
+    // cached file keeps the right extension (.exe / .zip / .dmg) for launching
+    // the installer or mounting the dmg.
+    if is_nightly_link_url(url) {
+        return fallback_filename.to_owned();
+    }
     url::Url::parse(url)
         .ok()
         .and_then(|url| {

@@ -258,6 +258,23 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
     }
 }
 
+// Map a plugin type + current platform to the V4 short artifact name used by
+// the plugin workflow on workflow_dispatch / nightly publishes. The names live
+// in `NiYien/gyroflow-plugins/.github/workflows/release.yml` and must stay in
+// sync with `_scripts/publish_pan123_release.py PLUGIN_ASSET_NAMES` (filename
+// side) + `control_center.config.json::publish_defaults.plugins_artifact_name`
+// (CSV of artifact names). On macOS the `-zip` suffix selects the .zip variant
+// over the .dmg artifact.
+fn nightly_artifact_name_for_plugin(typ: &str) -> &'static str {
+    match (typ, cfg!(target_os = "windows")) {
+        ("openfx", true) => "GyroflowNiyien-OpenFX-windows",
+        ("openfx", false) => "GyroflowNiyien-OpenFX-macos-zip",
+        ("adobe", true) => "GyroflowNiyien-Adobe-windows",
+        ("adobe", false) => "GyroflowNiyien-Adobe-macos-zip",
+        _ => unreachable!(),
+    }
+}
+
 pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     // Single base for all plugin downloads — manifest.plugins_base when present,
     // GitHub releases as offline fallback. Filenames are fixed and match
@@ -270,16 +287,17 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     } else {
         format!("{normalized_custom_base}/")
     };
-    let (download_url, extract_path) = match typ {
+    let is_nightly_base = base.contains("nightly.link");
+    let (filename, extract_path) = match typ {
         "openfx" => {
             if cfg!(target_os = "windows") {
                 (
-                    format!("{base}GyroflowNiyien-OpenFX-windows.zip"),
+                    "GyroflowNiyien-OpenFX-windows.zip",
                     "C:/Program Files/Common Files/OFX/Plugins/",
                 )
             } else {
                 (
-                    format!("{base}GyroflowNiyien-OpenFX-macos.zip"),
+                    "GyroflowNiyien-OpenFX-macos.zip",
                     "/Library/OFX/Plugins/",
                 )
             }
@@ -287,17 +305,30 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
         "adobe" => {
             if cfg!(target_os = "windows") {
                 (
-                    format!("{base}GyroflowNiyien-Adobe-windows.aex"),
+                    "GyroflowNiyien-Adobe-windows.aex",
                     "C:/Program Files/Adobe/Common/Plug-ins/7.0/MediaCore/",
                 )
             } else {
                 (
-                    format!("{base}GyroflowNiyien-Adobe-macos.zip"),
+                    "GyroflowNiyien-Adobe-macos.zip",
                     "/Library/Application Support/Adobe/Common/Plug-ins/7.0/MediaCore/",
                 )
             }
         }
         _ => unreachable!(),
+    };
+    // For nightly-style bases (artifact-mode plugin publish), URLs follow
+    //   {base}{artifact_name}.zip
+    // where {artifact_name} is the V4 short name from the plugin workflow
+    // (no file extension; macos-zip variant has the `-zip` suffix). The
+    // wrapper served by nightly.link contains the deliverable file we know
+    // by `filename`; the existing zip-branch in this function unwraps one
+    // layer, so the only change needed is the URL construction.
+    let download_url = if is_nightly_base {
+        let artifact_name = nightly_artifact_name_for_plugin(typ);
+        format!("{base}{artifact_name}.zip")
+    } else {
+        format!("{base}{filename}")
     };
     ::log::info!(
         "[nle install] start typ={typ:?} plugins_base={plugins_base:?} effective_base={base:?} download_url={download_url:?} extract_path={extract_path:?}"

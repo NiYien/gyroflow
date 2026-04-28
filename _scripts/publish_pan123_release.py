@@ -51,6 +51,18 @@ APP_ASSET_NAMES_BY_PLATFORM = {
     "android": ("gyroflow-niyien.apk",),
 }
 
+# Workflow_dispatch (nightly) mode uploads artifacts with short names that omit
+# the file extension and platform-detail suffix, mirroring the gyroflow upstream
+# layout. Each short artifact wraps exactly one raw deliverable (the
+# extension-bearing filename). nightly.link serves the wrapper at
+# `<short_name>.zip`; publish/client extracts one level to recover the raw file.
+APP_ARTIFACT_NAMES_BY_FILE = {
+    "gyroflow-niyien-windows":   "gyroflow-niyien-windows64.zip",
+    "gyroflow-niyien-win-setup": "gyroflow-niyien-windows64-setup.exe",
+    "gyroflow-niyien-mac":       "gyroflow-niyien-mac-universal.dmg",
+}
+APP_FILE_TO_ARTIFACT_NAME = {v: k for k, v in APP_ARTIFACT_NAMES_BY_FILE.items()}
+
 
 def derive_required_app_asset_names(
     *,
@@ -1174,20 +1186,32 @@ def build_global_artifact_app_urls(
     github_owner: str = "NiYien",
     github_repo: str = "gyroflow",
 ) -> dict[str, dict[str, str]]:
-    # Artifact builds do not have a GitHub Release asset URL. Use the
-    # 123-backed download route for both global and CN clients so the manifest
-    # points at the bare uploaded asset, not a nightly.link artifact wrapper.
+    # Artifact builds expose nightly.link wrappers for global clients (123 disk
+    # is unreachable outside CN). Each short artifact name from the workflow
+    # corresponds to exactly one raw deliverable; nightly.link serves the V4
+    # wrapper at `<short_name>.zip`, and clients unwrap one level on download.
     if not app_tag:
         return {}
-    _ = github_owner, github_repo
+    run_id = app_tag[len("run-"):] if app_tag.startswith("run-") else app_tag
     urls: dict[str, dict[str, str]] = {}
     for asset_name in sorted(asset_names):
         platform = APP_ASSET_PLATFORM_BY_NAME.get(asset_name)
         if not platform:
             continue
+        artifact_name = APP_FILE_TO_ARTIFACT_NAME.get(asset_name)
+        if not artifact_name:
+            # Platforms without a defined V4 short-name (e.g. linux/android while
+            # nightly upload steps are still pending) keep the legacy 123 route
+            # so they don't disappear from manifests entirely.
+            url = build_download_route_asset_url(app_tag, asset_name)
+        else:
+            url = (
+                f"https://nightly.link/{github_owner}/{github_repo}"
+                f"/actions/runs/{run_id}/{artifact_name}.zip"
+            )
         role = APP_ASSET_ROLE_BY_NAME.get(asset_name, "package")
         key = "installer_url" if role == "installer" else "package_url"
-        urls.setdefault(platform, {})[key] = build_download_route_asset_url(app_tag, asset_name)
+        urls.setdefault(platform, {})[key] = url
     return urls
 
 
@@ -1578,14 +1602,15 @@ def resolve_app_assets_from_artifacts(
 ) -> dict[str, Path]:
     """Resolve app installers from a workflow run's artifacts.
 
-    The release workflow uses `actions/upload-artifact@v7` with
-    `archive: false` (.github/workflows/release.yml:122,131) so each
-    artifact's `name` is exactly the final asset filename
-    (e.g. `gyroflow-niyien-windows64.zip` /
-    `gyroflow-niyien-mac-universal.dmg`) and the downloaded body is the
-    raw asset — no outer zip wrapper, no extraction needed.
+    The nightly upload steps in `.github/workflows/release.yml` use
+    `actions/upload-artifact@v4` with short artifact names declared in
+    `APP_ARTIFACT_NAMES_BY_FILE` (e.g. `gyroflow-niyien-windows` wrapping the
+    raw `gyroflow-niyien-windows64.zip`). The GitHub API serves each artifact
+    as a one-level zip wrapper, so we download the wrapper to a temp file and
+    extract the named raw deliverable into `app_root`.
     """
     app_root = temp_root / "app"
+    wrapper_root = temp_root / "_app_wrappers" / str(run_id)
     artifact_signatures = sorted(
         f"{int(item.get('id', 0) or 0)}:{str(item.get('digest', '')).strip()}:{str(item.get('name', '')).strip()}"
         for item in artifacts
@@ -1595,25 +1620,28 @@ def resolve_app_assets_from_artifacts(
         a for a in artifacts
         if str(a.get("archive_download_url", "")).strip()
         and str(a.get("name", "")).strip()
-        and str(a.get("name", "")).strip() in APP_ASSET_NAMES
+        and str(a.get("name", "")).strip() in APP_ARTIFACT_NAMES_BY_FILE
     ]
     if not valid_artifacts:
         raise RuntimeError(f"No usable app artifacts in run {run_id}")
 
-    # Cache reuse: every artifact already on disk with matching signature?
+    # Cache reuse: every artifact already on disk (under its raw filename) with
+    # matching signature?
     resolved: dict[str, Path] = {}
     reusable = True
     for artifact in valid_artifacts:
-        asset_name = str(artifact["name"]).strip()
-        destination = app_root / asset_name
+        artifact_name = str(artifact["name"]).strip()
+        raw_filename = APP_ARTIFACT_NAMES_BY_FILE[artifact_name]
+        destination = app_root / raw_filename
         expected = {
             "kind": "app_artifact_output",
             "source_ref": source_ref,
             "artifact_signatures": artifact_signatures,
-            "asset_name": asset_name,
+            "artifact_name": artifact_name,
+            "asset_name": raw_filename,
         }
         if is_cached_file_match(destination, expected):
-            resolved[asset_name] = destination
+            resolved[raw_filename] = destination
         else:
             reusable = False
             break
@@ -1621,41 +1649,60 @@ def resolve_app_assets_from_artifacts(
         emit_log(f"Reusing local app artifact outputs: {source_ref}")
         return resolved
 
-    # Fresh download — straight to the final asset filename.
+    # Fresh download — fetch wrapper, extract single raw deliverable.
     app_root.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(wrapper_root, ignore_errors=True)
+    wrapper_root.mkdir(parents=True, exist_ok=True)
     resolved = {}
     total = len(valid_artifacts)
     emit_log(f"Resolved {total} app artifacts from run {run_id}, downloading via GitHub")
     for index, artifact in enumerate(valid_artifacts, start=1):
-        asset_name = str(artifact["name"]).strip()
+        artifact_name = str(artifact["name"]).strip()
         archive_url = str(artifact["archive_download_url"]).strip()
-        destination = app_root / asset_name
+        raw_filename = APP_ARTIFACT_NAMES_BY_FILE[artifact_name]
+        wrapper_path = wrapper_root / f"{artifact_name}.zip"
+        destination = app_root / raw_filename
         emit_progress(
             phase="resolve",
-            label=asset_name,
+            label=artifact_name,
             message=f"download artifact {index}/{total}",
             current=index - 1,
             total=total,
         )
-        github.download_artifact_archive(archive_url, destination)
+        github.download_artifact_archive(archive_url, wrapper_path)
+        try:
+            with zipfile.ZipFile(wrapper_path, "r") as wrapper:
+                names = wrapper.namelist()
+                if raw_filename not in names:
+                    raise RuntimeError(
+                        f"Artifact {artifact_name} wrapper does not contain {raw_filename}; "
+                        f"got {names}"
+                    )
+                # Extract directly to destination path (avoid intermediate dir).
+                with wrapper.open(raw_filename) as src, open(destination, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        finally:
+            wrapper_path.unlink(missing_ok=True)
         write_cached_metadata(
             destination,
             {
                 "kind": "app_artifact_output",
                 "source_ref": source_ref,
                 "artifact_signatures": artifact_signatures,
-                "asset_name": asset_name,
+                "artifact_name": artifact_name,
+                "asset_name": raw_filename,
             },
         )
-        resolved[asset_name] = destination
+        resolved[raw_filename] = destination
         emit_progress(
             phase="resolve",
-            label=asset_name,
+            label=artifact_name,
             message=f"artifact ready {index}/{total}",
             current=index,
             total=total,
         )
 
+    shutil.rmtree(wrapper_root, ignore_errors=True)
     return resolved
 
 
@@ -1833,6 +1880,22 @@ def build_release_summary(
         global_plugins_base = (
             f"https://github.com/{quote(plugin_source.owner, safe='')}/"
             f"{quote(plugin_source.repo, safe='')}/releases/latest/download/"
+        )
+    elif (
+        plugin_source.mode == "artifact"
+        and plugin_source.owner
+        and plugin_source.repo
+        and plugin_source.run_id > 0
+    ):
+        # Artifact-mode plugin URLs go through nightly.link so global users can
+        # fetch directly from GitHub without authentication. The client side
+        # (`src/nle_plugins.rs::install`) detects the `nightly.link` host,
+        # translates plugin filename → V4 short artifact name → URL, and
+        # unwraps the served zip wrapper.
+        global_plugins_base = (
+            f"https://nightly.link/{quote(plugin_source.owner, safe='')}/"
+            f"{quote(plugin_source.repo, safe='')}/actions/runs/"
+            f"{plugin_source.run_id}/"
         )
     return {
         "schema": 1,

@@ -113,8 +113,9 @@ jobs:
           just android install-deps
           just android deploy
 
-      - name: Upload Windows package
-        if: ${{ matrix.targets.type == 'windows' }}
+      # Release flow (tag push) — V7 + archive:false: raw bytes attached directly to GitHub release.
+      - name: Upload Windows package (release)
+        if: ${{ matrix.targets.type == 'windows' && startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v7
         with:
           name: gyroflow-niyien-windows64.zip
@@ -122,8 +123,8 @@ jobs:
           archive: false
           if-no-files-found: error
 
-      - name: Upload Windows setup
-        if: ${{ matrix.targets.type == 'windows' }}
+      - name: Upload Windows setup (release)
+        if: ${{ matrix.targets.type == 'windows' && startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v7
         with:
           name: gyroflow-niyien-windows64-setup.exe
@@ -131,13 +132,42 @@ jobs:
           archive: false
           if-no-files-found: error
 
-      - name: Upload macOS package
-        if: ${{ matrix.targets.type == 'macos' }}
+      - name: Upload macOS package (release)
+        if: ${{ matrix.targets.type == 'macos' && startsWith(github.ref, 'refs/tags/') }}
         uses: actions/upload-artifact@v7
         with:
           name: gyroflow-niyien-mac-universal.dmg
           path: _deployment/_binaries/gyroflow-niyien-mac-universal.dmg
           archive: false
+          if-no-files-found: error
+
+      # Nightly flow (workflow_dispatch) — V4 with short name + no pre-zip.
+      # V4's auto-archive wraps the raw build output once, so nightly.link URL
+      # `<short_name>.zip` returns a wrapper containing the deliverable file.
+      # Mirrors gyroflow/gyroflow upstream pattern (Gyroflow-windows.zip wrapping
+      # Gyroflow-windows64.zip).
+      - name: Upload Windows package (nightly)
+        if: ${{ matrix.targets.type == 'windows' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gyroflow-niyien-windows
+          path: _deployment/_binaries/gyroflow-niyien-windows64.zip
+          if-no-files-found: error
+
+      - name: Upload Windows setup (nightly)
+        if: ${{ matrix.targets.type == 'windows' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gyroflow-niyien-win-setup
+          path: _deployment/_binaries/gyroflow-niyien-windows64-setup.exe
+          if-no-files-found: error
+
+      - name: Upload macOS package (nightly)
+        if: ${{ matrix.targets.type == 'macos' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gyroflow-niyien-mac
+          path: _deployment/_binaries/gyroflow-niyien-mac-universal.dmg
           if-no-files-found: error
 
   github_release:
