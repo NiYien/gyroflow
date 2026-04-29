@@ -536,48 +536,27 @@ Item {
         }
         if (urls.length < 1) return;
 
-        // Drop .gyroflow files that have a same-stem video sibling in this
-        // batch: keep the video so add_file's video branch (or single-file
-        // loadFile) runs telemetry-parser and produces creation_date_utc for
-        // batch-gyro-match. Lone .gyroflow files (no matching video) are
-        // preserved and load as project/preset.
-        let effective = urls;
-        try {
-            const filteredJson = render_queue.filter_paired_gyroflow_siblings(
-                JSON.stringify(urls.map(u => u.toString())),
-                JSON.stringify(fileDialog.extensions)
-            );
-            effective = JSON.parse(filteredJson);
-        } catch (e) {
-            console.log("filter_paired_gyroflow_siblings failed:", e);
-        }
-
-        if (effective.length === 1) {
-            root.loadFile(effective[0], skip_detection);
-            return;
-        }
-
         // If no renderable video remains and this is only .gyroflow data,
         // preserve legacy behavior: load the first one in the main area.
         const firstVideoUrl = render_queue.first_renderable_video_file(
-            JSON.stringify(effective.map(u => u.toString())),
+            JSON.stringify(urls.map(u => u.toString())),
             JSON.stringify(fileDialog.extensions)
         );
         let allGyroflow = true;
-        for (const u of effective) {
+        for (const u of urls) {
             if (!filesystem.get_filename(u).toLowerCase().endsWith(".gyroflow")) {
                 allGyroflow = false;
                 break;
             }
         }
         if (!firstVideoUrl && allGyroflow) {
-            root.loadFile(effective[0], skip_detection);
+            root.loadFile(urls[0], skip_detection);
             return;
         }
 
         // Multiple items → batch into render queue. queue.item.dt.loadFiles
         // handles .gyroflow (project or preset) and video URLs uniformly.
-        const urlsCopy = [...effective];
+        const urlsCopy = [...urls];
         queue.item.dt.loadFiles(urlsCopy);
         queue.item.shown = true;
     }

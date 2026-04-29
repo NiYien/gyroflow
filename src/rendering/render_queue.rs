@@ -177,6 +177,12 @@ impl JobLensMetadataBackup {
         md.frame_readout_time = self.frame_readout_time;
         md.frame_readout_direction = self.frame_readout_direction;
     }
+
+    fn to_metadata(&self) -> core::gyro_source::FileMetadata {
+        let mut md = core::gyro_source::FileMetadata::default();
+        self.overwrite_metadata(&mut md);
+        md
+    }
 }
 
 #[derive(Default, Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -363,6 +369,7 @@ impl RenderOptions {
 
 #[derive(Default, Clone, Debug)]
 struct GyroFileInfo {
+    id: u64,
     path: String,
     filename: String,
     created_at_ms: Option<i64>,
@@ -431,14 +438,18 @@ fn effective_lens_group_config_for_group<'a>(
 }
 
 fn metadata_snapshot_for_job(job: &Job) -> Option<core::gyro_source::FileMetadata> {
-    let stab = job.stab.as_ref()?;
-    let gyro = stab.gyro.read();
-    let md = gyro.file_metadata.read();
-    let mut snapshot = md.thin();
-    if let Some(backup) = job.base_lens_metadata.as_ref() {
-        backup.overwrite_metadata(&mut snapshot);
+    if let Some(stab) = job.stab.as_ref() {
+        let gyro = stab.gyro.read();
+        let md = gyro.file_metadata.read();
+        let mut snapshot = md.thin();
+        if let Some(backup) = job.base_lens_metadata.as_ref() {
+            backup.overwrite_metadata(&mut snapshot);
+        }
+        return Some(snapshot);
     }
-    Some(snapshot)
+    job.base_lens_metadata
+        .as_ref()
+        .map(JobLensMetadataBackup::to_metadata)
 }
 
 fn build_job_lens_group_override(
@@ -573,6 +584,7 @@ pub struct RenderQueue {
 
     // Batch gyro matching
     gyro_files: Vec<GyroFileInfo>,
+    next_gyro_file_id: u64,
     match_results: Option<core::gyro_match::BatchMatchResult>,
     pairing_mode_gyro_index: Option<usize>,
     // [queue-lifecycle T2] original_job_order 已废弃，不再保存/恢复原始顺序
@@ -1395,23 +1407,40 @@ impl RenderQueue {
             let mut lens_group_ratio = 0.0;
             let mut lens_group_direction = String::new();
 
-            if let Some(lens_index) = lens_group_index {
+            if let (Some(lens_index), Some(metadata)) =
+                (lens_group_index, metadata_snapshot.as_ref())
+            {
                 if let Some((config, is_local)) =
                     effective_lens_group_config_for_group(job, &global_configs, lens_index)
                 {
-                    let has_manual_display =
-                        config.focal_length_mm.unwrap_or_default()
-                            > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
-                            || config.anamorphic_enabled;
-                    if has_manual_display {
+                    if let Some(display_config) =
+                        niyien_lens_presets::effective_lens_group_config_for_build(
+                            self.stabilizer.get_lens_group_manual_edit(),
+                            config,
+                            metadata,
+                        )
+                    {
                         lens_group_mode = if is_local { "local" } else { "global" };
                         lens_group_number = lens_index + 1;
-                        lens_group_focal_length = config.focal_length_mm.unwrap_or_default();
-                        lens_group_ratio = config.squeeze_ratio.unwrap_or_default();
-                        lens_group_direction = match config.squeeze_direction.unwrap_or_default() {
-                            niyien_lens_presets::SqueezeDirection::Horizontal => "H".to_owned(),
-                            niyien_lens_presets::SqueezeDirection::Vertical => "V".to_owned(),
-                        };
+                        lens_group_focal_length =
+                            display_config.focal_length_mm.unwrap_or_default();
+                        if display_config.anamorphic_enabled {
+                            if let Some(anamorphic) =
+                                niyien_lens_presets::resolve_anamorphic_config(
+                                    Some(&display_config),
+                                )
+                            {
+                                lens_group_ratio = anamorphic.squeeze_ratio;
+                                lens_group_direction = match anamorphic.squeeze_direction {
+                                    niyien_lens_presets::SqueezeDirection::Horizontal => {
+                                        "H".to_owned()
+                                    }
+                                    niyien_lens_presets::SqueezeDirection::Vertical => {
+                                        "V".to_owned()
+                                    }
+                                };
+                            }
+                        }
                         if lens_group_focal_length
                             <= niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
                         {
@@ -3472,8 +3501,11 @@ impl RenderQueue {
             .or_else(|| url.rsplit('\\').next())
             .unwrap_or(&url)
             .to_string();
+        let gyro_file_id = self.next_gyro_file_id;
+        self.next_gyro_file_id = self.next_gyro_file_id.wrapping_add(1);
         let index = self.gyro_files.len();
         self.gyro_files.push(GyroFileInfo {
+            id: gyro_file_id,
             path: url.clone(),
             filename,
             ..Default::default()
@@ -3481,17 +3513,18 @@ impl RenderQueue {
         self.gyro_files_changed();
 
         // T2: Background metadata parsing
+        let callback_url = url.clone();
         let on_parsed = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this, result: (Option<i64>, Option<f64>, Option<String>, Option<String>)| {
-                if let Some(info) = this.gyro_files.get_mut(index) {
-                    info.created_at_ms = result.0;
-                    info.duration_ms = result.1;
-                    info.detected_source = result.2.clone();
-                    info.error = result.3.clone();
-                    info.parsed = true;
+                if this.update_gyro_file_parse_result(
+                    index,
+                    gyro_file_id,
+                    &callback_url,
+                    result,
+                ) {
+                    this.gyro_files_changed();
                 }
-                this.gyro_files_changed();
             },
         );
 
@@ -3820,6 +3853,7 @@ impl RenderQueue {
         );
         self.gyro_files.clear();
         self.match_results = None;
+        self.same_gyro_cache.clear();
         self.stabilizer.clear_lens_group_status();
         self.manual_pairs.clear();
         self.restore_original_order();
@@ -3833,6 +3867,33 @@ impl RenderQueue {
 
     fn has_gyro_files(&self) -> bool {
         !self.gyro_files.is_empty()
+    }
+
+    fn update_gyro_file_parse_result(
+        &mut self,
+        index: usize,
+        id: u64,
+        path: &str,
+        result: (Option<i64>, Option<f64>, Option<String>, Option<String>),
+    ) -> bool {
+        let Some(info) = self.gyro_files.get_mut(index) else {
+            return false;
+        };
+        if info.id != id || info.path != path {
+            ::log::debug!(
+                "[add_gyro_file] ignored stale parse result: index={}, path={}",
+                index,
+                path
+            );
+            return false;
+        }
+
+        info.created_at_ms = result.0;
+        info.duration_ms = result.1;
+        info.detected_source = result.2;
+        info.error = result.3;
+        info.parsed = true;
+        true
     }
 
     fn get_gyro_file_info_json(&self, index: usize) -> QString {
@@ -6063,29 +6124,46 @@ fn parse_gyro_metadata(
     Ok((created_at, duration, md.detected_source))
 }
 
-// Pure-function core of `filter_paired_gyroflow_siblings`. Exposed as a free
-// fn so it is callable from unit tests without needing a RenderQueue instance.
 // Rules:
 //   - Group URLs by everything before the final '.' (key is case-sensitive
 //     to stay correct on case-sensitive filesystems).
-//   - Within a group, if a .gyroflow *and* a video (extension ∈ `extensions`
-//     after lowercasing, minus "gyroflow") both exist, drop the .gyroflow.
+//   - Within a group, if a .gyroflow project *and* a video (extension ∈
+//     `extensions` after lowercasing, minus "gyroflow") both exist, drop the
+//     .gyroflow.
+//   - Also drop .gyroflow projects whose `videofile` points to a video URL
+//     already present in the batch.
 //   - Lone .gyroflow (no sibling video) is preserved.
 //   - URLs with no extension, or whose dot sits inside the directory part,
 //     are passed through untouched.
 //   - Output preserves the original order.
 fn filter_paired_gyroflow_siblings_impl(urls: &[String], extensions: &[String]) -> Vec<String> {
+    filter_paired_gyroflow_siblings_impl_with_project_reader(
+        urls,
+        extensions,
+        read_gyroflow_project_video_url,
+    )
+}
+
+fn filter_paired_gyroflow_siblings_impl_with_project_reader<F>(
+    urls: &[String],
+    extensions: &[String],
+    mut project_video_url: F,
+) -> Vec<String>
+where
+    F: FnMut(&str) -> Option<String>,
+{
     if urls.len() <= 1 {
         return urls.to_vec();
     }
-    let video_exts: std::collections::HashSet<String> = extensions
+    let video_exts: HashSet<String> = extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
         .filter(|e| e != "gyroflow")
         .collect();
 
-    let mut groups: std::collections::HashMap<String, (Option<String>, Option<String>)> =
-        std::collections::HashMap::new();
+    let mut groups: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+    let mut video_url_keys: HashSet<String> = HashSet::new();
+    let mut gyroflow_urls: Vec<String> = Vec::new();
     for u in urls {
         let Some(dot) = u.rfind('.') else { continue };
         let slash_idx = u.rfind(['/', '\\']).unwrap_or(0);
@@ -6097,20 +6175,92 @@ fn filter_paired_gyroflow_siblings_impl(urls: &[String], extensions: &[String]) 
         let entry = groups.entry(key).or_insert((None, None));
         if ext_lower == "gyroflow" {
             entry.1 = Some(u.clone());
+            gyroflow_urls.push(u.clone());
         } else if video_exts.contains(&ext_lower) {
             entry.0 = Some(u.clone());
+            video_url_keys.insert(comparable_video_url_key(u));
         }
     }
-    let mut drop_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    if video_url_keys.is_empty() {
+        return urls.to_vec();
+    }
+
+    let mut same_stem_gyroflows: HashSet<String> = HashSet::new();
     for (_, (video, gyroflow)) in &groups {
         if let (Some(_), Some(g)) = (video, gyroflow) {
-            drop_set.insert(g.clone());
+            same_stem_gyroflows.insert(g.clone());
+        }
+    }
+    let mut drop_set: HashSet<String> = HashSet::new();
+    for gyroflow_url in gyroflow_urls {
+        if let Some(video_url) = project_video_url(&gyroflow_url) {
+            let video_key = comparable_video_url_key(&video_url);
+            if same_stem_gyroflows.contains(&gyroflow_url) || video_url_keys.contains(&video_key) {
+                drop_set.insert(gyroflow_url);
+            }
         }
     }
     urls.iter()
         .filter(|u| !drop_set.contains(*u))
         .cloned()
         .collect()
+}
+
+#[derive(serde::Deserialize)]
+struct GyroflowProjectVideoRef {
+    videofile: Option<String>,
+    image_sequence_start: Option<i64>,
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    videofile_bookmark: Option<String>,
+}
+
+fn read_gyroflow_project_video_url(url: &str) -> Option<String> {
+    if file_extension(url)? != "gyroflow" {
+        return None;
+    }
+    let data = filesystem::read(url).ok()?;
+    let project: GyroflowProjectVideoRef = serde_json::from_slice(&data).ok()?;
+    let mut video_url = project.videofile.filter(|x| !x.is_empty())?;
+    if !video_url.contains("://") {
+        video_url = filesystem::path_to_url(&video_url);
+    }
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if let Some(v) = project
+        .videofile_bookmark
+        .as_deref()
+        .filter(|x| !x.is_empty())
+    {
+        let (resolved, _is_stale) = filesystem::apple::resolve_bookmark(v, Some(url));
+        if !resolved.is_empty() {
+            video_url = resolved;
+        }
+    }
+    let sequence_start = project.image_sequence_start.unwrap_or_default() as u32;
+    Some(StabilizationManager::get_new_videofile_url(
+        &video_url,
+        Some(url),
+        sequence_start,
+    ))
+}
+
+fn comparable_video_url_key(url: &str) -> String {
+    let url = if url.contains("://") {
+        url.replace(' ', "%20")
+    } else {
+        filesystem::path_to_url(url)
+    };
+    if url.to_ascii_lowercase().starts_with("file://") {
+        let path = filesystem::url_to_path(&url);
+        if !path.is_empty() && path != url {
+            let path = path.replace('\\', "/");
+            if cfg!(windows) {
+                return path.to_ascii_lowercase();
+            }
+            return path;
+        }
+    }
+    url
 }
 
 fn file_extension(url: &str) -> Option<String> {
@@ -6190,6 +6340,242 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn queue_with_lens_display_job(
+        manual_edit: bool,
+        config: niyien_lens_presets::LensGroupConfig,
+        metadata: core::gyro_source::FileMetadata,
+    ) -> RenderQueue {
+        let stabilizer = Arc::new(StabilizationManager::default());
+        stabilizer
+            .lens_group_manual_edit
+            .store(manual_edit, SeqCst);
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        let lens_index = config.lens_index;
+        configs[lens_index] = config;
+        *stabilizer.lens_group_config.write() = configs;
+
+        let base_lens_metadata = JobLensMetadataBackup::from_metadata(&metadata);
+        let job_stab = Arc::new(StabilizationManager::default());
+        {
+            let mut gyro = job_stab.gyro.write();
+            gyro.file_metadata = metadata.into();
+        }
+
+        let mut queue = RenderQueue::new(stabilizer);
+        queue.jobs.insert(
+            1,
+            Job {
+                queue_index: 0,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                stab: Some(job_stab),
+                base_lens_metadata: Some(base_lens_metadata),
+                lens_group_config_override: None,
+                lens_group_index: Some(0),
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+        queue
+    }
+
+    fn job_display_params(queue: &RenderQueue) -> serde_json::Value {
+        serde_json::from_str(&queue.get_job_display_params(1).to_string()).unwrap()
+    }
+
+    fn auto_focal_metadata() -> core::gyro_source::FileMetadata {
+        core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            lens_params: BTreeMap::from([(
+                0,
+                core::gyro_source::LensParams {
+                    focal_length: Some(31.0),
+                    pixel_focal_length: Some(3100.0),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn display_params_skip_manual_focal_when_video_has_auto_focal() {
+        let queue = queue_with_lens_display_job(
+            true,
+            niyien_lens_presets::LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                ..Default::default()
+            },
+            auto_focal_metadata(),
+        );
+
+        let display = job_display_params(&queue);
+
+        assert_eq!(display["lens_group_display_mode"], "auto");
+        assert_eq!(display["lens_group_display_number"], 0);
+        assert_eq!(display["lens_group_display_focal_length"], 0.0);
+    }
+
+    #[test]
+    fn display_params_show_anamorphic_when_manual_edit_and_auto_focal() {
+        let queue = queue_with_lens_display_job(
+            true,
+            niyien_lens_presets::LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                anamorphic_enabled: true,
+                squeeze_ratio: Some(1.33),
+                squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Vertical),
+                ..Default::default()
+            },
+            auto_focal_metadata(),
+        );
+
+        let display = job_display_params(&queue);
+
+        assert_eq!(display["lens_group_display_mode"], "global");
+        assert_eq!(display["lens_group_display_number"], 1);
+        assert_eq!(display["lens_group_display_focal_length"], 50.0);
+        assert_eq!(display["lens_group_display_ratio"], 1.33);
+        assert_eq!(display["lens_group_display_direction"], "V");
+    }
+
+    #[test]
+    fn display_params_show_anamorphic_preset_ratio() {
+        let queue = queue_with_lens_display_job(
+            true,
+            niyien_lens_presets::LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                anamorphic_enabled: true,
+                preset_id: Some("sirui_xingchen_50mm_1_33x".to_owned()),
+                squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+                ..Default::default()
+            },
+            auto_focal_metadata(),
+        );
+
+        let display = job_display_params(&queue);
+
+        assert_eq!(display["lens_group_display_mode"], "global");
+        assert_eq!(display["lens_group_display_ratio"], 1.33);
+        assert_eq!(display["lens_group_display_direction"], "H");
+    }
+
+    #[test]
+    fn display_params_use_backup_metadata_after_stab_release() {
+        let mut queue = queue_with_lens_display_job(
+            false,
+            niyien_lens_presets::LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                ..Default::default()
+            },
+            core::gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 0 }),
+                ..Default::default()
+            },
+        );
+        queue.jobs.get_mut(&1).unwrap().stab = None;
+
+        let display = job_display_params(&queue);
+
+        assert_eq!(display["lens_group_display_mode"], "global");
+        assert_eq!(display["lens_group_display_number"], 1);
+        assert_eq!(display["lens_group_display_focal_length"], 50.0);
+    }
+
+    #[test]
+    fn display_params_skip_anamorphic_when_manual_edit_off_and_auto_focal() {
+        let queue = queue_with_lens_display_job(
+            false,
+            niyien_lens_presets::LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                anamorphic_enabled: true,
+                squeeze_ratio: Some(1.33),
+                ..Default::default()
+            },
+            auto_focal_metadata(),
+        );
+
+        let display = job_display_params(&queue);
+
+        assert_eq!(display["lens_group_display_mode"], "auto");
+        assert_eq!(display["lens_group_display_number"], 0);
+        assert_eq!(display["lens_group_display_ratio"], 0.0);
+    }
+
+    #[test]
+    fn display_params_show_manual_focal_when_video_auto_focal_missing() {
+        let queue = queue_with_lens_display_job(
+            false,
+            niyien_lens_presets::LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                ..Default::default()
+            },
+            core::gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 0 }),
+                ..Default::default()
+            },
+        );
+
+        let display = job_display_params(&queue);
+
+        assert_eq!(display["lens_group_display_mode"], "global");
+        assert_eq!(display["lens_group_display_number"], 1);
+        assert_eq!(display["lens_group_display_focal_length"], 50.0);
+    }
+
+    #[test]
+    fn stale_gyro_parse_result_does_not_update_reused_index() {
+        let mut queue = RenderQueue::default();
+        queue.gyro_files.push(GyroFileInfo {
+            id: 1,
+            path: "file:///old_mix.bin".to_owned(),
+            filename: "old_mix.bin".to_owned(),
+            ..Default::default()
+        });
+        queue.gyro_files.clear();
+        queue.gyro_files.push(GyroFileInfo {
+            id: 2,
+            path: "file:///new_mix.bin".to_owned(),
+            filename: "new_mix.bin".to_owned(),
+            ..Default::default()
+        });
+
+        let updated = queue.update_gyro_file_parse_result(
+            0,
+            1,
+            "file:///old_mix.bin",
+            (Some(1000), Some(2000.0), Some("old".to_owned()), None),
+        );
+
+        assert!(!updated);
+        assert_eq!(queue.gyro_files[0].path, "file:///new_mix.bin");
+        assert!(!queue.gyro_files[0].parsed);
+        assert_eq!(queue.gyro_files[0].created_at_ms, None);
+        assert_eq!(queue.gyro_files[0].duration_ms, None);
+    }
+
+    #[test]
+    fn clear_gyro_files_clears_same_gyro_cache() {
+        let mut queue = RenderQueue::default();
+        queue.same_gyro_cache.insert(7, (true, true));
+
+        queue.clear_gyro_files();
+
+        assert!(queue.same_gyro_cache.is_empty());
+    }
 
     #[test]
     fn lens_metadata_backup_restores_missing_fields_without_overwriting_real_values() {
@@ -6391,7 +6777,17 @@ mod tests {
             "file:///C:/clips/a.mp4".to_string(),
             "file:///C:/clips/a.gyroflow".to_string(),
         ];
-        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |url| {
+                if url == "file:///C:/clips/a.gyroflow" {
+                    Some("file:///C:/clips/a.mp4".to_string())
+                } else {
+                    None
+                }
+            },
+        );
         assert_eq!(out, vec!["file:///C:/clips/a.mp4".to_string()]);
     }
 
@@ -6424,7 +6820,17 @@ mod tests {
             "file:///C:/x/a.gyroflow".to_string(),
             "file:///C:/x/b.mp4".to_string(),
         ];
-        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |url| {
+                if url == "file:///C:/x/a.gyroflow" {
+                    Some("file:///C:/x/a.mp4".to_string())
+                } else {
+                    None
+                }
+            },
+        );
         assert_eq!(
             out,
             vec![
@@ -6441,8 +6847,92 @@ mod tests {
             "file:///C:/x/Clip.MP4".to_string(),
             "file:///C:/x/Clip.Gyroflow".to_string(),
         ];
-        let out = filter_paired_gyroflow_siblings_impl(&urls, &default_exts());
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |url| {
+                if url == "file:///C:/x/Clip.Gyroflow" {
+                    Some("file:///C:/x/Clip.MP4".to_string())
+                } else {
+                    None
+                }
+            },
+        );
         assert_eq!(out, vec!["file:///C:/x/Clip.MP4".to_string()]);
+    }
+
+    #[test]
+    fn filter_pairs_preserves_same_stem_gyroflow_preset_without_videofile() {
+        let urls = vec![
+            "file:///C:/clips/clip.mp4".to_string(),
+            "file:///C:/clips/clip.gyroflow".to_string(),
+        ];
+        let out =
+            filter_paired_gyroflow_siblings_impl_with_project_reader(&urls, &default_exts(), |_| {
+                None
+            });
+
+        assert_eq!(out, urls);
+    }
+
+    #[test]
+    fn filter_pairs_does_not_read_gyroflow_projects_when_no_video_is_loaded() {
+        let urls = vec![
+            "file:///C:/clips/a.gyroflow".to_string(),
+            "file:///C:/clips/b.gyroflow".to_string(),
+        ];
+        let mut calls = 0;
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |_| {
+                calls += 1;
+                Some("file:///C:/clips/a.mp4".to_string())
+            },
+        );
+
+        assert_eq!(out, urls);
+        assert_eq!(calls, 0);
+    }
+
+    #[test]
+    fn filter_pairs_matches_project_video_url_after_file_url_normalization() {
+        let urls = vec![
+            "file:///C:/clips/My%20Clip.mp4".to_string(),
+            "file:///C:/clips/session.gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |url| {
+                if url == "file:///C:/clips/session.gyroflow" {
+                    Some("file:///C:/clips/My Clip.mp4".to_string())
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert_eq!(out, vec!["file:///C:/clips/My%20Clip.mp4".to_string()]);
+    }
+
+    #[test]
+    fn read_gyroflow_project_video_url_reads_only_project_video_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let video_path = dir.path().join("clip.mp4");
+        std::fs::write(&video_path, []).unwrap();
+        let video_url = filesystem::path_to_url(&video_path.to_string_lossy());
+
+        let project_path = dir.path().join("session.gyroflow");
+        let project_json = serde_json::json!({
+            "videofile": video_url,
+            "image_sequence_start": 0,
+            "raw_imu": [{ "timestamp_ms": 0.0, "gyro": [0.0, 0.0, 0.0] }]
+        });
+        std::fs::write(&project_path, project_json.to_string()).unwrap();
+        let project_url = filesystem::path_to_url(&project_path.to_string_lossy());
+
+        assert_eq!(read_gyroflow_project_video_url(&project_url), Some(video_url));
     }
 
     #[test]
@@ -6488,6 +6978,27 @@ mod tests {
         let narrow = vec!["mp4".to_string(), "gyroflow".to_string()];
         let out = filter_paired_gyroflow_siblings_impl(&urls, &narrow);
         assert_eq!(out, urls, "r3d not in narrow whitelist → no pair");
+    }
+
+    #[test]
+    fn filter_pairs_drops_gyroflow_when_project_points_to_loaded_video() {
+        let urls = vec![
+            "file:///C:/clips/clip.mp4".to_string(),
+            "file:///C:/clips/session.gyroflow".to_string(),
+        ];
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |url| {
+                if url == "file:///C:/clips/session.gyroflow" {
+                    Some("file:///C:/clips/clip.mp4".to_string())
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert_eq!(out, vec!["file:///C:/clips/clip.mp4".to_string()]);
     }
 
     #[test]

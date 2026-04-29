@@ -1436,6 +1436,17 @@ Item {
             return additional;
         }
         function add(outFolder: string, urls: list<url>): void {
+            try {
+                const filteredJson = render_queue.filter_paired_gyroflow_siblings(
+                    JSON.stringify(urls.map(u => u.toString())),
+                    JSON.stringify(fileDialog.extensions)
+                );
+                urls = JSON.parse(filteredJson);
+            } catch (e) {
+                console.log("filter_paired_gyroflow_siblings failed:", e);
+            }
+            if (!urls.length) return;
+
             let foldersWithoutAccess = [];
             let additional = prepareBatchAdditionalData(window.getAdditionalProjectData());
             if (!outFolder) {
@@ -1551,20 +1562,6 @@ Item {
                 } else {
                     videoUrls.push(url);
                 }
-            }
-            if (!videoUrls.length) return;
-            // After folder expansion, drop .gyroflow files that have a same-stem
-            // video sibling in videoUrls: keep the video so add_file's video
-            // branch runs telemetry-parser and produces creation_date_utc for
-            // batch-gyro-match. Lone .gyroflow (no matching video) preserved.
-            try {
-                const filteredJson = render_queue.filter_paired_gyroflow_siblings(
-                    JSON.stringify(videoUrls.map(u => u.toString())),
-                    JSON.stringify(fileDialog.extensions)
-                );
-                videoUrls = JSON.parse(filteredJson);
-            } catch (e) {
-                console.log("filter_paired_gyroflow_siblings failed:", e);
             }
             if (!videoUrls.length) return;
             const firstVideoUrl = render_queue.first_renderable_video_file(
