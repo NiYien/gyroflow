@@ -6,7 +6,7 @@
 /// Bump this constant whenever a new `data-v*` release ships with content
 /// that the NiYien gyroflow fork should embed as the compile-time fallback.
 const NIYIEN_LENS_DATA_REPO: &str = "NiYien/niyien-lens-data";
-const NIYIEN_LENS_DATA_DEFAULT_TAG: &str = "data-v20260421.1";
+const NIYIEN_LENS_DATA_DEFAULT_TAG: &str = "data-v20260429.1";
 
 fn main() {
     let project_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap();

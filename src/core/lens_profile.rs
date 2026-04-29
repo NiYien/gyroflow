@@ -87,6 +87,8 @@ pub struct LensProfile {
     pub is_copy: bool,
     pub rating: Option<f64>,
     pub checksum: Option<String>,
+    #[serde(skip)]
+    pub lens_group_override: bool,
     parsed_interpolations: BTreeMap<i64, LensProfile>,
 }
 

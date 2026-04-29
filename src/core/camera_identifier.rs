@@ -127,7 +127,7 @@ impl CameraIdentifier {
                             if let Some(v) = tag_map
                                 .get(&GroupId::Lens)
                                 .and_then(|map| map.get_t(TagId::FocalLength) as Option<&f32>)
-                                .filter(|v| **v > 0.0)
+                                .filter(|v| **v > 5.0)
                             {
                                 id.lens_info = format!("{:.2} mm", v);
                                 id.focal_length = Some(*v as f64);
@@ -205,6 +205,7 @@ impl CameraIdentifier {
                             if let Some(v) = tag_map
                                 .get(&GroupId::Lens)
                                 .and_then(|map| map.get_t(TagId::FocalLength) as Option<&f32>)
+                                .filter(|v| **v > 5.0)
                             {
                                 id.lens_info = format!("{:.2} mm", v);
                                 id.focal_length = Some(*v as f64);
@@ -237,7 +238,7 @@ impl CameraIdentifier {
                                     if let Some(v) = v
                                         .get("focal_length")
                                         .and_then(|v| v.as_f64())
-                                        .filter(|v| *v > 0.0)
+                                        .filter(|v| *v > 5.0)
                                     {
                                         id.lens_info = format!("{:.2}mm", v);
                                         id.focal_length = Some(v);
@@ -247,7 +248,7 @@ impl CameraIdentifier {
                                         let focal_length =
                                             v.replace("mm", "").trim().parse::<f64>().ok();
                                         if let Some(focal_length) =
-                                            focal_length.filter(|value| *value > 0.0)
+                                            focal_length.filter(|value| *value > 5.0)
                                         {
                                             id.lens_info = v.to_string();
                                             id.focal_length = Some(focal_length);

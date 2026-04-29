@@ -206,6 +206,47 @@ class GitHubClient:
         response.raise_for_status()
         return response.json()
 
+    def list_run_artifacts(self, owner: str | None = None, repo: str | None = None, run_id: int = 0) -> list[dict]:
+        """List artifacts attached to a workflow run. Empty list when 404."""
+        self._ensure_ready()
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/runs/{int(run_id)}/artifacts"
+        response = self._get(url, params={"per_page": 100}, timeout=30)
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        payload = response.json()
+        artifacts = payload.get("artifacts") if isinstance(payload, dict) else []
+        return [item for item in artifacts or [] if isinstance(item, dict)]
+
+    def list_repo_artifacts(
+        self,
+        owner: str | None = None,
+        repo: str | None = None,
+        *,
+        name: str = "",
+        per_page: int = 100,
+    ) -> list[dict]:
+        """List repo-level artifacts. With `name`, GitHub server-filters by exact
+        artifact name and returns each artifact's workflow_run.id, so the latest
+        run that produced a given artifact is one API call away.
+        """
+        self._ensure_ready()
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        url = f"https://api.github.com/repos/{owner}/{repo}/actions/artifacts"
+        params: dict = {"per_page": max(1, min(int(per_page), 100))}
+        if name:
+            params["name"] = name
+        response = self._get(url, params=params, timeout=30)
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        payload = response.json()
+        artifacts = payload.get("artifacts") if isinstance(payload, dict) else []
+        return [item for item in artifacts or [] if isinstance(item, dict)]
+
     def dispatch_workflow(
         self,
         workflow: str,

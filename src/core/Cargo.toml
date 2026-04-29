@@ -107,7 +107,7 @@ features = [ "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemSer
              "Win32_Storage_Packaging_Appx", "Win32_Storage_FileSystem" ]
 
 [features]
-default = []
+default = ["cache-gyro-metadata"]
 use-opencl = ["ocl", "ocl-interop"]
 use-opencv = ["opencv"]
 bundle-lens-profiles = []

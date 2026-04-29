@@ -251,7 +251,6 @@ Item {
             }
         }
         function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
-            console.log("Telemetry additional data:", JSON.stringify(additional_data));
             if (is_main_video) {
                 root.detectedCamera = camera;
                 vidInfo.updateEntry("Detected camera", camera || "---");

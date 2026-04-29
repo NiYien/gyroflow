@@ -583,11 +583,24 @@ impl GyroSource {
         progress_cb: F,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<FileMetadata, crate::GyroflowCoreError> {
-        let key = format!("{}{options:?}{size:?}{fps}", path.as_ref().display());
+        // path comes from QML/QUrl callers as a file:// URL (sometimes percent-
+        // encoded, sometimes not). Normalize to a native filesystem path so the
+        // same file always hits the same cache slot, and so std::fs::metadata
+        // can resolve mtime for invalidation when the file is overwritten.
+        let path_str = path.as_ref().to_string_lossy().to_string();
+        let native_path = crate::filesystem::url_to_path(&path_str);
+        let mtime = std::fs::metadata(&native_path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let key = format!("{}|{}|{}|{options:?}|{size:?}|{fps}", native_path, mtime, filesize);
         static CACHE: RwLock<BTreeMap<String, FileMetadata>> = RwLock::new(BTreeMap::new());
         {
             let cache = CACHE.read();
             if let Some(md) = cache.get(&key) {
+                log::info!("[parse_telemetry] cache hit: {} (mtime={})", native_path, mtime);
                 return Ok(md.clone());
             }
         }
@@ -622,6 +635,23 @@ impl GyroSource {
         if let Some(m) = input.camera_model() {
             detected_source.push(' ');
             detected_source.push_str(m);
+        }
+
+        // C1: classify RED bodies — Komodo / Komodo-X are the only RED models
+        // whose internal IMU we trust. Identification only here; C2/C3 will
+        // act on the flag (clear non-Komodo IMU, prefer Komodo IMU over external).
+        let is_komodo = input.camera_type() == "RED"
+            && input
+                .camera_model()
+                .map(|m| m.starts_with("KOMODO"))
+                .unwrap_or(false);
+        if input.camera_type() == "RED" {
+            log::info!(
+                "[red_classify] type={} model={:?} is_komodo={}",
+                input.camera_type(),
+                input.camera_model(),
+                is_komodo
+            );
         }
 
         let mut imu_orientation = None;
@@ -738,7 +768,7 @@ impl GyroSource {
                             lens_profile = Some(serde_json::Value::String(v.clone()));
                         }
                         if let Some(v) = map.get_t(TagId::FocalLength) as Option<&f32> {
-                            if *v > 0.0 {
+                            if *v > 5.0 {
                                 lens_positions.insert(timestamp_us, *v as f64);
                                 lens_info.focal_length = Some(*v);
                             }
@@ -747,11 +777,15 @@ impl GyroSource {
                             lens_info.focus_distance = Some(*v);
                         }
                         if let Some(v) = map.get_t(TagId::PixelFocalLength) as Option<&f32> {
-                            lens_info.pixel_focal_length = Some(*v);
+                            if *v > 5.0 {
+                                lens_info.pixel_focal_length = Some(*v);
+                            }
                         }
                         if let Some(v) = map.get_t(TagId::PixelFocalLength) as Option<&Vec<f32>> {
                             if let Some(v) = v.first() {
-                                lens_info.pixel_focal_length = Some(*v);
+                                if *v > 5.0 {
+                                    lens_info.pixel_focal_length = Some(*v);
+                                }
                             }
                         }
                         if let Some(v) = map.get_t(TagId::Custom("unit_pixel_focal_length".into()))
@@ -773,10 +807,18 @@ impl GyroSource {
                                     .and_then(|x| x.as_f64())
                                     .unwrap_or(1.0);
 
-                                lens_info.pixel_focal_length = Some(
-                                    ((focal_length_nm as f64 / effective_sensor_height_nm as f64)
-                                        * size.1 as f64) as f32,
-                                );
+                                let focal_length_mm = focal_length_nm / 1_000_000.0;
+                                let pixel_focal_length = if focal_length_mm > 5.0
+                                    && effective_sensor_height_nm > 0.0
+                                {
+                                    ((focal_length_nm / effective_sensor_height_nm)
+                                        * size.1 as f64) as f32
+                                } else {
+                                    0.0
+                                };
+                                if pixel_focal_length > 5.0 {
+                                    lens_info.pixel_focal_length = Some(pixel_focal_length);
+                                }
                             }
                         }
                     }
@@ -1059,6 +1101,7 @@ impl GyroSource {
         let mut md = FileMetadata {
             imu_orientation,
             detected_source: Some(detected_source),
+            is_komodo,
             quaternions,
             image_orientations,
             gravity_vectors,
@@ -1102,18 +1145,22 @@ impl GyroSource {
         };
 
         log::info!(
-            "Telemetry parsed: lens_params={}, lens_positions={}, unit_px_fl={:?}, frame_readout_time={:?}, detected={}",
+            "Telemetry parsed: lens_params={}, lens_positions={}, unit_px_fl={:?}, frame_readout_time={:?}, detected={}, camera_id={:?}",
             md.lens_params.len(),
             md.lens_positions.len(),
             md.unit_pixel_focal_length,
             md.frame_readout_time,
-            md.detected_source.as_deref().unwrap_or("?")
+            md.detected_source.as_deref().unwrap_or("?"),
+            md.camera_identifier
+                .as_ref()
+                .map(|c| format!("{} {}", c.brand, c.model))
         );
         if let Some((_ts, lp)) = md.lens_params.iter().next() {
             log::info!(
-                "First lens_param: pixel_focal_length={:?}, focal_length={:?}",
+                "First lens_param: pixel_focal_length={:?}, focal_length={:?}, pixel_pitch={:?}",
                 lp.pixel_focal_length,
-                lp.focal_length
+                lp.focal_length,
+                lp.pixel_pitch
             );
         }
 
@@ -1268,8 +1315,71 @@ impl GyroSource {
             }
         }
 
+        // [lens_diag] Part A2 diagnostic — print everything that feeds
+        // should_use_manual_config / lens_params status on every parse_telemetry_file
+        // call. The same parse path runs for both main video and external IMU/gyro
+        // files, so this surfaces niyien gyro vs video metadata distinctions.
+        {
+            let path_str = path.as_ref().display().to_string();
+            let camera_type = input.camera_type();
+            let camera_model = input.camera_model().map(|s| s.to_string());
+            let detected_source_str = md.detected_source.clone().unwrap_or_default();
+            let lens_params_count = md.lens_params.len();
+            let first_lens = md.lens_params.values().next();
+            let first_focal = first_lens.and_then(|lp| lp.focal_length);
+            let first_pixel_focal = first_lens.and_then(|lp| lp.pixel_focal_length);
+            let upfl = md.unit_pixel_focal_length;
+            let cam_id_brand = md
+                .camera_identifier
+                .as_ref()
+                .map(|c| c.brand.clone())
+                .unwrap_or_default();
+            let cam_id_model = md
+                .camera_identifier
+                .as_ref()
+                .map(|c| c.model.clone())
+                .unwrap_or_default();
+            let cam_id_focal = md.camera_identifier.as_ref().and_then(|c| c.focal_length);
+            let additional_focus = md
+                .additional_data
+                .get("focus_length")
+                .and_then(|v| v.as_f64());
+            let additional_lens_index = md
+                .additional_data
+                .get("lens_index")
+                .and_then(|v| v.as_u64());
+            log::info!(
+                "[lens_diag] path={path_str} camera_type={camera_type:?} camera_model={camera_model:?} detected_source={detected_source_str:?} cam_id=(brand={cam_id_brand:?} model={cam_id_model:?} focal={cam_id_focal:?}) lens_params_count={lens_params_count} first_focal={first_focal:?} first_pixel_focal={first_pixel_focal:?} unit_pixel_focal_length={upfl:?} additional_data.focus_length={additional_focus:?} additional_data.lens_index={additional_lens_index:?}"
+            );
+        }
+
+        // C2: drop internal IMU on non-Komodo RED bodies so downstream external
+        // IMU loading (telemetry sidecar / .bin) is the sole motion source.
+        // Lens metadata (lens_params, lens_positions, camera_identifier,
+        // unit_pixel_focal_length, frame_readout_time, etc.) is preserved.
+        if input.camera_type() == "RED" && !is_komodo {
+            let dropped_imu = md.raw_imu.len();
+            let dropped_quat = md.quaternions.len();
+            let dropped_grav = md.gravity_vectors.as_ref().map(|v| v.len()).unwrap_or(0);
+            let dropped_iori = md.image_orientations.as_ref().map(|v| v.len()).unwrap_or(0);
+            md.raw_imu.clear();
+            md.quaternions.clear();
+            md.gravity_vectors = None;
+            md.image_orientations = None;
+            md.imu_orientation = None;
+            log::info!(
+                "[red_filter] non-komodo RED ({:?}), dropped imu={} quat={} grav={} iori={}; lens metadata kept",
+                input.camera_model(),
+                dropped_imu,
+                dropped_quat,
+                dropped_grav,
+                dropped_iori
+            );
+        }
+
         #[cfg(feature = "cache-gyro-metadata")]
         {
+            log::info!("[parse_telemetry] cache miss \u{2192} parsed and cached: {} (mtime={})", native_path, mtime);
             let mut cache = CACHE.write();
             cache.insert(key, md.clone());
         }

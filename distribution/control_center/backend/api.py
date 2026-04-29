@@ -33,15 +33,14 @@ REPO_ROOT = Path(__file__).resolve().parents[3]  # gyroflow/
 PAN123_AUTO_PUBLISH_ACTIONS = {"publish_and_push", "switch_auto", "rollback_auto"}
 
 # Asset names expected per release tag — app bundle (the gyroflow installers
-# only). Content bundle (lens/plugin/sdk) lives under a separate `content-*`
-# directory whose name is a hash, so we list it independently.
+# only). Lens/plugin/sdk live under separate `lens-<sha12>/`, `plugin-<sha12>/`,
+# `sdk/` directories on 123 网盘, listed independently below.
 FALLBACK_EXPECTED_APP_ASSETS = (
     "gyroflow-niyien-windows64-setup.exe",
     "gyroflow-niyien-windows64.zip",
     "gyroflow-niyien-mac-universal.dmg",
 )
 EXPECTED_APP_ASSETS = FALLBACK_EXPECTED_APP_ASSETS
-CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"
 
 
 def _load_publish_script_constants():
@@ -352,11 +351,6 @@ class Api:
         # NIYIEN_PLUGIN_RELEASE_TAG = the bundle directory name on 123 网盘
         # (`plugin-<sha12>/`). Set by the publish script's finalize_summary.
         plugin_release_tag = str(envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip()
-        # Legacy fallback: old deployments still hold a content_tag pointing
-        # at the coupled `content-<x>/` layout. Keep reading it so the probe
-        # below can fall back to the legacy plugins/ subdirectory until the
-        # operator runs at least one decoupled publish.
-        legacy_content_tag = str(envs.get("NIYIEN_CONTENT_RELEASE_TAG", "")).strip()
         state["plugin"] = {
             "mode": plugin_mode,
             "tag": plugin_tag,
@@ -364,12 +358,10 @@ class Api:
             "source": "vercel" if has_plugin_env else ("defaults" if (plugin_tag or plugin_artifact or plugin_mode_env) else "none"),
             # Filled below by the plugin pan123 probe (parallel to the SDK probe).
             # None = probe didn't run; [] = all expected files present;
-            # non-empty list = filenames missing from `releases/plugin-<x>/`
-            # (or `releases/<content_tag>/plugins/` in legacy mode).
+            # non-empty list = filenames missing from `releases/plugin-<x>/`.
             "missing_files": None,
             "pan123_error": None,
             "release_tag": plugin_release_tag,
-            "legacy_content_tag": legacy_content_tag,
             "expected_count": len(EXPECTED_PLUGIN_ASSETS),
         }
 
@@ -425,9 +417,6 @@ class Api:
             state["sdk"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
 
         # --- pan123 probe: lens bundle in `releases/<lens_release_tag>/` ---
-        # New decoupled layout. Falls back to legacy
-        # `releases/<content_tag>/<lens_files>` if NIYIEN_LENS_RELEASE_TAG
-        # isn't set yet (operator hasn't run a decoupled publish).
         try:
             cid = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=envs, cfg=cfg)
             csec = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=envs, cfg=cfg)
@@ -458,11 +447,6 @@ class Api:
                     state["lens"]["missing_files"] = [
                         name for name in expected if name not in present
                     ]
-            elif legacy_content_tag:
-                # Legacy layout: lens cbor lives flat in content-<x>/
-                state["lens"]["pan123_error"] = (
-                    "未设置 NIYIEN_LENS_RELEASE_TAG (legacy 模式: lens 仍混在 content-<x>/ 内)"
-                )
             else:
                 state["lens"]["pan123_error"] = (
                     "无 NIYIEN_LENS_RELEASE_TAG (运行一次「全量」发布以初始化)"
@@ -471,9 +455,8 @@ class Api:
             state["lens"]["pan123_error"] = f"{e.__class__.__name__}: {e}"
 
         # --- pan123 probe: plugin bundle in `releases/<plugin_release_tag>/` ---
-        # New decoupled layout (flat — no `plugins/` subdir). Falls back to
-        # legacy `releases/<content_tag>/plugins/` when NIYIEN_PLUGIN_RELEASE_TAG
-        # isn't set yet. EXPECTED_PLUGIN_ASSETS comes from the publish script.
+        # Flat layout (no `plugins/` subdir). EXPECTED_PLUGIN_ASSETS comes
+        # from the publish script.
         try:
             if not EXPECTED_PLUGIN_ASSETS:
                 state["plugin"]["pan123_error"] = (
@@ -506,38 +489,6 @@ class Api:
                             name for name in EXPECTED_PLUGIN_ASSETS
                             if name not in present
                         ]
-                elif legacy_content_tag:
-                    # Legacy layout: plugin assets in content-<x>/plugins/.
-                    client = Pan123Client(
-                        cid, csec, proxy_url=str(cfg.get("network_proxy", "") or "")
-                    )
-                    content_entry = client.find_child(root_id, legacy_content_tag, is_dir=True)
-                    if not content_entry:
-                        state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
-                        state["plugin"]["pan123_error"] = (
-                            f"pan123 上 releases/{legacy_content_tag}/ 目录不存在 (legacy)"
-                        )
-                    else:
-                        content_dir_id = Pan123Client._entry_id(content_entry)
-                        plugins_entry = client.find_child(
-                            content_dir_id, "plugins", is_dir=True
-                        )
-                        if not plugins_entry:
-                            state["plugin"]["missing_files"] = list(EXPECTED_PLUGIN_ASSETS)
-                            state["plugin"]["pan123_error"] = (
-                                f"pan123 上 releases/{legacy_content_tag}/plugins/ 目录不存在 (legacy)"
-                            )
-                        else:
-                            plugins_dir_id = Pan123Client._entry_id(plugins_entry)
-                            files = client.list_directory(plugins_dir_id)
-                            present = {
-                                str(item.get("filename") or item.get("name") or "").strip()
-                                for item in files
-                            }
-                            state["plugin"]["missing_files"] = [
-                                name for name in EXPECTED_PLUGIN_ASSETS
-                                if name not in present
-                            ]
                 else:
                     state["plugin"]["pan123_error"] = (
                         "无 NIYIEN_PLUGIN_RELEASE_TAG (运行一次「全量」发布以初始化)"
@@ -1405,8 +1356,6 @@ class Api:
                 "ok": True,
                 "defaults": defaults,
                 "current": {
-                    # Legacy single-tag (kept for legacy fallback rendering).
-                    "NIYIEN_CONTENT_RELEASE_TAG": envs.get("NIYIEN_CONTENT_RELEASE_TAG", ""),
                     # Decoupled bundle tags (`lens-<sha12>` / `plugin-<sha12>`).
                     "NIYIEN_LENS_RELEASE_TAG": envs.get("NIYIEN_LENS_RELEASE_TAG", ""),
                     "NIYIEN_PLUGIN_RELEASE_TAG": envs.get("NIYIEN_PLUGIN_RELEASE_TAG", ""),
@@ -1477,6 +1426,15 @@ class Api:
         """Immediately upsert Lens/Plugin/SDK env vars to Vercel (live).
 
         `payload` keys: lens_tag, plugin_mode, plugin_tag, plugin_artifact_name, sdk_base.
+
+        `lens_tag` is the niyien-lens-data GitHub release tag (mapped to
+        `entry.lens_release_tag`). `plugin_tag` is the gyroflow-plugins
+        release tag (release mode only). The 123 网盘 directory names
+        (`lens-<sha12>` / `plugin-<sha12>`) are read back from vercel envs
+        `NIYIEN_LENS_RELEASE_TAG` / `NIYIEN_PLUGIN_RELEASE_TAG`, which the
+        publish flow set on the prior `publish_and_push`. This lets the
+        switch operate on already-uploaded bundles without re-running the
+        whole publish pipeline.
         """
         try:
             lens_tag = str(payload.get("lens_tag", "")).strip()
@@ -1490,6 +1448,8 @@ class Api:
                 return {"ok": False, "error": f"plugin_mode 必须是 release/artifact,不是 {plugin_mode}"}
             if plugin_mode == "release" and not plugin_tag:
                 return {"ok": False, "error": "release 模式下 Plugin Tag 不能为空"}
+            if plugin_mode == "artifact" and not plugin_artifact:
+                return {"ok": False, "error": "artifact 模式下 Plugin Artifact Name 不能为空"}
             cfg = config_module.load_config()
             mapping = {
                 "NIYIEN_LENS_DATA_TAG": lens_tag,
@@ -1510,9 +1470,220 @@ class Api:
                 lens_extras.append(f"sha256={str(meta['sha256'])[:10]}...")
             self._vercel(cfg).upsert_envs(mapping)
             extras_note = f" (lens metadata: {', '.join(lens_extras)})" if lens_extras else " (lens metadata 未读到)"
-            return {"ok": True, "message": f"已 upsert {len(mapping)} 个 env 到 Vercel{extras_note}"}
+            # Read the 123 网盘 dir tags that the prior publish flow recorded.
+            # Without these the policy entry can't surface a working
+            # `entry.lens_tag` / `entry.plugin_tag` for CN clients (CN URLs
+            # walk RELEASES_ROOT/<dir_tag>/...).
+            current_envs = self._vercel(cfg).list_envs_decrypted()
+            lens_dir_tag = str(current_envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip()
+            plugin_dir_tag = str(current_envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip()
+            # Resolve plugin nightly.link in artifact mode by finding the most
+            # recent successful run that produced this artifact name. Empty
+            # run_id leaves global_plugins_base untouched; manifest will fall
+            # back to release-latest, which is the same behavior as before
+            # this code path existed.
+            plugin_run_id = 0
+            plugin_owner = str(cfg.get("plugins_owner", "") or "NiYien").strip()
+            plugin_repo = str(cfg.get("plugins_repo", "") or "gyroflow-plugins").strip()
+            artifact_resolve_note = ""
+            if plugin_mode == "artifact" and plugin_artifact:
+                # plugin_artifact may be a CSV list (publish scripts treat it
+                # the same way). All names in one publish come from the same
+                # workflow run, so any one of them resolves to the same run_id.
+                # Try them in order and stop at the first match.
+                csv_names = [
+                    item.strip()
+                    for item in str(plugin_artifact).split(",")
+                    if item.strip()
+                ]
+                if not csv_names:
+                    artifact_resolve_note = "⚠ plugin_artifact_name 为空, global_plugins_base 留空"
+                else:
+                    gh_client = self._gh_for(plugin_owner, plugin_repo, cfg)
+                    last_err: Exception | None = None
+                    tried_names: list[str] = []
+                    for name in csv_names:
+                        tried_names.append(name)
+                        try:
+                            artifacts = gh_client.list_repo_artifacts(
+                                plugin_owner, plugin_repo, name=name, per_page=10,
+                            )
+                        except Exception as e:
+                            last_err = e
+                            continue
+                        valid = [
+                            a for a in artifacts
+                            if not bool(a.get("expired"))
+                            and isinstance(a.get("workflow_run"), dict)
+                            and int(a["workflow_run"].get("id", 0) or 0) > 0
+                        ]
+                        if valid:
+                            # GitHub returns artifacts newest-first.
+                            plugin_run_id = int(valid[0]["workflow_run"]["id"])
+                            artifact_resolve_note = (
+                                f"plugin nightly.link 已解析: run-{plugin_run_id} "
+                                f"(via artifact={name})"
+                            )
+                            break
+                    if plugin_run_id == 0:
+                        if last_err is not None:
+                            artifact_resolve_note = (
+                                f"⚠ GitHub artifact 查询失败({last_err}), "
+                                f"已试 {len(tried_names)} 个 name, global_plugins_base 留空"
+                            )
+                        else:
+                            artifact_resolve_note = (
+                                f"⚠ {len(tried_names)} 个 artifact name 都没有未过期的 run, "
+                                f"global_plugins_base 留空(docs 将回退到 release-latest)"
+                            )
+            try:
+                sync_note = self._sync_resources_into_policy_entries(
+                    cfg,
+                    lens_release_tag=lens_tag,
+                    lens_dir_tag=lens_dir_tag,
+                    lens_version=meta.get("version"),
+                    lens_sha=str(meta.get("sha256") or ""),
+                    plugin_mode=plugin_mode,
+                    plugin_release_tag=plugin_tag,
+                    plugin_dir_tag=plugin_dir_tag,
+                    plugin_artifact_name=plugin_artifact,
+                    plugin_run_id=plugin_run_id,
+                    plugin_owner=plugin_owner,
+                    plugin_repo=plugin_repo,
+                )
+            except Exception as e:
+                sync_note = f"policy entry 镜像失败: {e}"
+            # Vercel runtime env vars only affect new deployments. Without a
+            # redeploy the manifest API keeps serving the previous env
+            # snapshot, which is what made earlier "立即切换" calls look
+            # like no-ops. Trigger unconditionally; _trigger_deploy_hook
+            # falls back to the Vercel REST API if no hook is configured.
+            try:
+                hook_note = self._trigger_deploy_hook(cfg)
+            except Exception as e:
+                hook_note = f"redeploy 触发失败: {e}"
+            artifact_segment = f"; {artifact_resolve_note}" if artifact_resolve_note else ""
+            return {
+                "ok": True,
+                "message": f"已 upsert {len(mapping)} 个 env 到 Vercel{extras_note}{artifact_segment}; {sync_note}; {hook_note}",
+                "deploy_hook": hook_note,
+                "policy_sync": sync_note,
+                "artifact_resolve": artifact_resolve_note,
+            }
         except Exception as e:
             return _error(e, "apply_resources_now")
+
+    def _sync_resources_into_policy_entries(self, cfg: dict, *,
+                                             lens_release_tag: str = "",
+                                             lens_dir_tag: str = "",
+                                             lens_version=None,
+                                             lens_sha: str = "",
+                                             plugin_mode: str = "",
+                                             plugin_release_tag: str = "",
+                                             plugin_dir_tag: str = "",
+                                             plugin_artifact_name: str = "",
+                                             plugin_run_id: int = 0,
+                                             plugin_owner: str = "NiYien",
+                                             plugin_repo: str = "gyroflow-plugins") -> str:
+        """Mirror Lens/Plugin fields into every NIYIEN_RELEASE_POLICY_JSON entry.
+
+        Two distinct lens identifiers exist and the manifest reads them in
+        different places:
+        - `lens_release_tag` is the niyien-lens-data GitHub release tag, used
+          by the docs Global branch to build `releases/download/<tag>/...`.
+        - `lens_dir_tag` is the 123 网盘 directory name (`lens-<sha12>`),
+          used by the CN branch to walk `RELEASES_ROOT/<tag>/...`.
+        The same split applies to plugins (`plugin_release_tag` vs
+        `plugin_dir_tag`). Empty inputs leave the existing entry value
+        untouched so a partial switch can't blank out the other component's
+        state.
+
+        In artifact mode the function also computes `global_plugins_base`
+        (nightly.link wrapper) and `plugins_source_ref` from `plugin_run_id`
+        so the docs Global branch returns nightly URLs without requiring a
+        full publish_and_push run.
+        """
+        import json as _json
+        envs = self._vercel(cfg).list_envs_decrypted()
+        raw = str(envs.get("NIYIEN_RELEASE_POLICY_JSON", "")).strip()
+        if not raw:
+            return "policy 为空,跳过 entry 镜像"
+        try:
+            policy = _json.loads(raw)
+        except _json.JSONDecodeError:
+            return "policy 不是合法 JSON,跳过 entry 镜像"
+        versions = policy.get("versions") or []
+        if not versions:
+            return "policy.versions 为空,跳过 entry 镜像"
+        try:
+            lens_version_val = int(lens_version) if lens_version is not None and str(lens_version).strip() != "" else None
+        except (TypeError, ValueError):
+            lens_version_val = lens_version
+        plugin_mode_norm = str(plugin_mode or "").strip().lower()
+        global_plugins_base = ""
+        plugins_source_ref = ""
+        plugins_source_tag = ""
+        if plugin_mode_norm == "artifact":
+            if int(plugin_run_id or 0) > 0 and plugin_owner and plugin_repo:
+                global_plugins_base = (
+                    f"https://nightly.link/{plugin_owner}/{plugin_repo}"
+                    f"/actions/runs/{int(plugin_run_id)}/"
+                )
+                plugins_source_ref = f"actions-run-{int(plugin_run_id)}"
+            if plugin_artifact_name:
+                plugins_source_tag = plugin_artifact_name
+        elif plugin_mode_norm == "release":
+            if plugin_release_tag:
+                plugins_source_ref = plugin_release_tag
+                plugins_source_tag = plugin_release_tag
+        changed_entries = 0
+        for entry in versions:
+            if not isinstance(entry, dict):
+                continue
+            entry_changed = False
+            # Lens
+            if lens_release_tag and entry.get("lens_release_tag") != lens_release_tag:
+                entry["lens_release_tag"] = lens_release_tag
+                entry_changed = True
+            if lens_dir_tag and entry.get("lens_tag") != lens_dir_tag:
+                entry["lens_tag"] = lens_dir_tag
+                entry_changed = True
+            if lens_version_val is not None and entry.get("lens_version") != lens_version_val:
+                entry["lens_version"] = lens_version_val
+                entry_changed = True
+            if lens_sha and entry.get("lens_sha256") != lens_sha:
+                entry["lens_sha256"] = lens_sha
+                entry_changed = True
+            # Plugin
+            if plugin_mode_norm and entry.get("plugins_source_mode") != plugin_mode_norm:
+                entry["plugins_source_mode"] = plugin_mode_norm
+                entry_changed = True
+            if plugin_dir_tag and entry.get("plugin_tag") != plugin_dir_tag:
+                entry["plugin_tag"] = plugin_dir_tag
+                entry_changed = True
+            if global_plugins_base and entry.get("global_plugins_base") != global_plugins_base:
+                entry["global_plugins_base"] = global_plugins_base
+                entry_changed = True
+            if plugins_source_ref and entry.get("plugins_source_ref") != plugins_source_ref:
+                entry["plugins_source_ref"] = plugins_source_ref
+                entry_changed = True
+            if plugins_source_tag and entry.get("plugins_source_tag") != plugins_source_tag:
+                entry["plugins_source_tag"] = plugins_source_tag
+                entry_changed = True
+            # Mode switched away from artifact → strip stale nightly.link state
+            # so the docs Global branch falls back to the release-latest base
+            # instead of pinning to a stale run.
+            if plugin_mode_norm == "release":
+                if entry.get("global_plugins_base"):
+                    entry["global_plugins_base"] = ""
+                    entry_changed = True
+            if entry_changed:
+                changed_entries += 1
+        if not changed_entries:
+            return "所有 entry 已与新值一致,无需写回"
+        policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
+        self._vercel(cfg).upsert_envs({"NIYIEN_RELEASE_POLICY_JSON": policy_json})
+        return f"已镜像到 {changed_entries}/{len(versions)} 个 policy entry"
 
     def save_resources_defaults(self, payload: dict) -> dict:
         """Save Lens/Plugin/SDK defaults to control_center.config.json's publish_defaults."""
@@ -2254,6 +2425,11 @@ class Api:
                         target["plugins_source_ref"] = str(finalize_summary["plugin_source_ref"])
                     if finalize_summary.get("plugin_source_tag"):
                         target["plugins_source_tag"] = str(finalize_summary["plugin_source_tag"])
+                    # Without this mirror, docs manifest Global+artifact branch
+                    # has no nightly.link base for plugins and falls back to
+                    # release-latest, which is wrong for nightly publishes.
+                    if finalize_summary.get("global_plugins_base"):
+                        target["global_plugins_base"] = str(finalize_summary["global_plugins_base"])
                     packages = finalize_summary.get("packages")
                     if isinstance(packages, dict):
                         target["packages"] = packages
@@ -2297,16 +2473,32 @@ class Api:
             return f"deploy hook failed: {e}"
 
     def _trigger_deploy_hook(self, cfg: dict) -> str:
-        """Fire the Vercel deploy hook to rebuild the manifest CDN."""
+        """Force a fresh production deployment so upserted env vars actually
+        take effect. Try the configured deploy hook first; fall back to the
+        Vercel REST API (clone the latest production deployment's gitSource
+        into a new one) when no hook is configured or the hook call fails.
+        """
         import requests
-        url = str(cfg.get("deploy_hook_url", "")).strip()
-        if not url:
-            return "no deploy_hook_url configured, skipped"
         from .helpers import build_proxy_mapping
         proxies = build_proxy_mapping(cfg.get("network_proxy", ""))
-        r = requests.post(url, timeout=30, proxies=proxies)
-        r.raise_for_status()
-        return f"deploy hook triggered ({r.status_code})"
+        url = str(cfg.get("deploy_hook_url", "")).strip()
+        hook_err: Exception | None = None
+        if url:
+            try:
+                r = requests.post(url, timeout=30, proxies=proxies)
+                r.raise_for_status()
+                return f"deploy hook triggered ({r.status_code})"
+            except Exception as e:
+                hook_err = e
+        try:
+            self._vercel(cfg).redeploy_production()
+            if hook_err is not None:
+                return f"deploy hook failed ({hook_err}); fell back to Vercel REST API redeploy"
+            return "deploy hook absent; redeployed via Vercel REST API"
+        except Exception as e:
+            if hook_err is not None:
+                raise RuntimeError(f"hook failed ({hook_err}); REST fallback failed: {e}") from e
+            raise
 
     def execute_app_action(self, payload: dict) -> dict:
         """One of 5 publish actions — real policy mutation + Vercel upsert.

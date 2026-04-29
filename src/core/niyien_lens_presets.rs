@@ -173,7 +173,7 @@ pub fn normalize_lens_group_configs(input: &[LensGroupConfig]) -> Vec<LensGroupC
         };
         let mut next = cfg.clone();
         next.lens_index = lens_index;
-        next.focal_length_mm = sanitize_positive(next.focal_length_mm);
+        next.focal_length_mm = sanitize_manual_focal_length_mm(next.focal_length_mm);
         next.squeeze_ratio = sanitize_positive(next.squeeze_ratio);
         next.preset_id = next
             .preset_id
@@ -246,7 +246,7 @@ pub fn lens_group_statuses_from_json(json: &str) -> Vec<LensGroupStatus> {
 
 impl LensGroupConfig {
     pub fn has_values(&self) -> bool {
-        self.focal_length_mm.unwrap_or_default() > 0.0
+        sanitize_manual_focal_length_mm(self.focal_length_mm).is_some()
             || self.anamorphic_enabled
             || self
                 .preset_id
@@ -256,37 +256,66 @@ impl LensGroupConfig {
     }
 }
 
-/// Decide whether to generate the lens profile via the manual path (user-supplied focal
-/// length and/or anamorphic) for this group. Requires the global `manual_edit` toggle,
-/// then either condition is sufficient:
-///   A. Fill missing focal length:  video has no telemetry focal length AND the group's
-///      manual focal length is above the MANUAL_FOCAL_LENGTH_MIN_MM sanity threshold.
-///   B. Apply anamorphic:  group has anamorphic enabled. Focal length can still come
-///      from telemetry in this case — build_lens_profile already falls back to auto
-///      focal when the manual field is empty.
+/// Decide whether to generate the lens profile via the lens-group path for this group.
+/// Either condition is sufficient:
+///   A. Fill missing focal length: video has no telemetry focal length AND the group's
+///      focal length is above the MANUAL_FOCAL_LENGTH_MIN_MM sanity threshold.
+///   B. Apply anamorphic: manual_edit is on AND group has anamorphic enabled. Focal
+///      length can still come from telemetry in this case.
 pub fn should_use_manual_config(
     manual_edit: bool,
     config: &LensGroupConfig,
     metadata: &FileMetadata,
 ) -> bool {
-    if !manual_edit {
-        return false;
-    }
-    let auto_has_focal = metadata
-        .lens_params
-        .values()
-        .any(|lp| {
-            lp.focal_length.map(|value| value > 0.0).unwrap_or(false)
-                || lp
-                    .pixel_focal_length
-                    .map(|value| value > 0.0)
-                    .unwrap_or(false)
-        });
-    let manual_focal_sufficient =
-        config.focal_length_mm.unwrap_or(0.0) > MANUAL_FOCAL_LENGTH_MIN_MM;
-    let fills_missing_focal = !auto_has_focal && manual_focal_sufficient;
-    let applies_anamorphic = config.anamorphic_enabled;
+    let (fills_missing_focal, applies_anamorphic) =
+        lens_group_build_decision(manual_edit, config, metadata);
     fills_missing_focal || applies_anamorphic
+}
+
+pub fn effective_lens_group_config_for_build(
+    manual_edit: bool,
+    config: &LensGroupConfig,
+    metadata: &FileMetadata,
+) -> Option<LensGroupConfig> {
+    let (fills_missing_focal, applies_anamorphic) =
+        lens_group_build_decision(manual_edit, config, metadata);
+    if !fills_missing_focal && !applies_anamorphic {
+        return None;
+    }
+
+    let mut effective = config.clone();
+    if !applies_anamorphic {
+        effective.anamorphic_enabled = false;
+    }
+    Some(effective)
+}
+
+pub fn effective_lens_correction_amount_percent(
+    config: &LensGroupConfig,
+    applies_anamorphic: bool,
+) -> f64 {
+    if applies_anamorphic {
+        config
+            .lens_correction_amount
+            .filter(|v| v.is_finite())
+            .map(|v| v.clamp(0.0, 100.0) as f64)
+            .unwrap_or(100.0)
+    } else {
+        100.0
+    }
+}
+
+fn lens_group_build_decision(
+    manual_edit: bool,
+    config: &LensGroupConfig,
+    metadata: &FileMetadata,
+) -> (bool, bool) {
+    let auto_has_focal = extract_video_focus_length_mm(metadata).is_some();
+    let manual_focal_sufficient =
+        sanitize_manual_focal_length_mm(config.focal_length_mm).is_some();
+    let fills_missing_focal = !auto_has_focal && manual_focal_sufficient;
+    let applies_anamorphic = manual_edit && config.anamorphic_enabled;
+    (fills_missing_focal, applies_anamorphic)
 }
 
 pub fn extract_lens_index(additional_data: &serde_json::Value) -> Option<usize> {
@@ -297,28 +326,18 @@ pub fn extract_lens_index(additional_data: &serde_json::Value) -> Option<usize> 
         .filter(|value| *value < LENS_GROUP_COUNT)
 }
 
-pub fn extract_focus_length_mm(additional_data: &serde_json::Value) -> Option<f64> {
-    sanitize_positive(
-        additional_data
-            .get("focus_length")
-            .and_then(value_to_f64)
-            .map(|value| value / 10.0),
-    )
-}
-
 pub fn extract_video_focus_length_mm(metadata: &FileMetadata) -> Option<f64> {
-    extract_focus_length_mm(&metadata.additional_data)
-        .or_else(|| {
-            metadata
-                .lens_params
-                .values()
-                .next()
-                .and_then(|params| params.focal_length)
+    metadata
+        .lens_params
+        .values()
+        .find_map(|params| {
+            params
+                .focal_length
                 .map(|value| value as f64)
-                .and_then(|value| sanitize_positive(Some(value)))
+                .and_then(|value| sanitize_video_focal_length_mm(Some(value)))
         })
         .or_else(|| {
-            sanitize_positive(
+            sanitize_video_focal_length_mm(
                 metadata
                     .camera_identifier
                     .as_ref()
@@ -350,18 +369,19 @@ pub fn select_focal_length(
     auto_focus_length_mm: Option<f64>,
     config: Option<&LensGroupConfig>,
 ) -> Option<(f64, FocalLengthSource)> {
-    let manual_focus_length_mm = config.and_then(|cfg| sanitize_positive(cfg.focal_length_mm));
+    let manual_focus_length_mm =
+        config.and_then(|cfg| sanitize_manual_focal_length_mm(cfg.focal_length_mm));
     if let Some(value) = manual_focus_length_mm {
         return Some((value, FocalLengthSource::Manual));
     }
-    if let Some(value) = sanitize_positive(auto_focus_length_mm) {
+    if let Some(value) = sanitize_video_focal_length_mm(auto_focus_length_mm) {
         return Some((value, FocalLengthSource::Auto));
     }
     None
 }
 
 pub fn apply_focal_length_fallback_to_metadata(metadata: &mut FileMetadata, focal_length_mm: f64) {
-    let Some(focal_length_mm) = sanitize_positive(Some(focal_length_mm)) else {
+    let Some(focal_length_mm) = sanitize_manual_focal_length_mm(Some(focal_length_mm)) else {
         return;
     };
     let pixel_focal_length = metadata
@@ -455,12 +475,19 @@ pub fn build_lens_profile(
     fallback_lens: Option<&LensProfile>,
 ) -> Option<LensProfile> {
     let auto_focus_length_mm = extract_video_focus_length_mm(metadata);
-    let (focal_length_mm, _) = select_focal_length(auto_focus_length_mm, config)?;
-    let base_focal_px =
-        sanitize_positive(metadata.unit_pixel_focal_length).map(|upfl| focal_length_mm * upfl)?;
+    let Some((focal_length_mm, _)) = select_focal_length(auto_focus_length_mm, config)
+    else {
+        return None;
+    };
+    let Some(base_focal_px) =
+        sanitize_positive(metadata.unit_pixel_focal_length).map(|upfl| focal_length_mm * upfl)
+    else {
+        return None;
+    };
 
     let mut profile = fallback_lens.cloned().unwrap_or_default();
     populate_profile_metadata(&mut profile, metadata, fallback_lens, size);
+    profile.lens_group_override = config.is_some();
     profile.focal_length = Some(focal_length_mm);
     profile.input_horizontal_stretch = 1.0;
     profile.input_vertical_stretch = 1.0;
@@ -483,8 +510,8 @@ pub fn build_lens_profile(
         h: size.1,
     };
     let mut output_dimension = None;
-    let mut fx = base_focal_px;
-    let mut fy = base_focal_px;
+    let fx = base_focal_px;
+    let fy = base_focal_px;
     let mut cx = size.0 as f64 / 2.0;
     let mut cy = size.1 as f64 / 2.0;
 
@@ -530,23 +557,25 @@ pub fn build_lens_profile(
 }
 
 /// Load lens presets with four-level priority:
-///   P1: lens 热更新包 `<data_dir>/lens/versions/<N>/lens_presets/` (整目录存在即完全覆盖)
-///   P2: `<data_dir>/lens_presets/`（用户本地覆盖层；同 id 覆盖 + 允许新增）
-///       + `<data_dir>/anamorphic_presets/`（legacy 路径，保留老用户文件）
-///   P3: `<exe>/lens_presets/`（便携版）
-///   P4: 编译期 `include_str!` 内置快照（fallback，保证离线可用）
+///   P1: lens update package `<data_dir>/lens/versions/<N>/lens_presets/`
+///       (directory presence means full override)
+///   P2: `<data_dir>/lens_presets/` (user local override layer; same id wins + new ids allowed)
+///       + `<data_dir>/anamorphic_presets/` (legacy path for existing user files)
+///   P3: `<exe>/lens_presets/` (portable build path)
+///   P4: compile-time `include_str!` built-in snapshot (offline fallback)
 ///
-/// 后三级合并顺序遵循"同 id 后者覆盖前者"，最终优先级为 P2(new) > P2(legacy) > P3 > P4。
+/// The last three layers merge as "later same id overrides earlier", so final
+/// priority is P2(new) > P2(legacy) > P3 > P4.
 pub fn load_presets() -> Vec<AnamorphicPreset> {
-    // P1: lens 热更新包 —— 整目录覆盖语义
+    // P1: lens update package, full-directory override.
     if let Some(pkg_presets) = load_from_lens_package() {
         return pkg_presets;
     }
 
-    // P4: 内置作为基底
+    // P4: built-in base.
     let mut presets = load_builtin_presets();
 
-    // P3: 便携版路径（exe 同目录 lens_presets/）
+    // P3: portable path next to the executable.
     if let Some(exe_presets_dir) = std::env::current_exe()
         .ok()
         .and_then(|e| e.parent().map(|p| p.join("lens_presets")))
@@ -554,13 +583,13 @@ pub fn load_presets() -> Vec<AnamorphicPreset> {
         merge_presets(&mut presets, load_from_user_dir(&exe_presets_dir));
     }
 
-    // P2-legacy: <data_dir>/anamorphic_presets/（老路径，保留用户已有自定义文件）
+    // P2-legacy: keep existing user custom files from the old path.
     merge_presets(
         &mut presets,
         load_from_user_dir(&settings_dir().join("anamorphic_presets")),
     );
 
-    // P2-new: <data_dir>/lens_presets/（新路径；同 id 会覆盖 legacy）
+    // P2-new: new user path; same ids override the legacy path.
     merge_presets(
         &mut presets,
         load_from_user_dir(&settings_dir().join("lens_presets")),
@@ -577,9 +606,9 @@ fn load_builtin_presets() -> Vec<AnamorphicPreset> {
     load_presets_from_index(BUILTIN_INDEX_JSON, None, true)
 }
 
-/// P1: 从当前激活的 lens 热更新包加载。
-/// 目录存在且 `index.json` 有效 → Some(presets)（完全覆盖后续层级）
-/// 目录/索引缺失或解析失败 → None（退化到后续层级）
+/// P1: load from the currently active lens update package.
+/// Existing directory with valid `index.json` -> Some(presets), fully overriding
+/// later layers. Missing directory/index or parse failure -> None.
 fn load_from_lens_package() -> Option<Vec<AnamorphicPreset>> {
     let dir = crate::distribution::resolve_package_subdir("lens", "lens_presets")?;
     let index_path = dir.join("index.json");
@@ -617,7 +646,8 @@ fn load_from_lens_package() -> Option<Vec<AnamorphicPreset>> {
     }
 }
 
-/// 通用用户目录加载（P2 / P3 共用）。优先用 index.json；无索引时扫描目录。
+/// Shared user-directory loader for P2/P3. Prefer index.json; scan the directory
+/// when no index exists.
 fn load_from_user_dir(root: &Path) -> Vec<AnamorphicPreset> {
     if !root.exists() {
         return Vec::new();
@@ -839,6 +869,17 @@ fn sanitize_positive(value: Option<f64>) -> Option<f64> {
     }
 }
 
+fn sanitize_manual_focal_length_mm(value: Option<f64>) -> Option<f64> {
+    match value {
+        Some(value) if value.is_finite() && value > MANUAL_FOCAL_LENGTH_MIN_MM => Some(value),
+        _ => None,
+    }
+}
+
+fn sanitize_video_focal_length_mm(value: Option<f64>) -> Option<f64> {
+    sanitize_positive(value)
+}
+
 fn value_to_u64(value: &serde_json::Value) -> Option<u64> {
     value
         .as_u64()
@@ -849,12 +890,6 @@ fn value_to_u64(value: &serde_json::Value) -> Option<u64> {
                 .map(|value| value as u64)
         })
         .or_else(|| value.as_str().and_then(|value| value.parse::<u64>().ok()))
-}
-
-fn value_to_f64(value: &serde_json::Value) -> Option<f64> {
-    value
-        .as_f64()
-        .or_else(|| value.as_str().and_then(|value| value.parse::<f64>().ok()))
 }
 
 fn format_source_path(root: Option<&Path>, file: &str, built_in: bool) -> String {
@@ -927,6 +962,141 @@ mod tests {
     }
 
     #[test]
+    fn manual_config_fills_missing_focal_without_manual_edit() {
+        let metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(28.0),
+            ..Default::default()
+        };
+
+        assert!(should_use_manual_config(false, &config, &metadata));
+    }
+
+    #[test]
+    fn manual_config_fills_missing_focal_when_only_pixel_focal_exists() {
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                pixel_focal_length: Some(3100.0),
+                ..Default::default()
+            },
+        );
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(28.0),
+            ..Default::default()
+        };
+
+        assert!(should_use_manual_config(false, &config, &metadata));
+    }
+
+    #[test]
+    fn effective_config_fills_focal_without_anamorphic_when_manual_edit_off() {
+        let metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(28.0),
+            anamorphic_enabled: true,
+            squeeze_ratio: Some(1.33),
+            ..Default::default()
+        };
+
+        let effective =
+            effective_lens_group_config_for_build(false, &config, &metadata).unwrap();
+
+        assert_eq!(effective.focal_length_mm, Some(28.0));
+        assert!(!effective.anamorphic_enabled);
+    }
+
+    #[test]
+    fn lens_correction_amount_only_applies_with_effective_anamorphic() {
+        let config = LensGroupConfig {
+            lens_correction_amount: Some(42.0),
+            ..Default::default()
+        };
+
+        assert_eq!(effective_lens_correction_amount_percent(&config, true), 42.0);
+        assert_eq!(effective_lens_correction_amount_percent(&config, false), 100.0);
+    }
+
+    #[test]
+    fn manual_config_requires_manual_edit_for_anamorphic_when_focal_exists() {
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                focal_length: Some(31.0),
+                pixel_focal_length: Some(3100.0),
+                ..Default::default()
+            },
+        );
+        let config = LensGroupConfig {
+            lens_index: 0,
+            anamorphic_enabled: true,
+            squeeze_ratio: Some(1.33),
+            ..Default::default()
+        };
+
+        assert!(!should_use_manual_config(false, &config, &metadata));
+        assert!(should_use_manual_config(true, &config, &metadata));
+    }
+
+    #[test]
+    fn manual_config_ignores_additional_focus_length_without_video_focal() {
+        let metadata = FileMetadata {
+            additional_data: serde_json::json!({ "focus_length": 310 }),
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+
+        assert_eq!(extract_video_focus_length_mm(&metadata), None);
+        assert!(should_use_manual_config(true, &config, &metadata));
+    }
+
+    #[test]
+    fn manual_config_keeps_small_auto_focus_without_anamorphic() {
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                focal_length: Some(3.5),
+                ..Default::default()
+            },
+        );
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(28.0),
+            ..Default::default()
+        };
+
+        assert_eq!(extract_video_focus_length_mm(&metadata), Some(3.5));
+        assert!(!should_use_manual_config(true, &config, &metadata));
+        assert_eq!(select_focal_length(Some(3.5), None).unwrap().0, 3.5);
+    }
+
+    #[test]
     fn lens_group_config_json_ignores_legacy_manual_override_field() {
         let parsed = lens_group_configs_from_json(
             r#"[{"lens_index":0,"focal_length_mm":35.0,"manual_override_enabled":true}]"#,
@@ -950,7 +1120,28 @@ mod tests {
     }
 
     #[test]
-    fn extracts_video_focus_length_from_additional_data_first() {
+    fn extracts_video_focus_length_from_any_lens_param() {
+        let mut metadata = FileMetadata::default();
+        metadata.lens_params.insert(
+            0,
+            crate::gyro_source::LensParams {
+                pixel_focal_length: Some(3100.0),
+                ..Default::default()
+            },
+        );
+        metadata.lens_params.insert(
+            10,
+            crate::gyro_source::LensParams {
+                focal_length: Some(35.0),
+                ..Default::default()
+            },
+        );
+
+        assert_eq!(extract_video_focus_length_mm(&metadata), Some(35.0));
+    }
+
+    #[test]
+    fn extract_video_focus_length_ignores_additional_focus_length() {
         let mut metadata = FileMetadata::default();
         metadata.additional_data = serde_json::json!({
             "focus_length": 300
@@ -963,7 +1154,7 @@ mod tests {
             },
         );
 
-        assert_eq!(extract_video_focus_length_mm(&metadata), Some(30.0));
+        assert_eq!(extract_video_focus_length_mm(&metadata), Some(35.0));
     }
 
     #[test]
@@ -1080,9 +1271,15 @@ mod tests {
 
         let mut with_focus = FileMetadata::default();
         with_focus.additional_data = serde_json::json!({
-            "lens_index": 1,
-            "focus_length": 350
+            "lens_index": 1
         });
+        with_focus.lens_params.insert(
+            0,
+            crate::gyro_source::LensParams {
+                focal_length: Some(35.0),
+                ..Default::default()
+            },
+        );
         update_status_from_metadata(&mut statuses, &with_focus);
 
         let mut without_focus = FileMetadata::default();

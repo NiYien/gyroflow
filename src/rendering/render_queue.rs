@@ -7,8 +7,7 @@ use crate::core::StabilizationManager;
 use crate::{core, rendering, util};
 use core::camera_identifier::CameraIdentifier;
 use core::filesystem;
-use core::gyro_source::GyroSource;
-use core::lens_profile::LensProfile;
+use core::gyro_source::{FileMetadata, GyroSource};
 use core::niyien_lens_presets;
 use core::stabilization_params::ReadoutDirection;
 use parking_lot::{Mutex as ParkingMutex, RwLock};
@@ -392,11 +391,10 @@ fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
     serde_json::from_str(job_ids_json).unwrap_or_default()
 }
 
-fn resolve_lens_group_focal_length(
-    auto_focus_length_mm: Option<f64>,
-    group_config: Option<&niyien_lens_presets::LensGroupConfig>,
-) -> Option<(f64, niyien_lens_presets::FocalLengthSource)> {
-    niyien_lens_presets::select_focal_length(auto_focus_length_mm, group_config)
+fn lens_profile_metadata_for_group_build(metadata: &FileMetadata) -> FileMetadata {
+    let mut snapshot = metadata.thin();
+    snapshot.lens_params = metadata.lens_params.clone();
+    snapshot
 }
 
 fn effective_lens_group_configs(
@@ -1401,8 +1399,10 @@ impl RenderQueue {
                 if let Some((config, is_local)) =
                     effective_lens_group_config_for_group(job, &global_configs, lens_index)
                 {
-                    let has_manual_display = config.focal_length_mm.unwrap_or_default() > 0.0
-                        || config.anamorphic_enabled;
+                    let has_manual_display =
+                        config.focal_length_mm.unwrap_or_default()
+                            > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+                            || config.anamorphic_enabled;
                     if has_manual_display {
                         lens_group_mode = if is_local { "local" } else { "global" };
                         lens_group_number = lens_index + 1;
@@ -1412,7 +1412,9 @@ impl RenderQueue {
                             niyien_lens_presets::SqueezeDirection::Horizontal => "H".to_owned(),
                             niyien_lens_presets::SqueezeDirection::Vertical => "V".to_owned(),
                         };
-                        if lens_group_focal_length <= 0.0 {
+                        if lens_group_focal_length
+                            <= niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+                        {
                             lens_group_focal_length = metadata_focal_length;
                         }
                     }
@@ -1461,12 +1463,17 @@ impl RenderQueue {
                         .and_then(|vi| vi.get("focal_length"))
                         .and_then(|f| f.as_f64())
                         .unwrap_or(0.0);
-                    let display_focal_length = if focal_length > 0.0 {
+                    let display_focal_length = if focal_length
+                        > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+                    {
                         focal_length
                     } else {
                         metadata_focal_length
                     };
-                    if lens_group_mode != "auto" && lens_group_focal_length <= 0.0 {
+                    if lens_group_mode != "auto"
+                        && lens_group_focal_length
+                            <= niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+                    {
                         lens_group_focal_length = display_focal_length;
                     }
                     let detected_source = v
@@ -2879,6 +2886,16 @@ impl RenderQueue {
         proc_height: i32,
         cancel_flag: Arc<AtomicBool>,
     ) {
+        // C3: Komodo trusts its own internal IMU; auto-sync against external IMU
+        // is unnecessary and would compute a meaningless offset. Skip entirely.
+        if stab.gyro.read().file_metadata.read().is_komodo {
+            let url = stab.input_file.read().url.clone();
+            ::log::info!(
+                "[red_arbitration] Komodo main video, skipping auto-sync: {url}"
+            );
+            return;
+        }
+
         let (url, duration_ms) = {
             (
                 stab.input_file.read().url.clone(),
@@ -4171,11 +4188,12 @@ impl RenderQueue {
                                 base_lens_metadata.overwrite_metadata(&mut snapshot);
                                 snapshot
                             };
-                            let auto_focus =
-                                niyien_lens_presets::extract_video_focus_length_mm(&base_metadata);
-
                             // Preserve sync_settings across lens profile replacement
                             let saved_sync_settings = stab.lens.read().sync_settings.clone();
+                            let manual_edit =
+                                core::settings::get_bool("lens_group_manual_edit", false);
+                            *stab.lens_group_config.write() = effective_configs.clone();
+                            stab.lens_group_manual_edit.store(manual_edit, SeqCst);
 
                             stab.apply_main_video_telemetry(&mut base_metadata, gyro_file_url, true);
                             *stab.camera_id.write() = base_metadata.camera_identifier.clone();
@@ -4195,96 +4213,40 @@ impl RenderQueue {
 
                             if let Some(lens_index) = lens_index {
                                 if let Some(group_config) = effective_configs.get(lens_index) {
-                                    // Gate: only apply manual overrides when the global
-                                    // Manual edit toggle is on AND the auto path can't fully
-                                    // satisfy this video (see should_use_manual_config).
-                                    // Read settings live (not stab's cached Arc): job stabs
-                                    // are spawned independently with their own AtomicBool,
-                                    // so reading the persistent setting here ensures the
-                                    // current toggle value is honored at reapply time.
-                                    let manual_edit = core::settings::get_bool(
-                                        "lens_group_manual_edit",
-                                        false,
-                                    );
-                                    let should_apply_manual =
-                                        niyien_lens_presets::should_use_manual_config(
+                                    let cfg_for_build =
+                                        niyien_lens_presets::effective_lens_group_config_for_build(
                                             manual_edit,
                                             group_config,
                                             &base_metadata,
                                         );
-
-                                    if should_apply_manual {
-                                        let selected_focal_length = resolve_lens_group_focal_length(
-                                            auto_focus,
-                                            Some(group_config),
-                                        );
-                                        let manual_focus_length_mm = selected_focal_length.and_then(
-                                            |(focal_length_mm, source)| {
-                                                (source == niyien_lens_presets::FocalLengthSource::Manual)
-                                                    .then_some(focal_length_mm)
-                                            },
-                                        );
-
-                                        if let Some(focal_length_mm) = manual_focus_length_mm {
-                                            niyien_lens_presets::apply_focal_length_fallback_to_metadata(
-                                                &mut base_metadata,
-                                                focal_length_mm,
-                                            );
-                                            {
-                                                let gyro = stab.gyro.read();
-                                                let mut md = gyro.file_metadata.write();
-                                                niyien_lens_presets::apply_focal_length_fallback_to_metadata(
-                                                    &mut md,
-                                                    focal_length_mm,
-                                                );
-                                            }
-                                            stab.set_user_focal_length(focal_length_mm);
-                                            ::log::info!(
-                                                "[reapply_lens_group_config] job[{}] applied manual focal length {:.1}mm",
-                                                job_id,
-                                                focal_length_mm
-                                            );
+                                    let existing_lens = stab.lens.read().clone();
+                                    let profile = niyien_lens_presets::build_lens_profile(
+                                        &base_metadata,
+                                        size,
+                                        cfg_for_build.as_ref(),
+                                        Some(&existing_lens),
+                                    );
+                                    if let Some(profile) = profile {
+                                        if let Some(output_dim) = profile.output_dimension.clone() {
+                                            updated_render_options.output_width = output_dim.w;
+                                            updated_render_options.output_height = output_dim.h;
                                         }
-
-                                        if group_config.anamorphic_enabled {
-                                            let existing_lens = stab.lens.read().clone();
-                                            let profile = niyien_lens_presets::build_lens_profile(
-                                                &base_metadata,
-                                                size,
-                                                Some(group_config),
-                                                Some(&existing_lens),
-                                            );
-                                            if let Some(profile) = profile {
-                                                if let Some(output_dim) =
-                                                    profile.output_dimension.clone()
-                                                {
-                                                    updated_render_options.output_width = output_dim.w;
-                                                    updated_render_options.output_height = output_dim.h;
-                                                }
-                                                *stab.lens.write() = profile;
-                                                ::log::info!(
-                                                    "[reapply_lens_group_config] job[{}] applied anamorphic profile for group #{}",
-                                                    job_id,
-                                                    lens_index
-                                                );
-                                            }
-                                        }
+                                        *stab.lens.write() = profile;
                                     }
 
                                     // Mirror apply_lens_group_to_main: correction override only
                                     // applies when manual override is effectively applied AND
                                     // anamorphic is on. Otherwise revert to 100% so queue renders
                                     // match the live preview.
+                                    let applies_anamorphic = cfg_for_build
+                                        .as_ref()
+                                        .map(|cfg| cfg.anamorphic_enabled)
+                                        .unwrap_or(false);
                                     let correction_percent =
-                                        if should_apply_manual && group_config.anamorphic_enabled {
-                                            group_config
-                                                .lens_correction_amount
-                                                .filter(|v| v.is_finite())
-                                                .map(|v| v.clamp(0.0, 100.0) as f64)
-                                                .unwrap_or(100.0)
-                                        } else {
-                                            100.0
-                                        };
+                                        niyien_lens_presets::effective_lens_correction_amount_percent(
+                                            group_config,
+                                            applies_anamorphic,
+                                        );
                                     stab.set_lens_correction_amount(correction_percent / 100.0);
                                 }
                             }
@@ -4899,6 +4861,12 @@ impl RenderQueue {
             }
             let auto_rotation_results = Arc::new(auto_rotation_results);
             apply_items.par_iter_mut().enumerate().for_each(|(idx, item)| {
+                // C3: Komodo main video keeps its own internal gyro + camera identity.
+                // We still run the niyien lens flow (index detection, focal length,
+                // lens profile) but skip the IMU/quaternion + camera_id overwrites —
+                // those would replace Komodo's trusted state with matched external
+                // data. Auto-sync is gated separately in do_autosync.
+                let main_is_komodo = item.stab.gyro.read().file_metadata.read().is_komodo;
                 let t_item = std::time::Instant::now();
                 let requested_range = normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
                 if let Some(cached_entries) = gyro_cache.get(&item.gyro_files_idx) {
@@ -4931,34 +4899,24 @@ impl RenderQueue {
                         let group_config = lens_index
                             .and_then(|index| item.effective_lens_group_configs.get(index))
                             .cloned();
-                        let auto_focus_length_mm =
-                            niyien_lens_presets::extract_video_focus_length_mm(&md);
-                        let selected_focal_length = resolve_lens_group_focal_length(
-                            auto_focus_length_mm,
-                            group_config.as_ref(),
-                        );
-                        let manual_focus_length_mm = selected_focal_length.and_then(
-                            |(focal_length_mm, source)| {
-                                (source == niyien_lens_presets::FocalLengthSource::Manual)
-                                    .then_some(focal_length_mm)
-                            },
-                        );
-
-                        if let Some(focal_length_mm) = manual_focus_length_mm {
-                            niyien_lens_presets::apply_focal_length_fallback_to_metadata(
-                                &mut md,
-                                focal_length_mm,
-                            );
-                            ::log::info!(
-                                "[apply_match] job[{}] applied lens group manual focal length {:.1}mm to metadata",
-                                idx,
-                                focal_length_mm
-                            );
-                        }
-
+                        let manual_edit =
+                            core::settings::get_bool("lens_group_manual_edit", false);
+                        *item.stab.lens_group_config.write() =
+                            item.effective_lens_group_configs.clone();
+                        item.stab.lens_group_manual_edit.store(manual_edit, SeqCst);
+                        let cfg_for_build = group_config
+                            .as_ref()
+                            .and_then(|cfg| {
+                                niyien_lens_presets::effective_lens_group_config_for_build(
+                                    manual_edit,
+                                    cfg,
+                                    &md,
+                                )
+                            });
                         item.stab
                             .apply_main_video_telemetry(&mut md, &item.gyro_path, true);
                         let camera_id = md.camera_identifier.clone();
+                        let lens_profile_metadata = lens_profile_metadata_for_group_build(&md);
 
                         let detected_source =
                             md.detected_source.as_deref().unwrap_or("").to_string();
@@ -5003,35 +4961,64 @@ impl RenderQueue {
                             None
                         };
 
-                        let existing_lens = item.stab.lens.read().clone();
-                        let custom_lens_profile = group_config
-                            .as_ref()
-                            .filter(|cfg| cfg.anamorphic_enabled)
-                            .and_then(|cfg| {
-                                niyien_lens_presets::build_lens_profile(
-                                    &md,
-                                    size,
-                                    Some(cfg),
-                                    Some(&existing_lens),
-                                )
-                            });
-
-                        {
-                            let params = item.stab.params.read();
-                            let mut gyro = item.stab.gyro.write();
-                            gyro.init_from_params(&params);
-                            gyro.clear();
-                            gyro.file_url = String::new();
+                        if main_is_komodo {
+                            // Komodo: keep video gyro (raw_imu/quaternions) + camera_id,
+                            // but merge .bin's lens-related metadata into stab so the
+                            // niyien lens flow (metadata_snapshot_for_job →
+                            // extract_video_focus_length_mm / extract_lens_index +
+                            // queue display fallback) sees the right info, parallel
+                            // to non-Komodo's load_from_telemetry overwrite.
+                            // additional_data uses merge_json (asymmetric — .bin keys
+                            // layered on top of RED's recording_settings/image_stabilizer),
+                            // not unconditional overwrite, to preserve RED-recorded fields.
+                            // frame_readout_time is merged because RED telemetry doesn't
+                            // supply it; .bin's value (or downstream camera_db lookup) is
+                            // the only source.
+                            {
+                                let gyro = item.stab.gyro.read();
+                                let mut fm = gyro.file_metadata.write();
+                                core::util::merge_json(
+                                    &mut fm.additional_data,
+                                    &md.additional_data,
+                                );
+                                if fm.lens_params.is_empty() {
+                                    fm.lens_params = md.lens_params.clone();
+                                }
+                                if fm.lens_positions.is_empty() {
+                                    fm.lens_positions = md.lens_positions.clone();
+                                }
+                                if fm.lens_profile.is_none() {
+                                    fm.lens_profile = md.lens_profile.clone();
+                                }
+                                if fm.unit_pixel_focal_length.is_none() {
+                                    fm.unit_pixel_focal_length = md.unit_pixel_focal_length;
+                                }
+                                if fm.frame_readout_time.is_none() {
+                                    fm.frame_readout_time = md.frame_readout_time;
+                                }
+                            }
                             ::log::info!(
-                                "[apply_match T18] job[{}] gyro.file_url cleared (data in memory)",
+                                "[red_arbitration] job[{}] Komodo: kept video gyro + camera_id, merged .bin lens metadata",
                                 idx
                             );
-                            gyro.file_metadata = Default::default();
-                            drop(params);
-                            gyro.load_from_telemetry(md);
-                            gyro.file_load_options = Default::default();
+                        } else {
+                            {
+                                let params = item.stab.params.read();
+                                let mut gyro = item.stab.gyro.write();
+                                gyro.init_from_params(&params);
+                                gyro.clear();
+                                gyro.file_url = String::new();
+                                ::log::info!(
+                                    "[apply_match T18] job[{}] gyro.file_url cleared (data in memory)",
+                                    idx
+                                );
+                                gyro.file_metadata = Default::default();
+                                drop(params);
+                                gyro.load_from_telemetry(md);
+                                gyro.file_load_options = Default::default();
+                            }
+                            *item.stab.camera_id.write() = camera_id;
                         }
-                        *item.stab.camera_id.write() = camera_id;
                         match item.stab.autoload_lens_from_camera_id() {
                             Ok(true) => {
                                 ::log::info!(
@@ -5047,16 +5034,6 @@ impl RenderQueue {
                                     err
                                 );
                             }
-                        }
-
-                        if let Some(focal_length_mm) = manual_focus_length_mm {
-                            item.stab.set_user_focal_length(focal_length_mm);
-                            sync_readout_params_from_lens(item.stab.as_ref());
-                            ::log::info!(
-                                "[apply_match] job[{}] applied lens group manual focal length {:.1}mm",
-                                idx,
-                                focal_length_mm
-                            );
                         }
 
                         if let Some(rotation) = auto_rotation {
@@ -5103,6 +5080,19 @@ impl RenderQueue {
                         );
 
                         if let Some(lens_index) = lens_index {
+                            let applies_anamorphic = cfg_for_build
+                                .as_ref()
+                                .map(|cfg| cfg.anamorphic_enabled)
+                                .unwrap_or(false);
+                            let custom_lens_profile = group_config.as_ref().and_then(|_| {
+                                let existing_lens = item.stab.lens.read().clone();
+                                niyien_lens_presets::build_lens_profile(
+                                    &lens_profile_metadata,
+                                    size,
+                                    cfg_for_build.as_ref(),
+                                    Some(&existing_lens),
+                                )
+                            });
                             if let Some(profile) = custom_lens_profile {
                                 if let Some(output_dim) = profile.output_dimension.clone() {
                                     item.render_options.output_width = output_dim.w;
@@ -5119,6 +5109,17 @@ impl RenderQueue {
                                     item.render_options.output_width,
                                     item.render_options.output_height,
                                 );
+                                let correction_percent = group_config
+                                    .as_ref()
+                                    .map(|cfg| {
+                                        niyien_lens_presets::effective_lens_correction_amount_percent(
+                                            cfg,
+                                            applies_anamorphic,
+                                        )
+                                    })
+                                    .unwrap_or(100.0);
+                                item.stab
+                                    .set_lens_correction_amount(correction_percent / 100.0);
                                 sync_readout_params_from_lens(item.stab.as_ref());
                                 ::log::info!(
                                     "[apply_match] job[{}] applied lens group #{} profile",
@@ -5132,6 +5133,7 @@ impl RenderQueue {
                                     item.render_options.output_width,
                                     item.render_options.output_height,
                                 );
+                                item.stab.set_lens_correction_amount(1.0);
                                 ::log::info!(
                                     "[apply_match] job[{}] lens group #{} skipped (keeping existing lens flow)",
                                     idx,
@@ -5145,6 +5147,7 @@ impl RenderQueue {
                                 item.render_options.output_width,
                                 item.render_options.output_height,
                             );
+                            item.stab.set_lens_correction_amount(1.0);
                         }
 
                         item.stab.invalidate_smoothing();
@@ -6284,44 +6287,6 @@ mod tests {
     }
 
     #[test]
-    fn resolve_lens_group_focal_length_prefers_manual_override() {
-        let config = niyien_lens_presets::LensGroupConfig {
-            lens_index: 0,
-            focal_length_mm: Some(50.0),
-            ..Default::default()
-        };
-
-        let selected = resolve_lens_group_focal_length(Some(35.0), Some(&config)).unwrap();
-        assert_eq!(selected.0, 50.0);
-        assert_eq!(selected.1, niyien_lens_presets::FocalLengthSource::Manual);
-    }
-
-    #[test]
-    fn resolve_lens_group_focal_length_keeps_auto_when_manual_empty() {
-        let config = niyien_lens_presets::LensGroupConfig {
-            lens_index: 0,
-            ..Default::default()
-        };
-
-        let selected = resolve_lens_group_focal_length(Some(35.0), Some(&config)).unwrap();
-        assert_eq!(selected.0, 35.0);
-        assert_eq!(selected.1, niyien_lens_presets::FocalLengthSource::Auto);
-    }
-
-    #[test]
-    fn resolve_lens_group_focal_length_falls_back_to_manual_when_auto_missing() {
-        let config = niyien_lens_presets::LensGroupConfig {
-            lens_index: 0,
-            focal_length_mm: Some(24.0),
-            ..Default::default()
-        };
-
-        let selected = resolve_lens_group_focal_length(None, Some(&config)).unwrap();
-        assert_eq!(selected.0, 24.0);
-        assert_eq!(selected.1, niyien_lens_presets::FocalLengthSource::Manual);
-    }
-
-    #[test]
     fn build_job_lens_group_override_keeps_local_auto_detect_against_global_manual() {
         let mut global = niyien_lens_presets::default_lens_group_configs();
         global[0].focal_length_mm = Some(35.0);
@@ -6366,6 +6331,48 @@ mod tests {
         let effective = effective_lens_group_configs(&job, &global);
         assert_eq!(effective[0].focal_length_mm, Some(24.0));
         assert_eq!(effective[1].focal_length_mm, Some(50.0));
+    }
+
+    #[test]
+    fn lens_profile_metadata_for_group_build_preserves_auto_focal_from_lens_params() {
+        let metadata = core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            unit_pixel_focal_length: Some(100.0),
+            lens_params: BTreeMap::from([(
+                0,
+                core::gyro_source::LensParams {
+                    focal_length: Some(31.0),
+                    pixel_focal_length: Some(3100.0),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+        let snapshot = lens_profile_metadata_for_group_build(&metadata);
+        let config = niyien_lens_presets::LensGroupConfig {
+            anamorphic_enabled: true,
+            squeeze_ratio: Some(1.33),
+            ..Default::default()
+        };
+        let cfg_for_build =
+            niyien_lens_presets::effective_lens_group_config_for_build(true, &config, &metadata)
+                .unwrap();
+
+        let profile = niyien_lens_presets::build_lens_profile(
+            &snapshot,
+            (1920, 1080),
+            Some(&cfg_for_build),
+            Some(&core::lens_profile::LensProfile::default()),
+        )
+        .unwrap();
+
+        assert_eq!(
+            niyien_lens_presets::extract_video_focus_length_mm(&snapshot),
+            Some(31.0)
+        );
+        assert_eq!(profile.focal_length, Some(31.0));
+        assert_eq!(profile.fisheye_params.camera_matrix[0], [3100.0, 0.0, 1277.0]);
+        assert_eq!(profile.fisheye_params.camera_matrix[1], [0.0, 3100.0, 540.0]);
     }
 
     fn default_exts() -> Vec<String> {

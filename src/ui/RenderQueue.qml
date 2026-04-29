@@ -53,11 +53,12 @@ Item {
     property int pairingGyroIndex: -1
     property string pairingGyroFilename: ""
     property string matchWarning: ""
-    // [T14] 全局 matchExecuted 标志：是否已执行过 match
+    property bool _queueLayoutPending: false
+    // [T14] Global matchExecuted flag: whether matching has run.
     property bool matchExecuted: false
-    // [T21] debug: 追踪 matchExecuted 变化
+    // [T21] debug: trace matchExecuted changes.
     onMatchExecutedChanged: console.log("[QML T21] matchExecuted changed to:", matchExecuted);
-    // [T19] match 版本计数器，每次 match 结果变化时递增，触发 delegate 属性重新求值
+    // [T19] Match version counter. Incrementing it forces delegate bindings to re-evaluate.
     property int matchVersion: 0
     // ── Batch selection ──
     // CheckBox column is always visible on every row. Tap a checkbox (mouse or touch)
@@ -104,6 +105,20 @@ Item {
         }
         return true;
     }
+    function requestQueueLayout(): void {
+        if (_queueLayoutPending) {
+            return;
+        }
+        _queueLayoutPending = true;
+        Qt.callLater(function() {
+            _queueLayoutPending = false;
+            if (lv && lv.forceLayout) {
+                lv.forceLayout();
+            }
+        });
+    }
+    onWidthChanged: requestQueueLayout();
+    onShownChanged: requestQueueLayout();
 
     Connections {
         target: render_queue;
@@ -114,19 +129,21 @@ Item {
             }
             root.gyroFilesInfo = infos;
             root.hasGyroFiles = render_queue.has_gyro_files();
-            // [T14] gyro 清除时重置 matchExecuted
+            // [T14] Reset matchExecuted when gyro files are cleared.
             if (!root.hasGyroFiles) root.matchExecuted = false;
-            // [queue-lifecycle T2] 始终按创建时间排序
+            // [queue-lifecycle T2] Always keep jobs sorted by creation time.
             render_queue.sort_jobs_by_created_at();
+            root.requestQueueLayout();
         }
         function onMatch_results_changed(): void {
-            // [T14] 更新全局 matchExecuted 标志
+            // [T14] Update the global matchExecuted flag.
             root.matchExecuted = render_queue.has_match_results();
-            // [T19] 递增版本计数器触发 delegate 属性重新求值（不重建 delegate）
+            // [T19] Increment the version counter to refresh delegate bindings without rebuilding delegates.
             root.matchVersion++;
-            // [T22] 只重置 matching 状态（遮罩由 match_apply_finished 关闭）
+            // [T22] Only reset the matching state here; match_apply_finished closes the overlay.
             autoMatchBtn.matching = false;
-            // 检查未匹配项
+            root.requestQueueLayout();
+            // Check unmatched items.
             Qt.callLater(function() {
                 let unmatchedCount = 0;
                 for (let i = 0; i < lv.count; i++) {
@@ -144,9 +161,10 @@ Item {
                 }
             });
         }
-        // [T22] 匹配+数据加载全部完成时关闭遮罩
+        // [T22] Close the overlay after matching and data loading have both finished.
         function onMatch_apply_finished(): void {
             loader.active = false;
+            root.requestQueueLayout();
             console.log("[QML T22] match_apply_finished: loader closed");
         }
         function onPairing_mode_changed(): void {
@@ -154,6 +172,12 @@ Item {
                 root.pairingGyroIndex = -1;
                 root.pairingGyroFilename = "";
             }
+        }
+    }
+    Connections {
+        target: window
+        function onIsSimpleModeChanged(): void {
+            root.requestQueueLayout();
         }
     }
     opacity: shown? 1 : 0;
@@ -475,18 +499,33 @@ Item {
         anchors.bottomMargin: (multiSelectBar.visible || topGyroButtons.visible) ? 5 * dpiScale : 30 * dpiScale;
         clip: true;
         model: render_queue.queue;
-        // [queue-lifecycle T1] 移除了历史恢复 Timer 和 save Connections
-        // [T20] spacing 改为 0，间距由 delegate 内部 spacer 控制，确保同组颜色条连续
+        // [queue-lifecycle T1] Historical restore timer and save connections were removed.
+        // [T20] Spacing is handled inside delegates so same-gyro color bars can stay continuous.
         spacing: 0;
+        onCountChanged: root.requestQueueLayout();
         QQC.ScrollIndicator.vertical: QQC.ScrollIndicator { }
 
-        // [queue-lifecycle T3] 移除了 isDragging / dragTargetIndex / dragIndicator（手动拖拽重排）
-        property bool isDragging: false  // 保留为常量 false，供外部引用（VideoArea.qml）
+        // [queue-lifecycle T3] Manual drag-reorder state was removed.
+        property bool isDragging: false  // Kept as a constant for external references in VideoArea.qml.
         delegate: Item {
             // https://doc.qt.io/qt-6/qtquick-tutorials-dynamicview-dynamicview3-example.html
-            // [T20] 内部间距：同组(sameGyroAsNext)时无间距，否则 5px 间距
+            // [T20] Inner spacing: no spacing inside a matched gyro group, 5px otherwise.
             property real delegateSpacing: (dlg.isMatched && dlg.sameGyroAsNext) ? 0 : 5 * dpiScale
-            implicitHeight: innerItm.height + 2*innerItm.y + messageAreaParent.height + delegateSpacing;
+            property bool showProgressColumn: !window.isMobileLayout && !dlg.isFinished && !dlg.isSkipped
+            property real progressColumnWidth: showProgressColumn ? Math.max(200 * dpiScale, progressText.implicitWidth, time.implicitWidth) : 0
+            property real progressColumnGap: 10 * dpiScale
+            property real trailingControlsWidth: btnsRow.width + (showProgressColumn ? progressColumnWidth + progressColumnGap : 0)
+            property real textRightLimit: Math.max(0, innerItm.width - trailingControlsWidth)
+            property real delegateContentHeight: Math.max(
+                70 * dpiScale,
+                Math.max(textColumn.implicitHeight, textColumn.childrenRect.height, textColumn.height) + 20 * dpiScale,
+                showProgressColumn ? Math.max(progressColumn.implicitHeight, progressColumn.childrenRect.height, progressColumn.height) + 20 * dpiScale : 0,
+                btnsRow.height + 20 * dpiScale
+            )
+            implicitHeight: delegateContentHeight + 2*innerItm.y + messageAreaParent.height + delegateSpacing;
+            height: implicitHeight;
+            onImplicitHeightChanged: root.requestQueueLayout();
+            onWidthChanged: root.requestQueueLayout();
             width: parent? parent.width : 0;
             id: dlg;
             property int jobId: job_id;
@@ -504,23 +543,22 @@ Item {
             property string errorString: error_string;
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
 
-            // T5: Match status for this delegate
-            // [T19] matchVersion 依赖触发器：match 结果变化时强制重新求值
+            // T5: Match status for this delegate.
+            // [T19] matchVersion forces re-evaluation when match results change.
             property var matchStatus: { root.matchVersion; return root.hasGyroFiles ? JSON.parse(render_queue.get_match_status_json(job_id)) : ({status: "none"}); }
             property string matchState: matchStatus.status || "none"
             property int matchGyroIndex: matchStatus.gyro_index !== undefined && matchStatus.gyro_index !== null ? matchStatus.gyro_index : -1
             property color matchColor: matchGyroIndex >= 0 ? root.gyroColors[matchGyroIndex % root.gyroColors.length] : "transparent"
             property string gyroFilename: matchStatus.gyro_filename || ""
             property int manualGyroIndex: { root.matchVersion; return render_queue.get_manual_pair_gyro_index(job_id); }
-            // [queue-gyro-column T8, T14] 双模式属性：已匹配 vs 未匹配
-            // isMatched 改为全局 matchExecuted（执行过 match 后所有 delegate 进入已匹配模式）
+            // [queue-gyro-column T8, T14] Dual display mode: matched vs. unmatched.
+            // isMatched now follows the global matchExecuted flag.
             property bool isMatched: root.matchExecuted
             property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
             property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
             property color statusAccentColor: isSkipped ? root.skippedStatusColor : isFinished ? root.finishedStatusColor : isError ? root.errorStatusColor : isQuestion ? styleAccentColor : "transparent"
-            // [T15] 通过 Rust 端直接判断相邻 item 是否同一 gyro 组，
-            // 避免 QML 绑定时序问题和 delegate 创建顺序问题。
-            // [T22] 从缓存读取 sameGyro 状态（match 完成后一次性计算，不受渲染/queue变化影响）
+            // [T15] Adjacent same-gyro state is computed in Rust to avoid QML binding timing issues.
+            // [T22] Read sameGyro state from a cache built after matching.
             property bool sameGyroAsPrev: { root.matchVersion; return root.matchExecuted && render_queue.get_cached_same_gyro_prev(job_id); }
             property bool sameGyroAsNext: { root.matchVersion; return root.matchExecuted && render_queue.get_cached_same_gyro_next(job_id); }
             onProgressChanged: {
@@ -549,8 +587,8 @@ Item {
                 }
             }
 
-            // [queue-lifecycle T3] 移除了 dragging 属性（不再支持拖拽重排）
-            // T7: Lower opacity for already-paired items when in pairing mode
+            // [queue-lifecycle T3] Drag-reorder support was removed.
+            // T7: Lower opacity for already-paired items when in pairing mode.
             opacity: (root.pairingGyroIndex >= 0 && dlg.matchState === "Matched" ? 0.5 : 1);
             Ease on opacity { }
 
@@ -616,6 +654,11 @@ Item {
                     text: qsTr("Edit");
                     enabled: !isInProgress;
                     onTriggered: {
+                        // Part B fix E: also mark this job as selected so
+                        // LensGroupConfig.batchScope kicks in and the
+                        // per-job hint + "Apply globally" button appear in
+                        // the main view editor.
+                        root.selectedJobs = { [job_id]: true };
                         const data = render_queue.get_gyroflow_data(job_id);
                         if (data) {
                             window.videoArea.loadGyroflowData(JSON.parse(data), job_id);
@@ -1043,7 +1086,7 @@ Item {
                 // [T20] x accounts for optional multi-select column, gyro column and separator
                 x: 5 * dpiScale + checkboxCol.width + gyroArea.width + separatorCol.width;
                 width: parent.width - x - 5 * dpiScale;
-                height: textColumn.height + 20 * dpiScale;
+                height: dlg.delegateContentHeight;
                 Image {
                     x: 5 * dpiScale;
                     source: thumbnail_url
@@ -1068,7 +1111,8 @@ Item {
                     x: 55 * dpiScale;
                     anchors.verticalCenter: parent.verticalCenter;
                     spacing: 3 * dpiScale;
-                    width: parent.width - x - btnsRow.width - 10 * dpiScale;
+                    width: Math.max(1 * dpiScale, dlg.textRightLimit - x - 10 * dpiScale);
+                    height: childrenRect.height;
                     BasicText {
                         text: input_filename;
                         font.bold: true;
@@ -1087,10 +1131,11 @@ Item {
                                           : qsTr("Rendering: %1").arg(`<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText}${eta})</small>`);
                     }
                     BasicText { text: qsTr("Save to: %1").arg("<b>" + display_output_path + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
-                    // Aligned display params row
-                    Row {
+                    // Aligned display params. Flow wraps when Full mode narrows the queue panel.
+                    Flow {
                         spacing: 10 * dpiScale;
                         width: parent.width;
+                        height: visible ? childrenRect.height : 0;
                         BasicText {
                             text: qsTranslate("Stabilization", "Smoothness") + " <b>" + ((dlg.displayParams.smoothness || 0.5) * 100).toFixed(0) + "%</b>";
                             font.pixelSize: basicTextSize;
@@ -1123,6 +1168,7 @@ Item {
                     Flow {
                         visible: (dlg.displayParams.lens_group_display_mode || "auto") !== "auto";
                         width: parent.width;
+                        height: visible ? childrenRect.height : 0;
                         spacing: 10 * dpiScale;
 
                         BasicText {
@@ -1145,34 +1191,23 @@ Item {
                             font.pixelSize: basicTextSize;
                         }
                     }
-                    // T5+T6: Match status annotation with gyro filename
-                    Row {
+                    // T5+T6: Match status annotation with gyro filename.
+                    BasicText {
                         visible: root.hasGyroFiles && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"));
-                        spacing: 5 * dpiScale;
-                        BasicText {
-                            visible: dlg.manualGyroIndex >= 0;
-                            text: qsTr("Manual") + " ⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "");
-                            color: root.manualStatusColor;
-                            font.pixelSize: basicTextSize;
-                            font.bold: true;
-                        }
-                        BasicText {
-                            visible: dlg.manualGyroIndex < 0 && dlg.matchState === "Matched";
-                            // [queue-batch-streamline T2] 显示 detected_source
-                            text: "✓ " + dlg.gyroFilename + (dlg.matchStatus.detected_source ? " (" + dlg.matchStatus.detected_source + ")" : "");
-                            color: root.matchedStatusColor;
-                            font.pixelSize: basicTextSize;
-                            font.bold: true;
-                        }
-                        BasicText {
-                            visible: dlg.manualGyroIndex < 0 && dlg.matchState === "CalibrationPair";
-                            text: qsTr("Calibration") + " · " + dlg.gyroFilename;
-                            color: root.calibrationStatusColor;
-                            font.pixelSize: basicTextSize;
-                            font.bold: true;
-                        }
+                        width: parent.width;
+                        wrapMode: Text.WordWrap;
+                        color: dlg.manualGyroIndex >= 0 ? root.manualStatusColor
+                            : dlg.matchState === "Matched" ? root.matchedStatusColor
+                            : root.calibrationStatusColor;
+                        font.pixelSize: basicTextSize;
+                        font.bold: true;
+                        text: dlg.manualGyroIndex >= 0
+                            ? qsTr("Manual") + " ⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "")
+                            : dlg.matchState === "Matched"
+                                ? "✓ " + dlg.gyroFilename + (dlg.matchStatus.detected_source ? " (" + dlg.matchStatus.detected_source + ")" : "")
+                                : qsTr("Calibration") + " · " + dlg.gyroFilename;
                     }
-                    // [queue-render-skip] 显示跳过原因
+                    // [queue-render-skip] Show skip reason.
                     BasicText {
                         visible: dlg.isSkipped;
                         text: dlg.skipReason === "no_gyro" ? qsTr("Skipped - no gyro data")
@@ -1185,14 +1220,18 @@ Item {
                 }
 
                 Column {
+                    id: progressColumn;
                     anchors.right: btnsRow.left;
-                    anchors.rightMargin: 10 * dpiScale;
+                    anchors.rightMargin: dlg.progressColumnGap;
                     spacing: 6 * dpiScale;
+                    width: dlg.progressColumnWidth;
+                    height: childrenRect.height;
                     anchors.verticalCenter: parent.verticalCenter;
-                    // [T19] 渲染完成或跳过后隐藏进度/时间信息
-                    visible: !window.isMobileLayout && !dlg.isFinished && !dlg.isSkipped;
+                    // [T19] Hide progress/time information after completion or skip.
+                    visible: dlg.showProgressColumn;
 
                     BasicText {
+                        id: progressText;
                         leftPadding: 0;
                         anchors.horizontalCenter: parent.horizontalCenter;
                         horizontalAlignment: Text.AlignHCenter;
@@ -1269,17 +1308,6 @@ Item {
             clip: true;
         }
         highlight: Item { }
-        add: Transition {
-            NumberAnimation { properties: "y"; from: (lv.count - 1.5) * (70 * dpiScale); duration: 500; easing.type: Easing.OutExpo; }
-            NumberAnimation { properties: "opacity"; from: 0; to: 1; duration: 700; easing.type: Easing.OutExpo; }
-        }
-        remove: Transition {
-            NumberAnimation { properties: "opacity"; from: 1; to: 0; duration: 700; easing.type: Easing.OutExpo; }
-            NumberAnimation { properties: "implicitHeight"; from: 65 * dpiScale; to: 0; duration: 500; easing.type: Easing.OutExpo; }
-        }
-        displaced: Transition {
-            NumberAnimation { properties: "y"; duration: 500; easing.type: Easing.OutExpo; }
-        }
     }
 
     // Multi-select toolbar — shown whenever at least one job is selected.
@@ -1356,24 +1384,11 @@ Item {
                 matchTimer.start();
             }
             onClicked: {
-                let hasLensGroupConfig = false;
-                try {
-                    const configs = JSON.parse(controller.lens_group_config || "[]");
-                    hasLensGroupConfig = Array.isArray(configs) && configs.length > 0;
-                } catch (e) {
-                    console.warn("lens_group_config parse error:", e);
-                }
-                if (hasLensGroupConfig) {
-                    messageBox(Modal.Question, qsTr("Re-matching will clear lens group settings. Continue?"), [
-                        { text: qsTr("Yes"), accent: true, clicked: () => {
-                            controller.set_lens_group_config("[]");
-                            beginMatch();
-                        } },
-                        { text: qsTr("Cancel") }
-                    ]);
-                } else {
-                    beginMatch();
-                }
+                // Part B fix B: per user request, don't wipe L1-L6 manual focal
+                // when re-matching — manual configurations should persist across
+                // match passes. (Used to pop a "Re-matching will clear lens group
+                // settings. Continue?" modal that called set_lens_group_config("[]").)
+                beginMatch();
             }
         }
         Button {
@@ -1411,9 +1426,18 @@ Item {
         acceptedFilenameSuffixes: ["_mix.bin", ".rdc"];
         acceptAnyMatchingUrl: true;
         visible: !lv.isDragging;
+        function prepareBatchAdditionalData(additional: var): var {
+            if (!additional || !additional.output) return additional;
+
+            if (!window.exportSettings.preserveOutputSettings.checked) {
+                delete additional.output.output_width;
+                delete additional.output.output_height;
+            }
+            return additional;
+        }
         function add(outFolder: string, urls: list<url>): void {
             let foldersWithoutAccess = [];
-            let additional = window.getAdditionalProjectData();
+            let additional = prepareBatchAdditionalData(window.getAdditionalProjectData());
             if (!outFolder) {
                 delete additional.output.output_folder;
                 delete additional.output.output_filename;

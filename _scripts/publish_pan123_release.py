@@ -141,11 +141,9 @@ LENS_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz"
 LENS_METADATA_ASSET_NAME = "gyroflow-niyien-lens.cbor.gz.json"
 # Per-component manifests for the decoupled bundle layout. Each bundle is a
 # self-describing immutable directory whose name is derived from the sha256 of
-# the file contents only. Old `content-manifest.json` is kept as a constant
-# for legacy artifact discovery but is no longer written for new publishes.
+# the file contents only.
 LENS_MANIFEST_ASSET_NAME = "gyroflow-niyien-lens-manifest.json"
 PLUGIN_MANIFEST_ASSET_NAME = "gyroflow-niyien-plugin-manifest.json"
-CONTENT_MANIFEST_ASSET_NAME = "gyroflow-niyien-content-manifest.json"  # legacy, kept for back-compat
 RELEASE_SUMMARY_ASSET_NAME = "gyroflow-niyien-release-summary.json"
 
 # Publish scope tokens. Allow operators to push only the lens bundle, only the

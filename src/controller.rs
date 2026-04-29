@@ -74,6 +74,7 @@ pub struct Controller {
     lens_group_config_changed: qt_signal!(),
     set_lens_group_config: qt_method!(fn(&self, json: String)),
     apply_lens_group_to_main: qt_method!(fn(&self, lens_index: usize) -> QString),
+    preview_lens_group_config: qt_method!(fn(&self, json: String, lens_index: usize) -> bool),
     lens_group_status: qt_property!(QString; READ get_lens_group_status NOTIFY lens_group_status_changed),
     lens_group_status_changed: qt_signal!(),
     get_lens_group_status: qt_method!(fn(&self) -> QString),
@@ -1456,6 +1457,25 @@ impl Controller {
             None => QString::default(),
         }
     }
+    fn preview_lens_group_config(&self, json: String, lens_index: usize) -> bool {
+        let Some(_) = self
+            .stabilizer
+            .apply_lens_group_config_json_to_main(&json, lens_index)
+        else {
+            return false;
+        };
+
+        let lens_json = self.stabilizer.lens.read().get_json().unwrap_or_default();
+        self.lens_profile_loaded(
+            QString::from(lens_json),
+            QString::default(),
+            QString::default(),
+        );
+        self.lens_changed();
+        self.chart_data_changed();
+        self.request_recompute();
+        true
+    }
     fn get_lens_group_status(&self) -> QString {
         QString::from(self.stabilizer.get_lens_group_status_json())
     }
@@ -1473,6 +1493,15 @@ impl Controller {
         self.lens_group_manual_edit_changed();
         // Reapply the selected lens-group decision to the main stabilizer and recompute
         // so the live preview reflects the new manual/auto state immediately.
+        let lens_index = {
+            let gyro = self.stabilizer.gyro.read();
+            let md = gyro.file_metadata.read();
+            core::niyien_lens_presets::extract_lens_index(&md.additional_data)
+        };
+        if let Some(lens_index) = lens_index {
+            self.apply_lens_group_to_main(lens_index);
+            return;
+        }
         self.chart_data_changed();
         self.request_recompute();
     }

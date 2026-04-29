@@ -21,10 +21,27 @@ MenuItem {
     property int selectedLensIndex: 0
     property bool syncing: false
     property bool manualEditExpanded: false
+    // Lock auto-selection after the user has manually picked a lens group from
+    // the dropdown — otherwise loadConfigs / loadStatuses would re-run
+    // updateSelection on every persist and snap selection back to whichever
+    // group hits hasManualFocusValue first (typically L1).
+    property bool userPickedLens: false
+    // Suppress persistence during component construction. NumberField defaults
+    // (squeezeRatioField.value=1.33 etc.) trigger onValueChanged at init time,
+    // which would otherwise cascade through updateCurrentConfig → persistConfigs
+    // → controller.set_lens_group_config(default 6 configs, all has_values=false)
+    // → settings::lens_group_configs_v1 = "[]" — wiping the user's persisted
+    // L1-L6 right at startup. Set to true in Component.onCompleted after the
+    // first loadConfigs() finishes.
+    property bool _bootDone: false
 
-    readonly property bool batchScope: !!(window.batchState
-        && window.batchState.active
-        && window.videoArea
+    // batchScope is true whenever the render queue has at least one selected
+    // job. Don't gate on batchState.active — that flag also requires the queue
+    // panel to be visible, but the right-click "Edit" flow closes the queue
+    // panel right after setting selection, which would suppress the per-job
+    // hint + "Apply globally" button. Selection state alone is the right
+    // signal for "are we editing per-job vs global".
+    readonly property bool batchScope: !!(window.videoArea
         && window.videoArea.queue
         && window.videoArea.queue.selectedCount > 0)
     // Editor (lens group selector + focal/anamorphic fields) is only shown when the
@@ -136,6 +153,10 @@ MenuItem {
             presets = []
     }
     function updateSelection(): void {
+        // If the user already picked a lens group manually, do not let auto-select
+        // override it on every persist (Part B fix A: editing focal in L3 was
+        // snapping back to L1 because L1 had a persisted manual focal value).
+        if (userPickedLens) return
         for (let i = 0; i < statuses.length; ++i) {
             const status = statuses[i]
             if (status.used && status.has_missing_focus) {
@@ -185,8 +206,8 @@ MenuItem {
         // Prefix a bullet for groups that were detected in the current telemetry —
         // a lightweight visual cue without disabling the row.
         const badge = status.used ? "● " : ""
-        if (hasMixedState(config))
-            return badge + "L" + (index + 1) + " - " + qsTr("Mixed")
+        // Part B fix D: per user request, don't tag the lens group label with
+        // "- Mixed" in multi-select. Manual / auto focal labels still apply.
         if (hasManualFocusValue(config))
             return badge + "L" + (index + 1) + " " + config.focal_length_mm.toFixed(1) + "mm"
         if (status.has_auto_focus && status.auto_focus_length_mm > 0)
@@ -251,7 +272,7 @@ MenuItem {
 
         if (lensGroupCombo.currentIndex !== selectedLensIndex)
             lensGroupCombo.currentIndex = selectedLensIndex
-        if (focalLengthField.value !== focusFieldValue(config))
+        if (!focalLengthField.activeFocus && focalLengthField.value !== focusFieldValue(config))
             focalLengthField.value = focusFieldValue(config)
         if (anamorphicBox.checked !== !!config.anamorphic_enabled)
             anamorphicBox.checked = !!config.anamorphic_enabled
@@ -273,8 +294,17 @@ MenuItem {
         syncing = previousSyncing
     }
     function persistConfigs(next: var): void {
+        // Skip persistence during boot — NumberField default-value initial
+        // change events would otherwise wipe lens_group_configs_v1 to "[]".
+        if (!_bootDone) return
         if (batchScope) {
-            render_queue.set_selected_lens_group_config(selectedJobIdsJson(), JSON.stringify(next))
+            const ids = selectedJobIds()
+            const nextJson = JSON.stringify(next)
+            render_queue.set_selected_lens_group_config(JSON.stringify(ids), nextJson)
+            // Single-job queue edits should refresh the main LensProfile panel,
+            // but multi-select edits don't have one representative fx/fy value.
+            if (ids.length === 1)
+                controller.preview_lens_group_config(nextJson, selectedLensIndex)
             Qt.callLater(loadConfigs)
         } else {
             controller.set_lens_group_config(JSON.stringify(next))
@@ -332,6 +362,9 @@ MenuItem {
     }
     onBatchScopeChanged: {
         manualEditExpanded = false
+        // Reset user lens pick when scope changes (entering / leaving batch view) —
+        // each scope is allowed its own auto-selected lens group.
+        userPickedLens = false
         loadStatuses()
         loadConfigs()
     }
@@ -370,6 +403,9 @@ MenuItem {
         loadPresets()
         loadStatuses()
         loadConfigs()
+        // After the initial load + the cascade of NumberField initial-value
+        // onValueChanged events has settled, allow persistence again.
+        Qt.callLater(() => { root._bootDone = true })
     }
 
     Rectangle {
@@ -412,8 +448,8 @@ MenuItem {
                     // settings.json via controller.lens_group_manual_edit. When off, the
                     // fields below stay editable but calibration still follows telemetry
                     // (auto) for every group. When on, a group's focal length / anamorphic
-                    // override kicks in only for videos whose telemetry can't satisfy
-                    // auto by itself (see should_use_manual_config in Rust).
+                    // decision follows should_use_manual_config in Rust: missing focal can
+                    // be filled manually, and anamorphic can override when enabled.
                     CheckBox {
                         id: manualEditSwitch
                         text: qsTr("Manual edit")
@@ -422,6 +458,8 @@ MenuItem {
                         onCheckedChanged: {
                             if (checked === controller.lens_group_manual_edit) return
                             controller.lens_group_manual_edit = checked
+                            if (root.batchScope && root.selectedJobIds().length === 1)
+                                controller.preview_lens_group_config(JSON.stringify(root.configs), root.selectedLensIndex)
                             // Toggling the global gate must re-decide auto/manual for every
                             // queued job too — the per-job render path reads the same
                             // settings flag, but only when reapply is invoked.
@@ -437,6 +475,21 @@ MenuItem {
                 spacing: 10 * dpiScale
                 visible: root.editorVisible
 
+                // batchScope notice: edits go to the selected jobs only (per-job override),
+                // not to the global lens_group_configs_v1 in QSettings. Restart drops them.
+                // Use the "Apply globally" button below to persist for all videos.
+                // Wording is in English; translations get filled in later.
+                BasicText {
+                    visible: root.batchScope
+                    width: parent.width
+                    leftPadding: 0
+                    color: root.mutedTextColor
+                    wrapMode: Text.WordWrap
+                    text: root.selectedJobIds().length === 1
+                        ? qsTr("Changes only affect the selected video.")
+                        : qsTr("Changes only affect the %1 selected videos.").arg(root.selectedJobIds().length)
+                }
+
                 Label {
                     position: Label.LeftPosition
                     text: qsTr("Lens group")
@@ -449,8 +502,11 @@ MenuItem {
                         model: root.lensGroupOptions()
                         currentIndex: Math.max(0, Math.min(root.selectedLensIndex, model.length - 1))
                         onActivated: {
-                            if (!root.syncing)
+                            if (!root.syncing) {
+                                // Lock auto-selection — the user's pick is now sticky.
+                                root.userPickedLens = true
                                 root.selectedLensIndex = currentIndex
+                            }
                         }
                     }
                 }
@@ -469,7 +525,8 @@ MenuItem {
                         to: 2000
                         precision: 1
                         unit: qsTr("mm")
-                        placeholderText: root.currentConfig().mixed_focal_length ? qsTr("Mixed") : ""
+                        // Part B fix D: drop the "Mixed" placeholder in the focal field.
+                        placeholderText: ""
                         // All 6 lens groups are editable at all times. The per-group Manual
                         // checkbox decides whether the value is actually applied.
                         enabled: true
@@ -620,6 +677,19 @@ MenuItem {
                                 })
                             }
                         }
+                    }
+                }
+
+                // Promote per-job batch edits to the global persisted config.
+                // Visible only in batchScope: writes the current (post-batch-edit) configs
+                // through controller.set_lens_group_config → lens_group_configs_v1 in QSettings.
+                Button {
+                    visible: root.batchScope
+                    width: parent.width
+                    text: qsTr("Apply globally")
+                    accent: true
+                    onClicked: {
+                        controller.set_lens_group_config(JSON.stringify(root.configs))
                     }
                 }
             }

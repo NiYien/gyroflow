@@ -2,7 +2,6 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 use super::{ComputeParams, KernelParams};
-use crate::gyro_source::FileMetadata;
 use crate::keyframes::KeyframeType;
 use crate::util::{MapClosest, map_coord};
 use nalgebra::Matrix3;
@@ -19,20 +18,8 @@ pub struct FrameTransform {
 }
 
 impl FrameTransform {
-    fn get_frame_readout_time(
-        params: &ComputeParams,
-        can_invert: bool,
-        timestamp_ms: f64,
-        file_metadata: &FileMetadata,
-    ) -> f64 {
+    fn get_frame_readout_time(params: &ComputeParams, can_invert: bool) -> f64 {
         let mut frame_readout_time = params.frame_readout_time.abs();
-        let mut scale = 1.0;
-        telemetry_parser::try_block!({
-            let val = file_metadata
-                .lens_params
-                .get_closest(&((timestamp_ms * 1000.0).round() as i64), 100000)?; // closest within 100ms
-            scale = val.capture_area_size?.1 as f64 / val.sensor_size_px?.1 as f64;
-        });
         if can_invert
             && params.framebuffer_inverted
             && !params.frame_readout_direction.is_horizontal()
@@ -42,7 +29,7 @@ impl FrameTransform {
         if params.frame_readout_direction.is_inverted() {
             frame_readout_time *= -1.0;
         }
-        frame_readout_time * scale
+        frame_readout_time
     }
     fn get_new_k(params: &ComputeParams, camera_matrix: &Matrix3<f64>, fov: f64) -> Matrix3<f64> {
         let horizontal_ratio = if params.lens.input_horizontal_stretch > 0.01 {
@@ -143,15 +130,17 @@ impl FrameTransform {
                     )
                 });
                 if let Some(pfl) = pixel_focal_length {
-                    // println!("pfl: {pfl:.3}px, lens: {:?}", val);
-                    camera_matrix[(0, 0)] = pfl;
-                    camera_matrix[(1, 1)] = pfl;
-                    camera_matrix[(0, 2)] = params.width as f64 / 2.0;
-                    camera_matrix[(1, 2)] = params.height as f64 / 2.0;
-                    stretch_lens = false;
+                    if !lens.lens_group_override {
+                        // println!("pfl: {pfl:.3}px, lens: {:?}", val);
+                        camera_matrix[(0, 0)] = pfl;
+                        camera_matrix[(1, 1)] = pfl;
+                        camera_matrix[(0, 2)] = params.width as f64 / 2.0;
+                        camera_matrix[(1, 2)] = params.height as f64 / 2.0;
+                        stretch_lens = false;
 
-                    if let Some(fl) = val.focal_length {
-                        focal_length = Some(fl as f64);
+                        if let Some(fl) = val.focal_length {
+                            focal_length = Some(fl as f64);
+                        }
                     }
                 }
                 if !val.distortion_coefficients.is_empty()
@@ -283,7 +272,7 @@ impl FrameTransform {
 
         // ----------- Rolling shutter correction -----------
         let frame_readout_time =
-            Self::get_frame_readout_time(&params, true, timestamp_ms, &file_metadata);
+            Self::get_frame_readout_time(&params, true);
 
         let row_readout_time = frame_readout_time
             / if params.frame_readout_direction.is_horizontal() {
@@ -537,7 +526,7 @@ impl FrameTransform {
 
         // ----------- Rolling shutter correction -----------
         let frame_readout_time =
-            Self::get_frame_readout_time(params, false, timestamp_ms, &file_metadata);
+            Self::get_frame_readout_time(params, false);
 
         let row_readout_time = frame_readout_time
             / if params.frame_readout_direction.is_horizontal() {

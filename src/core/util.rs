@@ -108,9 +108,15 @@ impl<V> MapClosest<V> for BTreeMap<i64, V> {
         let bd = (key - b.map(|v| *v.0).unwrap_or(-99999)).abs();
         let fd = (key - f.map(|v| *v.0).unwrap_or(-99999)).abs();
 
-        if b.is_some() && bd < max_diff && bd < fd {
+        // Tie-break to b on equality so a key that lands exactly between two
+        // entries (bd == fd) still resolves instead of returning None. Real
+        // trigger: lens_params at half the video frame rate (e.g. 25 Hz
+        // entries + 50 fps video) — every other frame timestamp falls on a
+        // midpoint, and a strict `<` on both sides drops the entire odd-frame
+        // stream back to caller defaults.
+        if b.is_some() && bd < max_diff && bd <= fd {
             Some(b.unwrap().1)
-        } else if f.is_some() && fd < max_diff && fd < bd {
+        } else if f.is_some() && fd < max_diff {
             Some(f.unwrap().1)
         } else {
             None

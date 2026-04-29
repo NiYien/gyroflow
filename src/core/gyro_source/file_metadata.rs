@@ -42,6 +42,10 @@ pub struct FileMetadata {
     pub gravity_vectors: Option<TimeVec>,
     pub image_orientations: Option<TimeQuat>,
     pub detected_source: Option<String>,
+    /// True when telemetry-parser identifies the body as a RED Komodo / Komodo-X.
+    /// Used by external IMU arbitration: a Komodo main video keeps its own gyro
+    /// and rejects subsequent external IMU loads (see lib.rs::load_gyro_data).
+    pub is_komodo: bool,
     pub frame_readout_time: Option<f64>,
     pub frame_readout_direction: ReadoutDirection,
     pub frame_rate: Option<f64>,
@@ -71,6 +75,7 @@ impl FileMetadata {
             gravity_vectors: Default::default(),
             image_orientations: Default::default(),
             detected_source: self.detected_source.clone(),
+            is_komodo: self.is_komodo,
             frame_readout_time: self.frame_readout_time.clone(),
             frame_readout_direction: self.frame_readout_direction.clone(),
             frame_rate: self.frame_rate.clone(),

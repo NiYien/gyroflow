@@ -152,6 +152,74 @@ class VercelClient:
         response.raise_for_status()
         return response.json()
 
+    def latest_production_deployment(self) -> dict | None:
+        # Vercel runtime env vars are bound to a deployment; mutating envs
+        # alone does not propagate to the running production. We need the
+        # most recent READY production deployment so we can clone its
+        # gitSource into a new one — the only way to make upserted envs
+        # take effect when no deploy hook is configured.
+        self._ensure_ready()
+        url = "https://api.vercel.com/v6/deployments"
+        params = {
+            **self._params(),
+            "projectId": self.project,
+            "target": "production",
+            "state": "READY",
+            "limit": 1,
+        }
+        response = requests.get(
+            url,
+            headers=self._headers(),
+            params=params,
+            **self._request_kwargs(timeout=30),
+        )
+        response.raise_for_status()
+        deployments = response.json().get("deployments") or []
+        return deployments[0] if deployments else None
+
+    def redeploy_production(self) -> dict:
+        latest = self.latest_production_deployment()
+        if not latest:
+            raise RuntimeError("Vercel: no READY production deployment found to clone")
+        meta = latest.get("meta") or {}
+        if meta.get("githubRepoId"):
+            git_source = {
+                "type": "github",
+                "repoId": str(meta["githubRepoId"]),
+                "ref": meta.get("githubCommitRef") or "main",
+            }
+        elif meta.get("gitlabProjectId"):
+            git_source = {
+                "type": "gitlab",
+                "projectId": str(meta["gitlabProjectId"]),
+                "ref": meta.get("gitlabCommitRef") or "main",
+            }
+        elif meta.get("bitbucketRepoUuid"):
+            git_source = {
+                "type": "bitbucket",
+                "repoUuid": str(meta["bitbucketRepoUuid"]),
+                "ref": meta.get("bitbucketCommitRef") or "main",
+            }
+        else:
+            raise RuntimeError(
+                f"Vercel: cannot derive gitSource from latest deployment meta: {meta}"
+            )
+        url = "https://api.vercel.com/v13/deployments"
+        body = {
+            "name": latest.get("name") or self.project,
+            "target": "production",
+            "gitSource": git_source,
+        }
+        response = requests.post(
+            url,
+            headers=self._headers(),
+            params=self._params(),
+            json=body,
+            **self._request_kwargs(timeout=30),
+        )
+        response.raise_for_status()
+        return response.json()
+
 
 def parse_policy_from_envs(envs: dict) -> dict:
     """Decode NIYIEN_RELEASE_POLICY_JSON into a dict.
