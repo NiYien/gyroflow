@@ -771,7 +771,7 @@ where
         return Ok(path);
     }
 
-    if is_nightly_link_url(url) {
+    if is_wrapper_url(url) {
         return download_nightly_wrapped_update_file(
             label,
             url,
@@ -833,11 +833,37 @@ where
     Ok(path)
 }
 
-fn is_nightly_link_url(url: &str) -> bool {
-    url::Url::parse(url)
-        .ok()
-        .and_then(|u| u.host_str().map(|h| h.eq_ignore_ascii_case("nightly.link")))
+// Wrapper-zip aware URL classifier. Returns true when the URL is expected
+// to deliver a one-level zip wrapper around a single raw deliverable. Two
+// shapes are recognized:
+//   * nightly.link host: any URL there is a V4 short artifact wrapper
+//     (preserves the original is_nightly_link_url behavior).
+//   * CN release path: 123 disk auto-renames .exe/.apk uploads with a .bak
+//     suffix, so the publish pipeline ships these wrapped under the
+//     nightly-style short artifact name (see APP_FILE_TO_ARTIFACT_NAME in
+//     `_scripts/publish_pan123_release.py`). The portable Windows zip
+//     basename `gyroflow-niyien-windows64.zip` is intentionally absent from
+//     this list so it stays on the plain-download path.
+fn is_wrapper_url(url: &str) -> bool {
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    if parsed
+        .host_str()
+        .map(|h| h.eq_ignore_ascii_case("nightly.link"))
         .unwrap_or(false)
+    {
+        return true;
+    }
+    let basename = parsed
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .unwrap_or("");
+    matches!(
+        basename,
+        "gyroflow-niyien-win-setup.zip" | "gyroflow-niyien-android.zip"
+    )
 }
 
 // nightly.link serves GitHub Actions artifacts as a one-level zip wrapper that
@@ -1110,12 +1136,13 @@ fn app_update_filename(selection: &AppUpdateSelection) -> String {
 }
 
 fn app_update_filename_from_url(url: &str, fallback_filename: &str) -> String {
-    // For nightly.link wrappers the URL filename is the V4 short artifact name
-    // (e.g. `gyroflow-niyien-win-setup.zip`), which is *not* the extension of
-    // the raw deliverable inside. Use the platform-specific fallback so the
-    // cached file keeps the right extension (.exe / .zip / .dmg) for launching
-    // the installer or mounting the dmg.
-    if is_nightly_link_url(url) {
+    // For wrapper zips (nightly.link or CN release short-name zip) the URL
+    // basename is the V4 short artifact name (e.g.
+    // `gyroflow-niyien-win-setup.zip`), which is *not* the extension of the
+    // raw deliverable inside. Use the platform-specific fallback so the
+    // cached file keeps the right extension (.exe / .apk / .dmg) for
+    // launching the installer or mounting the dmg.
+    if is_wrapper_url(url) {
         return fallback_filename.to_owned();
     }
     url::Url::parse(url)
@@ -1131,6 +1158,8 @@ fn app_update_filename_from_url(url: &str, fallback_filename: &str) -> String {
 fn default_app_update_filename(platform: &str) -> &'static str {
     if platform == "windows" {
         "gyroflow-niyien-windows64-setup.exe"
+    } else if platform == "android" {
+        "gyroflow-niyien.apk"
     } else {
         "gyroflow-niyien-mac-universal.dmg"
     }
@@ -1704,5 +1733,61 @@ mod app_update_tests {
                 .any(|arg| arg == &format!("/PACKAGESHA256={}", "b".repeat(64)))
         );
         assert!(args.iter().any(|arg| arg == "/PACKAGESIZE=34"));
+    }
+
+    #[test]
+    fn is_wrapper_url_recognizes_nightly_and_cn_short_names() {
+        // nightly.link host: any URL is a wrapper
+        assert!(is_wrapper_url(
+            "https://nightly.link/NiYien/gyroflow/actions/runs/123/gyroflow-niyien-win-setup.zip"
+        ));
+        // CN release short-name wrappers (123 disk avoids .bak suffix)
+        assert!(is_wrapper_url(
+            "https://download.niyien.com/api/download/app/v1.6.3/gyroflow-niyien-win-setup.zip"
+        ));
+        assert!(is_wrapper_url(
+            "https://download.niyien.com/api/download/app/v1.6.3/gyroflow-niyien-android.zip"
+        ));
+        // Portable Windows zip is NOT a wrapper, even on download.niyien.com
+        assert!(!is_wrapper_url(
+            "https://download.niyien.com/api/download/app/v1.6.3/gyroflow-niyien-windows64.zip"
+        ));
+        // Plain GitHub Release .exe stays on the regular download path
+        assert!(!is_wrapper_url(
+            "https://github.com/NiYien/gyroflow/releases/download/v1.6.3/gyroflow-niyien-windows64-setup.exe"
+        ));
+        // Mac dmg is never a wrapper
+        assert!(!is_wrapper_url(
+            "https://download.niyien.com/api/download/app/v1.6.3/gyroflow-niyien-mac-universal.dmg"
+        ));
+        // Garbage URL returns false instead of panicking
+        assert!(!is_wrapper_url("not a url"));
+    }
+
+    #[test]
+    fn app_update_filename_falls_back_to_platform_default_for_cn_wrapper() {
+        // CN release wrapper URL: cache filename should be the raw inner
+        // .exe so launch_windows_update_impl can spawn it after extraction.
+        let selection = AppUpdateSelection {
+            platform: "windows".to_owned(),
+            download_url:
+                "https://download.niyien.com/api/download/app/v1.6.3/gyroflow-niyien-win-setup.zip"
+                    .to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(
+            app_update_filename(&selection),
+            "gyroflow-niyien-windows64-setup.exe"
+        );
+
+        // Android wrapper falls back to the apk default
+        let android = AppUpdateSelection {
+            platform: "android".to_owned(),
+            download_url:
+                "https://download.niyien.com/api/download/app/v1.6.3/gyroflow-niyien-android.zip"
+                    .to_owned(),
+            ..Default::default()
+        };
+        assert_eq!(app_update_filename(&android), "gyroflow-niyien.apk");
     }
 }

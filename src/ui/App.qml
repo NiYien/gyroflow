@@ -554,7 +554,7 @@ Rectangle {
                             }
                             // Batch path — render queue panel is open with pending jobs
                             if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
-                                render_queue.export_project = 0;
+                                render_queue.export_project = 4;
                                 render_queue.start();
                                 return;
                             }

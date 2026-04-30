@@ -76,7 +76,12 @@ def _load_publish_script_constants():
 
 try:
     _PUB_MODULE = _load_publish_script_constants()
-    EXPECTED_APP_ASSETS = tuple(_PUB_MODULE.REQUIRED_APP_ASSET_NAMES)
+    # REQUIRED_APP_ASSET_REMOTE_NAMES is the inventory-comparison source: it
+    # rewrites wrapped extensions (.exe / .apk → nightly-style short-name zip)
+    # so the directory listing on 123 disk matches. REQUIRED_APP_ASSET_NAMES
+    # (raw build artifact names) is still used by the publish pipeline for
+    # local-file checks; both come from the same single source of truth.
+    EXPECTED_APP_ASSETS = tuple(_PUB_MODULE.REQUIRED_APP_ASSET_REMOTE_NAMES)
     EXPECTED_SDK_ASSETS = tuple(_PUB_MODULE.SDK_FILENAMES)
     EXPECTED_PLUGIN_ASSETS = tuple(_PUB_MODULE.PLUGIN_ASSET_NAMES)
     # Decoupled bundle filename lists (include the per-bundle manifest).

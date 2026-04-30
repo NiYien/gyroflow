@@ -50,6 +50,83 @@ impl RenderQueueItem {
     }
 }
 
+#[derive(Default, Clone, Copy, Debug)]
+struct QueueEtaSample {
+    sync_frames: usize,
+    sync_ms: f64,
+    render_frames: usize,
+    render_ms: f64,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct QueueAutosyncStats {
+    frames: usize,
+    completed: bool,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
+struct QueueEtaEstimateModel {
+    sync_ms_per_frame: Option<f64>,
+    render_ms_per_frame: Option<f64>,
+    completed_job_samples: usize,
+}
+impl QueueEtaEstimateModel {
+    fn observe_completed_job(&mut self, sample: QueueEtaSample) {
+        let mut observed = false;
+
+        if sample.sync_frames > 0 && sample.sync_ms.is_finite() && sample.sync_ms > 0.0 {
+            Self::update_average(
+                &mut self.sync_ms_per_frame,
+                sample.sync_ms / sample.sync_frames as f64,
+            );
+            observed = true;
+        }
+        if sample.render_frames > 0 && sample.render_ms.is_finite() && sample.render_ms > 0.0 {
+            Self::update_average(
+                &mut self.render_ms_per_frame,
+                sample.render_ms / sample.render_frames as f64,
+            );
+            observed = true;
+        }
+        if observed {
+            self.completed_job_samples += 1;
+        }
+    }
+
+    fn estimate_remaining_ms(
+        &self,
+        sync_frames: usize,
+        render_frames: usize,
+        parallel_renders: usize,
+    ) -> Option<u64> {
+        if sync_frames == 0 && render_frames == 0 {
+            return None;
+        }
+
+        let sync_ms = if sync_frames > 0 {
+            self.sync_ms_per_frame? * sync_frames as f64
+        } else {
+            0.0
+        };
+        let render_ms = if render_frames > 0 {
+            self.render_ms_per_frame? * render_frames as f64
+                / parallel_renders.max(1) as f64
+        } else {
+            0.0
+        };
+        let total = sync_ms + render_ms;
+        total.is_finite().then(|| total.round().max(0.0) as u64)
+    }
+
+    fn update_average(avg: &mut Option<f64>, sample: f64) {
+        const SAMPLE_WEIGHT: f64 = 0.3;
+        *avg = Some(match *avg {
+            Some(current) => current * (1.0 - SAMPLE_WEIGHT) + sample * SAMPLE_WEIGHT,
+            None => sample,
+        });
+    }
+}
+
 #[derive(Default, Clone, Debug, Eq, PartialEq)]
 pub enum JobStatus {
     #[default]
@@ -530,6 +607,7 @@ pub struct RenderQueue {
     pub end_timestamp: qt_property!(u64; NOTIFY progress_changed),
     current_frame: qt_property!(u64; READ get_current_frame NOTIFY progress_changed),
     total_frames: qt_property!(u64; READ get_total_frames NOTIFY queue_changed),
+    estimated_remaining_ms: qt_property!(f64; READ get_estimated_remaining_ms NOTIFY progress_changed),
     pub status: qt_property!(QString; NOTIFY status_changed),
     pub auto_rotate: qt_property!(bool; NOTIFY auto_rotate_changed),
     pub simple_mode: qt_property!(bool; NOTIFY simple_mode_changed),
@@ -577,6 +655,7 @@ pub struct RenderQueue {
 
     paused_timestamp: Option<u64>,
     start_frame: u64,
+    eta_model: QueueEtaEstimateModel,
 
     stabilizer: Arc<StabilizationManager>,
 
@@ -699,6 +778,96 @@ impl RenderQueue {
             .try_borrow()
             .map(|x| x.iter().map(|v| v.current_frame).sum::<u64>() - self.start_frame)
             .unwrap_or_default()
+    }
+    pub fn get_estimated_remaining_ms(&self) -> f64 {
+        if self.status.to_string() != "active" {
+            return -1.0;
+        }
+        self.estimated_remaining_ms()
+            .map(|v| v as f64)
+            .unwrap_or(-1.0)
+    }
+
+    fn estimated_remaining_ms(&self) -> Option<u64> {
+        let q = self.queue.try_borrow().ok()?;
+        let mut sync_frames = 0usize;
+        let mut render_frames = 0usize;
+        let exports_video = self.exports_video();
+
+        for item in q.iter() {
+            match item.status {
+                JobStatus::Queued => {
+                    if exports_video {
+                        render_frames = render_frames.saturating_add(item.total_frames as usize);
+                    }
+                    if let Some(job) = self.jobs.get(&item.job_id) {
+                        sync_frames =
+                            sync_frames.saturating_add(Self::estimated_sync_frames_for_job(job));
+                    }
+                }
+                JobStatus::Rendering => {
+                    if exports_video {
+                        render_frames = render_frames.saturating_add(
+                            item.total_frames.saturating_sub(item.current_frame) as usize,
+                        );
+                    }
+                    if item.current_frame == 0
+                        && item.processing_progress > 0.0
+                        && item.processing_progress < 1.0
+                    {
+                        if let Some(job) = self.jobs.get(&item.job_id) {
+                            let estimated_sync = Self::estimated_sync_frames_for_job(job);
+                            sync_frames = sync_frames.saturating_add(
+                                (estimated_sync as f64 * (1.0 - item.processing_progress))
+                                    .ceil()
+                                    .max(0.0) as usize,
+                            );
+                        }
+                    }
+                }
+                JobStatus::Finished | JobStatus::Error | JobStatus::Skipped => {}
+            }
+        }
+
+        self.eta_model.estimate_remaining_ms(
+            sync_frames,
+            render_frames,
+            self.parallel_renders.max(1) as usize,
+        )
+    }
+
+    fn exports_video(&self) -> bool {
+        self.export_metadata.is_none()
+            && self.export_stmap.is_none()
+            && (self.export_project == 0 || self.export_project == 4)
+    }
+
+    fn observe_eta_sample_for_epoch(
+        &mut self,
+        job_id: u32,
+        capture_epoch: u64,
+        sample: QueueEtaSample,
+    ) -> bool {
+        let current_epoch = self
+            .jobs
+            .get(&job_id)
+            .map(|j| j.render_epoch.load(SeqCst))
+            .unwrap_or(0);
+        if current_epoch != capture_epoch {
+            return false;
+        }
+        self.eta_model.observe_completed_job(sample);
+        true
+    }
+
+    fn submit_sync_eta_sample<F>(eta_sample: &ParkingMutex<QueueEtaSample>, eta_sample_done: &F)
+    where
+        F: Fn(QueueEtaSample),
+    {
+        let sample = *eta_sample.lock();
+        if sample.sync_frames > 0 {
+            eta_sample_done(sample);
+        }
     }
 
     pub fn set_pixel_format(&mut self, job_id: u32, format: String) {
@@ -1864,6 +2033,15 @@ impl RenderQueue {
 
             let rendered_frames = Arc::new(AtomicUsize::new(0));
             let rendered_frames2 = rendered_frames.clone();
+            let eta_sample = Arc::new(ParkingMutex::new(QueueEtaSample::default()));
+            let eta_sample_done = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, sample: QueueEtaSample| {
+                    if this.observe_eta_sample_for_epoch(job_id, capture_epoch, sample) {
+                        this.progress_changed();
+                    }
+                },
+            );
             let progress = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this,
@@ -1960,6 +2138,7 @@ impl RenderQueue {
                         itm.processing_progress = progress;
                     });
                     this.processing_progress(job_id, progress);
+                    this.progress_changed();
                 },
             );
             let encoder_initialized = util::qt_queued_callback_mut(
@@ -2079,6 +2258,7 @@ impl RenderQueue {
             let params = stab.params.read();
             let trim_ratio = params.get_trim_ratio();
             let total_frame_count = params.frame_count;
+            let render_frame_count = (total_frame_count as f64 * trim_ratio).round() as usize;
             drop(params);
             let mut input_file = stab.input_file.read().clone();
             let filename = filesystem::get_filename(&input_file.url);
@@ -2087,7 +2267,7 @@ impl RenderQueue {
             progress((
                 0.0,
                 0,
-                (total_frame_count as f64 * trim_ratio).round() as usize,
+                render_frame_count,
                 false,
                 false,
             ));
@@ -2110,7 +2290,8 @@ impl RenderQueue {
 
             let sync_cancel_flag = cancel_flag.clone();
             core::run_threaded(move || {
-                Self::do_autosync(
+                let sync_start = std::time::Instant::now();
+                let sync_stats = Self::do_autosync(
                     stab.clone(),
                     processing,
                     &input_file,
@@ -2118,6 +2299,11 @@ impl RenderQueue {
                     proc_height,
                     sync_cancel_flag,
                 );
+                if sync_stats.completed && sync_stats.frames > 0 {
+                    let mut sample = eta_sample.lock();
+                    sample.sync_frames = sync_stats.frames;
+                    sample.sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
+                }
                 stab.recompute_blocking();
 
                 if let Some((opt, path, fields)) = export_metadata {
@@ -2154,6 +2340,7 @@ impl RenderQueue {
                     if let Err(e) = result() {
                         err(("An error occured: %1".to_string(), e.to_string()));
                     } else {
+                        Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
                         progress((1.0, 1, 1, true, false));
                     }
                     return;
@@ -2204,6 +2391,7 @@ impl RenderQueue {
                             break;
                         }
                     }
+                    Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
                     progress((1.0, total, total, true, false));
                     return;
                 }
@@ -2251,6 +2439,7 @@ impl RenderQueue {
                         if let Err(e) = result {
                             err((e.to_string(), String::new()));
                         } else {
+                            Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
                             progress((1.0, 1, 1, true, false));
                         }
                         return;
@@ -2333,8 +2522,11 @@ impl RenderQueue {
                     vec![None]
                 };
                 let original_gpu_decode = stab.gpu_decoding.load(SeqCst);
+                let render_start = std::time::Instant::now();
+                let mut render_ok = true;
                 'ranges: for range in ranges_to_render {
                     if cancel_flag.load(SeqCst) {
+                        render_ok = false;
                         break;
                     }
                     let mut i = 0;
@@ -2371,6 +2563,7 @@ impl RenderQueue {
                                         .join(","),
                                     candidate,
                                 ));
+                                render_ok = false;
                                 break 'ranges;
                             }
                             if original_gpu_decode
@@ -2393,6 +2586,7 @@ impl RenderQueue {
                                 }
                             }
                             err(("An error occured: %1".to_string(), e.to_string()));
+                            render_ok = false;
                             break 'ranges;
                         } else {
                             // Render ok
@@ -2401,6 +2595,15 @@ impl RenderQueue {
                     }
                 }
                 stab.gpu_decoding.store(original_gpu_decode, SeqCst);
+                if render_ok && !cancel_flag.load(SeqCst) {
+                    let sample = {
+                        let mut sample = eta_sample.lock();
+                        sample.render_frames = render_frame_count;
+                        sample.render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+                        *sample
+                    };
+                    eta_sample_done(sample);
+                }
             });
         }
     }
@@ -2438,6 +2641,88 @@ impl RenderQueue {
         }
 
         format!("{filename}{suffix}{ext}")
+    }
+
+    fn estimated_sync_frames_for_job(job: &Job) -> usize {
+        job.stab
+            .as_ref()
+            .map(|stab| Self::estimated_sync_frames_for_stab(stab))
+            .unwrap_or_default()
+    }
+
+    fn estimated_sync_frames_for_stab(stab: &StabilizationManager) -> usize {
+        if stab.gyro.read().file_metadata.read().is_komodo {
+            return 0;
+        }
+
+        let (url, duration_ms, fps, frame_count, fps_scale) = {
+            let params = stab.params.read();
+            (
+                stab.input_file.read().url.clone(),
+                params.duration_ms,
+                params.fps,
+                params.frame_count,
+                params.fps_scale,
+            )
+        };
+        let (has_sync_points, has_accurate_timestamps) = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            (
+                !gyro.get_offsets().is_empty(),
+                md.has_accurate_timestamps && !url.to_ascii_lowercase().ends_with(".braw"),
+            )
+        };
+
+        let sync_settings = stab.lens.read().sync_settings.clone().unwrap_or_default();
+        let force_autosync = sync_settings
+            .get("do_autosync")
+            .and_then(|v| v.as_bool())
+            .unwrap_or_default();
+        if !(force_autosync || (!has_sync_points && !has_accurate_timestamps)) {
+            return 0;
+        }
+
+        let Ok(sync_params) = serde_json::from_value::<gyroflow_core::synchronization::SyncParams>(
+            sync_settings,
+        ) else {
+            return 0;
+        };
+        if sync_params.max_sync_points == 0 {
+            return 0;
+        }
+
+        let mut sync_point_count = sync_params.max_sync_points;
+        if !sync_params.custom_sync_pattern.is_null() {
+            let custom_count = Self::resolve_syncpoint_pattern(
+                &sync_params.custom_sync_pattern,
+                duration_ms,
+                fps,
+            )
+            .into_iter()
+            .filter(|v| *v <= duration_ms)
+            .count();
+            if custom_count > 0 {
+                sync_point_count = custom_count;
+            }
+        }
+
+        let mut time_per_syncpoint_ms = sync_params.time_per_syncpoint * 1000.0;
+        if let Some(scale) = fps_scale {
+            time_per_syncpoint_ms *= scale;
+        }
+        let every_nth_frame = sync_params.every_nth_frame.max(1);
+        let frame_count = ((sync_point_count as f64 * (time_per_syncpoint_ms / 1000.0) * fps)
+            .ceil() as usize)
+            .min(frame_count)
+            / every_nth_frame;
+
+        let search_size_ms = sync_params.search_size * 1000.0;
+        if duration_ms < 10.0 || frame_count < 2 || time_per_syncpoint_ms < 10.0 || search_size_ms < 10.0 {
+            return 0;
+        }
+
+        frame_count
     }
 
     pub fn add_file(&mut self, url: String, gyro_url: String, additional_data: String) -> u32 {
@@ -2914,7 +3199,7 @@ impl RenderQueue {
         err: F2,
         proc_height: i32,
         cancel_flag: Arc<AtomicBool>,
-    ) {
+    ) -> QueueAutosyncStats {
         // C3: Komodo trusts its own internal IMU; auto-sync against external IMU
         // is unnecessary and would compute a meaningless offset. Skip entirely.
         if stab.gyro.read().file_metadata.read().is_komodo {
@@ -2922,7 +3207,7 @@ impl RenderQueue {
             ::log::info!(
                 "[red_arbitration] Komodo main video, skipping auto-sync: {url}"
             );
-            return;
+            return QueueAutosyncStats::default();
         }
 
         let (url, duration_ms) = {
@@ -2965,6 +3250,8 @@ impl RenderQueue {
         if force_autosync || (!has_sync_points && !has_accurate_timestamps) {
             // ----------------------------------------------------------------------------
             // --------------------------------- Autosync ---------------------------------
+            let mut sync_frames = 0usize;
+            let sync_failed = Arc::new(AtomicBool::new(false));
             processing_cb(0.01);
             use crate::rendering::VideoProcessor;
             use gyroflow_core::synchronization;
@@ -3034,8 +3321,11 @@ impl RenderQueue {
                         "synchronize".into(),
                         cancel_flag.clone(),
                     ) {
+                        let sync_frame_count = Arc::new(AtomicUsize::new(0));
                         let processing_cb2 = processing_cb.clone();
-                        sync.on_progress(move |percent, _ready, _total| {
+                        let sync_frame_count2 = sync_frame_count.clone();
+                        sync.on_progress(move |percent, ready, total| {
+                            sync_frame_count2.store(total.max(ready), SeqCst);
                             processing_cb2(percent);
                         });
                         let stab2 = stab.clone();
@@ -3128,6 +3418,7 @@ impl RenderQueue {
                             Ok(mut proc) => {
                                 let err2 = err.clone();
                                 let sync2 = sync.clone();
+                                let sync_failed2 = sync_failed.clone();
                                 proc.on_frame(
                                     move |timestamp_us,
                                           input_frame,
@@ -3191,10 +3482,13 @@ impl RenderQueue {
                                                         &pixels,
                                                     );
                                                 }
-                                                Err(e) => err2((
-                                                    "An error occured: %1".to_string(),
-                                                    e.to_string(),
-                                                )),
+                                                Err(e) => {
+                                                    sync_failed2.store(true, SeqCst);
+                                                    err2((
+                                                        "An error occured: %1".to_string(),
+                                                        e.to_string(),
+                                                    ));
+                                                }
                                             }
                                             frame_no += 1;
                                         }
@@ -3203,14 +3497,17 @@ impl RenderQueue {
                                     },
                                 );
                                 if let Err(e) =
-                                    proc.start_decoder_only(sync.get_ranges(), cancel_flag)
+                                    proc.start_decoder_only(sync.get_ranges(), cancel_flag.clone())
                                 {
+                                    sync_failed.store(true, SeqCst);
                                     err(("An error occured: %1".to_string(), e.to_string()));
                                 }
 
                                 sync.finished_feeding_frames();
+                                sync_frames = sync_frame_count.load(SeqCst);
                             }
                             Err(error) => {
+                                sync_failed.store(true, SeqCst);
                                 err(("An error occured: %1".to_string(), error.to_string()));
                             }
                         };
@@ -3222,6 +3519,7 @@ impl RenderQueue {
                             "[autosync] queue apply rejected for '{}': {detail}",
                             filesystem::get_filename(&url)
                         );
+                        sync_failed.store(true, SeqCst);
                         err(("An error occured: %1".to_string(), detail));
                     }
 
@@ -3231,7 +3529,14 @@ impl RenderQueue {
             processing_cb(1.0);
             // --------------------------------- Autosync ---------------------------------
             // ----------------------------------------------------------------------------
+            return QueueAutosyncStats {
+                frames: sync_frames,
+                completed: sync_frames > 0
+                    && !sync_failed.load(SeqCst)
+                    && !cancel_flag.load(SeqCst),
+            };
         }
+        QueueAutosyncStats::default()
     }
 
     pub fn apply_to_all(&mut self, data: String, additional_data: String, to_job_id: u32) {
@@ -4074,12 +4379,13 @@ impl RenderQueue {
         for r in &result.results {
             if r.gyro_index.is_some() {
                 ::log::info!(
-                    "[batch_match]   video[{}] -> gyro[{}] {:?} range=[{:.0?}..{:.0?}]",
+                    "[batch_match]   video[{}] -> gyro[{}] {:?} range=[{:.0?}..{:.0?}] init_offset={:.0?}ms",
                     r.video_index,
                     r.gyro_index.unwrap(),
                     r.status,
                     r.gyro_start_ms,
-                    r.gyro_end_ms
+                    r.gyro_end_ms,
+                    r.init_offset_ms
                 );
             }
         }
@@ -4369,6 +4675,9 @@ impl RenderQueue {
             gyro_path: String,
             gyro_start_ms: Option<f64>,
             gyro_end_ms: Option<f64>,
+            // Sync search center derived from front_comp (= -front_comp). Per-clip,
+            // grows with drift distance from the calibration video.
+            init_offset_ms: Option<f64>,
             additional_data: String,
             render_options: RenderOptions,
             base_render_output_size: (usize, usize),
@@ -4478,6 +4787,7 @@ impl RenderQueue {
                 gyro_path,
                 gyro_start_ms: result.gyro_start_ms,
                 gyro_end_ms: result.gyro_end_ms,
+                init_offset_ms: result.init_offset_ms,
                 additional_data,
                 render_options,
                 base_render_output_size,
@@ -4514,6 +4824,12 @@ impl RenderQueue {
                     Option<JobLensMetadataBackup>,
                     (usize, usize),
                     Option<usize>,
+                    // Patched additional_data carrying per-clip synchronization
+                    // (initial_offset, search_size, calc_initial_fast=false). Written
+                    // back to job.additional_data so a later export_gyroflow_file
+                    // (which reads job.additional_data) sees the per-clip values
+                    // instead of the stale UI-global synchronization block.
+                    String,
                 )>,
                 Vec<(usize, Vec<CachedGyroMetadataRange>)>,
                 Vec<niyien_lens_presets::LensGroupStatus>,
@@ -4554,7 +4870,7 @@ impl RenderQueue {
 
                 let applied_job_ids: Vec<u32> = job_updates
                     .iter()
-                    .map(|(job_id, _, _, _, _, _)| *job_id)
+                    .map(|(job_id, _, _, _, _, _, _)| *job_id)
                     .collect();
                 let t_project = std::time::Instant::now();
                 for (
@@ -4564,6 +4880,7 @@ impl RenderQueue {
                     base_lens_metadata,
                     base_output_size,
                     lens_group_index,
+                    additional_data,
                 ) in job_updates
                 {
                     let mut export_settings = None;
@@ -4572,6 +4889,7 @@ impl RenderQueue {
                             job.project_data = Some(data);
                         }
                         job.render_options = render_options;
+                        job.additional_data = additional_data;
                         job.base_render_output_size = Some(base_output_size);
                         job.lens_group_index = lens_group_index;
                         if let Some(base_lens_metadata) = base_lens_metadata {
@@ -5255,19 +5573,36 @@ impl RenderQueue {
 
                 item.stab.gyro.write().integration_method = 1; // Complementary
 
+                // sync_settings stores seconds; SyncParams parser at
+                // render_queue.rs:3015 multiplies by 1000 to ms. The init_offset/
+                // search_size pair comes from batch_match_sync_overrides so this
+                // write site and the additional_data patch site (par_iter#3 below)
+                // stay in sync.
+                let (init_offset_s, search_size_s) =
+                    batch_match_sync_overrides(item.init_offset_ms);
+
                 let mut lens = item.stab.lens.write();
                 lens.sync_settings = Some(serde_json::json!({
                     "do_autosync": true,
                     "max_sync_points": max_sync_points,
-                    "search_size": 5.0,
+                    "search_size": search_size_s,
                     "time_per_syncpoint": 2.5,
                     "every_nth_frame": every_nth_frame,
-                    "initial_offset": 0.0,
+                    "initial_offset": init_offset_s,
+                    // Disable essential_matrix pre-computation so it doesn't
+                    // overwrite our per-clip initial_offset and force search_size=3000ms.
+                    "calc_initial_fast": false,
                     "pose_method": 0,
                     "of_method": default_of_method,
                     "offset_method": 2
                 }));
                 drop(lens);
+                ::log::info!(
+                    "[batch_match] job={} init_offset_ms={:.1} search_size_ms={:.0}",
+                    item.job_id,
+                    init_offset_s * 1000.0,
+                    search_size_s * 1000.0
+                );
                 item.stab.recompute_gyro();
             });
             ::log::info!(
@@ -5284,11 +5619,48 @@ impl RenderQueue {
                 Option<JobLensMetadataBackup>,
                 (usize, usize),
                 Option<usize>,
+                String,
             )> =
                 apply_items
                     .into_par_iter()
-                    .map(|item| {
+                    .map(|mut item| {
                     item.stab.gyro.write().file_url = item.gyro_path.clone();
+
+                    // Patch additional_data["synchronization"] so the exported
+                    // .gyroflow file's top-level synchronization block matches
+                    // the per-clip values we wrote to lens.sync_settings. Without
+                    // this, export_gyroflow_data's merge_json would overlay the
+                    // UI-global synchronization (e.g. initial_offset=-1) on top
+                    // of our per-clip data, and reloading the project would also
+                    // overwrite lens.sync_settings via update_sync_settings.
+                    let (init_offset_s, search_size_s) =
+                        batch_match_sync_overrides(item.init_offset_ms);
+                    if let Ok(serde_json::Value::Object(mut ad_obj)) =
+                        serde_json::from_str::<serde_json::Value>(&item.additional_data)
+                    {
+                        let sync_entry = ad_obj
+                            .entry("synchronization".to_string())
+                            .or_insert_with(|| serde_json::json!({}));
+                        if let Some(sync_obj) = sync_entry.as_object_mut() {
+                            sync_obj.insert(
+                                "initial_offset".into(),
+                                serde_json::json!(init_offset_s),
+                            );
+                            sync_obj.insert(
+                                "search_size".into(),
+                                serde_json::json!(search_size_s),
+                            );
+                            sync_obj.insert(
+                                "calc_initial_fast".into(),
+                                serde_json::json!(false),
+                            );
+                        }
+                        if let Ok(s) = serde_json::to_string(&serde_json::Value::Object(ad_obj))
+                        {
+                            item.additional_data = s;
+                        }
+                    }
+
                     let additional_data =
                         prepare_project_additional_data(&item.additional_data, &item.render_options);
                     match item.stab.export_gyroflow_data(
@@ -5309,6 +5681,7 @@ impl RenderQueue {
                                 item.base_lens_metadata,
                                 item.base_render_output_size,
                                 item.lens_group_index,
+                                item.additional_data,
                             )
                         }
                         Err(e) => {
@@ -5324,6 +5697,7 @@ impl RenderQueue {
                                 item.base_lens_metadata,
                                 item.base_render_output_size,
                                 item.lens_group_index,
+                                item.additional_data,
                             )
                         }
                     }
@@ -5334,7 +5708,7 @@ impl RenderQueue {
                 t_export.elapsed().as_secs_f64() * 1000.0,
                 job_updates
                     .iter()
-                    .filter(|(_, project_data, _, _, _, _)| project_data.is_some())
+                    .filter(|(_, project_data, _, _, _, _, _)| project_data.is_some())
                     .count()
             );
 
@@ -5711,6 +6085,21 @@ impl RenderQueue {
 const APPLY_MATCH_PARSE_CHUNK_MAX_SPAN_MS: f64 = 120_000.0;
 const APPLY_MATCH_PARSE_CHUNK_MERGE_GAP_MS: f64 = 15_000.0;
 const APPLY_MATCH_RANGE_EPSILON_MS: f64 = 0.5;
+
+// Per-clip sync overrides derived from the batch match result. Returned in
+// seconds (sync_settings unit). Single source of truth so the lens.sync_settings
+// write site and the additional_data["synchronization"] patch site can't drift.
+//
+// initial_offset sign: positive = gyro late vs video. We pre-loaded front_comp
+// ms before the video start (gyro is "earlier") so we negate.
+//
+// search_size: floored at 5s (sync default); grows when |init_offset| pushes the
+// search center far from 0, so the window still covers the true peak ± slack.
+fn batch_match_sync_overrides(init_offset_ms: Option<f64>) -> (f64, f64) {
+    let init_offset_s = init_offset_ms.unwrap_or(0.0) / 1000.0;
+    let search_size_s = 5.0_f64.max(init_offset_s.abs() * 1.5);
+    (init_offset_s, search_size_s)
+}
 
 fn sync_readout_params_from_lens(stab: &StabilizationManager) {
     let (frame_readout_time, frame_readout_direction) = {
@@ -6405,6 +6794,190 @@ mod tests {
         }
     }
 
+    fn queue_with_eta_job(status: JobStatus) -> RenderQueue {
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.frame_count = 100;
+            params.duration_ms = 10_000.0;
+            params.fps = 10.0;
+        }
+        stab.input_file.write().url = "file:///eta-test.mp4".to_owned();
+        stab.lens.write().sync_settings = Some(serde_json::json!({
+            "do_autosync": true,
+            "max_sync_points": 2,
+            "search_size": 5.0,
+            "time_per_syncpoint": 1.0,
+            "every_nth_frame": 1,
+            "initial_offset": 0.0,
+            "pose_method": 0,
+            "of_method": 2,
+            "offset_method": 2
+        }));
+
+        let mut queue = RenderQueue::default();
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 1,
+            total_frames: 100,
+            status,
+            ..Default::default()
+        });
+        queue.jobs.insert(
+            1,
+            Job {
+                queue_index: 0,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                stab: Some(stab),
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+        queue
+    }
+
+    #[test]
+    fn queue_eta_model_waits_for_required_video_sample() {
+        let model = QueueEtaEstimateModel::default();
+
+        assert_eq!(model.estimate_remaining_ms(0, 100, 1), None);
+        assert_eq!(model.estimate_remaining_ms(10, 100, 1), None);
+    }
+
+    #[test]
+    fn queue_eta_model_estimates_from_completed_video_sample() {
+        let mut model = QueueEtaEstimateModel::default();
+
+        model.observe_completed_job(QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 1_000.0,
+            render_frames: 100,
+            render_ms: 10_000.0,
+        });
+
+        assert_eq!(model.completed_job_samples, 1);
+        assert_eq!(model.estimate_remaining_ms(20, 200, 2), Some(12_000));
+    }
+
+    #[test]
+    fn queue_eta_model_estimates_from_sync_only_sample() {
+        let mut model = QueueEtaEstimateModel::default();
+
+        model.observe_completed_job(QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 1_000.0,
+            render_frames: 0,
+            render_ms: 0.0,
+        });
+
+        assert_eq!(model.completed_job_samples, 1);
+        assert_eq!(model.estimate_remaining_ms(20, 0, 1), Some(2_000));
+    }
+
+    #[test]
+    fn queue_eta_model_returns_none_without_remaining_work() {
+        let mut model = QueueEtaEstimateModel::default();
+
+        model.observe_completed_job(QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 1_000.0,
+            render_frames: 0,
+            render_ms: 0.0,
+        });
+
+        assert_eq!(model.estimate_remaining_ms(0, 0, 1), None);
+    }
+
+    #[test]
+    fn queue_eta_for_sync_only_export_does_not_wait_for_render_sample() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.export_project = 2;
+
+        queue.observe_eta_sample_for_epoch(
+            1,
+            0,
+            QueueEtaSample {
+                sync_frames: 10,
+                sync_ms: 1_000.0,
+                render_frames: 0,
+                render_ms: 0.0,
+            },
+        );
+
+        assert_eq!(queue.estimated_remaining_ms(), Some(2_000));
+    }
+
+    #[test]
+    fn queue_eta_model_smooths_later_video_samples() {
+        let mut model = QueueEtaEstimateModel::default();
+
+        model.observe_completed_job(QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 1_000.0,
+            render_frames: 100,
+            render_ms: 10_000.0,
+        });
+        model.observe_completed_job(QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 2_000.0,
+            render_frames: 100,
+            render_ms: 20_000.0,
+        });
+
+        assert_eq!(model.completed_job_samples, 2);
+        assert!((model.sync_ms_per_frame.unwrap() - 130.0).abs() < 0.01);
+        assert!((model.render_ms_per_frame.unwrap() - 130.0).abs() < 0.01);
+        assert_eq!(model.estimate_remaining_ms(10, 100, 1), Some(14_300));
+    }
+
+    #[test]
+    fn queue_eta_sample_ignores_stale_render_epoch() {
+        let mut queue = RenderQueue::default();
+        let render_epoch = Arc::new(AtomicU64::new(2));
+        queue.jobs.insert(
+            1,
+            Job {
+                queue_index: 0,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: render_epoch.clone(),
+                project_data: None,
+                stab: None,
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+
+        let sample = QueueEtaSample {
+            sync_frames: 10,
+            sync_ms: 1_000.0,
+            render_frames: 100,
+            render_ms: 10_000.0,
+        };
+
+        assert!(!queue.observe_eta_sample_for_epoch(1, 1, sample));
+        assert_eq!(queue.eta_model.completed_job_samples, 0);
+
+        assert!(queue.observe_eta_sample_for_epoch(1, 2, sample));
+        assert_eq!(queue.eta_model.completed_job_samples, 1);
+    }
+
     #[test]
     fn display_params_skip_manual_focal_when_video_has_auto_focal() {
         let queue = queue_with_lens_display_job(
@@ -7084,6 +7657,31 @@ mod tests {
                 "file:///C:/clips/cam_mix.bin".to_string(),
                 "file:///C:/clips/clip.mov".to_string(),
             ]
+        );
+    }
+
+    #[test]
+    fn simple_mode_batch_stabilized_export_writes_project_with_gyro_data() {
+        let qml = include_str!("../ui/App.qml");
+        let marker_idx = qml
+            .find("Batch path")
+            .expect("simple batch path marker exists");
+        let remaining = &qml[marker_idx..];
+        let branch_end = remaining
+            .find("Single-video path")
+            .expect("single-video path marker exists after batch branch");
+        let branch = &remaining[..branch_end];
+
+        assert!(branch.contains("videoArea.queue && videoArea.queue.shown"));
+        assert!(branch.contains("simpleExportBtnRow.queueRowCount > 0"));
+        assert!(
+            branch.contains("render_queue.export_project = 4;"),
+            "simple-mode batch stabilized export must use export_project=4"
+        );
+        assert!(branch.contains("render_queue.start();"));
+        assert!(
+            !branch.contains("render_queue.export_project = 0;"),
+            "simple-mode batch stabilized export must not use export_project=0"
         );
     }
 }

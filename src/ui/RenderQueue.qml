@@ -242,17 +242,54 @@ Item {
             spacing: 5 * dpiScale;
             width: parent.parent.width - x - mainBtn.width - 3 * parent.spacing;
             property real progress: Math.max(0, Math.min(1, render_queue.current_frame / Math.max(1, render_queue.total_frames)));
-            onProgressChanged: {
+            property real estimatedRemainingMs: render_queue.estimated_remaining_ms;
+            property string queueStatus: render_queue.status;
+            property real remainingBaseMs: -1;
+            property double remainingBaseTimestamp: 0;
+            onProgressChanged: updateTimes();
+            onEstimatedRemainingMsChanged: refreshRemainingEstimate();
+            onQueueStatusChanged: refreshRemainingEstimate();
+            Component.onCompleted: refreshRemainingEstimate();
+            function formatRemainingMs(ms: real): string {
+                return ms <= 0? qsTr("0s") : Util.timeToStr(ms / 1000.0);
+            }
+            function refreshRemainingEstimate(): void {
+                const estimate = render_queue.estimated_remaining_ms;
+                if (queueStatus == "active" && estimate >= 0) {
+                    remainingBaseMs = estimate;
+                    remainingBaseTimestamp = Date.now();
+                } else if (queueStatus != "active") {
+                    remainingBaseMs = -1;
+                    remainingBaseTimestamp = 0;
+                }
+                updateTimes();
+            }
+            function currentRemainingMs(): real {
+                if (queueStatus != "active" || remainingBaseMs < 0) {
+                    return -1;
+                }
+                return Math.max(1000, remainingBaseMs - (Date.now() - remainingBaseTimestamp));
+            }
+            function updateTimes(): void {
                 const times = Util.calculateTimesAndFps(progress, render_queue.current_frame, render_queue.start_timestamp, render_queue.end_timestamp);
                 if (times !== false && progress < 1.0) {
                     totalTime.elapsed = times[0];
-                    totalTime.remaining = times[1];
                     if (times.length > 2) totalTime.fps = times[2];
                     window.reportProgress(progress, "queue");
                 } else {
                     window.reportProgress(-1, "queue");
-                    totalTime.remaining = "---";
+                    totalTime.elapsed = "---";
                 }
+                const remainingMs = currentRemainingMs();
+                totalTime.remaining = remainingMs >= 0
+                    ? formatRemainingMs(remainingMs)
+                    : (progress >= 1.0? formatRemainingMs(0) : "---");
+            }
+            Timer {
+                interval: 1000;
+                repeat: true;
+                running: topCol.queueStatus == "active" && topCol.remainingBaseMs >= 0;
+                onTriggered: topCol.updateTimes();
             }
 
             Item {
@@ -289,7 +326,7 @@ Item {
                     id: progressText3;
                     leftPadding: 0;
                     anchors.right: parent.right;
-                    text: qsTr("Remaining: %1").arg("<b>" + (render_queue.status == "active"? totalTime.remaining : "---") + "</b>");
+                    text: qsTr("Remaining: %1").arg("<b>" + totalTime.remaining + "</b>");
                     onWidthChanged: Qt.callLater(totalTime.updateLayout);
                 }
             }

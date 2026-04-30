@@ -60,6 +60,10 @@ APP_ARTIFACT_NAMES_BY_FILE = {
     "gyroflow-niyien-windows":   "gyroflow-niyien-windows64.zip",
     "gyroflow-niyien-win-setup": "gyroflow-niyien-windows64-setup.exe",
     "gyroflow-niyien-mac":       "gyroflow-niyien-mac-universal.dmg",
+    # 123 disk renames .exe / .apk uploads with a .bak suffix; the publish
+    # pipeline wraps these into a one-level zip whose short name reuses this
+    # nightly-style mapping (see build_pan123_wrapper / pan123_wrapper_short_name).
+    "gyroflow-niyien-android":   "gyroflow-niyien.apk",
 }
 APP_FILE_TO_ARTIFACT_NAME = {v: k for k, v in APP_ARTIFACT_NAMES_BY_FILE.items()}
 
@@ -1028,7 +1032,19 @@ def main() -> int:
                 current=index,
                 total=max(total_app_uploads, 1),
             )
-            pan123.upload_file(app_dir_id, asset_path, asset_name)
+            if needs_pan123_wrapper(asset_name):
+                wrapper_path = build_pan123_wrapper(asset_path, asset_name, temp_root)
+                wrapper_remote = pan123_wrapper_short_name(asset_name)
+                emit_log(
+                    f"123 wrap: {asset_name} -> {wrapper_remote} "
+                    f"(avoid 123 .bak suffix on .exe/.apk)"
+                )
+                try:
+                    pan123.upload_file(app_dir_id, wrapper_path, wrapper_remote)
+                finally:
+                    wrapper_path.unlink(missing_ok=True)
+            else:
+                pan123.upload_file(app_dir_id, asset_path, asset_name)
 
         finalize_event["app_tag"] = args.app_tag
         finalize_event["packages"] = app_packages
@@ -1990,7 +2006,19 @@ def add_asset_metadata(
     asset_name: str,
     asset_path: Path,
 ) -> None:
-    target[f"{prefix}_filename"] = asset_name
+    # When the asset is uploaded under a one-level zip wrapper (Pan123 .exe /
+    # .apk path — see PAN123_WRAPPED_EXTENSIONS), the CN manifest's *_filename
+    # drives the download URL, so we write the wrapper's short-name zip there.
+    # sha256/size are still computed on the raw inner file: the client
+    # extracts the wrapper and verifies the inner sha256 against this value
+    # (matches nightly.link semantics). The wrap decision is driven solely
+    # by needs_pan123_wrapper(asset_name) — single source of truth shared
+    # with the upload loop and the inventory-name derivation below.
+    target[f"{prefix}_filename"] = (
+        pan123_wrapper_short_name(asset_name)
+        if needs_pan123_wrapper(asset_name)
+        else asset_name
+    )
     target[f"{prefix}_sha256"] = sha256_file(asset_path)
     target[f"{prefix}_size"] = asset_path.stat().st_size
 
@@ -2208,6 +2236,58 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+# Extensions that 123 disk auto-renames with a `.bak` suffix on upload. We
+# wrap these in a one-level zip (matching the nightly.link short-artifact
+# layout) so the client's existing wrapper-extract path can recover the raw
+# file. Other extensions (.zip / .dmg / .AppImage) upload as-is.
+PAN123_WRAPPED_EXTENSIONS = (".exe", ".apk")
+
+
+def needs_pan123_wrapper(filename: str) -> bool:
+    return any(filename.lower().endswith(ext) for ext in PAN123_WRAPPED_EXTENSIONS)
+
+
+def pan123_wrapper_short_name(asset_name: str) -> str:
+    """Return the wrapper zip's filename for `asset_name`. Reuses the
+    nightly-style short-name map (`APP_FILE_TO_ARTIFACT_NAME`) so CN release
+    uploads share naming with the nightly.link path."""
+    short = APP_FILE_TO_ARTIFACT_NAME.get(asset_name)
+    if short:
+        return f"{short}.zip"
+    return f"{Path(asset_name).stem}.zip"
+
+
+def build_pan123_wrapper(local_path: Path, asset_name: str, dest_dir: Path) -> Path:
+    """Build a one-level zip wrapper at `dest_dir` containing `local_path`
+    under its original asset_name (mirrors nightly.link wrapper layout
+    exactly so the client extractor finds the inner file by basename)."""
+    wrapper = dest_dir / pan123_wrapper_short_name(asset_name)
+    if wrapper.exists():
+        wrapper.unlink()
+    with zipfile.ZipFile(wrapper, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(local_path, arcname=asset_name)
+    return wrapper
+
+
+def pan123_remote_name_for(asset_name: str) -> str:
+    """Map a local build artifact name to the filename it will actually appear
+    under on 123 disk. Wrapped extensions go through the short-name zip
+    rewrite; everything else uploads as-is."""
+    if needs_pan123_wrapper(asset_name):
+        return pan123_wrapper_short_name(asset_name)
+    return asset_name
+
+
+# Filenames that will actually appear inside `releases/<tag>/` on 123 disk
+# after publish (with wrapped .exe / .apk rewritten to their short-name zip).
+# control_center's inventory probe (`distribution/control_center/backend/api.py`)
+# reads this tuple to compare against the directory listing — without this
+# rewrite the dashboard would always flag wrapped assets as "missing".
+REQUIRED_APP_ASSET_REMOTE_NAMES = tuple(
+    pan123_remote_name_for(name) for name in REQUIRED_APP_ASSET_NAMES
+)
 
 
 def md5_file(path: Path) -> str:

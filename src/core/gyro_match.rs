@@ -50,6 +50,9 @@ pub struct MatchResult {
     pub global_offset_ms: Option<i64>,
     pub gyro_start_ms: Option<f64>,
     pub gyro_end_ms: Option<f64>,
+    // Per-clip sync initial offset (= -front_comp), so the sync search window
+    // is centered on the pre-allocated buffer point rather than 0.
+    pub init_offset_ms: Option<f64>,
 }
 
 /// Result of the entire batch matching operation.
@@ -334,8 +337,10 @@ fn compute_global_offset(
 
 // --- T6: assign_gyro_to_videos ---
 
-// Compensation time margin (ms).
-const COMP_TIME_MS: f64 = 500.0;
+// Compensation time margin (ms). Base buffer added to both ends of every clip's
+// gyro window. Sized to absorb typical external-IMU/camera clock offsets so the
+// sync search has a consistent margin on both sides.
+const COMP_TIME_MS: f64 = 1500.0;
 // Maximum per-day drift compensation (ms).
 const MAX_DAILY_DRIFT_MS: f64 = 1000.0;
 // Milliseconds in a day.
@@ -369,6 +374,7 @@ fn assign_gyro_to_videos(
                         global_offset_ms: Some(global_offset),
                         gyro_start_ms: None,
                         gyro_end_ms: None,
+                        init_offset_ms: None,
                     };
                 }
             };
@@ -383,9 +389,21 @@ fn assign_gyro_to_videos(
                 let video_end = video_start + (g.duration_ms as i64);
 
                 if v_created >= video_start - 1000 && v_created <= video_end + 1000 {
-                    // Compute time drift compensation
-                    let time_diff_from_start = (v_created - video_start).abs() as f64;
-                    let drift_comp = (time_diff_from_start * MAX_DAILY_DRIFT_MS / MS_PER_DAY)
+                    // Drift anchor: nearest calibration video strictly inside this gyro
+                    // segment. The user's mental model is "calibration video is the most
+                    // accurate sync; clips farther from it drift more". Use a strict
+                    // [video_start, video_end] window (no ±1000ms slack) so a calib video
+                    // in an adjacent segment can't be mistaken for this segment's anchor.
+                    // Fall back to the gyro segment start when no calibration video falls
+                    // inside this gyro.
+                    let calib_anchor_ms = calibration_video_indices
+                        .iter()
+                        .filter_map(|&ci| videos.get(ci).and_then(|cv| cv.created_at_ms))
+                        .filter(|&t| t >= video_start && t <= video_end)
+                        .min_by_key(|&t| (t - v_created).abs())
+                        .unwrap_or(video_start);
+                    let time_diff_from_calib = (v_created - calib_anchor_ms).abs() as f64;
+                    let drift_comp = (time_diff_from_calib * MAX_DAILY_DRIFT_MS / MS_PER_DAY)
                         .min(MAX_DAILY_DRIFT_MS);
                     let front_comp = COMP_TIME_MS + drift_comp;
                     let back_comp = COMP_TIME_MS + drift_comp;
@@ -408,6 +426,11 @@ fn assign_gyro_to_videos(
                         global_offset_ms: Some(global_offset),
                         gyro_start_ms: Some(gyro_start_ms),
                         gyro_end_ms: Some(gyro_end_ms),
+                        // Sync search window center: we pre-loaded `front_comp` ms of
+                        // gyro before the video start, so the gyro stream is "earlier"
+                        // than the video by that much. Sync's initial_offset uses the
+                        // convention positive = gyro late vs video, so we negate.
+                        init_offset_ms: Some(-front_comp),
                     };
                 }
             }
@@ -420,6 +443,7 @@ fn assign_gyro_to_videos(
                 global_offset_ms: Some(global_offset),
                 gyro_start_ms: None,
                 gyro_end_ms: None,
+                init_offset_ms: None,
             }
         })
         .collect()
@@ -561,6 +585,7 @@ pub fn batch_match(
                     global_offset_ms: None,
                     gyro_start_ms: None,
                     gyro_end_ms: None,
+                    init_offset_ms: None,
                 })
                 .collect();
             BatchMatchResult {
