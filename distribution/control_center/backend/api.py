@@ -1473,7 +1473,6 @@ class Api:
             if meta.get("sha256"):
                 mapping["NIYIEN_LENS_SHA256"] = str(meta["sha256"])
                 lens_extras.append(f"sha256={str(meta['sha256'])[:10]}...")
-            self._vercel(cfg).upsert_envs(mapping)
             extras_note = f" (lens metadata: {', '.join(lens_extras)})" if lens_extras else " (lens metadata 未读到)"
             # Read the 123 网盘 dir tags that the prior publish flow recorded.
             # Without these the policy entry can't surface a working
@@ -1541,23 +1540,43 @@ class Api:
                                 f"⚠ {len(tried_names)} 个 artifact name 都没有未过期的 run, "
                                 f"global_plugins_base 留空(docs 将回退到 release-latest)"
                             )
-            try:
-                sync_note = self._sync_resources_into_policy_entries(
-                    cfg,
-                    lens_release_tag=lens_tag,
-                    lens_dir_tag=lens_dir_tag,
-                    lens_version=meta.get("version"),
-                    lens_sha=str(meta.get("sha256") or ""),
-                    plugin_mode=plugin_mode,
-                    plugin_release_tag=plugin_tag,
-                    plugin_dir_tag=plugin_dir_tag,
-                    plugin_artifact_name=plugin_artifact,
-                    plugin_run_id=plugin_run_id,
-                    plugin_owner=plugin_owner,
-                    plugin_repo=plugin_repo,
+            if plugin_mode == "artifact":
+                target_plugin_source_ref = (
+                    f"actions-run-{int(plugin_run_id)}" if int(plugin_run_id or 0) > 0 else ""
                 )
-            except Exception as e:
-                sync_note = f"policy entry 镜像失败: {e}"
+                if not target_plugin_source_ref:
+                    return {
+                        "ok": False,
+                        "error": (
+                            "artifact 模式未能解析插件 GitHub Actions run；"
+                            f"{artifact_resolve_note or '请检查 Plugin Artifact Name'}"
+                        ),
+                    }
+                plugin_dir_tag = self._resolve_plugin_bundle_tag_for_source_ref(
+                    cfg=cfg,
+                    vercel_envs=current_envs,
+                    current_tag=plugin_dir_tag,
+                    target_source_ref=target_plugin_source_ref,
+                )
+                mapping["NIYIEN_PLUGIN_RELEASE_TAG"] = plugin_dir_tag
+            sync_note, policy_json = self._prepare_resources_policy_update(
+                cfg,
+                vercel_envs=current_envs,
+                lens_release_tag=lens_tag,
+                lens_dir_tag=lens_dir_tag,
+                lens_version=meta.get("version"),
+                lens_sha=str(meta.get("sha256") or ""),
+                plugin_mode=plugin_mode,
+                plugin_release_tag=plugin_tag,
+                plugin_dir_tag=plugin_dir_tag,
+                plugin_artifact_name=plugin_artifact,
+                plugin_run_id=plugin_run_id,
+                plugin_owner=plugin_owner,
+                plugin_repo=plugin_repo,
+            )
+            if policy_json:
+                mapping["NIYIEN_RELEASE_POLICY_JSON"] = policy_json
+            self._vercel(cfg).upsert_envs(mapping)
             # Vercel runtime env vars only affect new deployments. Without a
             # redeploy the manifest API keeps serving the previous env
             # snapshot, which is what made earlier "立即切换" calls look
@@ -1578,18 +1597,117 @@ class Api:
         except Exception as e:
             return _error(e, "apply_resources_now")
 
-    def _sync_resources_into_policy_entries(self, cfg: dict, *,
-                                             lens_release_tag: str = "",
-                                             lens_dir_tag: str = "",
-                                             lens_version=None,
-                                             lens_sha: str = "",
-                                             plugin_mode: str = "",
-                                             plugin_release_tag: str = "",
-                                             plugin_dir_tag: str = "",
-                                             plugin_artifact_name: str = "",
-                                             plugin_run_id: int = 0,
-                                             plugin_owner: str = "NiYien",
-                                             plugin_repo: str = "gyroflow-plugins") -> str:
+    def _resolve_plugin_bundle_tag_for_source_ref(self, *, cfg: dict,
+                                                  vercel_envs: dict,
+                                                  current_tag: str,
+                                                  target_source_ref: str) -> str:
+        client_id = self._get_publish_secret("PAN123_CLIENT_ID", vercel_envs=vercel_envs, cfg=cfg)
+        client_secret = self._get_publish_secret("PAN123_CLIENT_SECRET", vercel_envs=vercel_envs, cfg=cfg)
+        root_id = self._pan123_releases_root_id(cfg=cfg, vercel_envs=vercel_envs)
+        if not (client_id and client_secret and root_id):
+            raise RuntimeError("artifact 模式需要 PAN123 凭据来确认对应的 plugin bundle")
+        client = Pan123Client(client_id, client_secret, proxy_url=cfg.get("network_proxy", ""))
+        bundles = self._list_plugin_bundle_sources(client, root_id)
+        return self._select_plugin_bundle_tag_for_source_ref(
+            bundles,
+            current_tag=current_tag,
+            target_source_ref=target_source_ref,
+        )
+
+    def _list_plugin_bundle_sources(self, client: Pan123Client, root_id: int) -> list[dict]:
+        if not EXPECTED_PLUGIN_FILENAMES:
+            raise RuntimeError("EXPECTED_PLUGIN_FILENAMES is empty; refusing to validate plugin bundles")
+        bundles: list[dict] = []
+        for child in client.list_directory(root_id):
+            if int(child.get("type", -1)) != 1:
+                continue
+            tag = str(child.get("filename") or child.get("name") or "").strip()
+            if not tag.startswith("plugin-"):
+                continue
+            bundle_dir_id = client._entry_id(child)
+            if bundle_dir_id <= 0:
+                continue
+            entries = client.list_directory(bundle_dir_id)
+            file_names = {
+                str(entry.get("filename") or entry.get("name") or "").strip()
+                for entry in entries
+                if int(entry.get("type", -1)) == 0
+            }
+            files_missing = [name for name in EXPECTED_PLUGIN_FILENAMES if name not in file_names]
+            manifest, manifest_error = self._read_plugin_bundle_manifest(client, entries)
+            bundles.append({
+                "tag": tag,
+                "plugin_source_ref": str(manifest.get("plugin_source_ref", "")).strip(),
+                "complete": not files_missing,
+                "files_missing": files_missing,
+                "manifest_error": manifest_error,
+            })
+        return bundles
+
+    def _read_plugin_bundle_manifest(self, client: Pan123Client, entries: list[dict]) -> tuple[dict, str]:
+        manifest_entry = next(
+            (
+                entry for entry in entries
+                if str(entry.get("filename") or entry.get("name") or "").strip() == PLUGIN_MANIFEST_ASSET_NAME
+                and int(entry.get("type", -1)) == 0
+            ),
+            None,
+        )
+        if not manifest_entry:
+            return {}, "missing manifest"
+        manifest_id = client._entry_id(manifest_entry)
+        if manifest_id <= 0:
+            return {}, "invalid manifest file id"
+        try:
+            import json as _json
+            parsed = _json.loads(client.fetch_file_text(manifest_id))
+        except Exception as err:
+            return {}, str(err)
+        if not isinstance(parsed, dict):
+            return {}, "manifest is not a JSON object"
+        return parsed, ""
+
+    @staticmethod
+    def _select_plugin_bundle_tag_for_source_ref(bundles: list[dict], *,
+                                                 current_tag: str,
+                                                 target_source_ref: str) -> str:
+        target_ref = str(target_source_ref or "").strip()
+        if not target_ref:
+            raise RuntimeError("plugin_source_ref 不能为空")
+        current = str(current_tag or "").strip()
+        matches: list[str] = []
+        seen: list[str] = []
+        for bundle in bundles:
+            tag = str(bundle.get("tag", "")).strip()
+            source_ref = str(bundle.get("plugin_source_ref", "")).strip()
+            complete = bool(bundle.get("complete", False))
+            if tag:
+                suffix = "" if complete else " (incomplete)"
+                manifest_error = str(bundle.get("manifest_error", "")).strip()
+                error_suffix = f" ({manifest_error})" if manifest_error else ""
+                seen.append(f"{tag}:{source_ref or 'no-source-ref'}{suffix}{error_suffix}")
+            if tag and complete and source_ref == target_ref:
+                matches.append(tag)
+        if current and current in matches:
+            return current
+        if matches:
+            return matches[0]
+        details = ", ".join(seen[:8]) if seen else "no plugin bundles found"
+        raise RuntimeError(f"123 plugin bundle not found for {target_ref}; available: {details}")
+
+    def _prepare_resources_policy_update(self, cfg: dict, *,
+                                         vercel_envs: dict | None = None,
+                                         lens_release_tag: str = "",
+                                         lens_dir_tag: str = "",
+                                         lens_version=None,
+                                         lens_sha: str = "",
+                                         plugin_mode: str = "",
+                                         plugin_release_tag: str = "",
+                                         plugin_dir_tag: str = "",
+                                         plugin_artifact_name: str = "",
+                                         plugin_run_id: int = 0,
+                                         plugin_owner: str = "NiYien",
+                                         plugin_repo: str = "gyroflow-plugins") -> tuple[str, str]:
         """Mirror Lens/Plugin fields into every NIYIEN_RELEASE_POLICY_JSON entry.
 
         Two distinct lens identifiers exist and the manifest reads them in
@@ -1609,17 +1727,17 @@ class Api:
         full publish_and_push run.
         """
         import json as _json
-        envs = self._vercel(cfg).list_envs_decrypted()
+        envs = vercel_envs if vercel_envs is not None else self._vercel(cfg).list_envs_decrypted()
         raw = str(envs.get("NIYIEN_RELEASE_POLICY_JSON", "")).strip()
         if not raw:
-            return "policy 为空,跳过 entry 镜像"
+            return "policy 为空,跳过 entry 镜像", ""
         try:
             policy = _json.loads(raw)
         except _json.JSONDecodeError:
-            return "policy 不是合法 JSON,跳过 entry 镜像"
+            return "policy 不是合法 JSON,跳过 entry 镜像", ""
         versions = policy.get("versions") or []
         if not versions:
-            return "policy.versions 为空,跳过 entry 镜像"
+            return "policy.versions 为空,跳过 entry 镜像", ""
         try:
             lens_version_val = int(lens_version) if lens_version is not None and str(lens_version).strip() != "" else None
         except (TypeError, ValueError):
@@ -1685,10 +1803,15 @@ class Api:
             if entry_changed:
                 changed_entries += 1
         if not changed_entries:
-            return "所有 entry 已与新值一致,无需写回"
+            return "所有 entry 已与新值一致,无需写回", ""
         policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
-        self._vercel(cfg).upsert_envs({"NIYIEN_RELEASE_POLICY_JSON": policy_json})
-        return f"已镜像到 {changed_entries}/{len(versions)} 个 policy entry"
+        return f"已镜像到 {changed_entries}/{len(versions)} 个 policy entry", policy_json
+
+    def _sync_resources_into_policy_entries(self, cfg: dict, **kwargs) -> str:
+        sync_note, policy_json = self._prepare_resources_policy_update(cfg, **kwargs)
+        if policy_json:
+            self._vercel(cfg).upsert_envs({"NIYIEN_RELEASE_POLICY_JSON": policy_json})
+        return sync_note
 
     def save_resources_defaults(self, payload: dict) -> dict:
         """Save Lens/Plugin/SDK defaults to control_center.config.json's publish_defaults."""
