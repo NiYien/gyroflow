@@ -245,6 +245,25 @@ fn compute_global_offset(
             };
 
             let avg_offset = (offset0 + offset1) / 2;
+            log::info!(
+                "[batch_match_diag] candidate vi_pair=[{},{}] gi_pair=[{},{}] offset0={}ms offset1={}ms avg={}ms delay={}ms dur_diff=[{:.3},{:.3}] total_diff=[{:.3},{:.3}] v_paths=['{}','{}'] g_paths=['{}','{}']",
+                cal_video_indices[vi],
+                cal_video_indices[vi + 1],
+                cal_gyro_indices[gi],
+                cal_gyro_indices[gi + 1],
+                offset0,
+                offset1,
+                avg_offset,
+                delay,
+                dur_diff0,
+                dur_diff1,
+                total_diff0,
+                total_diff1,
+                v0.path,
+                v1.path,
+                g0.path,
+                g1.path
+            );
             candidates.push((
                 avg_offset,
                 delay,
@@ -286,6 +305,15 @@ fn compute_global_offset(
                 }
             }
         }
+        log::info!(
+            "[batch_match_diag] coverage test_offset={}ms test_delay={}ms video_offset={}ms covered={} videos={} gyros={}",
+            test_offset,
+            test_delay,
+            video_offset,
+            covered,
+            videos.len(),
+            gyros.len()
+        );
 
         let dominated = match &best {
             Some((_, _, best_cov, _, _)) => covered > *best_cov,
@@ -323,6 +351,16 @@ fn compute_global_offset(
                 .collect();
             matching_offsets.sort();
             let median_offset = matching_offsets[matching_offsets.len() / 2];
+
+            log::info!(
+                "[batch_match_diag] selected global_offset={}ms raw_selected_offset={}ms delay={}ms calibration_videos={:?} calibration_gyros={:?} matching_offsets={:?}",
+                median_offset,
+                offset,
+                delay,
+                cal_v,
+                cal_g,
+                matching_offsets
+            );
 
             Ok(OffsetResult {
                 offset: median_offset,
@@ -407,10 +445,41 @@ fn assign_gyro_to_videos(
                         .min(MAX_DAILY_DRIFT_MS);
                     let front_comp = COMP_TIME_MS + drift_comp;
                     let back_comp = COMP_TIME_MS + drift_comp;
+                    let legacy_video_start = g.created_at_ms - global_offset - delay;
+                    let legacy_video_end = legacy_video_start + (g.duration_ms as i64);
+                    let legacy_front_comp = (500.0 + drift_comp).min(1500.0);
+                    let legacy_back_comp = 2000.0;
 
                     // Position within the gyro's own timeline
                     let gyro_start_ms = (v_created - video_start) as f64 - front_comp;
                     let gyro_end_ms = gyro_start_ms + v.duration_ms + front_comp + back_comp;
+                    log::info!(
+                        "[batch_match_diag] assign video_index={} gyro_index={} status={} global_offset={}ms delay={}ms video_created={} gyro_created={} current_video_start={} current_video_end={} legacy_video_start={} legacy_video_end={} calib_anchor={} time_from_anchor={:.1}ms drift={:.1}ms front={:.1}ms back={:.1}ms legacy_front={:.1}ms legacy_back={:.1}ms raw_range=[{:.1},{:.1}] duration={:.1}ms pre_recording={:.1}ms v_path='{}' g_path='{}'",
+                        vi,
+                        gi,
+                        if is_cal { "calibration" } else { "matched" },
+                        global_offset,
+                        delay,
+                        v_created,
+                        g.created_at_ms,
+                        video_start,
+                        video_end,
+                        legacy_video_start,
+                        legacy_video_end,
+                        calib_anchor_ms,
+                        time_diff_from_calib,
+                        drift_comp,
+                        front_comp,
+                        back_comp,
+                        legacy_front_comp,
+                        legacy_back_comp,
+                        gyro_start_ms,
+                        gyro_end_ms,
+                        v.duration_ms,
+                        v.pre_recording_ms,
+                        v.path,
+                        g.path
+                    );
 
                     let status = if is_cal {
                         MatchStatus::CalibrationPair

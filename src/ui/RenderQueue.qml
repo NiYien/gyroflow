@@ -241,15 +241,19 @@ Item {
             id: topCol;
             spacing: 5 * dpiScale;
             width: parent.parent.width - x - mainBtn.width - 3 * parent.spacing;
-            property real progress: Math.max(0, Math.min(1, render_queue.current_frame / Math.max(1, render_queue.total_frames)));
+            property bool queueProgressUsesJobs: render_queue.queue_progress_uses_jobs;
+            property real progress: render_queue.queue_progress;
             property real estimatedRemainingMs: render_queue.estimated_remaining_ms;
             property string queueStatus: render_queue.status;
             property real remainingBaseMs: -1;
             property double remainingBaseTimestamp: 0;
             onProgressChanged: updateTimes();
+            onQueueProgressUsesJobsChanged: updateTimes();
             onEstimatedRemainingMsChanged: refreshRemainingEstimate();
             onQueueStatusChanged: refreshRemainingEstimate();
-            Component.onCompleted: refreshRemainingEstimate();
+            Component.onCompleted: {
+                refreshRemainingEstimate();
+            }
             function formatRemainingMs(ms: real): string {
                 return ms <= 0? qsTr("0s") : Util.timeToStr(ms / 1000.0);
             }
@@ -271,19 +275,32 @@ Item {
                 return Math.max(1000, remainingBaseMs - (Date.now() - remainingBaseTimestamp));
             }
             function updateTimes(): void {
-                const times = Util.calculateTimesAndFps(progress, render_queue.current_frame, render_queue.start_timestamp, render_queue.end_timestamp);
-                if (times !== false && progress < 1.0) {
-                    totalTime.elapsed = times[0];
-                    if (times.length > 2) totalTime.fps = times[2];
+                const queueActive = queueStatus == "active";
+                const progressFrame = queueProgressUsesJobs ? 0 : render_queue.current_frame;
+                const endTimestamp = queueProgressUsesJobs ? Date.now() : render_queue.end_timestamp;
+                const times = Util.calculateTimesAndFps(progress, progressFrame, render_queue.start_timestamp, endTimestamp);
+                if (queueActive && progress >= 0.0 && progress < 1.0) {
+                    if (times !== false) {
+                        totalTime.elapsed = times[0];
+                        if (!queueProgressUsesJobs && times.length > 2) {
+                            totalTime.fps = times[2];
+                        } else if (queueProgressUsesJobs) {
+                            totalTime.fps = 0;
+                        }
+                    } else {
+                        totalTime.elapsed = "---";
+                        if (queueProgressUsesJobs) totalTime.fps = 0;
+                    }
                     window.reportProgress(progress, "queue");
                 } else {
                     window.reportProgress(-1, "queue");
                     totalTime.elapsed = "---";
+                    if (queueProgressUsesJobs) totalTime.fps = 0;
                 }
                 const remainingMs = currentRemainingMs();
                 totalTime.remaining = remainingMs >= 0
                     ? formatRemainingMs(remainingMs)
-                    : (progress >= 1.0? formatRemainingMs(0) : "---");
+                    : (times !== false && times.length > 1 && progress < 1.0 ? times[1] : (progress >= 1.0? formatRemainingMs(0) : "---"));
             }
             Timer {
                 interval: 1000;
@@ -299,7 +316,7 @@ Item {
                 property string elapsed: "---";
                 property string remaining: "---";
                 property real fps: 0;
-                property string fpsText: topCol.progress > 0? qsTr(" @ %1fps").arg(fps.toFixed(1)) : "";
+                property string fpsText: topCol.queueProgressUsesJobs ? "" : (topCol.progress > 0? qsTr(" @ %1fps").arg(fps.toFixed(1)) : "");
                 onWidthChanged: Qt.callLater(totalTime.updateLayout);
                 property bool twoLines: false;
                 function updateLayout(): void {
@@ -318,7 +335,9 @@ Item {
                     leftPadding: 0;
                     anchors.horizontalCenter: parent.horizontalCenter;
                     textFormat: Text.RichText;
-                    text: `<b>${(topCol.progress*100).toFixed(2)}%</b> <small>(${render_queue.current_frame}/${render_queue.total_frames}${totalTime.fpsText})</small>`;
+                    text: topCol.queueProgressUsesJobs
+                        ? `<b>${(topCol.progress*100).toFixed(2)}%</b> <small>(${render_queue.queue_done_jobs}/${render_queue.queue_total_jobs})</small>`
+                        : `<b>${(topCol.progress*100).toFixed(2)}%</b> <small>(${render_queue.current_frame}/${render_queue.total_frames}${totalTime.fpsText})</small>`;
                     y: totalTime.twoLines? progressText1.height + 5 * dpiScale : 0;
                     onWidthChanged: Qt.callLater(totalTime.updateLayout);
                 }

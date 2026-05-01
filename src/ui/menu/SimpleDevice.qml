@@ -562,39 +562,38 @@ MenuItem {
                     anchors.centerIn: mapImage
                     width: Math.min(mapImage.width, mapImage.height * 2)
                     height: width / 2
-                }
 
-                Repeater {
-                    model: root.timezoneCatalog
-
-                    Rectangle {
-                        required property var modelData
-                        property bool active: root.selectedRegion === modelData
-                        parent: mapViewport
-                        x: modelData.x * mapViewport.width - width / 2
-                        y: modelData.y * mapViewport.height - height / 2
-                        width: active ? 18 * dpiScale : 12 * dpiScale
-                        height: width
-                        radius: width / 2
-                        color: active ? root.cityDotSelectedColor : root.cityDotColor
-                        border.width: active ? 2 * dpiScale : 1 * dpiScale
-                        border.color: active ? "#ffffff" : Qt.rgba(1, 1, 1, root.lightTheme ? 0.85 : 0.55)
+                    Repeater {
+                        model: root.timezoneCatalog
 
                         Rectangle {
-                            visible: parent.active
-                            anchors.centerIn: parent
-                            width: parent.width + 10 * dpiScale
+                            required property var modelData
+                            property bool active: root.selectedRegion === modelData
+                            x: modelData.x * mapViewport.width - width / 2
+                            y: modelData.y * mapViewport.height - height / 2
+                            width: active ? 18 * dpiScale : 12 * dpiScale
                             height: width
                             radius: width / 2
-                            color: "transparent"
-                            border.width: 1 * dpiScale
-                            border.color: Qt.rgba(root.cityDotSelectedColor.r, root.cityDotSelectedColor.g, root.cityDotSelectedColor.b, 0.36)
-                        }
+                            color: active ? root.cityDotSelectedColor : root.cityDotColor
+                            border.width: active ? 2 * dpiScale : 1 * dpiScale
+                            border.color: active ? "#ffffff" : Qt.rgba(1, 1, 1, root.lightTheme ? 0.85 : 0.55)
 
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.selectRegion(parent.modelData)
+                            Rectangle {
+                                visible: parent.active
+                                anchors.centerIn: parent
+                                width: parent.width + 10 * dpiScale
+                                height: width
+                                radius: width / 2
+                                color: "transparent"
+                                border.width: 1 * dpiScale
+                                border.color: Qt.rgba(root.cityDotSelectedColor.r, root.cityDotSelectedColor.g, root.cityDotSelectedColor.b, 0.36)
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: root.selectRegion(parent.modelData)
+                            }
                         }
                     }
                 }

@@ -65,6 +65,14 @@ struct QueueAutosyncStats {
 }
 
 #[derive(Default, Clone, Copy, Debug)]
+struct QueueProgressSnapshot {
+    done_units: f64,
+    total_units: f64,
+    done_jobs: u64,
+    total_jobs: u64,
+}
+
+#[derive(Default, Clone, Copy, Debug)]
 struct QueueEtaEstimateModel {
     sync_ms_per_frame: Option<f64>,
     render_ms_per_frame: Option<f64>,
@@ -149,6 +157,7 @@ struct Job {
     // otherwise mark the job Finished/Error during a fast Stop→Start restart.
     render_epoch: Arc<AtomicU64>,
     project_data: Option<String>,
+    last_finished_export_project: Option<u32>,
     stab: Option<Arc<StabilizationManager>>,
     base_lens_metadata: Option<JobLensMetadataBackup>,
     lens_group_config_override: Option<JobLensGroupOverride>,
@@ -580,6 +589,7 @@ pub struct RenderQueue {
     render_job: qt_method!(fn(&mut self, job_id: u32)),
     cancel_job: qt_method!(fn(&self, job_id: u32)),
     reset_job: qt_method!(fn(&mut self, job_id: u32)),
+    prepare_finished_jobs_for_video_export: qt_method!(fn(&mut self)),
     get_gyroflow_data: qt_method!(fn(&self, job_id: u32) -> QString),
 
     add_file:
@@ -607,6 +617,10 @@ pub struct RenderQueue {
     pub end_timestamp: qt_property!(u64; NOTIFY progress_changed),
     current_frame: qt_property!(u64; READ get_current_frame NOTIFY progress_changed),
     total_frames: qt_property!(u64; READ get_total_frames NOTIFY queue_changed),
+    queue_progress: qt_property!(f64; READ get_queue_progress NOTIFY progress_changed),
+    queue_done_jobs: qt_property!(u64; READ get_queue_done_jobs NOTIFY progress_changed),
+    queue_total_jobs: qt_property!(u64; READ get_queue_total_jobs NOTIFY progress_changed),
+    queue_progress_uses_jobs: qt_property!(bool; READ get_queue_progress_uses_jobs NOTIFY progress_changed),
     estimated_remaining_ms: qt_property!(f64; READ get_estimated_remaining_ms NOTIFY progress_changed),
     pub status: qt_property!(QString; NOTIFY status_changed),
     pub auto_rotate: qt_property!(bool; NOTIFY auto_rotate_changed),
@@ -655,6 +669,7 @@ pub struct RenderQueue {
 
     paused_timestamp: Option<u64>,
     start_frame: u64,
+    start_queue_work_units: f64,
     eta_model: QueueEtaEstimateModel,
 
     stabilizer: Arc<StabilizationManager>,
@@ -779,6 +794,39 @@ impl RenderQueue {
             .map(|x| x.iter().map(|v| v.current_frame).sum::<u64>() - self.start_frame)
             .unwrap_or_default()
     }
+    pub fn get_queue_progress_uses_jobs(&self) -> bool {
+        self.queue_progress_uses_weighted_work()
+    }
+    pub fn get_queue_progress(&self) -> f64 {
+        if !self.queue_progress_uses_weighted_work() {
+            let total = self.get_total_frames();
+            if total == 0 {
+                return 0.0;
+            }
+            return (self.get_current_frame() as f64 / total as f64).clamp(0.0, 1.0);
+        }
+
+        let snapshot = self.queue_progress_snapshot();
+        let start_units = self.start_queue_work_units.min(snapshot.total_units);
+        let total_units = (snapshot.total_units - start_units).max(0.0);
+        if total_units <= f64::EPSILON {
+            return if snapshot.total_units > 0.0
+                && snapshot.done_units >= snapshot.total_units
+            {
+                1.0
+            } else {
+                0.0
+            };
+        }
+
+        ((snapshot.done_units - start_units).max(0.0) / total_units).clamp(0.0, 1.0)
+    }
+    pub fn get_queue_done_jobs(&self) -> u64 {
+        self.queue_progress_snapshot().done_jobs
+    }
+    pub fn get_queue_total_jobs(&self) -> u64 {
+        self.queue_progress_snapshot().total_jobs
+    }
     pub fn get_estimated_remaining_ms(&self) -> f64 {
         if self.status.to_string() != "active" {
             return -1.0;
@@ -834,6 +882,82 @@ impl RenderQueue {
             render_frames,
             self.parallel_renders.max(1) as usize,
         )
+    }
+
+    fn queue_progress_uses_weighted_work(&self) -> bool {
+        self.export_project == 2 || self.export_project == 4
+    }
+
+    fn queue_progress_snapshot(&self) -> QueueProgressSnapshot {
+        let q = match self.queue.try_borrow() {
+            Ok(q) => q,
+            Err(_) => return QueueProgressSnapshot::default(),
+        };
+        let exports_video = self.exports_video();
+        let mut snapshot = QueueProgressSnapshot::default();
+
+        for item in q.iter() {
+            let estimated_sync_units = self
+                .jobs
+                .get(&item.job_id)
+                .map(Self::estimated_sync_frames_for_job)
+                .unwrap_or_default() as f64;
+            let render_units = if exports_video {
+                item.total_frames as f64
+            } else {
+                0.0
+            };
+            let sync_units =
+                Self::queue_item_sync_work_units(item, estimated_sync_units, render_units);
+            let mut total_units = sync_units + render_units;
+            if total_units <= f64::EPSILON {
+                total_units = 1.0;
+            }
+
+            let done_units = match item.status {
+                JobStatus::Finished | JobStatus::Skipped => total_units,
+                JobStatus::Queued | JobStatus::Rendering | JobStatus::Error => {
+                    Self::queue_item_active_work_units(item, sync_units, render_units)
+                        .min(total_units)
+                }
+            };
+
+            snapshot.done_units += done_units;
+            snapshot.total_units += total_units;
+            snapshot.total_jobs += 1;
+            if matches!(item.status, JobStatus::Finished | JobStatus::Skipped) {
+                snapshot.done_jobs += 1;
+            }
+        }
+
+        snapshot
+    }
+
+    fn queue_item_sync_work_units(
+        item: &RenderQueueItem,
+        estimated_sync_units: f64,
+        render_units: f64,
+    ) -> f64 {
+        if estimated_sync_units > f64::EPSILON {
+            estimated_sync_units
+        } else if render_units <= f64::EPSILON || item.processing_progress > 0.0 {
+            1.0
+        } else {
+            0.0
+        }
+    }
+
+    fn queue_item_active_work_units(
+        item: &RenderQueueItem,
+        sync_units: f64,
+        render_units: f64,
+    ) -> f64 {
+        let processing = item.processing_progress.clamp(0.0, 1.0);
+        if render_units > 0.0 && item.current_frame > 0 {
+            sync_units + (item.current_frame.min(item.total_frames) as f64)
+        } else {
+            sync_units * processing
+        }
     }
 
     fn exports_video(&self) -> bool {
@@ -1098,6 +1222,7 @@ impl RenderQueue {
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
                 project_data,
+                last_finished_export_project: None,
                 stab: Some(stab.clone()),
                 base_lens_metadata,
                 lens_group_config_override: None,
@@ -1147,6 +1272,7 @@ impl RenderQueue {
             self.start_frame = 0;
             self.start_timestamp = Self::current_timestamp();
             self.start_frame = self.get_current_frame();
+            self.start_queue_work_units = self.queue_progress_snapshot().done_units;
             self.progress_changed();
         }
     }
@@ -1197,8 +1323,10 @@ impl RenderQueue {
 
         if self.start_timestamp == 0 {
             self.start_frame = 0;
+            self.start_queue_work_units = 0.0;
             self.start_timestamp = Self::current_timestamp();
             self.start_frame = self.get_current_frame();
+            self.start_queue_work_units = self.queue_progress_snapshot().done_units;
             self.progress_changed();
         }
 
@@ -1228,6 +1356,7 @@ impl RenderQueue {
                     self.queue_finished();
 
                     self.start_frame = 0;
+                    self.start_queue_work_units = 0.0;
                     self.start_timestamp = 0;
                     self.progress_changed();
 
@@ -1296,8 +1425,12 @@ impl RenderQueue {
 
         self.reset_rendering_jobs_to_queued();
 
+        self.start_timestamp = 0;
+        self.start_frame = 0;
+        self.start_queue_work_units = 0.0;
         self.status = QString::from("stopped");
         self.status_changed();
+        self.progress_changed();
     }
 
     // Proactively flip every Rendering job back to Queued so a follow-up start() can
@@ -1410,8 +1543,9 @@ impl RenderQueue {
         }
     }
     pub fn reset_job(&mut self, job_id: u32) {
-        if let Some(job) = self.jobs.get(&job_id) {
+        if let Some(job) = self.jobs.get_mut(&job_id) {
             job.cancel_flag.store(false, SeqCst);
+            job.last_finished_export_project = None;
         }
 
         // Recreate StabilizationManager from project_data if it was released after rendering
@@ -1485,10 +1619,52 @@ impl RenderQueue {
         update_model!(self, job_id, itm {
             itm.error_string = QString::default();
             itm.skip_reason = QString::default();
+            itm.processing_progress = 0.0;
             itm.current_frame = 0;
+            itm.start_timestamp = 0;
+            itm.start_timestamp2 = 0;
+            itm.start_timestamp_frame = 0;
+            itm.end_timestamp = 0;
             itm.frame_times.clear();
             itm.status = JobStatus::Queued;
         });
+    }
+    pub fn prepare_finished_jobs_for_video_export(&mut self) {
+        let finished_job_ids = {
+            let q = self.queue.borrow();
+            q.iter()
+                .filter(|v| v.status == JobStatus::Finished)
+                .map(|v| v.job_id)
+                .collect::<Vec<_>>()
+        };
+
+        let sync_only_job_ids = finished_job_ids
+            .into_iter()
+            .filter(|job_id| {
+                self.jobs
+                    .get(job_id)
+                    .map(|job| job.last_finished_export_project == Some(2))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+
+        for job_id in sync_only_job_ids {
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                remove_do_autosync_from_project_json(&mut job.additional_data);
+                if let Some(ref mut project_data) = job.project_data {
+                    remove_do_autosync_from_project_json(project_data);
+                }
+                if let Some(ref stab) = job.stab {
+                    remove_do_autosync_from_stab(stab);
+                }
+            }
+            self.reset_job(job_id);
+            if let Some(job) = self.jobs.get(&job_id) {
+                if let Some(ref stab) = job.stab {
+                    remove_do_autosync_from_stab(stab);
+                }
+            }
+        }
     }
     pub fn update_status(&mut self) {
         for v in self.queue.borrow().iter() {
@@ -1517,15 +1693,33 @@ impl RenderQueue {
         additional_data: &str,
         render_options: &RenderOptions,
     ) -> Option<String> {
-        if let Some(url) = stab.input_file.read().project_file_url.as_ref() {
-            if filesystem::exists(url) {
-                #[cfg(any(target_os = "macos", target_os = "ios"))]
-                {
-                    return Some(serde_json::json!({ "project_file": url, "project_file_bookmark": filesystem::apple::create_bookmark(&url, false, None) }).to_string());
-                }
-                #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-                {
-                    return Some(serde_json::json!({ "project_file": url }).to_string());
+        Self::get_gyroflow_data_internal_with_type(
+            stab,
+            additional_data,
+            render_options,
+            core::GyroflowProjectType::Simple,
+            true,
+        )
+    }
+
+    fn get_gyroflow_data_internal_with_type(
+        stab: &StabilizationManager,
+        additional_data: &str,
+        render_options: &RenderOptions,
+        typ: core::GyroflowProjectType,
+        allow_project_file_reference: bool,
+    ) -> Option<String> {
+        if allow_project_file_reference {
+            if let Some(url) = stab.input_file.read().project_file_url.as_ref() {
+                if filesystem::exists(url) {
+                    #[cfg(any(target_os = "macos", target_os = "ios"))]
+                    {
+                        return Some(serde_json::json!({ "project_file": url, "project_file_bookmark": filesystem::apple::create_bookmark(&url, false, None) }).to_string());
+                    }
+                    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+                    {
+                        return Some(serde_json::json!({ "project_file": url }).to_string());
+                    }
                 }
             }
         }
@@ -1538,9 +1732,7 @@ impl RenderQueue {
             }
             additional_data = serde_json::to_string(&obj).unwrap_or_default();
         }
-        if let Ok(data) =
-            stab.export_gyroflow_data(core::GyroflowProjectType::Simple, &additional_data, None)
-        {
+        if let Ok(data) = stab.export_gyroflow_data(typ, &additional_data, None) {
             return Some(data);
         }
         None
@@ -2042,6 +2234,13 @@ impl RenderQueue {
                     }
                 },
             );
+            let finished_export_project = self.export_project;
+            let finished_project_type = match finished_export_project {
+                2 | 4 => core::GyroflowProjectType::WithGyroData,
+                3 => core::GyroflowProjectType::WithProcessedData,
+                _ => core::GyroflowProjectType::Simple,
+            };
+            let allow_finished_project_file_reference = finished_export_project != 2;
             let progress = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this,
@@ -2106,12 +2305,15 @@ impl RenderQueue {
                         // Update project_data with sync offsets before releasing stab
                         if let Some(job) = this.jobs.get_mut(&job_id) {
                             if let Some(ref stab) = job.stab {
-                                job.project_data = Self::get_gyroflow_data_internal(
+                                job.project_data = Self::get_gyroflow_data_internal_with_type(
                                     stab,
                                     &job.additional_data,
                                     &job.render_options,
+                                    finished_project_type.clone(),
+                                    allow_finished_project_file_reference,
                                 );
                             }
+                            job.last_finished_export_project = Some(finished_export_project);
                         }
                         // Release StabilizationManager to reclaim GPU memory
                         if let Some(job) = this.jobs.get_mut(&job_id) {
@@ -2123,6 +2325,7 @@ impl RenderQueue {
                         } else {
                             this.start_timestamp = 0;
                             this.start_frame = 0;
+                            this.start_queue_work_units = 0.0;
                             this.update_status();
                             if is_queue_active {
                                 this.post_render_action();
@@ -2201,8 +2404,10 @@ impl RenderQueue {
                     } else {
                         this.start_timestamp = 0;
                         this.start_frame = 0;
+                        this.start_queue_work_units = 0.0;
                     }
                     this.update_status();
+                    this.progress_changed();
                 },
             );
 
@@ -2251,8 +2456,10 @@ impl RenderQueue {
                     } else {
                         this.start_timestamp = 0;
                         this.start_frame = 0;
+                        this.start_queue_work_units = 0.0;
                     }
                     this.update_status();
+                    this.progress_changed();
                 },
             );
             let params = stab.params.read();
@@ -4726,8 +4933,8 @@ impl RenderQueue {
                     continue;
                 }
             }
-            let requested_range =
-                normalize_time_range_ms(result.gyro_start_ms.zip(result.gyro_end_ms));
+            let raw_requested_range = result.gyro_start_ms.zip(result.gyro_end_ms);
+            let requested_range = normalize_time_range_ms(raw_requested_range);
             let (
                 stab,
                 gyro_path,
@@ -4764,6 +4971,21 @@ impl RenderQueue {
                 },
                 None => continue,
             };
+            ::log::info!(
+                "[batch_match_diag] apply_item job_id={} video='{}' gyro_files_idx={} gyro_file='{}' status={:?} global_offset_ms={:?} init_offset_ms={:?} raw_range_ms={:?} normalized_range_ms={:?} auto_rotate={} original_rotation={:.1} base_output={:?}",
+                job_id,
+                render_options.input_filename,
+                gyro_files_idx,
+                filesystem::get_filename(&gyro_path),
+                result.status,
+                result.global_offset_ms,
+                result.init_offset_ms,
+                raw_requested_range,
+                requested_range,
+                auto_rotate,
+                original_video_rotation,
+                base_render_output_size
+            );
 
             unique_gyro_paths
                 .entry(gyro_files_idx)
@@ -4996,6 +5218,16 @@ impl RenderQueue {
                 let existing_entries = gyro_cache.get(&gyro_files_idx).cloned().unwrap_or_default();
                 let parse_requests =
                     build_parse_requests(&parse_info.requested_ranges, &existing_entries);
+                let existing_ranges: Vec<_> =
+                    existing_entries.iter().map(|entry| entry.range_ms).collect();
+                ::log::info!(
+                    "[batch_match_diag] parse_plan gyro_files_idx={} gyro_file='{}' requested_ranges={:?} existing_cache_ranges={:?} parse_requests={:?}",
+                    gyro_files_idx,
+                    filesystem::get_filename(&parse_info.path),
+                    parse_info.requested_ranges,
+                    existing_ranges,
+                    parse_requests
+                );
                 if parse_requests.is_empty() {
                     if !existing_entries.is_empty() {
                         cache_hit += 1;
@@ -5207,6 +5439,18 @@ impl RenderQueue {
                     );
                     let md =
                         clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
+                    ::log::info!(
+                        "[batch_match_diag] auto_rotate_slice job_id={} video='{}' gyro_files_idx={} requested_range={:?} cache_range={:?} adjusted_range={:?} cache_bounds={:?} cloned_bounds={:?} init_offset_ms={:?}",
+                        item.job_id,
+                        item.render_options.input_filename,
+                        item.gyro_files_idx,
+                        requested_range,
+                        cache_entry.range_ms,
+                        adjusted_range_ms,
+                        metadata_time_bounds_ms(cache_entry.metadata.as_ref()),
+                        metadata_time_bounds_ms(&md),
+                        item.init_offset_ms
+                    );
                     let detected_source = md.detected_source.as_deref().unwrap_or("");
                     let is_r3d = item
                         .render_options
@@ -5261,6 +5505,22 @@ impl RenderQueue {
                             clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
                         let imu_count = md.raw_imu.len();
                         let quat_count = md.quaternions.len();
+                        ::log::info!(
+                            "[batch_match_diag] apply_slice job_id={} worker_idx={} video='{}' gyro_files_idx={} gyro_file='{}' requested_range={:?} cache_range={:?} adjusted_range={:?} cache_bounds={:?} cloned_bounds={:?} imu_count={} quat_count={} init_offset_ms={:?}",
+                            item.job_id,
+                            idx,
+                            item.render_options.input_filename,
+                            item.gyro_files_idx,
+                            filesystem::get_filename(&item.gyro_path),
+                            requested_range,
+                            cache_entry.range_ms,
+                            adjusted_range_ms,
+                            metadata_time_bounds_ms(cache_entry.metadata.as_ref()),
+                            metadata_time_bounds_ms(&md),
+                            imu_count,
+                            quat_count,
+                            item.init_offset_ms
+                        );
                         let size = item.stab.params.read().size;
 
                         if let Some(base_lens_metadata) = item.base_lens_metadata.as_ref() {
@@ -5580,6 +5840,21 @@ impl RenderQueue {
                 // stay in sync.
                 let (init_offset_s, search_size_s) =
                     batch_match_sync_overrides(item.init_offset_ms);
+                ::log::info!(
+                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} duration_s={:.3} fps={:.3} max_sync_points={} every_nth_frame={}",
+                    item.job_id,
+                    item.render_options.input_filename,
+                    filesystem::get_filename(&item.gyro_path),
+                    item.gyro_start_ms.zip(item.gyro_end_ms),
+                    normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms)),
+                    item.init_offset_ms,
+                    init_offset_s,
+                    search_size_s,
+                    duration_s,
+                    fps,
+                    max_sync_points,
+                    every_nth_frame
+                );
 
                 let mut lens = item.stab.lens.write();
                 lens.sync_settings = Some(serde_json::json!({
@@ -6305,6 +6580,49 @@ fn prepare_project_additional_data(
     additional_data
 }
 
+fn remove_do_autosync_from_project_json(data: &mut String) -> bool {
+    let Ok(mut value) = serde_json::from_str::<serde_json::Value>(data) else {
+        return false;
+    };
+
+    let changed = remove_do_autosync_from_project_value(&mut value);
+    if changed {
+        if let Ok(updated) = serde_json::to_string(&value) {
+            *data = updated;
+        }
+    }
+    changed
+}
+
+fn remove_do_autosync_from_project_value(value: &mut serde_json::Value) -> bool {
+    let mut changed = false;
+    if let Some(sync) = value.get_mut("synchronization") {
+        changed |= remove_do_autosync_from_sync_value(sync);
+    }
+    if let Some(sync) = value
+        .get_mut("calibration_data")
+        .and_then(|v| v.get_mut("sync_settings"))
+    {
+        changed |= remove_do_autosync_from_sync_value(sync);
+    }
+    changed
+}
+
+fn remove_do_autosync_from_stab(stab: &StabilizationManager) -> bool {
+    let mut lens = stab.lens.write();
+    lens.sync_settings
+        .as_mut()
+        .map(remove_do_autosync_from_sync_value)
+        .unwrap_or_default()
+}
+
+fn remove_do_autosync_from_sync_value(value: &mut serde_json::Value) -> bool {
+    value
+        .as_object_mut()
+        .and_then(|obj| obj.remove("do_autosync"))
+        .is_some()
+}
+
 fn get_adjusted_match_range_ms(
     merged_time_range: Option<(f64, f64)>,
     gyro_start_ms: Option<f64>,
@@ -6318,6 +6636,18 @@ fn get_adjusted_match_range_ms(
     let adjusted_start = (start - range_offset_ms).max(0.0);
     let adjusted_end = (end - range_offset_ms).max(adjusted_start);
     Some((adjusted_start, adjusted_end))
+}
+
+fn metadata_time_bounds_ms(md: &core::gyro_source::FileMetadata) -> Option<(f64, f64)> {
+    md.raw_imu
+        .first()
+        .zip(md.raw_imu.last())
+        .map(|(first, last)| (first.timestamp_ms, last.timestamp_ms))
+        .or_else(|| {
+            let first = *md.quaternions.keys().next()? as f64 / 1000.0;
+            let last = *md.quaternions.keys().next_back()? as f64 / 1000.0;
+            Some((first, last))
+        })
 }
 
 fn update_metadata_duration(md: &mut core::gyro_source::FileMetadata) {
@@ -6764,6 +7094,7 @@ mod tests {
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
                 project_data: None,
+                last_finished_export_project: None,
                 stab: Some(job_stab),
                 base_lens_metadata: Some(base_lens_metadata),
                 lens_group_config_override: None,
@@ -6834,6 +7165,7 @@ mod tests {
                 cancel_flag: Default::default(),
                 render_epoch: Default::default(),
                 project_data: None,
+                last_finished_export_project: None,
                 stab: Some(stab),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -6843,6 +7175,215 @@ mod tests {
             },
         );
         queue
+    }
+
+    fn autosync_additional_data() -> String {
+        serde_json::json!({
+            "synchronization": {
+                "do_autosync": true,
+                "max_sync_points": 2,
+                "search_size": 5.0,
+                "time_per_syncpoint": 1.0,
+                "every_nth_frame": 1,
+                "initial_offset": 0.0,
+                "pose_method": 0,
+                "of_method": 2,
+                "offset_method": 2
+            }
+        })
+        .to_string()
+    }
+
+    fn queue_with_autosync_project(
+        status: JobStatus,
+        with_offsets: bool,
+        last_finished_export_project: Option<u32>,
+    ) -> RenderQueue {
+        let release_stab = status == JobStatus::Finished;
+        let mut queue = queue_with_eta_job(status);
+        let additional_data = autosync_additional_data();
+        let (stab, render_options) = {
+            let job = queue.jobs.get(&1).unwrap();
+            (job.stab.as_ref().unwrap().clone(), job.render_options.clone())
+        };
+
+        if with_offsets {
+            stab.gyro.write().set_offset(1_000_000, 42.0);
+        }
+
+        let project_data = RenderQueue::get_gyroflow_data_internal_with_type(
+            &stab,
+            &additional_data,
+            &render_options,
+            core::GyroflowProjectType::WithGyroData,
+            false,
+        )
+        .expect("project data export succeeds");
+
+        let job = queue.jobs.get_mut(&1).unwrap();
+        job.additional_data = additional_data;
+        job.project_data = Some(project_data);
+        job.last_finished_export_project = last_finished_export_project;
+        if release_stab {
+            job.stab = None;
+        }
+
+        queue
+    }
+
+    fn has_top_level_do_autosync(data: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .and_then(|v| {
+                v.get("synchronization")?
+                    .get("do_autosync")?
+                    .as_bool()
+            })
+            .unwrap_or_default()
+    }
+
+    fn has_calibration_do_autosync(data: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(data)
+            .ok()
+            .and_then(|v| {
+                v.get("calibration_data")?
+                    .get("sync_settings")?
+                    .get("do_autosync")?
+                    .as_bool()
+            })
+            .unwrap_or_default()
+    }
+
+    fn job_lens_has_do_autosync(job: &Job) -> bool {
+        job.stab
+            .as_ref()
+            .and_then(|stab| {
+                stab.lens
+                    .read()
+                    .sync_settings
+                    .clone()
+                    .and_then(|v| v.get("do_autosync").and_then(|x| x.as_bool()))
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn finished_sync_snapshot_bypasses_project_file_reference() {
+        let stab = StabilizationManager::default();
+        let dir = tempfile::tempdir().unwrap();
+        let project_path = dir.path().join("existing.gyroflow");
+        std::fs::write(&project_path, "{}").unwrap();
+        let project_url = filesystem::path_to_url(&project_path.to_string_lossy());
+        stab.input_file.write().project_file_url = Some(project_url.clone());
+
+        let shortcut = RenderQueue::get_gyroflow_data_internal_with_type(
+            &stab,
+            "{}",
+            &RenderOptions::default(),
+            core::GyroflowProjectType::Simple,
+            true,
+        )
+        .expect("project file reference succeeds");
+        let shortcut: serde_json::Value = serde_json::from_str(&shortcut).unwrap();
+        assert_eq!(shortcut["project_file"].as_str(), Some(project_url.as_str()));
+
+        let snapshot = RenderQueue::get_gyroflow_data_internal_with_type(
+            &stab,
+            &autosync_additional_data(),
+            &RenderOptions::default(),
+            core::GyroflowProjectType::WithGyroData,
+            false,
+        )
+        .expect("inline project snapshot succeeds");
+        let snapshot: serde_json::Value = serde_json::from_str(&snapshot).unwrap();
+        assert!(snapshot.get("project_file").is_none());
+        assert_eq!(snapshot["title"].as_str(), Some("Gyroflow data file"));
+        assert_eq!(
+            snapshot["synchronization"]["do_autosync"].as_bool(),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn prepare_finished_jobs_for_video_export_requeues_synced_jobs_without_force_autosync() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        let project_data = queue.jobs.get(&1).unwrap().project_data.as_ref().unwrap();
+        assert!(has_top_level_do_autosync(project_data));
+        assert!(has_calibration_do_autosync(project_data));
+        assert!(queue.jobs.get(&1).unwrap().stab.is_none());
+
+        queue.prepare_finished_jobs_for_video_export();
+
+        assert_eq!(queue.queue.borrow()[0].get_status(), &JobStatus::Queued);
+        let job = queue.jobs.get(&1).unwrap();
+        let project_data = job.project_data.as_ref().unwrap();
+        assert!(job.stab.is_some());
+        assert!(!has_top_level_do_autosync(project_data));
+        assert!(!has_calibration_do_autosync(project_data));
+        assert!(!has_top_level_do_autosync(&job.additional_data));
+        assert!(!job_lens_has_do_autosync(job));
+        assert!(!job
+            .stab
+            .as_ref()
+            .unwrap()
+            .gyro
+            .read()
+            .get_offsets()
+            .is_empty());
+        assert_eq!(job.last_finished_export_project, None);
+        assert_eq!(RenderQueue::estimated_sync_frames_for_job(job), 0);
+    }
+
+    #[test]
+    fn prepare_finished_jobs_for_video_export_leaves_error_and_skipped_jobs_unchanged() {
+        for status in [JobStatus::Error, JobStatus::Skipped] {
+            let mut queue = queue_with_autosync_project(status.clone(), true, Some(2));
+
+            queue.prepare_finished_jobs_for_video_export();
+
+            assert_eq!(queue.queue.borrow()[0].get_status(), &status);
+            let job = queue.jobs.get(&1).unwrap();
+            let project_data = job.project_data.as_ref().unwrap();
+            assert!(has_top_level_do_autosync(project_data));
+            assert!(has_calibration_do_autosync(project_data));
+            assert!(has_top_level_do_autosync(&job.additional_data));
+            assert!(job_lens_has_do_autosync(job));
+        }
+    }
+
+    #[test]
+    fn prepare_finished_jobs_for_video_export_leaves_finished_video_exports_unchanged() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(4));
+
+        queue.prepare_finished_jobs_for_video_export();
+
+        assert_eq!(queue.queue.borrow()[0].get_status(), &JobStatus::Finished);
+        assert!(queue.jobs.get(&1).unwrap().stab.is_none());
+        let job = queue.jobs.get(&1).unwrap();
+        let project_data = job.project_data.as_ref().unwrap();
+        assert!(has_top_level_do_autosync(project_data));
+        assert!(has_calibration_do_autosync(project_data));
+        assert_eq!(job.last_finished_export_project, Some(4));
+    }
+
+    #[test]
+    fn prepare_finished_jobs_for_video_export_leaves_unknown_finished_jobs_unchanged() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, None);
+
+        queue.prepare_finished_jobs_for_video_export();
+
+        assert_eq!(queue.queue.borrow()[0].get_status(), &JobStatus::Finished);
+        assert!(queue.jobs.get(&1).unwrap().stab.is_none());
+    }
+
+    #[test]
+    fn prepare_finished_jobs_for_video_export_keeps_sync_estimate_when_offsets_are_missing() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, false, Some(2));
+
+        queue.prepare_finished_jobs_for_video_export();
+
+        let job = queue.jobs.get(&1).unwrap();
+        assert!(RenderQueue::estimated_sync_frames_for_job(job) > 0);
     }
 
     #[test]
@@ -6917,6 +7458,129 @@ mod tests {
     }
 
     #[test]
+    fn queue_progress_tracks_sync_only_processing_progress() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.export_project = 2;
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 0.5;
+            q.change_line(0, item);
+        }
+
+        assert!((queue.get_queue_progress() - 0.5).abs() < 0.001);
+        assert_eq!(queue.get_queue_done_jobs(), 0);
+        assert_eq!(queue.get_queue_total_jobs(), 1);
+    }
+
+    #[test]
+    fn queue_progress_tracks_processing_when_sync_estimate_is_unknown() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.export_project = 2;
+        queue
+            .jobs
+            .get(&1)
+            .unwrap()
+            .stab
+            .as_ref()
+            .unwrap()
+            .lens
+            .write()
+            .sync_settings = Some(serde_json::json!({
+                "do_autosync": true,
+                "max_sync_points": 0
+            }));
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 0.25;
+            q.change_line(0, item);
+        }
+
+        assert_eq!(RenderQueue::estimated_sync_frames_for_job(queue.jobs.get(&1).unwrap()), 0);
+        assert!((queue.get_queue_progress() - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn queue_progress_weights_autosync_and_render_work_for_video_export() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.export_project = 4;
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 0.5;
+            q.change_line(0, item);
+        }
+
+        assert!((queue.get_queue_progress() - (10.0 / 120.0)).abs() < 0.001);
+
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 1.0;
+            item.current_frame = 50;
+            q.change_line(0, item);
+        }
+
+        assert!((queue.get_queue_progress() - (70.0 / 120.0)).abs() < 0.001);
+    }
+
+    #[test]
+    fn queue_progress_uses_frame_progress_for_regular_video_export() {
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.export_project = 0;
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.current_frame = 25;
+            q.change_line(0, item);
+        }
+
+        assert!(!queue.get_queue_progress_uses_jobs());
+        assert!((queue.get_queue_progress() - 0.25).abs() < 0.001);
+    }
+
+    #[test]
+    fn queue_progress_does_not_count_error_as_complete() {
+        let mut queue = queue_with_eta_job(JobStatus::Error);
+        queue.export_project = 2;
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 0.4;
+            q.change_line(0, item);
+        }
+
+        assert!((queue.get_queue_progress() - 0.4).abs() < 0.001);
+        assert_eq!(queue.get_queue_done_jobs(), 0);
+        assert_eq!(queue.get_queue_total_jobs(), 1);
+    }
+
+    #[test]
+    fn reset_job_clears_stale_processing_progress() {
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut item = q[0].clone();
+            item.processing_progress = 1.0;
+            item.current_frame = 1;
+            item.total_frames = 1;
+            item.start_timestamp = 123;
+            item.end_timestamp = 456;
+            q.change_line(0, item);
+        }
+
+        queue.reset_job(1);
+
+        let q = queue.queue.borrow();
+        assert_eq!(q[0].get_status(), &JobStatus::Queued);
+        assert_eq!(q[0].processing_progress, 0.0);
+        assert_eq!(q[0].current_frame, 0);
+        assert_eq!(q[0].start_timestamp, 0);
+        assert_eq!(q[0].end_timestamp, 0);
+    }
+
+    #[test]
     fn queue_eta_model_smooths_later_video_samples() {
         let mut model = QueueEtaEstimateModel::default();
 
@@ -6955,6 +7619,7 @@ mod tests {
                 cancel_flag: Default::default(),
                 render_epoch: render_epoch.clone(),
                 project_data: None,
+                last_finished_export_project: None,
                 stab: None,
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -7276,6 +7941,7 @@ mod tests {
             cancel_flag: Default::default(),
             render_epoch: Default::default(),
             project_data: None,
+            last_finished_export_project: None,
             stab: None,
             base_lens_metadata: None,
             lens_group_config_override: Some(JobLensGroupOverride {
@@ -7679,9 +8345,50 @@ mod tests {
             "simple-mode batch stabilized export must use export_project=4"
         );
         assert!(branch.contains("render_queue.start();"));
+        let prepare_idx = branch
+            .find("render_queue.prepare_finished_jobs_for_video_export();")
+            .expect("batch export prepares finished sync-only jobs before starting");
+        let start_idx = branch
+            .find("render_queue.start();")
+            .expect("batch export starts the queue");
+        assert!(
+            prepare_idx < start_idx,
+            "simple-mode batch stabilized export must prepare finished jobs before starting"
+        );
         assert!(
             !branch.contains("render_queue.export_project = 0;"),
             "simple-mode batch stabilized export must not use export_project=0"
+        );
+    }
+
+    #[test]
+    fn render_queue_top_progress_uses_backend_queue_progress() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let marker_idx = qml
+            .find("id: topCol")
+            .expect("top progress column exists");
+        let remaining = &qml[marker_idx..];
+        let branch_end = remaining
+            .find("Connections {")
+            .expect("top progress column ends before queue connections");
+        let top_progress = &remaining[..branch_end];
+
+        assert!(
+            top_progress.contains("render_queue.queue_progress"),
+            "top queue progress must use the backend aggregate progress"
+        );
+        assert!(
+            top_progress.contains("render_queue.queue_progress_uses_jobs"),
+            "top queue progress must use the backend display mode"
+        );
+        assert!(
+            top_progress.contains("render_queue.queue_done_jobs")
+                && top_progress.contains("render_queue.queue_total_jobs"),
+            "job-weighted top queue progress must display completed jobs over total jobs"
+        );
+        assert!(
+            !top_progress.contains("processing_progress"),
+            "top queue progress must not scan per-job processing progress in QML"
         );
     }
 }

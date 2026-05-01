@@ -696,20 +696,18 @@ fn normalize_source_base(value: &str) -> String {
 }
 
 fn source_changed(installed: &InstalledPluginInfo, latest: &LatestPluginInfo) -> bool {
+    let latest_ref = latest.source_ref.trim();
+    if !latest_ref.is_empty() {
+        let installed_ref = installed.source_ref.trim();
+        return installed_ref.is_empty() || installed_ref != latest_ref;
+    }
+
     let latest_base = normalize_source_base(&latest.source_base);
     if latest_base.is_empty() {
         return false;
     }
     let installed_base = normalize_source_base(&installed.source_base);
-    if installed_base != latest_base {
-        return true;
-    }
-    let latest_ref = latest.source_ref.trim();
-    if latest_ref.is_empty() {
-        return false;
-    }
-    let installed_ref = installed.source_ref.trim();
-    installed_ref.is_empty() || installed_ref != latest_ref
+    installed_base != latest_base
 }
 
 fn compare_plugin_versions(latest: &str, installed: &str) -> Ordering {
@@ -835,5 +833,59 @@ mod tests {
             source_mode: "release".to_owned(),
         };
         assert!(!source_changed(&installed, &latest));
+    }
+
+    #[test]
+    fn same_source_ref_ignores_mirror_base_change() {
+        let installed = InstalledPluginInfo {
+            version: "2.1.2.14".to_owned(),
+            source_ref: "actions-run-25153325566".to_owned(),
+            source_base: "https://www.niyien.com/api/download/content/plugin-49595a258ec8"
+                .to_owned(),
+        };
+        let latest = LatestPluginInfo {
+            version: "actions-run-25153325566".to_owned(),
+            source_ref: "actions-run-25153325566".to_owned(),
+            source_tag: "GyroflowNiyien-OpenFX-macos".to_owned(),
+            source_base: "https://nightly.link/NiYien/gyroflow-plugins/actions/runs/25153325566"
+                .to_owned(),
+            source_mode: "artifact".to_owned(),
+        };
+        assert!(!source_changed(&installed, &latest));
+    }
+
+    #[test]
+    fn different_source_ref_forces_update_across_mirrors() {
+        let installed = InstalledPluginInfo {
+            version: "2.1.2.14".to_owned(),
+            source_ref: "actions-run-25116018536".to_owned(),
+            source_base: "https://www.niyien.com/api/download/content/plugin-old".to_owned(),
+        };
+        let latest = LatestPluginInfo {
+            version: "actions-run-25153325566".to_owned(),
+            source_ref: "actions-run-25153325566".to_owned(),
+            source_tag: "GyroflowNiyien-OpenFX-macos".to_owned(),
+            source_base: "https://nightly.link/NiYien/gyroflow-plugins/actions/runs/25153325566"
+                .to_owned(),
+            source_mode: "artifact".to_owned(),
+        };
+        assert!(source_changed(&installed, &latest));
+    }
+
+    #[test]
+    fn source_base_change_is_fallback_when_latest_ref_is_empty() {
+        let installed = InstalledPluginInfo {
+            version: "1.0.0".to_owned(),
+            source_ref: String::new(),
+            source_base: "https://mirror-a.example/plugins".to_owned(),
+        };
+        let latest = LatestPluginInfo {
+            version: "manifest".to_owned(),
+            source_ref: String::new(),
+            source_tag: String::new(),
+            source_base: "https://mirror-b.example/plugins".to_owned(),
+            source_mode: "release".to_owned(),
+        };
+        assert!(source_changed(&installed, &latest));
     }
 }

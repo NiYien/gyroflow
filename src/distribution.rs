@@ -1486,6 +1486,15 @@ mod app_update_tests {
     }
 
     #[test]
+    fn cached_country_header_normalizes_two_letter_country_codes() {
+        assert_eq!(normalize_cached_country_header(" cn "), Some("CN".to_owned()));
+        assert_eq!(normalize_cached_country_header("us"), Some("US".to_owned()));
+        assert_eq!(normalize_cached_country_header("USA"), None);
+        assert_eq!(normalize_cached_country_header("1N"), None);
+        assert_eq!(normalize_cached_country_header(""), None);
+    }
+
+    #[test]
     fn manifest_deserializes_windows_setup_and_zip_packages() {
         let manifest: Manifest = serde_json::from_str(
             r#"{
