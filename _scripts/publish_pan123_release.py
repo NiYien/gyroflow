@@ -268,6 +268,13 @@ def parse_csv_list(value: str) -> list[str]:
     return [item.strip() for item in str(value or "").split(",") if item.strip()]
 
 
+def parse_int_env(name: str, default: int = 0) -> int:
+    try:
+        return int(os.environ.get(name, str(default)) or default)
+    except (TypeError, ValueError):
+        return default
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     # `--app-tag` is required only when the publish scope includes "app".
@@ -282,7 +289,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--app-owner", default=os.environ.get("NIYIEN_APP_OWNER", "").strip())
     parser.add_argument("--app-repo", default=os.environ.get("NIYIEN_APP_REPO", "").strip())
-    parser.add_argument("--app-run-id", type=int, default=int(os.environ.get("NIYIEN_APP_RUN_ID", "0") or "0"))
+    parser.add_argument("--app-run-id", type=int, default=parse_int_env("NIYIEN_APP_RUN_ID"))
     parser.add_argument("--lens-owner", default=os.environ.get("NIYIEN_LENS_DATA_OWNER", "NiYien"))
     parser.add_argument("--lens-repo", default=os.environ.get("NIYIEN_LENS_DATA_REPO", "niyien-lens-data"))
     parser.add_argument("--lens-tag", default=os.environ.get("NIYIEN_LENS_DATA_TAG", "").strip())
@@ -296,6 +303,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--plugins-artifact-name",
         default=os.environ.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "").strip(),
+    )
+    parser.add_argument(
+        "--plugins-run-id",
+        type=int,
+        default=parse_int_env("NIYIEN_PLUGINS_RUN_ID"),
     )
     parser.add_argument(
         "--sdk-base",
@@ -960,7 +972,8 @@ def main() -> int:
     emit_log(
         f"Resource refs: lens_tag={args.lens_tag or 'auto-latest'}, "
         f"plugins_tag={args.plugins_tag or 'auto-latest'}, "
-        f"plugins_artifact_name={args.plugins_artifact_name or 'auto-latest'}, sdk_base={args.sdk_base}"
+        f"plugins_artifact_name={args.plugins_artifact_name or 'auto-latest'}, "
+        f"plugins_run_id={args.plugins_run_id or 'auto-latest'}, sdk_base={args.sdk_base}"
     )
 
     # Diagnostic: surface proxy state. GitHub uploads/downloads honor
@@ -1129,6 +1142,7 @@ def main() -> int:
                 source_mode=args.plugins_source_mode,
                 tag=args.plugins_tag,
                 artifact_name=args.plugins_artifact_name,
+                run_id=args.plugins_run_id,
             )
             downloaded_plugin = download_plugin_assets(
                 github=github, temp_root=temp_root, plugin_source=plugin_source,
@@ -1458,6 +1472,7 @@ def resolve_plugin_source(
     source_mode: str,
     tag: str,
     artifact_name: str,
+    run_id: int = 0,
 ) -> PluginSource:
     mode = normalize_choice(
         source_mode,
@@ -1478,6 +1493,51 @@ def resolve_plugin_source(
         )
 
     requested_artifacts = parse_csv_list(artifact_name)
+    requested_artifact_set = set(requested_artifacts)
+
+    if int(run_id or 0) > 0:
+        artifacts = github.list_workflow_run_artifacts(owner, repo, int(run_id))
+        valid_artifacts = [
+            item
+            for item in artifacts
+            if not bool(item.get("expired"))
+            and (
+                not requested_artifacts
+                or str(item.get("name", "")).strip() in requested_artifact_set
+            )
+        ]
+        if requested_artifacts:
+            matched_names = {str(item.get("name", "")).strip() for item in valid_artifacts}
+            if not all(name in matched_names for name in requested_artifacts):
+                raise RuntimeError(
+                    f"Requested plugin artifact names missing from run {int(run_id)}: "
+                    f"{', '.join(name for name in requested_artifacts if name not in matched_names)}"
+                )
+        elif not valid_artifacts:
+            raise RuntimeError(f"No plugin artifacts found for run {int(run_id)}")
+        try:
+            resolved_files = resolve_plugin_assets_from_artifacts(
+                github=github,
+                temp_root=temp_root,
+                run_id=int(run_id),
+                artifacts=valid_artifacts,
+                source_ref=f"actions-run-{int(run_id)}",
+            )
+            display_name = ", ".join(requested_artifacts) if requested_artifacts else f"run-{int(run_id)}"
+            return PluginSource(
+                mode="artifact",
+                source_ref=f"actions-run-{int(run_id)}",
+                display_name=display_name,
+                owner=owner,
+                repo=repo,
+                run_id=int(run_id),
+                artifact_names=tuple(str(item.get("name", "")).strip() for item in valid_artifacts),
+                branch="",
+                resolved_files=resolved_files,
+            )
+        except RuntimeError as err:
+            raise RuntimeError(f"run {int(run_id)}: {err}") from err
+
     repository = github.get_repository(owner, repo)
     branch = str(repository.get("default_branch", "")).strip()
     if not branch:
@@ -1491,17 +1551,17 @@ def resolve_plugin_source(
     for run in runs:
         if str(run.get("conclusion", "")).lower() != "success":
             continue
-        run_id = int(run.get("id", 0) or 0)
-        if run_id <= 0:
+        current_run_id = int(run.get("id", 0) or 0)
+        if current_run_id <= 0:
             continue
-        artifacts = github.list_workflow_run_artifacts(owner, repo, run_id)
+        artifacts = github.list_workflow_run_artifacts(owner, repo, current_run_id)
         valid_artifacts = [
             item
             for item in artifacts
             if not bool(item.get("expired"))
             and (
                 not requested_artifacts
-                or str(item.get("name", "")).strip() in set(requested_artifacts)
+                or str(item.get("name", "")).strip() in requested_artifact_set
             )
         ]
         if requested_artifacts:
@@ -1515,24 +1575,24 @@ def resolve_plugin_source(
             resolved_files = resolve_plugin_assets_from_artifacts(
                 github=github,
                 temp_root=temp_root,
-                run_id=run_id,
+                run_id=current_run_id,
                 artifacts=valid_artifacts,
-                source_ref=f"actions-run-{run_id}",
+                source_ref=f"actions-run-{current_run_id}",
             )
             display_name = ", ".join(requested_artifacts) if requested_artifacts else "latest successful run"
             return PluginSource(
                 mode="artifact",
-                source_ref=f"actions-run-{run_id}",
+                source_ref=f"actions-run-{current_run_id}",
                 display_name=display_name,
                 owner=owner,
                 repo=repo,
-                run_id=run_id,
+                run_id=current_run_id,
                 artifact_names=tuple(str(item.get("name", "")).strip() for item in valid_artifacts),
                 branch=branch,
                 resolved_files=resolved_files,
             )
         except RuntimeError as err:
-            errors.append(f"run {run_id}: {err}")
+            errors.append(f"run {current_run_id}: {err}")
 
     message = (
         f"Unable to resolve plugin artifacts from {owner}/{repo} on branch {branch}. "

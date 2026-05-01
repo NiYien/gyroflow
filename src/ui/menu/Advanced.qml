@@ -79,40 +79,6 @@ MenuItem {
         if (persist)
             settings.setValue("theme", nextIndex);
     }
-    function showAvailableVersions(): void {
-        const payloadText = controller.fetch_available_versions();
-        let payload = { versions: [], error: "" };
-        try {
-            if (payloadText && payloadText.length > 0)
-                payload = JSON.parse(payloadText);
-        } catch (e) {
-            payload = { versions: [], error: e + "" };
-        }
-        if (payload.error) {
-            messageBox(Modal.Error, qsTr("Failed to fetch available versions: %1").arg(payload.error), [
-                { text: qsTr("Ok") }
-            ]);
-            return;
-        }
-        if (!payload.versions || payload.versions.length === 0) {
-            messageBox(Modal.Info, qsTr("No optional versions are currently available."), [
-                { text: qsTr("Ok") }
-            ]);
-            return;
-        }
-        let text = "### " + qsTr("Available versions") + "\n\n";
-        for (let i = 0; i < payload.versions.length; ++i) {
-            const item = payload.versions[i];
-            const label = item.recommended ? item.version + " (" + qsTr("Recommended") + ")" : item.version;
-            text += "- [" + label + "](" + item.url + ")";
-            if (item.changelog && item.changelog.length > 0) {
-                text += "\n  " + item.changelog.replace(/\r\n|\n\r|\n|\r/g, "\n  ");
-            }
-            text += "\n\n";
-        }
-        const el = messageBox(Modal.Info, text, [ { text: qsTr("Close") } ], undefined, Text.MarkdownText);
-        el.t.horizontalAlignment = Text.AlignLeft;
-    }
     Label {
         position: Label.LeftPosition;
         text: qsTr("Preview resolution");
@@ -478,9 +444,10 @@ MenuItem {
     }
     Item { width: 1; height: 10 * dpiScale; }
     LinkButton {
-        text: qsTr("View available app versions");
+        text: qsTr("Check for updates");
+        iconName: "sync";
         anchors.horizontalCenter: parent.horizontalCenter;
-        onClicked: root.showAvailableVersions();
+        onClicked: window.showAvailableAppVersions();
     }
     LinkButton {
         text: qsTr("Reset all settings to default");

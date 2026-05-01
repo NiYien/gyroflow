@@ -65,21 +65,27 @@ code,
 .mode-panel.hidden { display: none; }
 
 .mode-btn.active,
-.source-btn.active {
+.source-btn.active,
+.plugin-mode-btn.active,
+.plan-plugin-mode-btn.active {
   border-color: rgb(59 130 246);
   background-color: rgb(239 246 255);
 }
-.source-item.active {
+.source-item.active,
+.plugin-artifact-item.active {
   background-color: rgb(239 246 255);
 }
-.source-item {
+.source-item,
+.plugin-artifact-item {
   cursor: pointer;
   padding: 8px 12px;
   border-bottom: 1px solid rgb(241 245 249);
   font-size: 13px;
 }
-.source-item:hover { background-color: rgb(248 250 252); }
-.source-item:last-child { border-bottom: 0; }
+.source-item:hover,
+.plugin-artifact-item:hover { background-color: rgb(248 250 252); }
+.source-item:last-child,
+.plugin-artifact-item:last-child { border-bottom: 0; }
 
 /* Scrollbar — subtle */
 ::-webkit-scrollbar { width: 8px; height: 8px; }

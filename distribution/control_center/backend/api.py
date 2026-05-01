@@ -734,6 +734,45 @@ class Api:
         except Exception as e:
             return _error(e, "list_action_builds")
 
+    def list_plugin_action_builds(self, limit: int = 20) -> dict:
+        """Recent Action runs for the configured plugins owner/repo."""
+        try:
+            cfg = config_module.load_config()
+            owner = str(cfg.get("plugins_owner", "")).strip()
+            repo = str(cfg.get("plugins_repo", "")).strip()
+            if not (owner and repo):
+                return {"ok": False, "error": "config 里缺少 plugins_owner / plugins_repo"}
+            gh = self._gh_for(owner, repo, cfg)
+            runs = gh.list_repo_workflow_runs(owner, repo, per_page=limit, status="")
+            out = []
+            for r in runs:
+                run_id = int(r.get("id", 0) or 0)
+                artifact_names = []
+                if run_id:
+                    for a in gh.list_run_artifacts(owner, repo, run_id=run_id):
+                        if bool(a.get("expired")):
+                            continue
+                        name = str(a.get("name", "") or "").strip()
+                        if name:
+                            artifact_names.append(name)
+                out.append({
+                    "run_id": run_id,
+                    "run_number": int(r.get("run_number", 0) or 0),
+                    "name": r.get("name", ""),
+                    "title": r.get("display_title", "") or r.get("head_commit", {}).get("message", "").split("\n", 1)[0],
+                    "branch": r.get("head_branch", ""),
+                    "head_sha": r.get("head_sha", ""),
+                    "status": r.get("status", ""),
+                    "conclusion": r.get("conclusion", ""),
+                    "url": r.get("html_url", ""),
+                    "created_at": r.get("created_at", ""),
+                    "artifact_names": artifact_names,
+                    "artifact_name": ",".join(artifact_names),
+                })
+            return {"ok": True, "builds": out}
+        except Exception as e:
+            return _error(e, "list_plugin_action_builds")
+
     # ---- Publish actions ----
 
     def get_head_commit_subject(self) -> dict:
@@ -1369,6 +1408,7 @@ class Api:
                     "NIYIEN_PLUGINS_SOURCE_MODE": envs.get("NIYIEN_PLUGINS_SOURCE_MODE", ""),
                     "NIYIEN_PLUGINS_TAG": envs.get("NIYIEN_PLUGINS_TAG", ""),
                     "NIYIEN_PLUGINS_ARTIFACT_NAME": envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", ""),
+                    "NIYIEN_PLUGINS_RUN_ID": envs.get("NIYIEN_PLUGINS_RUN_ID", ""),
                     "NIYIEN_SDK_BASE": envs.get("NIYIEN_SDK_BASE", ""),
                 },
             }
@@ -1446,6 +1486,10 @@ class Api:
             plugin_mode = str(payload.get("plugin_mode", "")).strip().lower() or "release"
             plugin_tag = str(payload.get("plugin_tag", "")).strip()
             plugin_artifact = str(payload.get("plugin_artifact_name", "")).strip()
+            try:
+                plugin_run_id = int(payload.get("plugin_run_id", 0) or 0)
+            except (TypeError, ValueError):
+                plugin_run_id = 0
             sdk_base = str(payload.get("sdk_base", "")).strip()
             if not lens_tag:
                 return {"ok": False, "error": "Lens Tag 不能为空"}
@@ -1461,6 +1505,7 @@ class Api:
                 "NIYIEN_PLUGINS_SOURCE_MODE": plugin_mode,
                 "NIYIEN_PLUGINS_TAG": plugin_tag if plugin_mode == "release" else "",
                 "NIYIEN_PLUGINS_ARTIFACT_NAME": plugin_artifact if plugin_mode == "artifact" else "",
+                "NIYIEN_PLUGINS_RUN_ID": str(plugin_run_id) if plugin_mode == "artifact" and plugin_run_id > 0 else "",
                 "NIYIEN_SDK_BASE": sdk_base,
             }
             # Pull lens version/sha256 from the release's metadata.json so
@@ -1481,12 +1526,9 @@ class Api:
             current_envs = self._vercel(cfg).list_envs_decrypted()
             lens_dir_tag = str(current_envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip()
             plugin_dir_tag = str(current_envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip()
-            # Resolve plugin nightly.link in artifact mode by finding the most
-            # recent successful run that produced this artifact name. Empty
-            # run_id leaves global_plugins_base untouched; manifest will fall
-            # back to release-latest, which is the same behavior as before
-            # this code path existed.
-            plugin_run_id = 0
+            # Resolve plugin nightly.link in artifact mode. Prefer an explicit
+            # run id from the selected artifact list; fall back to the most
+            # recent run that produced the requested artifact name.
             plugin_owner = str(cfg.get("plugins_owner", "") or "NiYien").strip()
             plugin_repo = str(cfg.get("plugins_repo", "") or "gyroflow-plugins").strip()
             artifact_resolve_note = ""
@@ -1502,6 +1544,29 @@ class Api:
                 ]
                 if not csv_names:
                     artifact_resolve_note = "⚠ plugin_artifact_name 为空, global_plugins_base 留空"
+                elif plugin_run_id > 0:
+                    gh_client = self._gh_for(plugin_owner, plugin_repo, cfg)
+                    try:
+                        artifacts = gh_client.list_run_artifacts(
+                            plugin_owner, plugin_repo, run_id=plugin_run_id,
+                        )
+                    except Exception as e:
+                        artifact_resolve_note = f"⚠ 指定 run_id={plugin_run_id} 的 artifact 查询失败({e})"
+                        artifacts = []
+                    valid = [
+                        a for a in artifacts
+                        if not bool(a.get("expired"))
+                        and str(a.get("name", "")).strip() in csv_names
+                    ]
+                    matched_names = {str(a.get("name", "")).strip() for a in valid}
+                    if all(name in matched_names for name in csv_names):
+                        artifact_resolve_note = f"plugin nightly.link 已解析: run-{plugin_run_id} (explicit run_id)"
+                    else:
+                        artifact_resolve_note = (
+                            f"⚠ 指定 run_id={plugin_run_id} 未找到全部 artifact name, "
+                            "global_plugins_base 留空"
+                        )
+                        plugin_run_id = 0
                 else:
                     gh_client = self._gh_for(plugin_owner, plugin_repo, cfg)
                     last_err: Exception | None = None
@@ -1559,6 +1624,9 @@ class Api:
                     target_source_ref=target_plugin_source_ref,
                 )
                 mapping["NIYIEN_PLUGIN_RELEASE_TAG"] = plugin_dir_tag
+            mapping["NIYIEN_PLUGINS_RUN_ID"] = (
+                str(plugin_run_id) if plugin_mode == "artifact" and plugin_run_id > 0 else ""
+            )
             sync_note, policy_json = self._prepare_resources_policy_update(
                 cfg,
                 vercel_envs=current_envs,
@@ -1873,7 +1941,8 @@ class Api:
     def _build_pan123_publish_command(self, *, app_tag: str, cfg: dict,
                                       vercel_envs: dict, output_dir: Path,
                                       app_run_id: int = 0,
-                                      scope: list[str] | None = None) -> list[str]:
+                                      scope: list[str] | None = None,
+                                      publish_overrides: dict | None = None) -> list[str]:
         """Construct the publish_pan123_release.py CLI.
 
         `app_run_id > 0` switches to artifact mode (`--app-source-mode=artifact
@@ -1887,22 +1956,37 @@ class Api:
         the published component's tags.
         """
         script_path = REPO_ROOT / "_scripts" / "publish_pan123_release.py"
+        overrides = dict(publish_overrides or {})
         # Lens / plugin / sdk pulled from current Vercel env values (same as
         # what the manifest API will hand out — keeps cn 123 mirror in sync).
         # Fall back to publish_defaults from control_center.config.json when a
         # Vercel env is missing, so a stale or unset env doesn't silently feed
         # the publish script empty / outdated artifact names.
         defaults = dict(cfg.get("publish_defaults") or {})
-        lens_tag = str(vercel_envs.get("NIYIEN_LENS_DATA_TAG", "")).strip() \
+        lens_tag = str(overrides.get("lens_tag", "")).strip() \
+            or str(vercel_envs.get("NIYIEN_LENS_DATA_TAG", "")).strip() \
             or str(defaults.get("lens_data_tag", "")).strip()
-        plugins_mode = str(vercel_envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "")).strip().lower() \
+        plugins_mode = str(overrides.get("plugin_mode", "")).strip().lower() \
+            or str(vercel_envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "")).strip().lower() \
             or str(defaults.get("plugins_source_mode", "")).strip().lower() \
             or "release"
-        plugins_tag = str(vercel_envs.get("NIYIEN_PLUGINS_TAG", "")).strip() \
+        plugins_tag = str(overrides.get("plugin_tag", "")).strip() \
+            or str(vercel_envs.get("NIYIEN_PLUGINS_TAG", "")).strip() \
             or str(defaults.get("plugins_tag", "")).strip()
-        plugins_artifact = str(vercel_envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip() \
+        plugins_artifact = str(overrides.get("plugin_artifact_name", "")).strip() \
+            or str(vercel_envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip() \
             or str(defaults.get("plugins_artifact_name", "")).strip()
-        sdk_base = str(vercel_envs.get("NIYIEN_SDK_BASE", "")).strip() \
+        try:
+            plugins_run_id = int(
+                overrides.get("plugin_run_id", "")
+                or vercel_envs.get("NIYIEN_PLUGINS_RUN_ID", "")
+                or defaults.get("plugins_run_id", "")
+                or 0
+            )
+        except (TypeError, ValueError):
+            plugins_run_id = 0
+        sdk_base = str(overrides.get("sdk_base", "")).strip() \
+            or str(vercel_envs.get("NIYIEN_SDK_BASE", "")).strip() \
             or str(defaults.get("sdk_base", "")).strip()
 
         app_source_mode = "artifact" if int(app_run_id or 0) > 0 else "release"
@@ -1931,6 +2015,8 @@ class Api:
             cmd.extend(["--plugins-tag", plugins_tag])
         if plugins_artifact:
             cmd.extend(["--plugins-artifact-name", plugins_artifact])
+        if plugins_mode == "artifact" and plugins_run_id > 0:
+            cmd.extend(["--plugins-run-id", str(plugins_run_id)])
         if sdk_base:
             cmd.extend(["--sdk-base", sdk_base])
         return cmd
@@ -1938,6 +2024,7 @@ class Api:
     def _start_pan123_publish(self, *, app_tag: str, app_version: str,
                               app_run_id: int = 0,
                               scope: list[str] | None = None,
+                              publish_overrides: dict | None = None,
                               on_finalize=None) -> dict:
         """Submit a pan123 publish task. Returns {ok, token} or {ok:False, error}.
 
@@ -1990,7 +2077,7 @@ class Api:
             output_dir = REPO_ROOT / "_deployment" / "_publish_local" / app_tag
             command = self._build_pan123_publish_command(
                 app_tag=app_tag, cfg=cfg, vercel_envs=vercel_envs, output_dir=output_dir,
-                app_run_id=app_run_id, scope=scope_list,
+                app_run_id=app_run_id, scope=scope_list, publish_overrides=publish_overrides,
             )
 
             # Build env: copy os.environ + inject required secrets + proxy
@@ -2496,7 +2583,9 @@ class Api:
         versions.append(entry)
 
     def _finalize_publish_to_manifest(self, cfg: dict, policy_json: str,
-                                       finalize_summary: dict | None = None) -> str:
+                                       finalize_summary: dict | None = None,
+                                       *, target_version: str = "",
+                                       extra_envs: dict | None = None) -> str:
         """Two-phase commit step 2: push policy to Vercel + trigger deploy hook.
 
         Called either inline (manual_only / hide_version actions, no
@@ -2529,7 +2618,7 @@ class Api:
         if finalize_summary:
             try:
                 policy = _json.loads(policy_json)
-                auto_v = str(policy.get("auto_version", "")).strip()
+                auto_v = str(target_version or policy.get("auto_version", "")).strip()
                 target = next(
                     (v for v in policy.get("versions", []) if v.get("version") == auto_v),
                     None,
@@ -2582,6 +2671,10 @@ class Api:
                 upsert_map["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
             if finalize_summary.get("lens_sha256"):
                 upsert_map["NIYIEN_LENS_SHA256"] = str(finalize_summary["lens_sha256"])
+        if extra_envs:
+            for key, value in extra_envs.items():
+                if key:
+                    upsert_map[str(key)] = "" if value is None else str(value)
 
         last_err: Exception | None = None
         for attempt in range(3):
@@ -2628,6 +2721,262 @@ class Api:
                 raise RuntimeError(f"hook failed ({hook_err}); REST fallback failed: {e}") from e
             raise
 
+    @staticmethod
+    def _normalize_release_plan_resources(payload: dict) -> dict:
+        resources = payload.get("resources") if isinstance(payload.get("resources"), dict) else {}
+
+        def _pick(key: str, default: str = "") -> str:
+            value = resources.get(key, payload.get(key, default))
+            return str(value or "").strip()
+
+        def _pick_bool(key: str, default: bool = True) -> bool:
+            value = resources.get(key, payload.get(key, default))
+            if isinstance(value, bool):
+                return value
+            text = str(value).strip().lower()
+            if text in {"0", "false", "no", "off"}:
+                return False
+            if text in {"1", "true", "yes", "on"}:
+                return True
+            return default
+
+        plugin_mode = (_pick("plugin_mode", "release") or "release").lower()
+        return {
+            "lens_tag": _pick("lens_tag"),
+            "plugin_mode": plugin_mode,
+            "plugin_tag": _pick("plugin_tag"),
+            "plugin_artifact_name": _pick("plugin_artifact_name"),
+            "plugin_run_id": _pick("plugin_run_id"),
+            "sdk_base": _pick("sdk_base"),
+            "include_sdk": _pick_bool("include_sdk", True),
+        }
+
+    @staticmethod
+    def _normalize_release_plan_app(payload: dict) -> dict:
+        source_kind = str(payload.get("source_kind", payload.get("kind", ""))).strip().lower()
+        version = str(payload.get("version", "")).strip()
+        tag = str(payload.get("tag", "")).strip()
+        try:
+            run_id = int(payload.get("run_id", payload.get("runId", 0)) or 0)
+        except (TypeError, ValueError):
+            run_id = 0
+        if source_kind == "artifact" and run_id > 0 and not tag:
+            tag = f"run-{run_id}"
+        return {
+            "action": str(payload.get("action", "")).strip(),
+            "source_kind": source_kind,
+            "version": version,
+            "tag": tag,
+            "run_id": run_id,
+            "changelog": str(payload.get("changelog", "")).strip(),
+            "recommended": payload.get("recommended") if "recommended" in payload else None,
+        }
+
+    @staticmethod
+    def _normalize_scope(raw_scope) -> list[str]:
+        if isinstance(raw_scope, str):
+            items = [item.strip().lower() for item in raw_scope.split(",") if item.strip()]
+        elif isinstance(raw_scope, (list, tuple, set)):
+            items = [str(item).strip().lower() for item in raw_scope if str(item).strip()]
+        else:
+            items = []
+        seen: list[str] = []
+        for item in items:
+            if item not in seen:
+                seen.append(item)
+        return seen
+
+    def execute_release_plan(self, payload: dict) -> dict:
+        try:
+            return self._execute_release_plan(payload or {})
+        except Exception as e:
+            return _error(e, "execute_release_plan")
+
+    def _execute_release_plan(self, payload: dict) -> dict:
+        import json as _json
+
+        plan = self._normalize_release_plan_app(payload)
+        resources = self._normalize_release_plan_resources(payload)
+        action = plan["action"]
+        if action in {"hide_version"}:
+            return self.execute_app_action(payload)
+        rollback_auto = action == "rollback_auto"
+        if rollback_auto:
+            action = "switch_auto"
+            plan["recommended"] = True
+
+        version = plan["version"]
+        if not version:
+            return {"ok": False, "error": "缺少 version"}
+        tag = plan["tag"]
+        if not tag and action in {"manual_only", "publish_and_push", "switch_auto"}:
+            return {"ok": False, "error": "缺少 tag"}
+
+        cfg = config_module.load_config()
+        vercel = self._vercel(cfg)
+        env_records = vercel.list_env_records()
+        policy = self._load_current_policy(cfg, vercel, env_records)
+        versions = policy.get("versions", [])
+
+        app_source_mode_field = ""
+        app_urls_field: dict | None = None
+        if plan["source_kind"] == "artifact" and plan["run_id"] > 0:
+            app_source_mode_field = "artifact"
+            if _PUB_MODULE is not None:
+                app_urls_field = _PUB_MODULE.build_global_artifact_app_urls(
+                    tag,
+                    _PUB_MODULE.REQUIRED_APP_ASSET_NAMES,
+                )
+
+        already_present = any(v.get("version") == version for v in versions)
+        if action == "manual_only":
+            self._upsert_version_entry(
+                versions, version, tag, plan["changelog"], bool(plan["recommended"]), ["manual"],
+                run_id=plan["run_id"],
+                app_source_mode=app_source_mode_field,
+                app_urls=app_urls_field,
+            )
+        elif action == "publish_and_push":
+            self._upsert_version_entry(
+                versions, version, tag, plan["changelog"], bool(plan["recommended"]), ["auto", "manual"],
+                run_id=plan["run_id"],
+                app_source_mode=app_source_mode_field,
+                app_urls=app_urls_field,
+            )
+            for item in versions:
+                if item.get("version") != version and "auto" in item.get("channels", []):
+                    item["channels"] = [c for c in item.get("channels", []) if c != "auto"] or ["manual"]
+            policy["auto_version"] = version
+        elif action == "switch_auto":
+            if not already_present:
+                return {
+                    "ok": False,
+                    "error": f"版本 {version} 不在 policy.versions 白名单中,请先发布或加入手动列表",
+                }
+            for item in versions:
+                if item.get("version") == version:
+                    item["channels"] = sorted(set(item.get("channels", []) + ["auto", "manual"]))
+                    if plan["recommended"] is not None:
+                        item["recommended"] = plan["recommended"]
+                    if rollback_auto:
+                        item["recommended"] = True
+                    if tag and not str(item.get("tag", "")).strip():
+                        item["tag"] = tag
+                    if plan["run_id"] > 0 and int(item.get("run_id", 0) or 0) <= 0:
+                        item["run_id"] = plan["run_id"]
+                    if app_source_mode_field and not str(item.get("app_source_mode", "")).strip():
+                        item["app_source_mode"] = app_source_mode_field
+                    if app_urls_field and not item.get("app_urls"):
+                        item["app_urls"] = app_urls_field
+                elif "auto" in item.get("channels", []):
+                    item["channels"] = [c for c in item.get("channels", []) if c != "auto"] or ["manual"]
+            policy["auto_version"] = version
+        else:
+            return {"ok": False, "error": f"未知发布动作: {action}"}
+
+        policy["versions"].sort(key=lambda x: x.get("version", ""), reverse=True)
+        staged_policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
+
+        scope_list = self._normalize_scope(payload.get("scope"))
+        if not scope_list:
+            if tag:
+                scope_list.append("app")
+            if resources.get("lens_tag"):
+                scope_list.append("lens")
+            if resources.get("plugin_mode") == "artifact":
+                if resources.get("plugin_artifact_name"):
+                    scope_list.append("plugin")
+            elif resources.get("plugin_tag"):
+                scope_list.append("plugin")
+        scope_list = [item for item in scope_list if item in {"app", "lens", "plugin"}]
+        if not scope_list:
+            return {"ok": False, "error": "没有可执行的发布内容"}
+
+        publish_overrides = {k: v for k, v in resources.items() if k != "include_sdk"}
+        if not publish_overrides.get("plugin_mode"):
+            publish_overrides["plugin_mode"] = "release"
+        if not resources.get("include_sdk", True):
+            publish_overrides["sdk_base"] = ""
+
+        scope_set = set(scope_list)
+
+        def _extra_envs() -> dict[str, str]:
+            plugin_mode = str(resources.get("plugin_mode", "release")).strip().lower() or "release"
+            lens_tag = str(resources.get("lens_tag", "")).strip()
+            plugin_tag = str(resources.get("plugin_tag", "")).strip()
+            plugin_artifact_name = str(resources.get("plugin_artifact_name", "")).strip()
+            plugin_run_id = str(resources.get("plugin_run_id", "")).strip()
+            sdk_base = str(resources.get("sdk_base", "")).strip()
+            include_sdk = bool(resources.get("include_sdk", True))
+            extra: dict[str, str] = {}
+            if "lens" in scope_set and lens_tag:
+                extra["NIYIEN_LENS_DATA_TAG"] = lens_tag
+            if "plugin" in scope_set:
+                if plugin_mode == "release" and plugin_tag:
+                    extra["NIYIEN_PLUGINS_SOURCE_MODE"] = "release"
+                    extra["NIYIEN_PLUGINS_TAG"] = plugin_tag
+                    extra["NIYIEN_PLUGINS_ARTIFACT_NAME"] = ""
+                    extra["NIYIEN_PLUGINS_RUN_ID"] = ""
+                elif plugin_mode == "artifact" and plugin_artifact_name:
+                    extra["NIYIEN_PLUGINS_SOURCE_MODE"] = "artifact"
+                    extra["NIYIEN_PLUGINS_TAG"] = ""
+                    extra["NIYIEN_PLUGINS_ARTIFACT_NAME"] = plugin_artifact_name
+                    extra["NIYIEN_PLUGINS_RUN_ID"] = plugin_run_id
+                if include_sdk and sdk_base:
+                    extra["NIYIEN_SDK_BASE"] = sdk_base
+            elif "lens" in scope_set and include_sdk and sdk_base:
+                extra["NIYIEN_SDK_BASE"] = sdk_base
+            return extra
+
+        base_message = (
+            f"已执行 {action} · policy.versions 共 {len(policy['versions'])} 条 · "
+            f"auto_version={policy.get('auto_version') or '(空)'}"
+        )
+        result = {
+            "ok": True,
+            "action": action,
+            "version": version,
+            "auto_version": policy.get("auto_version", ""),
+            "versions_count": len(policy["versions"]),
+            "staged_until_pan123": False,
+            "plan_scope": scope_list,
+        }
+
+        effective_run_id = plan["run_id"] or int(
+            next((v.get("run_id", 0) for v in policy.get("versions", []) if v.get("version") == version), 0) or 0
+        )
+
+        def _on_pan123_finalize(finalize_summary: dict) -> str:
+            return self._finalize_publish_to_manifest(
+                cfg,
+                staged_policy_json,
+                finalize_summary,
+                target_version=version,
+                extra_envs=_extra_envs(),
+            )
+
+        pan_result = self._start_pan123_publish(
+            app_tag=tag,
+            app_version=version,
+            app_run_id=effective_run_id,
+            scope=scope_list,
+            publish_overrides=publish_overrides,
+            on_finalize=_on_pan123_finalize,
+        )
+        if pan_result.get("ok"):
+            result["pan123_task_token"] = pan_result["token"]
+            result["pan123_target_tag"] = tag
+            result["staged_until_pan123"] = True
+            result["message"] = (
+                f"{base_message} · pan123 同步已启动 (token={pan_result['token'][:8]}); "
+                f"上传成功后才会自动推送 manifest"
+            )
+        else:
+            result["pan123_error"] = pan_result.get("error", "pan123 同步启动失败")
+            result["ok"] = False
+            result["error"] = result["pan123_error"]
+        return result
+
     def execute_app_action(self, payload: dict) -> dict:
         """One of 5 publish actions — real policy mutation + Vercel upsert.
 
@@ -2650,6 +2999,8 @@ class Api:
             valid = {"manual_only", "publish_and_push", "switch_auto", "rollback_auto", "hide_version"}
             if action not in valid:
                 return {"ok": False, "error": f"未知发布动作: {action}"}
+            if action == "manual_only":
+                return self.execute_release_plan(payload)
             version = str(payload.get("version", "")).strip()
             if not version:
                 return {"ok": False, "error": "缺少 version"}

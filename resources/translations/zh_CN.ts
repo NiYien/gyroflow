@@ -375,6 +375,42 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>版本：%1</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1479"/>
+        <source>Manual test version</source>
+        <translation>手动测试版本</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1479"/>
+        <source>Stable update</source>
+        <translation>稳定版本更新</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1489"/>
+        <source>Test version available: %1.</source>
+        <translation>有可用测试版本：%1。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1490"/>
+        <source>Stable update available: %1.</source>
+        <translation>有可用稳定版本更新：%1。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1505"/>
+        <source>Available updates</source>
+        <translation>可用更新</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1526"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="447"/>
+        <source>Check for updates</source>
+        <translation>检查更新</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1561"/>
+        <source>You are already on the latest version.</source>
+        <translation>当前已经是最新版本。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1473"/>
         <source>Select a version</source>
         <translation>选择版本</translation>

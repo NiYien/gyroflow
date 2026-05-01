@@ -17,7 +17,7 @@
     </div>
     <nav class="flex-1 space-y-1 text-sm">
       <button data-view="dashboard" class="nav-btn active w-full text-left px-3 py-2 rounded-md bg-slate-800">Dashboard</button>
-      <button data-view="resources" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">资源编排</button>
+      <button data-view="publish" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">发布中心</button>
       <button data-view="stats" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">统计</button>
       <button data-view="settings" class="nav-btn w-full text-left px-3 py-2 rounded-md hover:bg-slate-800">设置</button>
     </nav>
@@ -25,7 +25,7 @@
   </aside>
 
   <!-- Main -->
-  <main class="flex-1 p-6 overflow-y-auto">
+  <main class="flex-1 min-w-0 p-6 overflow-y-auto">
     <!-- Dashboard view -->
     <section data-view="dashboard" class="view">
       <header class="flex items-baseline justify-between mb-4">
@@ -58,23 +58,6 @@
           <div class="text-lg font-semibold mt-1" id="sdk-version">-</div>
           <div class="text-xs text-slate-500 mt-0.5" id="sdk-meta">&nbsp;</div>
         </div>
-      </div>
-
-      <!-- Main actions -->
-      <h2 class="text-sm font-semibold text-slate-600 mb-2">主要操作</h2>
-      <div class="grid grid-cols-3 gap-3 mb-6">
-        <button data-action-nav="publish" class="p-4 bg-white rounded-lg shadow-sm hover:bg-slate-100 text-left border border-transparent hover:border-blue-400">
-          <div class="font-semibold">▸ 发布新版本</div>
-          <div class="text-xs text-slate-500 mt-1">打 tag / 触发构建 / 发布已有源</div>
-        </button>
-        <button data-action-nav="resources" class="p-4 bg-white rounded-lg shadow-sm hover:bg-slate-100 text-left border border-transparent hover:border-blue-400">
-          <div class="font-semibold">▸ 更新资源</div>
-          <div class="text-xs text-slate-500 mt-1">Lens / Plugin / SDK 版本切换</div>
-        </button>
-        <button id="open-manifest-modal-btn" class="p-4 bg-white rounded-lg shadow-sm hover:bg-slate-100 text-left border border-transparent hover:border-blue-400">
-          <div class="font-semibold">▸ 预览中国区 manifest</div>
-          <div class="text-xs text-slate-500 mt-1">排查用户下载问题</div>
-        </button>
       </div>
 
       <!-- 123 网盘资源状态 -->
@@ -115,8 +98,8 @@
     <section data-view="publish" class="view hidden">
       <header class="flex items-baseline justify-between mb-4">
         <div>
-          <h1 class="text-2xl font-semibold">发布新版本</h1>
-          <p class="text-sm text-slate-500">选择操作模式,只显示对应字段</p>
+          <h1 class="text-2xl font-semibold">发布中心</h1>
+          <p class="text-sm text-slate-500">App 发布和资源编排集中在这里执行</p>
         </div>
         <button data-action-nav="dashboard" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">返回 Dashboard</button>
       </header>
@@ -226,22 +209,84 @@
         <div class="mb-4">
           <label class="text-sm font-semibold text-slate-600 mb-1 block">发布动作</label>
           <select id="pub-action" class="w-full border border-slate-300 rounded-md p-2 text-sm">
-            <option value="manual_only">加入手动版本列表(不推送)</option>
+            <option value="manual_only">上传并加入手动版本列表</option>
             <option value="publish_and_push">发布并立即自动推送</option>
             <option value="switch_auto">切换当前推送为此版本</option>
-            <option value="rollback_auto">切换自动推送版本(此版本)</option>
             <option value="hide_version">隐藏版本</option>
           </select>
           <p id="pub-action-hint" class="text-xs text-slate-500 mt-1"></p>
         </div>
 
+        <div class="mb-4 bg-slate-50 rounded-lg border border-slate-200 p-4">
+          <div class="flex items-center justify-between gap-2 mb-3">
+            <label class="text-sm font-semibold text-slate-600 block">本次发布资源</label>
+            <span class="text-[11px] text-slate-500">选择后由发布计划统一执行</span>
+          </div>
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs text-slate-500 block mb-1">
+                <input id="plan-include-lens" type="checkbox" checked class="mr-2 align-middle h-3.5 w-3.5 rounded border-slate-300">
+                Lens / CameraDB Tag
+              </label>
+              <input id="plan-lens-tag" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: data-v20260421.1">
+            </div>
+
+            <div>
+              <label class="text-xs text-slate-500 block mb-1">
+                <input id="plan-include-plugin" type="checkbox" checked class="mr-2 align-middle h-3.5 w-3.5 rounded border-slate-300">
+                Plugin 来源
+              </label>
+              <div class="flex gap-2 mb-2">
+                <button data-plan-plugin-mode="release" class="plan-plugin-mode-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Release</button>
+                <button data-plan-plugin-mode="artifact" class="plan-plugin-mode-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Action Artifact</button>
+              </div>
+              <div data-plan-plugin-mode-panel="release" class="plan-plugin-mode-panel hidden">
+                <label class="text-[11px] text-slate-500 block mb-1">Plugin Release Tag</label>
+                <input id="plan-plugin-tag" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: v1.6.1">
+              </div>
+              <div data-plan-plugin-mode-panel="artifact" class="plan-plugin-mode-panel hidden">
+                <input type="hidden" id="plan-plugin-artifact">
+                <input type="hidden" id="plan-plugin-run-id">
+                <div class="flex flex-wrap items-center justify-between gap-2 mb-1">
+                  <label class="text-[11px] text-slate-500 block">Plugin Action Artifact</label>
+                  <button id="plan-plugin-artifact-refresh" type="button" class="text-xs text-blue-600 hover:text-blue-800">刷新</button>
+                </div>
+                <div id="plan-plugin-artifact-selected" class="mb-2 text-xs text-slate-500">未选择 Plugin Action Artifact</div>
+                <div id="plan-plugin-artifact-list" class="border border-slate-200 rounded-md max-h-44 overflow-y-auto bg-white">
+                  <div class="p-3 text-xs text-slate-500">切换到 Action Artifact 后加载列表</div>
+                </div>
+              </div>
+            </div>
+
+            <div>
+              <label class="text-xs text-slate-500 block mb-1">
+                <input id="plan-include-sdk" type="checkbox" checked class="mr-2 align-middle h-3.5 w-3.5 rounded border-slate-300">
+                SDK 下载源
+              </label>
+              <input id="plan-sdk-base" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="https://api.gyroflow.xyz/sdk/">
+            </div>
+          </div>
+        </div>
+
+        <div class="mb-4">
+          <label class="text-sm font-semibold text-slate-600 mb-2 block">执行清单</label>
+          <ul id="release-plan-checklist" class="space-y-1 text-sm">
+            <li data-plan-step="app" class="flex items-center gap-2 text-slate-500"><span class="w-4 text-center">·</span><span>App 源</span></li>
+            <li data-plan-step="lens" class="flex items-center gap-2 text-slate-500"><span class="w-4 text-center">·</span><span>Lens 资源</span></li>
+            <li data-plan-step="plugin" class="flex items-center gap-2 text-slate-500"><span class="w-4 text-center">·</span><span>Plugin 资源</span></li>
+            <li data-plan-step="sdk" class="flex items-center gap-2 text-slate-500"><span class="w-4 text-center">·</span><span>SDK 基址</span></li>
+            <li data-plan-step="pan123" class="flex items-center gap-2 text-slate-500"><span class="w-4 text-center">·</span><span>123 上传</span></li>
+            <li data-plan-step="manifest" class="flex items-center gap-2 text-slate-500"><span class="w-4 text-center">·</span><span>Vercel manifest</span></li>
+          </ul>
+        </div>
+
         <!-- Execute -->
         <div class="flex gap-2 items-center">
-          <button id="execute-publish-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-slate-300" disabled>执行发布动作</button>
+          <button id="execute-publish-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-slate-300" disabled>执行发布计划</button>
           <span id="execute-publish-result" class="text-sm text-slate-600">先选一个版本</span>
         </div>
 
-        <!-- Pan123 sync progress (auto-shown after publish_and_push / switch_auto / rollback_auto) -->
+        <!-- Pan123 sync progress (auto-shown for staged publish plans) -->
         <div id="pan123-progress-panel" class="hidden mt-5 p-4 bg-slate-50 rounded-lg border border-slate-200">
           <div class="flex items-center justify-between mb-2">
             <h3 class="font-semibold text-sm">123 网盘同步</h3>
@@ -271,164 +316,81 @@
           <div id="pan123-inventory" class="text-xs text-slate-500 italic">点"扫描"列出每个版本在 123 网盘上的文件齐不齐</div>
         </div>
       </div>
-    </section>
 
-    <!-- Resources view -->
-    <section data-view="resources" class="view hidden">
-      <header class="flex items-baseline justify-between mb-4">
-        <div>
-          <h1 class="text-2xl font-semibold">资源编排</h1>
-          <p class="text-sm text-slate-500">Lens / Plugin / SDK 版本管理,选操作后只显示相关字段</p>
-        </div>
-        <button id="resources-reload-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">重新读取</button>
-      </header>
-      <p id="resources-status" class="text-sm mb-4"></p>
-
-      <!-- Operation selector -->
-      <div class="mb-4">
-        <label class="text-sm font-semibold text-slate-600 mb-2 block">操作类型</label>
-        <div class="grid grid-cols-2 gap-2">
-          <button data-res-op="apply" class="res-op-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
-            <div class="font-semibold text-sm">① 立即切换当前内容版本</div>
-            <div class="text-xs text-slate-500 mt-1">upsert 到 Vercel 环境变量,立刻对用户生效</div>
-          </button>
-          <button data-res-op="save" class="res-op-btn p-3 text-left rounded-md border border-slate-200 bg-white hover:border-blue-400">
-            <div class="font-semibold text-sm">② 保存为下次发版默认</div>
-            <div class="text-xs text-slate-500 mt-1">写到 control_center.config.json,下次发版时自动填入</div>
-          </button>
-        </div>
-      </div>
-
-      <!-- Form (shared between both operations) -->
-      <div data-res-form class="bg-white rounded-lg shadow-sm p-5 mb-4 hidden">
-        <h2 id="res-form-title" class="font-semibold mb-3"></h2>
-
-        <div class="space-y-3">
-          <!-- Lens Tag -->
+      <!-- Resources orchestration -->
+      <div class="mt-6 border-t border-slate-200 pt-6">
+        <header class="flex items-baseline justify-between mb-4">
           <div>
-            <label class="text-sm text-slate-600 block mb-1">Lens / CameraDB Tag</label>
-            <input id="res-lens-tag" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: data-v20260421.1">
+            <h2 class="text-xl font-semibold">资源编排</h2>
+            <p class="text-sm text-slate-500">Lens / Plugin / SDK 只做准备和状态查看,最终推送走上方发布计划</p>
           </div>
+          <button id="resources-reload-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">重新读取</button>
+        </header>
+        <p id="resources-status" class="text-sm mb-4"></p>
 
-          <!-- Plugin mode + conditional tag / artifact_name -->
-          <div>
-            <label class="text-sm text-slate-600 block mb-1">Plugin 来源</label>
-            <div class="flex gap-2 mb-2">
-              <button data-plugin-mode="release" class="plugin-mode-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Release</button>
-              <button data-plugin-mode="artifact" class="plugin-mode-btn px-3 py-1.5 text-sm rounded-md border border-slate-300 bg-white hover:border-blue-400">Action Artifact</button>
-            </div>
+        <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.6fr)_minmax(320px,0.9fr)] gap-4 mb-4">
+          <div class="bg-white rounded-lg shadow-sm p-5">
+            <h2 class="font-semibold mb-2">发布新资源版本</h2>
+            <p class="text-xs text-slate-500 mb-4">通过 GitHub API 给 plugin / lens 仓库远程打 tag,触发其 workflow 自动 build + 创建 release。不需要本地克隆这两个仓库。</p>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div class="border border-slate-200 rounded-md p-4">
+                <div class="text-sm font-semibold mb-2">Plugin 仓库打 tag</div>
+                <p class="text-xs text-slate-500 mb-3" id="plugin-repo-hint">NiYien/gyroflow-plugins</p>
+                <label class="text-xs text-slate-600 block mb-1">主版本号</label>
+                <div class="flex flex-wrap items-center gap-1 mb-3">
+                  <input id="plugin-tag-major" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="1">
+                  <span class="text-slate-400">.</span>
+                  <input id="plugin-tag-minor" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="6">
+                  <span class="text-slate-400">.</span>
+                  <input id="plugin-tag-patch" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="1">
+                  <span class="sm:ml-2 text-xs text-slate-500">→ <code id="plugin-tag-preview" class="bg-slate-100 px-1 rounded">v1.6.1</code></span>
+                </div>
+                <button id="create-plugin-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
+                <div id="plugin-tag-result" class="mt-2 text-xs"></div>
 
-            <div data-plugin-mode-panel="release" class="plugin-mode-panel hidden">
-              <label class="text-xs text-slate-500 block mb-1">Plugin Release Tag</label>
-              <input id="res-plugin-tag" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="例: v1.6.1">
-            </div>
+                <div class="mt-4 pt-3 border-t border-slate-200">
+                  <div class="text-xs font-semibold text-slate-600 mb-1">仅触发构建（不打 tag）</div>
+                  <p class="text-[11px] text-slate-500 mb-2">用于 nightly artifact 模式发版,基于远程默认分支当前 HEAD,跳过 release 步骤。</p>
+                  <label class="text-[11px] text-slate-600 block mb-1">构建标题</label>
+                  <input id="plugin-trigger-build-label" class="w-full border border-slate-300 rounded-md px-2 py-1 text-xs mb-2 font-mono" placeholder="默认为远端 HEAD commit 标题">
+                  <button id="trigger-plugin-action-btn" class="w-full px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">触发 plugin Action 编译</button>
+                  <div id="trigger-plugin-action-result" class="mt-2 text-xs"></div>
+                  <div id="plugin-run-status" class="mt-3 bg-emerald-50 border border-emerald-200 rounded-md p-3 text-sm hidden">
+                    <div class="font-semibold text-emerald-800 mb-1">当前 Plugin Artifact 使用的 Action run</div>
+                    <div id="plugin-run-detail" class="text-xs text-slate-700">加载中...</div>
+                  </div>
+                </div>
+              </div>
 
-            <div data-plugin-mode-panel="artifact" class="plugin-mode-panel hidden">
-              <label class="text-xs text-slate-500 block mb-1">Plugin Artifact 名称 <span class="text-[11px] text-slate-400">(可留空自动取最新)</span></label>
-              <input id="res-plugin-artifact" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="GyroflowNiyien-frei0r-windows 等 CSV">
-              <!-- Current plugin artifact source run (only visible inside artifact panel) -->
-              <div id="plugin-run-status" class="mt-2 bg-emerald-50 border border-emerald-200 rounded-md p-3 text-sm hidden">
-                <div class="font-semibold text-emerald-800 mb-1">当前 Plugin Artifact 使用的 Action run</div>
-                <div id="plugin-run-detail" class="text-xs text-slate-700">加载中...</div>
+              <div class="border border-slate-200 rounded-md p-4">
+                <div class="text-sm font-semibold mb-2">Lens 仓库打 tag</div>
+                <p class="text-xs text-slate-500 mb-3" id="lens-repo-hint">NiYien/niyien-lens-data</p>
+                <label class="text-xs text-slate-600 block mb-1">日期 / 序号</label>
+                <div class="flex flex-wrap items-center gap-1 mb-3 text-sm">
+                  <span class="text-slate-500">data-v</span>
+                  <input id="lens-tag-date" class="w-24 text-center border border-slate-300 rounded-md py-1 font-mono" value="" maxlength="8">
+                  <span class="text-slate-400">.</span>
+                  <input id="lens-tag-suffix" type="number" min="1" max="99" class="w-14 text-center border border-slate-300 rounded-md py-1" value="1">
+                  <span class="sm:ml-2 text-xs text-slate-500">→ <code id="lens-tag-preview" class="bg-slate-100 px-1 rounded">data-v....1</code></span>
+                </div>
+                <button id="create-lens-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
+                <div id="lens-tag-result" class="mt-2 text-xs"></div>
               </div>
             </div>
           </div>
 
-          <!-- SDK base -->
-          <div>
-            <label class="text-sm text-slate-600 block mb-1">SDK 下载源</label>
-            <input id="res-sdk-base" class="w-full border border-slate-300 rounded-md px-3 py-1.5 text-sm font-mono" placeholder="https://api.gyroflow.xyz/sdk/">
-          </div>
-        </div>
-
-        <div class="mt-4 flex gap-2 items-center">
-          <button id="resources-execute-btn" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"></button>
-          <span id="resources-execute-result" class="text-sm text-slate-600"></span>
-        </div>
-
-        <!-- Push to 123 网盘 — independent of the apply/save op selector. -->
-        <div class="mt-5 pt-4 border-t border-slate-200">
-          <div class="text-xs font-semibold text-slate-600 mb-1">推送到 123 网盘</div>
-          <p class="text-[11px] text-slate-500 mb-2">
-            解耦布局：<code>lens-&lt;sha12&gt;/</code> 与 <code>plugin-&lt;sha12&gt;/</code> 独立目录,内容未变会自动跳过。
-            「全量」按 policy.auto_version 取 app tag 一并推送 app 安装包；首次解耦发布必须先点全量初始化两个新 env。
-          </p>
-          <div class="flex gap-2 items-center flex-wrap">
-            <button id="resources-publish-all-btn"
-                    class="px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">
-              推送全量 (App + Lens + Plugin)
-            </button>
-            <button id="resources-publish-lens-btn"
-                    class="px-3 py-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 text-sm">
-              仅推送 Lens
-            </button>
-            <button id="resources-publish-plugin-btn"
-                    class="px-3 py-1.5 bg-emerald-600 text-white rounded-md hover:bg-emerald-700 text-sm">
-              仅推送 Plugin
-            </button>
-            <span id="resources-publish-result" class="text-xs text-slate-600"></span>
+          <div class="bg-slate-100 rounded-lg p-4 text-sm">
+            <div class="flex items-center justify-between">
+              <h2 class="font-semibold">当前线上状态</h2>
+              <span class="text-xs text-slate-500">Vercel envs 只读</span>
+            </div>
+            <p class="mt-3 text-xs text-slate-500 border-l-2 border-slate-400 pl-2">
+              说明:这些 env 是客户端拉取 manifest 时的<strong>覆盖项</strong>,未设置 = 客户端使用 policy.auto_version 对应 versions 记录里的默认值。没设不是错误。
+            </p>
+            <div id="resources-current" class="mt-3 space-y-1 font-mono text-xs text-slate-600">加载中...</div>
           </div>
         </div>
       </div>
-
-      <!-- Publish new resource version: plugin / lens tag push -->
-      <div class="bg-white rounded-lg shadow-sm p-5 mb-4">
-        <h2 class="font-semibold mb-2">发布新资源版本</h2>
-        <p class="text-xs text-slate-500 mb-4">通过 GitHub API 给 plugin / lens 仓库远程打 tag,触发其 workflow 自动 build + 创建 release。不需要本地克隆这两个仓库。</p>
-        <div class="grid grid-cols-2 gap-4">
-          <!-- Plugin tag -->
-          <div class="border border-slate-200 rounded-md p-4">
-            <div class="text-sm font-semibold mb-2">Plugin 仓库打 tag</div>
-            <p class="text-xs text-slate-500 mb-3" id="plugin-repo-hint">NiYien/gyroflow-plugins</p>
-            <label class="text-xs text-slate-600 block mb-1">主版本号</label>
-            <div class="flex items-center gap-1 mb-3">
-              <input id="plugin-tag-major" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="1">
-              <span class="text-slate-400">.</span>
-              <input id="plugin-tag-minor" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="6">
-              <span class="text-slate-400">.</span>
-              <input id="plugin-tag-patch" type="number" min="0" max="999" class="w-16 text-center border border-slate-300 rounded-md py-1 text-lg" value="1">
-              <span class="ml-2 text-xs text-slate-500">→ <code id="plugin-tag-preview" class="bg-slate-100 px-1 rounded">v1.6.1</code></span>
-            </div>
-            <button id="create-plugin-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
-            <div id="plugin-tag-result" class="mt-2 text-xs"></div>
-
-            <!-- Trigger only (workflow_dispatch on default branch, no tag) -->
-            <div class="mt-4 pt-3 border-t border-slate-200">
-              <div class="text-xs font-semibold text-slate-600 mb-1">仅触发构建（不打 tag）</div>
-              <p class="text-[11px] text-slate-500 mb-2">用于 nightly artifact 模式发版,基于远程默认分支当前 HEAD,跳过 release 步骤。</p>
-              <label class="text-[11px] text-slate-600 block mb-1">构建标题</label>
-              <input id="plugin-trigger-build-label" class="w-full border border-slate-300 rounded-md px-2 py-1 text-xs mb-2 font-mono" placeholder="默认为远端 HEAD commit 标题">
-              <button id="trigger-plugin-action-btn" class="w-full px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">触发 plugin Action 编译</button>
-              <div id="trigger-plugin-action-result" class="mt-2 text-xs"></div>
-            </div>
-          </div>
-
-          <!-- Lens tag -->
-          <div class="border border-slate-200 rounded-md p-4">
-            <div class="text-sm font-semibold mb-2">Lens 仓库打 tag</div>
-            <p class="text-xs text-slate-500 mb-3" id="lens-repo-hint">NiYien/niyien-lens-data</p>
-            <label class="text-xs text-slate-600 block mb-1">日期 / 序号</label>
-            <div class="flex items-center gap-1 mb-3 text-sm">
-              <span class="text-slate-500">data-v</span>
-              <input id="lens-tag-date" class="w-24 text-center border border-slate-300 rounded-md py-1 font-mono" value="" maxlength="8">
-              <span class="text-slate-400">.</span>
-              <input id="lens-tag-suffix" type="number" min="1" max="99" class="w-14 text-center border border-slate-300 rounded-md py-1" value="1">
-              <span class="ml-2 text-xs text-slate-500">→ <code id="lens-tag-preview" class="bg-slate-100 px-1 rounded">data-v....1</code></span>
-            </div>
-            <button id="create-lens-tag-btn" class="w-full px-3 py-1.5 bg-amber-600 text-white rounded-md hover:bg-amber-700 text-sm">打 tag 并触发 release</button>
-            <div id="lens-tag-result" class="mt-2 text-xs"></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Current state snapshot -->
-      <details class="bg-slate-100 rounded-lg p-4 text-sm">
-        <summary class="cursor-pointer font-semibold select-none">当前线上状态 (Vercel envs 只读)</summary>
-        <p class="mt-3 text-xs text-slate-500 border-l-2 border-slate-400 pl-2">
-          说明:这些 env 是客户端拉取 manifest 时的<strong>覆盖项</strong>,未设置 = 客户端使用 policy.auto_version 对应 versions 记录里的默认值。没设不是错误。
-        </p>
-        <div id="resources-current" class="mt-3 space-y-1 font-mono text-xs text-slate-600">加载中...</div>
-      </details>
     </section>
     <section data-view="stats" class="view hidden">
       <header class="mb-4">

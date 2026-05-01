@@ -4,6 +4,7 @@
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
@@ -89,6 +90,13 @@ pub struct PreparedAppUpdate {
     pub package_path: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct AppUpdateCandidate {
+    pub channel: String,
+    pub version: String,
+    pub changelog: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
 pub struct ManualAppVersion {
     #[serde(default)]
@@ -159,6 +167,10 @@ lazy_static::lazy_static! {
     // serializes the actual fetch path; threads waiting on it then hit
     // the freshly-populated cache via the second cache check below.
     static ref FETCH_LOCK: Mutex<()> = Mutex::new(());
+}
+
+fn cached_manifest() -> Option<Manifest> {
+    MANIFEST_CACHE.read().as_ref().map(|entry| entry.manifest.clone())
 }
 
 pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
@@ -515,6 +527,16 @@ fn env_value_for_log(name: &str) -> &'static str {
     }
 }
 
+#[cfg(test)]
+fn normalize_cached_country_header(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.len() == 2 && value.chars().all(|c| c.is_ascii_alphabetic()) {
+        Some(value.to_ascii_uppercase())
+    } else {
+        None
+    }
+}
+
 fn apply_manifest_sources(manifest: &Manifest) {
     if !manifest.sdk_base.is_empty() {
         gyroflow_core::settings::set("sdkBase", manifest.sdk_base.clone().into());
@@ -569,7 +591,41 @@ pub fn platform_name() -> &'static str {
 }
 
 pub fn has_app_update(manifest: &Manifest) -> bool {
-    let latest = manifest.app.version.trim();
+    app_version_is_newer_than_current(&manifest.app.version)
+}
+
+pub fn app_update_candidates(manifest: &Manifest) -> Vec<AppUpdateCandidate> {
+    let mut candidates = Vec::new();
+    if has_app_update(manifest) {
+        candidates.push(AppUpdateCandidate {
+            channel: "auto".to_owned(),
+            version: manifest.app.version.trim().to_owned(),
+            changelog: manifest.app.changelog.clone(),
+        });
+    }
+    if let Some(manual) = latest_manual_app_update(manifest)
+        .filter(|manual| !app_versions_equivalent(&manual.version, &manifest.app.version))
+    {
+        candidates.push(AppUpdateCandidate {
+            channel: "manual".to_owned(),
+            version: manual.version.trim().to_owned(),
+            changelog: manual.changelog.clone(),
+        });
+    }
+    candidates
+}
+
+pub fn latest_manual_app_update(manifest: &Manifest) -> Option<&ManualAppVersion> {
+    manifest
+        .app
+        .manual_versions
+        .iter()
+        .filter(|version| app_version_is_newer_than_current(&version.version))
+        .max_by(|a, b| compare_app_versions(&a.version, &b.version))
+}
+
+pub fn app_version_is_newer_than_current(version: &str) -> bool {
+    let latest = version.trim();
     if latest.is_empty() {
         return false;
     }
@@ -580,13 +636,44 @@ pub fn has_app_update(manifest: &Manifest) -> bool {
     {
         return false;
     }
-    match (
-        semver::Version::parse(latest.trim_start_matches('v')),
-        semver::Version::parse(current_canonical.trim_start_matches('v')),
-    ) {
-        (Ok(latest), Ok(current)) => latest > current,
-        _ => true,
+    app_version_is_newer_than(latest, current_canonical)
+}
+
+fn app_version_is_newer_than(version: &str, current: &str) -> bool {
+    let version = version.trim();
+    let current = current.trim();
+    if version.is_empty() || version == current {
+        return false;
     }
+    match (parse_app_version(version), parse_app_version(current)) {
+        (Some(version), Some(current)) => version > current,
+        _ => false,
+    }
+}
+
+fn app_versions_equivalent(a: &str, b: &str) -> bool {
+    let a = a.trim();
+    let b = b.trim();
+    if a == b {
+        return true;
+    }
+    match (parse_app_version(a), parse_app_version(b)) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    }
+}
+
+fn compare_app_versions(a: &str, b: &str) -> Ordering {
+    match (parse_app_version(a), parse_app_version(b)) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(_), None) => Ordering::Greater,
+        (None, Some(_)) => Ordering::Less,
+        (None, None) => a.trim().cmp(b.trim()),
+    }
+}
+
+fn parse_app_version(version: &str) -> Option<semver::Version> {
+    semver::Version::parse(version.trim().trim_start_matches('v')).ok()
 }
 
 pub fn app_update_package_for_platform(
@@ -600,6 +687,19 @@ pub fn app_update_package_for_platform(
         manifest.app.url.trim(),
         manifest.app.packages.get(platform),
     )
+}
+
+pub fn app_update_package_for_requested_version(
+    manifest: &Manifest,
+    requested_version: Option<&str>,
+    platform: &str,
+) -> Option<AppUpdateSelection> {
+    match requested_version.map(str::trim).filter(|version| !version.is_empty()) {
+        Some(version) if version != manifest.app.version.trim() => {
+            manual_app_update_package_for_platform(manifest, version, platform)
+        }
+        _ => app_update_package_for_platform(manifest, platform),
+    }
 }
 
 pub fn manual_app_update_package_for_platform(
@@ -1432,9 +1532,19 @@ fn current_process_creation_time_hex() -> Result<String, String> {
 pub fn fetch_manual_versions(force: bool) -> Result<Vec<ManualAppVersion>, String> {
     match fetch_manifest(force) {
         Ok(manifest) => Ok(manifest.app.manual_versions),
-        Err(first_err) if force => fetch_manifest(false)
+        Err(first_err) if force => cached_manifest()
             .map(|manifest| manifest.app.manual_versions)
-            .map_err(|_| first_err),
+            .ok_or(first_err),
+        Err(err) => Err(err),
+    }
+}
+
+pub fn fetch_app_update_candidates(force: bool) -> Result<Vec<AppUpdateCandidate>, String> {
+    match fetch_manifest(force) {
+        Ok(manifest) => Ok(app_update_candidates(&manifest)),
+        Err(first_err) if force => cached_manifest()
+            .map(|manifest| app_update_candidates(&manifest))
+            .ok_or(first_err),
         Err(err) => Err(err),
     }
 }
@@ -1699,6 +1809,128 @@ mod app_update_tests {
         );
         assert_eq!(selected.package_sha256, "e".repeat(64));
         assert_eq!(selected.package_size, 90);
+    }
+
+    #[test]
+    fn app_version_compare_requires_candidate_to_be_newer() {
+        assert!(app_version_is_newer_than("1.6.4", "1.6.3"));
+        assert!(app_version_is_newer_than("v1.6.4", "1.6.3"));
+        assert!(app_version_is_newer_than("1.6.4-0.ni.7", "1.6.3"));
+        assert!(!app_version_is_newer_than("1.6.3-0.ni.7", "1.6.3"));
+        assert!(!app_version_is_newer_than("1.6.3", "1.6.3"));
+        assert!(!app_version_is_newer_than("1.6.2", "1.6.3"));
+        assert!(!app_version_is_newer_than("not-a-version", "1.6.3"));
+    }
+
+    #[test]
+    fn latest_manual_app_update_returns_only_newest_newer_version() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "manual_versions": [
+                        { "version": "0.0.1", "changelog": "old" },
+                        { "version": "9999.9.7-0.ni.10", "changelog": "older test" },
+                        { "version": "9999.9.9-0.ni.1", "changelog": "latest test" },
+                        { "version": "9999.9.8", "changelog": "older stable" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let manual = latest_manual_app_update(&manifest).unwrap();
+        assert_eq!(manual.version, "9999.9.9-0.ni.1");
+        assert_eq!(manual.changelog, "latest test");
+    }
+
+    #[test]
+    fn app_update_candidates_include_auto_and_manual_channels_separately() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "changelog": "stable update",
+                    "manual_versions": [
+                        { "version": "9999.9.7-0.ni.10", "changelog": "older test" },
+                        { "version": "9999.9.9-0.ni.1", "changelog": "latest test" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].channel, "auto");
+        assert_eq!(candidates[0].version, "9999.9.8");
+        assert_eq!(candidates[0].changelog, "stable update");
+        assert_eq!(candidates[1].channel, "manual");
+        assert_eq!(candidates[1].version, "9999.9.9-0.ni.1");
+        assert_eq!(candidates[1].changelog, "latest test");
+    }
+
+    #[test]
+    fn app_update_candidates_hide_manual_when_same_as_auto() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.9",
+                    "changelog": "stable update",
+                    "manual_versions": [
+                        { "version": "v9999.9.9", "changelog": "same manual" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].channel, "auto");
+        assert_eq!(candidates[0].version, "9999.9.9");
+    }
+
+    #[test]
+    fn app_update_candidates_empty_when_every_channel_is_current_or_older() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "not-a-version",
+                    "manual_versions": [
+                        { "version": "0.0.2", "changelog": "old test" },
+                        { "version": "also-not-a-version", "changelog": "bad test" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        assert!(app_update_candidates(&manifest).is_empty());
+    }
+
+    #[test]
+    fn requested_auto_version_selects_auto_package() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9.9.9",
+                    "url": "https://example.test/stable.exe",
+                    "manual_versions": [
+                        {
+                            "version": "9.9.9-0.ni.1",
+                            "url": "https://example.test/test.exe"
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let selected =
+            app_update_package_for_requested_version(&manifest, Some("9.9.9"), "windows")
+                .unwrap();
+        assert_eq!(selected.version, "9.9.9");
+        assert_eq!(selected.download_url, "https://example.test/stable.exe");
     }
 
     #[test]

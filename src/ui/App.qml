@@ -67,6 +67,70 @@ Rectangle {
             width: parent? parent.width : 240 * dpiScale;
         }
     }
+    Component {
+        id: appUpdateOptionComponent;
+        Rectangle {
+            id: updateOption;
+            property string channelTitle: "";
+            property string versionText: "";
+            property string changelogText: "";
+            property bool stable: false;
+            signal installClicked();
+
+            width: parent ? parent.width : 360 * dpiScale;
+            height: optionRow.height + 20 * dpiScale;
+            color: styleBackground;
+            border.width: 1 * dpiScale;
+            border.color: stylePopupBorder;
+            radius: 5 * dpiScale;
+
+            Row {
+                id: optionRow;
+                x: 12 * dpiScale;
+                y: 10 * dpiScale;
+                width: parent.width - 2 * x;
+                height: Math.max(optionText.implicitHeight, updateButton.height);
+                spacing: 12 * dpiScale;
+
+                Column {
+                    id: optionText;
+                    width: Math.max(120 * dpiScale, optionRow.width - updateButton.width - optionRow.spacing);
+                    spacing: 5 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+
+                    BasicText {
+                        width: parent.width;
+                        text: updateOption.channelTitle;
+                        font.pixelSize: 14 * dpiScale;
+                        font.bold: true;
+                        wrapMode: Text.WordWrap;
+                    }
+                    BasicText {
+                        width: parent.width;
+                        text: qsTr("Version: %1").arg(updateOption.versionText);
+                        font.pixelSize: 12 * dpiScale;
+                        wrapMode: Text.WordWrap;
+                    }
+                    BasicText {
+                        visible: updateOption.changelogText.length > 0;
+                        width: parent.width;
+                        text: updateOption.changelogText;
+                        textFormat: Text.MarkdownText;
+                        font.pixelSize: 12 * dpiScale;
+                        wrapMode: Text.WordWrap;
+                    }
+                }
+                Button {
+                    id: updateButton;
+                    text: qsTranslate("NlePlugins", "Update");
+                    accent: updateOption.stable;
+                    width: Math.max(64 * dpiScale, implicitWidth);
+                    anchors.verticalCenter: parent.verticalCenter;
+                    onClicked: updateOption.installClicked();
+                }
+            }
+        }
+    }
 
     property bool isLandscape: width > height;
     onIsLandscapeChanged: {
@@ -1243,6 +1307,14 @@ Rectangle {
                         }
                     }
 
+                    Item { width: 1; height: 10 * dpiScale; }
+                    LinkButton {
+                        text: qsTr("Check for updates");
+                        iconName: "sync";
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        onClicked: window.showAvailableAppVersions();
+                    }
+
                     SectionDivider { visible: controller.is_nle_installed(); }
                     ItemLoader {
                         active: controller.is_nle_installed();
@@ -1356,6 +1428,141 @@ Rectangle {
         if (settings.value("playSounds", "true") == "true")
             controller.play_sound(type);
     }
+    function setAppUpdateDialogText(text: string): void {
+        if (appUpdateDialog && appUpdateDialog.t) {
+            appUpdateDialog.t.text = text;
+        }
+    }
+    function closeAppUpdateDialog(): void {
+        if (appUpdateDialog) {
+            appUpdateDialog.close();
+        }
+        appUpdateDialog = null;
+        appUpdateProgressBar = null;
+    }
+    function ensureAppUpdateProgressBar(): var {
+        if (!appUpdateDialog || !appUpdateDialog.mainColumn) {
+            return null;
+        }
+        if (!appUpdateProgressBar || appUpdateProgressBar.parent !== appUpdateDialog.mainColumn) {
+            appUpdateProgressBar = appUpdateProgressBarComponent.createObject(appUpdateDialog.mainColumn);
+        }
+        return appUpdateProgressBar;
+    }
+    function updateAppUpdateProgressBar(downloaded: real, total: real): void {
+        const bar = ensureAppUpdateProgressBar();
+        if (!bar) {
+            return;
+        }
+        if (total > 0) {
+            bar.indeterminate = false;
+            bar.value = Math.max(0, Math.min(1, downloaded / total));
+        } else {
+            bar.indeterminate = true;
+            bar.value = 0;
+        }
+        bar.visible = true;
+    }
+    function showAppUpdateDownloadingDialog(heading: string, changelog: string): void {
+        appUpdateDialog = messageBox(Modal.Info, heading + changelog + "\n\n" + qsTr("Downloading update..."), [
+            { text: qsTr("Close"), clicked: () => { appUpdateDialog = null; appUpdateProgressBar = null; } }
+        ], undefined, Text.MarkdownText);
+        appUpdateDialog.t.horizontalAlignment = Text.AlignLeft;
+        updateAppUpdateProgressBar(0, 0);
+    }
+    function normalizedUpdateVersion(version: string): string {
+        return (version || "").trim().replace(/^v/, "");
+    }
+    function addAppUpdateOption(dialog: Modal, updateInfo: var): void {
+        const versionText = updateInfo.version;
+        const isManual = updateInfo.channel === "manual";
+        const channelTitle = isManual ? qsTr("Manual test version") : qsTr("Stable update");
+        const changelogText = updateInfo.changelog || "";
+        const option = appUpdateOptionComponent.createObject(dialog.mainColumn, {
+            channelTitle: channelTitle,
+            versionText: versionText,
+            changelogText: changelogText.replace(/\r\n|\n\r|\n|\r/g, "\n"),
+            stable: !isManual
+        });
+        option.installClicked.connect(() => {
+            const headingText = isManual
+                ? qsTr("Test version available: %1.")
+                : qsTr("Stable update available: %1.");
+            const heading = "<p align=\"center\">" + headingText.arg("<b>" + versionText + "</b>") + "</p>\n\n";
+            dialog.close();
+            window.isDialogOpened = false;
+            Qt.callLater(() => {
+                showAppUpdateDownloadingDialog(heading, changelogText);
+                if (isManual) {
+                    controller.start_app_update_version(versionText);
+                } else {
+                    controller.start_app_update();
+                }
+            });
+        });
+    }
+    function showAppUpdateOptions(visibleUpdates: var): void {
+        const dialog = messageBox(Modal.Info, qsTr("Available updates"), [
+            { text: qsTr("Close") }
+        ]);
+        for (const updateInfo of visibleUpdates) {
+            addAppUpdateOption(dialog, updateInfo);
+        }
+    }
+    function showAvailableAppVersions(): void {
+        let updates = [];
+        let error = "";
+        try {
+            const payload = JSON.parse(controller.fetch_available_versions() || "{}");
+            updates = Array.isArray(payload.updates) ? payload.updates : [];
+            error = payload.error || "";
+        } catch (e) {
+            error = "" + e;
+        }
+        if (error) {
+            messageBox(Modal.Error, qsTr("Update failed: %1").arg(error), [
+                { text: qsTr("Close") }
+            ]);
+            return;
+        }
+        let stableUpdate = null;
+        let manualUpdate = null;
+        for (const updateInfo of updates) {
+            const versionText = (updateInfo.version || "").trim();
+            if (!versionText) {
+                continue;
+            }
+            const candidate = {
+                channel: updateInfo.channel,
+                version: versionText,
+                changelog: updateInfo.changelog || ""
+            };
+            if (candidate.channel === "auto" && stableUpdate === null) {
+                stableUpdate = candidate;
+            } else if (candidate.channel === "manual" && manualUpdate === null) {
+                manualUpdate = candidate;
+            }
+        }
+        if (stableUpdate !== null && manualUpdate !== null &&
+            normalizedUpdateVersion(stableUpdate.version) === normalizedUpdateVersion(manualUpdate.version)) {
+            manualUpdate = null;
+        }
+        const visibleUpdates = [];
+        if (stableUpdate !== null) {
+            visibleUpdates.push(stableUpdate);
+        }
+        if (manualUpdate !== null) {
+            visibleUpdates.push(manualUpdate);
+        }
+        if (visibleUpdates.length === 0) {
+            messageBox(Modal.Info, qsTr("You are already on the latest version."), [
+                { text: qsTr("Close") }
+            ]);
+            return;
+        }
+
+        showAppUpdateOptions(visibleUpdates);
+    }
 
     Connections {
         target: controller;
@@ -1386,112 +1593,22 @@ Rectangle {
                 Qt.openUrlExternally("https://github.com/gyroflow/gyroflow/releases");
             }
         }
-        function setAppUpdateDialogText(text: string): void {
-            if (appUpdateDialog && appUpdateDialog.t) {
-                appUpdateDialog.t.text = text;
-            }
-        }
-        function closeAppUpdateDialog(): void {
-            if (appUpdateDialog) {
-                appUpdateDialog.close();
-            }
-            appUpdateDialog = null;
-            appUpdateProgressBar = null;
-        }
-        function ensureAppUpdateProgressBar(): var {
-            if (!appUpdateDialog || !appUpdateDialog.mainColumn) {
-                return null;
-            }
-            if (!appUpdateProgressBar || appUpdateProgressBar.parent !== appUpdateDialog.mainColumn) {
-                appUpdateProgressBar = appUpdateProgressBarComponent.createObject(appUpdateDialog.mainColumn);
-            }
-            return appUpdateProgressBar;
-        }
-        function updateAppUpdateProgressBar(downloaded: real, total: real): void {
-            const bar = ensureAppUpdateProgressBar();
-            if (!bar) {
-                return;
-            }
-            if (total > 0) {
-                bar.indeterminate = false;
-                bar.value = Math.max(0, Math.min(1, downloaded / total));
-            } else {
-                bar.indeterminate = true;
-                bar.value = 0;
-            }
-            bar.visible = true;
-        }
-        function showAppUpdateDownloadingDialog(heading: string, changelog: string): void {
-            appUpdateDialog = messageBox(Modal.Info, heading + changelog + "\n\n" + qsTr("Downloading update..."), [
-                { text: qsTr("Close"), clicked: () => { appUpdateDialog = null; appUpdateProgressBar = null; } }
-            ], undefined, Text.MarkdownText);
-            appUpdateDialog.t.horizontalAlignment = Text.AlignLeft;
-            updateAppUpdateProgressBar(0, 0);
-        }
-        function showManualAppVersionsDialog(): void {
-            let versions = [];
-            let error = "";
-            try {
-                const payload = JSON.parse(controller.fetch_available_versions() || "{}");
-                versions = Array.isArray(payload.versions) ? payload.versions : [];
-                error = payload.error || "";
-            } catch (e) {
-                error = "" + e;
-            }
-            if (versions.length === 0) {
-                messageBox(Modal.Error, error ? qsTr("Update failed: %1").arg(error) : qsTr("No versions available."), [
-                    { text: qsTr("Close") }
-                ]);
-                return;
-            }
-
-            const buttons = [];
-            for (const versionInfo of versions) {
-                const versionText = versionInfo.version || "";
-                if (!versionText) {
-                    continue;
-                }
-                const changelogText = versionInfo.changelog || "";
-                buttons.push({
-                    text: versionText,
-                    clicked: () => {
-                        const heading = "<p align=\"center\">" + qsTr("Version: %1").arg("<b>" + versionText + "</b>") + "</p>\n\n";
-                        Qt.callLater(() => {
-                            showAppUpdateDownloadingDialog(heading, changelogText);
-                            controller.start_app_update_version(versionText);
-                        });
-                    }
-                });
-            }
-            buttons.push({ text: qsTr("Close") });
-            const el = messageBox(Modal.Info, qsTr("Select a version"), buttons, undefined, Text.MarkdownText);
-            el.t.horizontalAlignment = Text.AlignLeft;
-        }
         function onUpdates_available(version: string, changelog: string, download_url: string): void {
-            const heading = "<p align=\"center\">" + qsTr("There's a newer version available: %1.").arg("<b>" + version + "</b>") + "</p>\n\n";
-            const el = messageBox(Modal.Info, heading + changelog, [
-                { text: qsTr("Install update"), accent: true, clicked: () => {
-                    Qt.callLater(() => {
-                        showAppUpdateDownloadingDialog(heading, changelog);
-                        controller.start_app_update();
-                    });
-                }},
-                { text: qsTr("Version history"), clicked: showManualAppVersionsDialog },
-                { text: qsTr("Close") }
-            ], undefined, Text.MarkdownText);
-            el.t.horizontalAlignment = Text.AlignLeft;
+            window.showAppUpdateOptions([
+                { channel: "auto", version: version, changelog: changelog }
+            ]);
         }
         function onApp_update_progress(downloaded: real, total: real, message: string): void {
             const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
             const line = total > 0
                 ? qsTr("Downloading update... %1%").arg(percent)
                 : qsTr("Downloading update...");
-            setAppUpdateDialogText(line);
-            updateAppUpdateProgressBar(downloaded, total);
+            window.setAppUpdateDialogText(line);
+            window.updateAppUpdateProgressBar(downloaded, total);
         }
         function onApp_update_ready(path: string, platform: string, message: string): void {
             appUpdateReadyMessage = message || "";
-            closeAppUpdateDialog();
+            window.closeAppUpdateDialog();
             const quitWarning = qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");
             const extra = platform === "macos"
                 ? "\n\n" + qsTr("After the DMG opens, drag Gyroflow.app to the Applications folder.")
@@ -1502,7 +1619,7 @@ Rectangle {
             ], undefined, Text.MarkdownText);
         }
         function onApp_update_error(message: string): void {
-            closeAppUpdateDialog();
+            window.closeAppUpdateDialog();
             appUpdateDialog = messageBox(Modal.Error, qsTr("Update failed: %1").arg(message), [
                 { text: qsTr("Close") }
             ]);

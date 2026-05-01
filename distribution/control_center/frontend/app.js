@@ -26,6 +26,12 @@ function fmtRelativeTime(iso) {
   return `${mo} 个月前`;
 }
 
+function escapeHtml(value) {
+  const div = document.createElement('div');
+  div.textContent = value == null ? '' : String(value);
+  return div.innerHTML;
+}
+
 function waitForApi() {
   return new Promise((resolve, reject) => {
     if (window.pywebview && pywebview.api) return resolve();
@@ -207,7 +213,7 @@ function renderRecentReleases(releases, errMsg) {
     return;
   }
   if (!releases || !releases.length) {
-    container.innerHTML = '<div class="text-xs text-slate-500 p-3">仓库没有 release · 可通过"发布新版本"打 tag 后生成</div>';
+    container.innerHTML = '<div class="text-xs text-slate-500 p-3">仓库没有 release · 可通过发布中心打 tag 后生成</div>';
     return;
   }
   container.innerHTML = releases.map(r => {
@@ -215,38 +221,14 @@ function renderRecentReleases(releases, errMsg) {
     let flag = '';
     if (r.draft) flag = '<span class="ml-2 text-xs text-amber-600">[draft]</span>';
     else if (r.prerelease) flag = '<span class="ml-2 text-xs text-purple-600">[pre]</span>';
-    return `<div class="recent-release-item px-3 py-2 bg-slate-50 hover:bg-blue-50 rounded mb-1 flex justify-between items-center text-sm cursor-pointer" data-tag="${tag}" title="点击跳转到发布页并选中此 release">
+    return `<div class="recent-release-item px-3 py-2 bg-slate-50 rounded mb-1 flex justify-between items-center text-sm">
       <span class="font-mono">${tag}${flag}</span>
       <span class="text-xs text-slate-500">${fmtRelativeTime(r.published_at)}</span>
     </div>`;
   }).join('');
-  container.querySelectorAll('.recent-release-item').forEach(el => {
-    el.addEventListener('click', () => navigateToPublishWithRelease(el.dataset.tag));
-  });
 }
 
-async function navigateToPublishWithRelease(tag) {
-  if (!tag) return;
-  showView('publish');
-  // Ensure mode=select is active
-  document.querySelector('.mode-btn[data-mode="select"]')?.click();
-  // Ensure source=release is active (its click handler fires loadSourceList async)
-  document.querySelector('.source-btn[data-source="release"]')?.classList.add('active');
-  publishState.source = 'release';
-  // Load list and select
-  await loadSourceList('release');
-  const item = document.querySelector(`.source-item[data-tag="${tag}"]`);
-  if (item) item.click();
-  else {
-    // Tag not in first page — tell user via execute status row
-    const statusEl = document.getElementById('execute-publish-result');
-    if (statusEl) statusEl.textContent = `未在列表前 N 条找到 tag ${tag},可手动翻找`;
-  }
-}
-
-// Render an "⬆ 有新版本" banner under a card's meta line. The banner
-// appends to the meta element so it stays inside the card layout. Clicking
-// the button surgically updates only that field via update_resource_field.
+// Render an update banner under a card's meta line. Dashboard is status-only.
 function renderUpdateBanner(metaElId, fieldName, update, sourceLabel) {
   const metaEl = document.getElementById(metaElId);
   if (!metaEl) return;
@@ -254,34 +236,11 @@ function renderUpdateBanner(metaElId, fieldName, update, sourceLabel) {
   metaEl.querySelectorAll('.cc-update-banner').forEach(b => b.remove());
   if (!update || !update.latest_tag) return;
   const banner = document.createElement('div');
-  banner.className = 'cc-update-banner mt-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded text-[11px] text-blue-700 flex items-center justify-between gap-2';
+  banner.className = 'cc-update-banner mt-1 px-2 py-1 bg-blue-50 border border-blue-200 rounded text-[11px] text-blue-700';
   const publishedNote = update.published_at ? ` · ${fmtRelativeTime(update.published_at)}` : '';
   banner.innerHTML =
-    `<span>⬆ ${sourceLabel}有新版 <span class="font-mono font-semibold">${update.latest_tag}</span>${publishedNote}</span>` +
-    `<button class="px-2 py-0.5 bg-blue-600 text-white rounded text-[11px] hover:bg-blue-700">切换</button>`;
-  banner.querySelector('button').addEventListener('click', () =>
-    triggerResourceUpgrade(fieldName, update.latest_tag, sourceLabel)
-  );
+    `<span>${sourceLabel}有新版 <span class="font-mono font-semibold">${update.latest_tag}</span>${publishedNote}</span>`;
   metaEl.appendChild(banner);
-}
-
-async function triggerResourceUpgrade(fieldName, newValue, sourceLabel) {
-  if (!confirm(`确定切换${sourceLabel}到 ${newValue}?\n\n` +
-               `这会立即 upsert Vercel env (NIYIEN_*),所有客户端下次拉 manifest 时会看到新版本。\n` +
-               `(只更新此字段,plugin/sdk/lens 其他字段保持不变。)`)) {
-    return;
-  }
-  try {
-    const r = await pywebview.api.update_resource_field(fieldName, newValue);
-    if (!r.ok) {
-      alert(`切换失败: ${r.error}`);
-      return;
-    }
-    // Reload dashboard so the card + banner re-render against new state
-    refreshDashboard();
-  } catch (e) {
-    alert(`调用失败: ${e}`);
-  }
 }
 
 async function refreshDashboard() {
@@ -392,13 +351,6 @@ function dashRenderPan123(payload) {
     html += `<div class="mt-3 text-red-600 text-xs px-3 py-2">扫描局部失败: ${scanError}</div>`;
   }
   el.innerHTML = html;
-
-  // Wire up manual upload buttons (kept for app row "missing dir" cases).
-  el.querySelectorAll('.dash-pan123-manual-upload-btn').forEach(btn => {
-    btn.addEventListener('click', () => dashTriggerManualUpload(
-      btn.dataset.tag, btn.dataset.version, parseInt(btn.dataset.runId || '0', 10),
-    ));
-  });
 }
 
 function dashRenderAppSection(items) {
@@ -406,25 +358,19 @@ function dashRenderAppSection(items) {
     const auto = it.is_auto_version
       ? '<span class="ml-2 px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">auto</span>'
       : '';
-    let statusBadge, alertText = '', uploadBtn = '';
+    let statusBadge, alertText = '';
     if (it.no_tag) {
       statusBadge = '<span class="px-1.5 py-0.5 bg-slate-200 text-slate-700 rounded text-[10px]">无 tag · artifact 模式</span>';
       alertText = '⚠ 此条是用 Action artifact 发的版本(无 GitHub release tag),无法直接定位 123 网盘目录。' +
                   '需要手动跑 publish_pan123_release.py --app-source-mode=artifact --app-run-id=N 上传,或重新打 release tag。';
     } else if (!it.exists) {
       statusBadge = '<span class="px-1.5 py-0.5 bg-red-100 text-red-700 rounded text-[10px]">目录不存在</span>';
-      alertText = '⚠ 123 网盘上没有此版本目录,客户端 cn 用户无法下载 — 请手动上传';
+      alertText = '⚠ 123 网盘上没有此版本目录,客户端 cn 用户无法下载';
     } else if (it.complete) {
       statusBadge = '<span class="px-1.5 py-0.5 bg-emerald-100 text-emerald-700 rounded text-[10px]">完整</span>';
     } else {
       statusBadge = `<span class="px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded text-[10px]">缺 ${it.files_missing.length}/${it.files_present.length + it.files_missing.length}</span>`;
-      alertText = `⚠ 缺少 ${it.files_missing.join(', ')} — 上传可能失败,建议手动重试`;
-    }
-    if (!it.no_tag && !it.complete) {
-      const runIdAttr = it.run_id ? ` data-run-id="${it.run_id}"` : '';
-      const labelHint = it.run_id ? '手动上传 (artifact)' : '手动上传';
-      uploadBtn = `<button class="dash-pan123-manual-upload-btn ml-2 text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700"
-                data-tag="${it.tag}" data-version="${it.version}"${runIdAttr}>${labelHint}</button>`;
+      alertText = `⚠ 缺少 ${it.files_missing.join(', ')} — 上传可能失败,建议在发布中心重推`;
     }
     const tagDisplay = it.tag || '<span class="text-slate-400">(无 tag)</span>';
     const alertLine = alertText
@@ -434,7 +380,7 @@ function dashRenderAppSection(items) {
     return `<div class="px-3 py-2 mb-1 bg-white border border-slate-200 rounded text-xs">
       <div class="flex items-center justify-between">
         <span class="font-mono">${it.version} <span class="text-slate-400">·</span> ${tagDisplay}${auto}</span>
-        <div class="flex items-center">${statusBadge}${uploadBtn}</div>
+        <div class="flex items-center">${statusBadge}</div>
       </div>
       ${alertLine}${packageLine}
     </div>`;
@@ -564,26 +510,6 @@ async function loadDashboardPan123Status() {
   }
 }
 
-async function dashTriggerManualUpload(tag, version, runId) {
-  if (!tag) return;
-  const modeLabel = runId ? `artifact 模式 (run=${runId})` : 'release 模式';
-  if (!confirm(`手动触发 ${tag} 同步到 123 网盘 [${modeLabel}]?\n\n` +
-               `已存在的文件会自动跳过 (123 API 端 MD5 去重),只补上缺失的部分。\n` +
-               `点确定后会跳转到"发布版本"视图,在那里看实时进度。`)) return;
-  try {
-    const r = await pywebview.api.start_pan123_publish_manual(tag, version || '', runId || 0);
-    if (!r.ok) {
-      alert(`启动失败: ${r.error}`);
-      return;
-    }
-    showView('publish');
-    document.querySelector('.mode-btn[data-mode="select"]')?.click();
-    pan123StartPolling(r.token);
-  } catch (e) {
-    alert(`调用失败: ${e}`);
-  }
-}
-
 document.getElementById('dash-pan123-refresh-btn')?.addEventListener('click', loadDashboardPan123Status);
 
 // "自动扫" toggle — persisted in localStorage so the preference survives restart
@@ -615,7 +541,11 @@ function showView(target) {
   // Prefill publish view fields on every entry — covers all paths
   // (Dashboard card, recent-release list, manual pan123 sync). Idempotent:
   // user-edited inputs are not overwritten (see prefillPublishView).
-  if (target === 'publish') prefillPublishView();
+  if (target === 'publish') {
+    prefillPublishView();
+    if (!resourcesState.loaded) loadResourcesState();
+    initResourcesExtrasOnce();
+  }
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -635,6 +565,318 @@ const publishState = {
   selected: null,   // selected release/artifact entry
 };
 
+const releasePlanState = {
+  pluginMode: 'release',
+  pluginArtifactBuilds: [],
+  pluginArtifactLoaded: false,
+  pluginArtifactLoading: false,
+  running: false,
+  lastResult: '',
+  lastAction: '',
+};
+
+const RELEASE_PLAN_ACTIONS = new Set(['manual_only', 'publish_and_push', 'switch_auto', 'rollback_auto']);
+
+function releasePlanActionUsesPan123(action) {
+  return RELEASE_PLAN_ACTIONS.has(action);
+}
+
+function clearReleasePlanOutcomeIfIdle() {
+  if (releasePlanState.running) return;
+  releasePlanState.lastResult = '';
+  releasePlanState.lastAction = '';
+}
+
+function setReleasePlanControlsLocked(locked) {
+  const ids = [
+    'execute-publish-btn',
+    'pub-action',
+    'pub-recommended',
+    'pub-major',
+    'pub-minor',
+    'pub-patch',
+    'pub-changelog',
+    'plan-include-lens',
+    'plan-include-plugin',
+    'plan-include-sdk',
+    'plan-lens-tag',
+    'plan-plugin-tag',
+    'plan-plugin-artifact',
+    'plan-plugin-run-id',
+    'plan-plugin-artifact-refresh',
+    'plan-sdk-base',
+    'reload-sources-btn',
+  ];
+  ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = locked || (id === 'execute-publish-btn' && !publishState.selected);
+  });
+  document.querySelectorAll('.source-btn, .plan-plugin-mode-btn').forEach(btn => {
+    btn.disabled = locked;
+  });
+  const sourceList = document.getElementById('source-list');
+  if (sourceList) {
+    sourceList.classList.toggle('pointer-events-none', locked);
+    sourceList.classList.toggle('opacity-60', locked);
+  }
+  const pluginArtifactList = document.getElementById('plan-plugin-artifact-list');
+  if (pluginArtifactList) {
+    pluginArtifactList.classList.toggle('pointer-events-none', locked);
+    pluginArtifactList.classList.toggle('opacity-60', locked);
+  }
+}
+
+function setReleasePlanStep(step, status) {
+  const el = document.querySelector(`[data-plan-step="${step}"]`);
+  if (!el) return;
+  const icon = el.querySelector('span.w-4');
+  if (icon) {
+    icon.textContent = status === 'active' ? '>'
+      : status === 'done' ? '✓'
+      : status === 'error' ? '✗'
+      : status === 'skipped' ? '-'
+      : '·';
+  }
+  const classes = ['text-slate-500', 'text-slate-400', 'text-blue-600', 'text-emerald-600', 'text-red-600'];
+  el.classList.remove(...classes);
+  el.classList.add(
+    status === 'active' ? 'text-blue-600'
+      : status === 'done' ? 'text-emerald-600'
+      : status === 'error' ? 'text-red-600'
+      : status === 'skipped' ? 'text-slate-400'
+      : 'text-slate-500',
+  );
+}
+
+function pluginArtifactSummary(value) {
+  const names = String(value || '').split(',').map(x => x.trim()).filter(Boolean);
+  if (!names.length) return '(无 artifact)';
+  if (names.length <= 2) return names.join(', ');
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+}
+
+function pluginArtifactValueFromBuild(item) {
+  if (!item) return '';
+  if (item.artifact_name) return String(item.artifact_name).trim();
+  return (item.artifact_names || []).map(x => String(x || '').trim()).filter(Boolean).join(',');
+}
+
+function updatePlanPluginArtifactSelected(item) {
+  const selectedEl = document.getElementById('plan-plugin-artifact-selected');
+  const value = document.getElementById('plan-plugin-artifact')?.value.trim() || '';
+  const runId = document.getElementById('plan-plugin-run-id')?.value.trim() || '';
+  if (!selectedEl) return;
+  if (!value) {
+    selectedEl.textContent = '未选择 Plugin Action Artifact';
+    return;
+  }
+  if (item) {
+    const runNumber = item.run_number || item.run_id || '';
+    const title = item.title || item.branch || '(no title)';
+    selectedEl.innerHTML = `<span class="font-mono">run #${escapeHtml(runNumber)}</span> · ${escapeHtml(title)} · <span class="font-mono">${escapeHtml(pluginArtifactSummary(value))}</span>`;
+    return;
+  }
+  if (runId) {
+    selectedEl.textContent = `已选择 run ${runId}: ${pluginArtifactSummary(value)}`;
+    return;
+  }
+  selectedEl.textContent = `已选择: ${pluginArtifactSummary(value)}`;
+}
+
+function setPlanPluginArtifactValue(value, runId = '', item = null) {
+  const input = document.getElementById('plan-plugin-artifact');
+  if (input) input.value = value || '';
+  const runInput = document.getElementById('plan-plugin-run-id');
+  if (runInput) runInput.value = runId ? String(runId) : '';
+  updatePlanPluginArtifactSelected(item);
+}
+
+function renderPluginArtifactBuilds() {
+  const container = document.getElementById('plan-plugin-artifact-list');
+  if (!container) return;
+  const items = releasePlanState.pluginArtifactBuilds || [];
+  const selectedValue = document.getElementById('plan-plugin-artifact')?.value.trim() || '';
+  const selectedRunId = document.getElementById('plan-plugin-run-id')?.value.trim() || '';
+  if (!items.length) {
+    container.innerHTML = '<div class="p-3 text-xs text-slate-500">没有最近 Plugin Action 构建</div>';
+    updatePlanPluginArtifactSelected(null);
+    return;
+  }
+  container.innerHTML = items.map((item, index) => {
+    const artifactName = pluginArtifactValueFromBuild(item);
+    const runId = String(item.run_id || '');
+    const active = runId && runId === selectedRunId ? ' active' : '';
+    const disabled = artifactName ? '' : ' opacity-50 pointer-events-none';
+    const statusText = [item.status, item.conclusion].filter(Boolean).join(' · ') || 'unknown';
+    const ok = item.status === 'completed' && item.conclusion === 'success';
+    const badge = ok ? 'text-emerald-600'
+      : item.conclusion && item.conclusion !== 'success' ? 'text-red-600'
+      : 'text-amber-600';
+    const runNumber = item.run_number || item.run_id || '';
+    const title = item.title || item.branch || '(no title)';
+    const meta = [item.branch, fmtRelativeTime(item.created_at)].filter(Boolean).join(' · ');
+    return `<div class="plugin-artifact-item${active}${disabled}" data-plugin-artifact-index="${index}" ${artifactName ? '' : 'aria-disabled="true"'}>
+      <div class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+        <div class="font-mono">run #${escapeHtml(runNumber)}</div>
+        <div class="text-xs ${badge}">${escapeHtml(statusText)}</div>
+      </div>
+      <div class="text-xs text-slate-500">${escapeHtml(title)}${meta ? ' · ' + escapeHtml(meta) : ''}</div>
+      <div class="text-[11px] text-slate-500 font-mono mt-0.5">${artifactName ? escapeHtml(pluginArtifactSummary(artifactName)) : 'no artifact'}</div>
+    </div>`;
+  }).join('');
+  container.querySelectorAll('.plugin-artifact-item').forEach(it => {
+    it.addEventListener('click', () => selectPluginArtifactItem(it));
+  });
+  const selectedItem = items.find(item => String(item.run_id || '') === selectedRunId)
+    || items.find(item => pluginArtifactValueFromBuild(item) === selectedValue);
+  updatePlanPluginArtifactSelected(selectedItem);
+}
+
+async function loadPluginArtifactBuilds(force = false) {
+  const container = document.getElementById('plan-plugin-artifact-list');
+  if (!container) return;
+  if (releasePlanState.pluginArtifactLoading) return;
+  if (releasePlanState.pluginArtifactLoaded && !force) {
+    renderPluginArtifactBuilds();
+    return;
+  }
+  releasePlanState.pluginArtifactLoading = true;
+  container.innerHTML = '<div class="p-3 text-xs text-slate-500">加载 Plugin Action 构建...</div>';
+  try {
+    const r = await pywebview.api.list_plugin_action_builds();
+    if (!r.ok) {
+      container.innerHTML = `<div class="p-3 text-xs text-red-600">加载失败: ${escapeHtml(r.error)}</div>`;
+      return;
+    }
+    releasePlanState.pluginArtifactBuilds = r.builds || [];
+    releasePlanState.pluginArtifactLoaded = true;
+    renderPluginArtifactBuilds();
+  } catch (e) {
+    container.innerHTML = `<div class="p-3 text-xs text-red-600">调用失败: ${escapeHtml(e)}</div>`;
+  } finally {
+    releasePlanState.pluginArtifactLoading = false;
+  }
+}
+
+function selectPluginArtifactItem(el) {
+  const index = Number(el.dataset.pluginArtifactIndex);
+  const item = releasePlanState.pluginArtifactBuilds[index];
+  const artifactName = pluginArtifactValueFromBuild(item);
+  if (!artifactName) return;
+  document.querySelectorAll('.plugin-artifact-item').forEach(i => i.classList.remove('active'));
+  el.classList.add('active');
+  setPlanPluginArtifactValue(artifactName, item?.run_id || '', item);
+  clearReleasePlanOutcomeIfIdle();
+  refreshReleasePlanChecklist();
+}
+
+function setReleasePlanPluginMode(mode) {
+  releasePlanState.pluginMode = mode === 'artifact' ? 'artifact' : 'release';
+  clearReleasePlanOutcomeIfIdle();
+  document.querySelectorAll('.plan-plugin-mode-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.planPluginMode === releasePlanState.pluginMode)
+  );
+  document.querySelectorAll('.plan-plugin-mode-panel').forEach(p =>
+    p.classList.toggle('hidden', p.dataset.planPluginModePanel !== releasePlanState.pluginMode)
+  );
+  if (releasePlanState.pluginMode === 'artifact') {
+    loadPluginArtifactBuilds();
+  }
+  refreshReleasePlanChecklist();
+}
+
+function releasePlanFields() {
+  return {
+    lens_tag: document.getElementById('plan-lens-tag')?.value.trim() || '',
+    plugin_mode: releasePlanState.pluginMode,
+    plugin_tag: document.getElementById('plan-plugin-tag')?.value.trim() || '',
+    plugin_artifact_name: document.getElementById('plan-plugin-artifact')?.value.trim() || '',
+    plugin_run_id: document.getElementById('plan-plugin-run-id')?.value.trim() || '',
+    sdk_base: document.getElementById('plan-sdk-base')?.value.trim() || '',
+    include_sdk: !!document.getElementById('plan-include-sdk')?.checked,
+  };
+}
+
+function releasePlanSdkWillRun(scope, fields) {
+  return !!fields.include_sdk && (scope.includes('lens') || scope.includes('plugin'));
+}
+
+function releasePlanScope(actionValue) {
+  if (!releasePlanActionUsesPan123(actionValue)) return [];
+  if (!publishState.selected || publishState.selected.kind === 'orphan') return [];
+  const fields = releasePlanFields();
+  const scope = ['app'];
+  const includeLens = !!document.getElementById('plan-include-lens')?.checked;
+  const includePlugin = !!document.getElementById('plan-include-plugin')?.checked;
+  if (includeLens && fields.lens_tag) scope.push('lens');
+  if (includePlugin) {
+    const pluginSelected = fields.plugin_mode === 'artifact'
+      ? !!fields.plugin_artifact_name
+      : !!fields.plugin_tag;
+    if (pluginSelected) scope.push('plugin');
+  }
+  return scope;
+}
+
+function fillReleasePlanFieldsFromResourcesPayload(payload) {
+  if (!payload || !payload.ok) return;
+  const d = payload.defaults || {};
+  const cur = payload.current || {};
+  const lens = document.getElementById('plan-lens-tag');
+  const pluginTag = document.getElementById('plan-plugin-tag');
+  const sdkBase = document.getElementById('plan-sdk-base');
+  const includeLens = document.getElementById('plan-include-lens');
+  const includePlugin = document.getElementById('plan-include-plugin');
+  const includeSdk = document.getElementById('plan-include-sdk');
+  if (lens) lens.value = cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '';
+  if (pluginTag) pluginTag.value = cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '';
+  setPlanPluginArtifactValue(
+    cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
+    cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
+  );
+  if (sdkBase) sdkBase.value = cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/';
+  if (includeLens) includeLens.checked = true;
+  if (includePlugin) includePlugin.checked = true;
+  if (includeSdk) includeSdk.checked = true;
+  setReleasePlanPluginMode((cur.NIYIEN_PLUGINS_SOURCE_MODE || d.plugins_source_mode || 'release').toLowerCase());
+  refreshReleasePlanChecklist();
+}
+
+function refreshReleasePlanChecklist() {
+  const selected = !!publishState.selected;
+  const action = releasePlanState.lastAction || document.getElementById('pub-action')?.value || '';
+  const fields = releasePlanFields();
+  const includeLens = !!document.getElementById('plan-include-lens')?.checked;
+  const includePlugin = !!document.getElementById('plan-include-plugin')?.checked;
+  const scope = releasePlanScope(action);
+  const sdkSelected = releasePlanSdkWillRun(scope, fields);
+  const needsPan123 = selected
+    && publishState.selected?.kind !== 'orphan'
+    && releasePlanActionUsesPan123(action);
+  setReleasePlanStep('app', selected ? 'done' : 'pending');
+  setReleasePlanStep('lens', includeLens ? (fields.lens_tag ? 'done' : 'pending') : 'skipped');
+  if (fields.plugin_mode === 'artifact') {
+    setReleasePlanStep('plugin', includePlugin ? (fields.plugin_artifact_name ? 'done' : 'pending') : 'skipped');
+  } else {
+    setReleasePlanStep('plugin', includePlugin ? (fields.plugin_tag ? 'done' : 'pending') : 'skipped');
+  }
+  setReleasePlanStep('sdk', sdkSelected ? (fields.sdk_base ? 'done' : 'pending') : 'skipped');
+  if (releasePlanState.running && needsPan123) {
+    setReleasePlanStep('pan123', 'active');
+    setReleasePlanStep('manifest', 'pending');
+  } else if (releasePlanState.lastResult === 'success') {
+    setReleasePlanStep('pan123', needsPan123 ? 'done' : 'skipped');
+    setReleasePlanStep('manifest', 'done');
+  } else if (releasePlanState.lastResult === 'error') {
+    setReleasePlanStep('pan123', needsPan123 ? 'error' : 'skipped');
+    setReleasePlanStep('manifest', needsPan123 ? 'pending' : 'error');
+  } else {
+    setReleasePlanStep('pan123', needsPan123 ? 'pending' : 'skipped');
+    setReleasePlanStep('manifest', 'pending');
+  }
+}
+
 // Mode switcher
 document.querySelectorAll('.mode-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -650,6 +892,18 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
     }
   });
 });
+
+document.querySelectorAll('.plan-plugin-mode-btn').forEach(btn => {
+  btn.addEventListener('click', () => setReleasePlanPluginMode(btn.dataset.planPluginMode));
+});
+document.getElementById('plan-plugin-artifact-refresh')?.addEventListener('click', () => loadPluginArtifactBuilds(true));
+['plan-include-lens', 'plan-include-plugin', 'plan-include-sdk', 'plan-lens-tag', 'plan-plugin-tag', 'plan-plugin-artifact', 'plan-sdk-base'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', () => {
+    clearReleasePlanOutcomeIfIdle();
+    refreshReleasePlanChecklist();
+  });
+});
+setReleasePlanPluginMode('release');
 
 // ---- Mode 1: Trigger action build ----
 
@@ -767,10 +1021,9 @@ document.getElementById('push-tag-btn')?.addEventListener('click', async () => {
 // ---- Mode 3: Select source + publish ----
 
 const ACTION_HINTS = {
-  manual_only: '只把版本加入 policy.versions[] 白名单,客户端手动查找时能找到,但不会主动推送',
-  publish_and_push: '加入白名单并立即设为当前自动推送版本,所有客户端升级检查会看到这个新版',
-  switch_auto: '把当前自动推送切换为此版本(版本必须已在白名单中)',
-  rollback_auto: '切换自动推送到此版本(版本必须已在白名单中)',
+  manual_only: '上传所选 App/资源后加入手动版本列表,不会改变 auto_version',
+  publish_and_push: '上传所选 App/资源后设为当前自动推送版本',
+  switch_auto: '上传/校验所选 App/资源后把自动推送切换为此版本',
   hide_version: '从 policy.versions[] 白名单移除此版本,如果它正在自动推送会切到其他版本',
 };
 
@@ -787,6 +1040,8 @@ function syncRecommendedVisibility(actionValue) {
 document.getElementById('pub-action')?.addEventListener('change', (e) => {
   document.getElementById('pub-action-hint').textContent = ACTION_HINTS[e.target.value] || '';
   syncRecommendedVisibility(e.target.value);
+  clearReleasePlanOutcomeIfIdle();
+  refreshReleasePlanChecklist();
 });
 // Trigger initial hint + recommended visibility
 if (document.getElementById('pub-action')) {
@@ -818,7 +1073,7 @@ async function loadSourceList(source) {
       ? await pywebview.api.list_action_builds()
       : await pywebview.api.list_policy_orphan_versions();
     if (!r.ok) {
-      container.innerHTML = `<div class="p-3 text-xs text-red-600">加载失败: ${r.error}</div>`;
+      container.innerHTML = `<div class="p-3 text-xs text-red-600">加载失败: ${escapeHtml(r.error)}</div>`;
       return;
     }
     const items = source === 'release' ? r.releases
@@ -835,16 +1090,17 @@ async function loadSourceList(source) {
       if (source === 'release') {
         const flag = item.draft ? '<span class="ml-2 text-amber-600">[draft]</span>'
                    : item.prerelease ? '<span class="ml-2 text-purple-600">[pre]</span>' : '';
-        return `<div class="source-item" data-tag="${item.tag}" data-kind="release">
-          <div class="font-mono">${item.tag}${flag}</div>
-          <div class="text-xs text-slate-500">${fmtRelativeTime(item.published_at)}</div>
+        return `<div class="source-item" data-tag="${escapeHtml(item.tag)}" data-kind="release">
+          <div class="font-mono">${escapeHtml(item.tag)}${flag}</div>
+          <div class="text-xs text-slate-500">${escapeHtml(fmtRelativeTime(item.published_at))}</div>
         </div>`;
       } else if (source === 'artifact') {
         const ok = item.status === 'completed' && item.conclusion === 'success';
         const badge = ok ? 'text-emerald-600' : 'text-amber-600';
-        return `<div class="source-item" data-run-id="${item.run_id}" data-run-number="${item.run_number}" data-kind="artifact">
-          <div class="font-mono">run #${item.run_number}</div>
-          <div class="text-xs text-slate-500">${item.title || item.branch} · <span class="${badge}">${item.status}${item.conclusion ? ' · ' + item.conclusion : ''}</span></div>
+        const statusText = `${item.status}${item.conclusion ? ' · ' + item.conclusion : ''}`;
+        return `<div class="source-item" data-run-id="${escapeHtml(item.run_id)}" data-run-number="${escapeHtml(item.run_number)}" data-kind="artifact">
+          <div class="font-mono">run #${escapeHtml(item.run_number)}</div>
+          <div class="text-xs text-slate-500">${escapeHtml(item.title || item.branch)} · <span class="${badge}">${escapeHtml(statusText)}</span></div>
         </div>`;
       } else {
         // orphan — policy.versions[] entry whose tag no longer exists on GitHub
@@ -854,9 +1110,9 @@ async function loadSourceList(source) {
         const tagLabel = item.tag || '(无 tag)';
         const channels = (item.channels || []).join(',') || '(空)';
         const disabled = item.is_auto_version ? 'opacity-50 pointer-events-none' : '';
-        return `<div class="source-item ${disabled}" data-version="${item.version}" data-tag="${item.tag || ''}" data-changelog="${(item.changelog || '').replace(/"/g, '&quot;')}" data-kind="orphan">
-          <div class="font-mono">${item.version} <span class="text-slate-400">·</span> ${tagLabel}${autoBadge}</div>
-          <div class="text-xs text-slate-500">channels: ${channels}</div>
+        return `<div class="source-item ${disabled}" data-version="${escapeHtml(item.version)}" data-tag="${escapeHtml(item.tag || '')}" data-changelog="${escapeHtml(item.changelog || '')}" data-kind="orphan">
+          <div class="font-mono">${escapeHtml(item.version)} <span class="text-slate-400">·</span> ${escapeHtml(tagLabel)}${autoBadge}</div>
+          <div class="text-xs text-slate-500">channels: ${escapeHtml(channels)}</div>
         </div>`;
       }
     }).join('');
@@ -865,7 +1121,7 @@ async function loadSourceList(source) {
       it.addEventListener('click', () => selectSourceItem(it, items));
     });
   } catch (e) {
-    container.innerHTML = `<div class="p-3 text-xs text-red-600">调用失败: ${e}</div>`;
+    container.innerHTML = `<div class="p-3 text-xs text-red-600">调用失败: ${escapeHtml(e)}</div>`;
   }
 }
 
@@ -909,6 +1165,9 @@ function selectSourceItem(el, items) {
   updateFinalVersion();
   document.getElementById('execute-publish-btn').disabled = false;
   document.getElementById('execute-publish-result').textContent = '';
+  releasePlanState.lastResult = '';
+  releasePlanState.lastAction = '';
+  refreshReleasePlanChecklist();
 }
 
 function updateFinalVersion() {
@@ -917,6 +1176,8 @@ function updateFinalVersion() {
   const pat = document.getElementById('pub-patch').value || '0';
   const suffix = document.getElementById('pub-suffix').textContent || '';
   document.getElementById('pub-final').textContent = `${maj}.${min}.${pat}${suffix}`;
+  clearReleasePlanOutcomeIfIdle();
+  refreshReleasePlanChecklist();
 }
 ['pub-major', 'pub-minor', 'pub-patch'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', updateFinalVersion);
@@ -929,6 +1190,8 @@ const pan123State = {
   pollHandle: null,
   startedAt: 0,
   logBuf: [],          // last N lines, capped
+  stagedUntilPan123: false,
+  releasePlan: false,
 };
 
 const PHASE_LABEL = {
@@ -1003,10 +1266,11 @@ async function pan123StartPolling(token, opts = {}) {
   if (opts.stagedUntilPan123) {
     const phaseEl = document.getElementById('pan123-phase-line');
     phaseEl.innerHTML =
-      '<span class="text-amber-700">⏳ manifest 等 pan123 完成才推送 (race-free 二阶段)</span>';
+      '<span class="text-amber-700">> manifest 等 pan123 完成才推送 (race-free 二阶段)</span>';
     pan123AppendLog('[stage] manifest is staged; will be pushed on pan123 success');
   }
   pan123State.stagedUntilPan123 = !!opts.stagedUntilPan123;
+  pan123State.releasePlan = !!opts.releasePlan;
   pan123State.token = token;
   pan123State.startedAt = Date.now();
   pan123State.pollHandle = setInterval(async () => {
@@ -1016,11 +1280,23 @@ async function pan123StartPolling(token, opts = {}) {
       r = await pywebview.api.poll_publish_progress(pan123State.token);
     } catch (e) {
       pan123AppendLog(`[poll error] ${e}`);
+      if (pan123State.releasePlan) {
+        releasePlanState.running = false;
+        releasePlanState.lastResult = 'error';
+        setReleasePlanControlsLocked(false);
+        refreshReleasePlanChecklist();
+      }
       return;
     }
     if (!r || !r.ok) {
       pan123AppendLog(`[poll error] ${r?.error || 'unknown'}`);
       pan123StopPolling();
+      if (pan123State.releasePlan) {
+        releasePlanState.running = false;
+        releasePlanState.lastResult = 'error';
+        setReleasePlanControlsLocked(false);
+        refreshReleasePlanChecklist();
+      }
       return;
     }
     // Render events
@@ -1088,12 +1364,18 @@ async function pan123StartPolling(token, opts = {}) {
         }
       }
       document.getElementById('pan123-phase-line').textContent = finalLine;
+      if (pan123State.releasePlan) {
+        releasePlanState.running = false;
+        releasePlanState.lastResult = r.task_ok ? 'success' : 'error';
+        setReleasePlanControlsLocked(false);
+        refreshReleasePlanChecklist();
+      }
       // Clear the "进行中..." mid-progress text once we're done.
       document.getElementById('pan123-progress-meta').textContent = '';
       if (r.task_ok) {
         document.getElementById('pan123-progress-bar').style.width = '100%';
       }
-      // Update the inline result span next to the "执行发布动作" button.
+      // Update the inline result span next to the publish plan button.
       const resultEl = document.getElementById('execute-publish-result');
       if (resultEl) {
         resultEl.textContent = resultLine;
@@ -1202,13 +1484,33 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
     run_id: publishState.selected.run_id,
     run_number: publishState.selected.run_number,
     tag: publishState.selected.tag,
+    resources: releasePlanFields(),
   };
   const resultEl = document.getElementById('execute-publish-result');
-  if (!confirm(`确定执行 "${payload.action}" 操作,版本 ${version}?`)) return;
+  const useReleasePlan = releasePlanActionUsesPan123(payload.action)
+    && publishState.selected.kind !== 'orphan';
+  const scope = releasePlanScope(payload.action);
+  payload.scope = scope;
+  const sdkWillRun = releasePlanSdkWillRun(scope, payload.resources);
+  if (!confirm(`确定执行 "${payload.action}" 操作,版本 ${version}?\n\n` +
+               (useReleasePlan
+                 ? `Scope: ${scope.join(', ')}\n` +
+                   `Lens: ${document.getElementById('plan-include-lens')?.checked ? (payload.resources.lens_tag || '(空)') : '(未选)'}\n` +
+                   `Plugin: ${document.getElementById('plan-include-plugin')?.checked ? `${payload.resources.plugin_mode} ${payload.resources.plugin_tag || payload.resources.plugin_artifact_name || '(空)'}` : '(未选)'}\n` +
+                   `SDK: ${sdkWillRun ? (payload.resources.sdk_base || '(空)') : '(未执行: 需选择 Lens 或 Plugin)'}\n\n` +
+                   `123 完成前不会推送 manifest。`
+                 : '此操作直接维护版本列表。'))) return;
   resultEl.textContent = '执行中...';
   resultEl.className = 'text-sm text-slate-600';
+  releasePlanState.running = useReleasePlan;
+  releasePlanState.lastResult = '';
+  releasePlanState.lastAction = payload.action;
+  setReleasePlanControlsLocked(true);
+  refreshReleasePlanChecklist();
   try {
-    const r = await pywebview.api.execute_app_action(payload);
+    const r = useReleasePlan
+      ? await pywebview.api.execute_release_plan(payload)
+      : await pywebview.api.execute_app_action(payload);
     if (r.ok) {
       resultEl.textContent = `✓ ${r.message || '已执行'}`;
       resultEl.className = 'text-sm text-emerald-600';
@@ -1222,20 +1524,38 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
       if (r.pan123_task_token) {
         pan123StartPolling(r.pan123_task_token, {
           stagedUntilPan123: !!r.staged_until_pan123,
+          releasePlan: useReleasePlan,
         });
       } else if (r.pan123_error) {
         // Two-phase commit: pan123 didn't start, so manifest also wasn't
         // pushed. Operator needs to fix creds and retry.
         resultEl.textContent +=
           ` · ⚠ manifest 未推送 (pan123 启动失败: ${r.pan123_error})`;
+        releasePlanState.running = false;
+        releasePlanState.lastResult = 'error';
+        setReleasePlanControlsLocked(false);
+        refreshReleasePlanChecklist();
+      } else {
+        releasePlanState.running = false;
+        releasePlanState.lastResult = (!useReleasePlan || r.deploy_hook) ? 'success' : '';
+        setReleasePlanControlsLocked(false);
+        refreshReleasePlanChecklist();
       }
     } else {
       resultEl.textContent = `✗ 失败: ${r.error}`;
       resultEl.className = 'text-sm text-red-600';
+      releasePlanState.running = false;
+      releasePlanState.lastResult = 'error';
+      setReleasePlanControlsLocked(false);
+      refreshReleasePlanChecklist();
     }
   } catch (e) {
     resultEl.textContent = `✗ 调用失败: ${e}`;
     resultEl.className = 'text-sm text-red-600';
+    releasePlanState.running = false;
+    releasePlanState.lastResult = 'error';
+    setReleasePlanControlsLocked(false);
+    refreshReleasePlanChecklist();
   }
 });
 
@@ -1258,30 +1578,20 @@ document.getElementById('policy-btn')?.addEventListener('click', async () => {
   catch (e) { logOutput('get_current_policy FAILED', String(e)); }
 });
 
-// ---- Resources view ----
+// ---- Resources orchestration ----
 
 const resourcesState = {
-  op: null,       // 'apply' | 'save'
-  pluginMode: 'release',
   loaded: false,
 };
 
-function resSetPluginMode(mode) {
-  resourcesState.pluginMode = mode;
-  document.querySelectorAll('.plugin-mode-btn').forEach(b =>
-    b.classList.toggle('active', b.dataset.pluginMode === mode)
-  );
-  document.querySelectorAll('.plugin-mode-panel').forEach(p =>
-    p.classList.toggle('hidden', p.dataset.pluginModePanel !== mode)
-  );
+function setInputValueIfPresent(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.value = value;
 }
-
-document.querySelectorAll('.plugin-mode-btn').forEach(btn => {
-  btn.addEventListener('click', () => resSetPluginMode(btn.dataset.pluginMode));
-});
 
 async function loadResourcesState() {
   const statusEl = document.getElementById('resources-status');
+  if (!statusEl) return;
   statusEl.textContent = '读取中...';
   statusEl.className = 'text-sm mb-4 text-slate-500';
   try {
@@ -1291,191 +1601,44 @@ async function loadResourcesState() {
       statusEl.className = 'text-sm mb-4 text-red-600';
       return;
     }
-    // Populate form: prefer current Vercel envs (consistent with dashboard
-    // cards), fall back to publish_defaults.
     const d = r.defaults || {};
     const cur = r.current || {};
-    document.getElementById('res-lens-tag').value = cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '';
-    document.getElementById('res-plugin-tag').value = cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '';
-    document.getElementById('res-plugin-artifact').value = cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '';
-    document.getElementById('res-sdk-base').value = cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/';
-    resSetPluginMode((cur.NIYIEN_PLUGINS_SOURCE_MODE || d.plugins_source_mode || 'release').toLowerCase());
+    setInputValueIfPresent('plan-lens-tag', cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '');
+    setInputValueIfPresent('plan-plugin-tag', cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '');
+    setPlanPluginArtifactValue(
+      cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
+      cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
+    );
+    setInputValueIfPresent('plan-sdk-base', cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/');
+    const includeLens = document.getElementById('plan-include-lens');
+    if (includeLens) includeLens.checked = true;
+    const includePlugin = document.getElementById('plan-include-plugin');
+    if (includePlugin) includePlugin.checked = true;
+    const includeSdk = document.getElementById('plan-include-sdk');
+    if (includeSdk) includeSdk.checked = true;
 
-    // Render current env snapshot (read-only)
     const curEl = document.getElementById('resources-current');
-    if (r.error) {
-      curEl.innerHTML = `<div class="text-red-600">${r.error}</div>`;
-    } else {
-      const cur = r.current || {};
+    if (curEl) {
       const entries = Object.entries(cur).filter(([_, v]) => v);
       if (!entries.length) {
         curEl.innerHTML = '<div class="text-slate-500">Vercel 上未设置任何 NIYIEN_* 资源变量</div>';
       } else {
         curEl.innerHTML = entries.map(([k, v]) =>
-          `<div><span class="text-slate-500">${k}</span> = <span class="text-slate-800">${v}</span></div>`
+          `<div><span class="text-slate-500">${escapeHtml(k)}</span> = <span class="text-slate-800">${escapeHtml(v)}</span></div>`
         ).join('');
       }
     }
-    statusEl.textContent = `已载入 publish_defaults · Vercel envs snapshot`;
+    statusEl.textContent = '已载入 publish_defaults · Vercel envs snapshot';
     statusEl.className = 'text-sm mb-4 text-slate-500';
     resourcesState.loaded = true;
+    fillReleasePlanFieldsFromResourcesPayload(r);
   } catch (e) {
     statusEl.textContent = `调用失败: ${e}`;
     statusEl.className = 'text-sm mb-4 text-red-600';
   }
 }
 
-// Op selector
-document.querySelectorAll('.res-op-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const op = btn.dataset.resOp;
-    resourcesState.op = op;
-    document.querySelectorAll('.res-op-btn').forEach(b => b.classList.toggle('active', b === btn));
-    document.querySelector('[data-res-form]').classList.remove('hidden');
-    document.getElementById('res-form-title').textContent =
-      op === 'apply' ? '立即切换 — upsert 到 Vercel envs' : '保存为下次发版默认 — 写 control_center.config.json';
-    const execBtn = document.getElementById('resources-execute-btn');
-    execBtn.textContent = op === 'apply' ? '立即切换' : '保存默认';
-    execBtn.className = op === 'apply'
-      ? 'px-4 py-2 bg-amber-600 text-white rounded-md hover:bg-amber-700'
-      : 'px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700';
-  });
-});
-
-document.getElementById('resources-execute-btn')?.addEventListener('click', async () => {
-  const op = resourcesState.op;
-  if (!op) return;
-  const payload = {
-    lens_tag: document.getElementById('res-lens-tag').value.trim(),
-    plugin_mode: resourcesState.pluginMode,
-    plugin_tag: document.getElementById('res-plugin-tag').value.trim(),
-    plugin_artifact_name: document.getElementById('res-plugin-artifact').value.trim(),
-    sdk_base: document.getElementById('res-sdk-base').value.trim(),
-  };
-  const resultEl = document.getElementById('resources-execute-result');
-  if (op === 'apply') {
-    if (!confirm(`立即切换会 upsert 到 Vercel envs,所有客户端会立刻生效。继续?\nLens: ${payload.lens_tag}\nPlugin: ${payload.plugin_mode} ${payload.plugin_tag || payload.plugin_artifact_name || '(auto)'}\nSDK: ${payload.sdk_base}`)) return;
-  }
-  resultEl.textContent = '执行中...';
-  resultEl.className = 'text-sm text-slate-600';
-  try {
-    const r = op === 'apply'
-      ? await pywebview.api.apply_resources_now(payload)
-      : await pywebview.api.save_resources_defaults(payload);
-    if (r.ok) {
-      resultEl.textContent = `✓ ${r.message}`;
-      resultEl.className = 'text-sm text-emerald-600';
-      // For 'apply', refresh current snapshot
-      if (op === 'apply') setTimeout(loadResourcesState, 500);
-    } else {
-      resultEl.textContent = `✗ ${r.error}`;
-      resultEl.className = 'text-sm text-red-600';
-    }
-  } catch (e) {
-    resultEl.textContent = `✗ 调用失败: ${e}`;
-    resultEl.className = 'text-sm text-red-600';
-  }
-});
-
-// Scoped publish to 123 — push only lens or only plugin without re-uploading
-// the other component. Backend defers the actual upload to publish_pan123_release
-// with --scope=lens|plugin. Requires both NIYIEN_LENS_RELEASE_TAG and
-// NIYIEN_PLUGIN_RELEASE_TAG to be seeded by a prior full publish.
-async function resTriggerScopedPublish(scope, label) {
-  const resultEl = document.getElementById('resources-publish-result');
-  if (!confirm(`将启动「仅 ${label}」推送到 123 网盘。\n\n` +
-               `当前 ${label} tag/artifact 已 upsert 到 Vercel 后才会被脚本拉取 — ` +
-               `如果改了表单还没点「立即切换」,请先点。\n\n` +
-               `点确定后会跳转到「发布版本」视图看实时进度。`)) return;
-  resultEl.textContent = `启动中 (${label})...`;
-  resultEl.className = 'text-xs text-slate-600';
-  try {
-    const r = await pywebview.api.start_pan123_publish_manual('', '', 0, [scope]);
-    if (!r.ok) {
-      resultEl.textContent = `✗ ${r.error}`;
-      resultEl.className = 'text-xs text-red-600';
-      return;
-    }
-    resultEl.textContent = `✓ 已启动 (token=${(r.token || '').slice(0, 12)}...)`;
-    resultEl.className = 'text-xs text-emerald-600';
-    showView('publish');
-    document.querySelector('.mode-btn[data-mode="select"]')?.click();
-    pan123StartPolling(r.token);
-  } catch (e) {
-    resultEl.textContent = `✗ 调用失败: ${e}`;
-    resultEl.className = 'text-xs text-red-600';
-  }
-}
-document.getElementById('resources-publish-lens-btn')?.addEventListener('click',
-  () => resTriggerScopedPublish('lens', 'Lens'));
-document.getElementById('resources-publish-plugin-btn')?.addEventListener('click',
-  () => resTriggerScopedPublish('plugin', 'Plugin'));
-
-// Full-scope publish — looks up policy.auto_version to recover the right
-// app tag + run_id, then dispatches start_pan123_publish_manual without a
-// scope arg (backend defaults to all three: app + lens + plugin).
-document.getElementById('resources-publish-all-btn')?.addEventListener('click', async () => {
-  const resultEl = document.getElementById('resources-publish-result');
-  resultEl.textContent = '读取 policy.auto_version...';
-  resultEl.className = 'text-xs text-slate-600';
-  let tag = '', version = '', runId = 0;
-  try {
-    const pr = await pywebview.api.get_current_policy();
-    if (!pr.ok) throw new Error(pr.error);
-    const policy = pr.policy || {};
-    const autoV = String(policy.auto_version || '').trim();
-    const entry = (policy.versions || []).find(v => String(v.version || '') === autoV);
-    if (!entry || !entry.tag) {
-      resultEl.textContent = '✗ 找不到 auto_version 对应的 app tag,先在 policy 里设一个';
-      resultEl.className = 'text-xs text-red-600';
-      return;
-    }
-    tag = String(entry.tag);
-    version = String(entry.version || autoV);
-    runId = parseInt(entry.run_id || 0, 10) || 0;
-  } catch (e) {
-    resultEl.textContent = `✗ 读取 policy 失败: ${e}`;
-    resultEl.className = 'text-xs text-red-600';
-    return;
-  }
-  const modeLabel = runId ? `artifact (run=${runId})` : 'release';
-  if (!confirm(`将启动「全量」推送到 123 网盘:\n\n` +
-               `App tag: ${tag} [${modeLabel}]\n` +
-               `Lens / Plugin 按当前 Vercel envs 拉取\n\n` +
-               `已存在的文件会自动跳过 (123 API MD5 去重 + bundle hash 复用)。`)) return;
-  resultEl.textContent = '启动中 (全量)...';
-  try {
-    const r = await pywebview.api.start_pan123_publish_manual(tag, version, runId);
-    if (!r.ok) {
-      resultEl.textContent = `✗ ${r.error}`;
-      resultEl.className = 'text-xs text-red-600';
-      return;
-    }
-    resultEl.textContent = `✓ 已启动 (token=${(r.token || '').slice(0, 12)}...)`;
-    resultEl.className = 'text-xs text-emerald-600';
-    showView('publish');
-    document.querySelector('.mode-btn[data-mode="select"]')?.click();
-    pan123StartPolling(r.token);
-  } catch (e) {
-    resultEl.textContent = `✗ 调用失败: ${e}`;
-    resultEl.className = 'text-xs text-red-600';
-  }
-});
-
 document.getElementById('resources-reload-btn')?.addEventListener('click', loadResourcesState);
-
-// Auto-load when entering resources view
-document.querySelector('[data-view="resources"].nav-btn')?.addEventListener('click', () => {
-  if (!resourcesState.loaded) loadResourcesState();
-  initResourcesExtrasOnce();
-});
-// Also trigger when landing via Dashboard "更新资源" card
-document.querySelectorAll('[data-action-nav="resources"]').forEach(btn => {
-  btn.addEventListener('click', () => {
-    if (!resourcesState.loaded) loadResourcesState();
-    initResourcesExtrasOnce();
-  });
-});
 
 // ---- Resources extras: plugin latest run + plugin/lens tag push ----
 

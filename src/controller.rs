@@ -2530,17 +2530,17 @@ impl Controller {
     }
 
     fn fetch_available_versions(&self) -> QString {
-        let payload = match crate::distribution::fetch_manual_versions(true) {
-            Ok(versions) => serde_json::json!({
-                "versions": versions
+        let payload = match crate::distribution::fetch_app_update_candidates(true) {
+            Ok(updates) => serde_json::json!({
+                "updates": updates
             }),
             Err(err) => serde_json::json!({
-                "versions": [],
+                "updates": [],
                 "error": err
             }),
         };
         QString::from(
-            serde_json::to_string(&payload).unwrap_or_else(|_| "{\"versions\":[]}".to_owned()),
+            serde_json::to_string(&payload).unwrap_or_else(|_| "{\"updates\":[]}".to_owned()),
         )
     }
 
@@ -2579,22 +2579,17 @@ impl Controller {
         core::run_threaded(move || {
             let result = (|| -> Result<crate::distribution::PreparedAppUpdate, String> {
                 let manifest = crate::distribution::fetch_manifest(true)?;
-                let selection = if let Some(version) = requested_version.as_deref() {
-                    crate::distribution::manual_app_update_package_for_platform(
-                        &manifest,
-                        version,
-                        crate::distribution::platform_name(),
-                    )
-                    .ok_or_else(|| {
-                        format!(
-                            "No app update package is available for version {version} on this platform"
-                        )
-                    })?
-                } else {
-                    crate::distribution::current_platform_app_update_package(&manifest).ok_or_else(
-                        || "No app update package is available for this platform".to_owned(),
-                    )?
-                };
+                let selection = crate::distribution::app_update_package_for_requested_version(
+                    &manifest,
+                    requested_version.as_deref(),
+                    crate::distribution::platform_name(),
+                )
+                .ok_or_else(|| match requested_version.as_deref() {
+                    Some(version) => format!(
+                        "No app update package is available for version {version} on this platform"
+                    ),
+                    None => "No app update package is available for this platform".to_owned(),
+                })?;
                 crate::distribution::download_app_update(&selection, |downloaded, total, status| {
                     progress((downloaded, total, status.to_owned()));
                 })
