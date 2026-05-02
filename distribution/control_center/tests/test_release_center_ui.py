@@ -12,6 +12,8 @@ class ReleaseCenterUiTests(unittest.TestCase):
         self.assertNotIn('data-view="resources"', html)
         self.assertNotIn('data-action-nav="resources"', html)
         self.assertIn('data-view="publish"', html)
+        self.assertIn('id="open-manifest-modal-btn"', html)
+        self.assertIn('id="manifest-modal"', html)
         self.assertIn('id="plan-include-lens"', html)
         self.assertIn('id="plan-include-plugin"', html)
         self.assertIn('id="plan-include-sdk"', html)

@@ -337,7 +337,7 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
     // Surface network / HTTP errors instead of swallowing them. The previous
     // `if let Ok(...)` skipped the entire download block on any ureq failure,
     // leaving detect() to return Ok("") and the UI showing no feedback.
-    let mut reader = match ureq::get(&download_url).call() {
+    let mut reader = match crate::network::get(&download_url).call() {
         Ok(resp) => {
             ::log::info!(
                 "[nle install] HTTP ok status={} content_len_hdr={:?}",
@@ -597,10 +597,12 @@ fn latest_plugin_info() -> LatestPluginInfo {
     // removed because the deploy side (publish_pan123_release.py) now ships one
     // fixed release naming for both CI runs and tag releases, so the client
     // doesn't need a parallel nightly path.
-    let body = match ureq::get("https://api.github.com/repos/NiYien/gyroflow-plugins/releases")
-        .call()
-        .ok()
-        .and_then(|response| response.into_body().read_to_string().ok())
+    let body = match crate::network::get(
+        "https://api.github.com/repos/NiYien/gyroflow-plugins/releases",
+    )
+    .call()
+    .ok()
+    .and_then(|response| response.into_body().read_to_string().ok())
     {
         Some(body) => body,
         None => return LatestPluginInfo::default(),

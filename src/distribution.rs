@@ -159,6 +159,11 @@ pub struct DataSyncResult {
     pub updated: bool,
 }
 
+const LOCAL_COUNTRY_CACHE_TTL_MS: u64 = 60 * 60 * 1000;
+const LOCAL_COUNTRY_FAILURE_TTL_MS: u64 = 5 * 60 * 1000;
+const LOCAL_COUNTRY_CHECKED_AT_KEY: &str = "distributionCountryCheckedAt";
+const LOCAL_COUNTRY_FAILED_AT_KEY: &str = "distributionCountryLookupFailedAt";
+
 lazy_static::lazy_static! {
     static ref MANIFEST_CACHE: RwLock<Option<CachedManifest>> = RwLock::new(None);
     // Single-flight lock: at startup multiple modules concurrently call
@@ -171,6 +176,23 @@ lazy_static::lazy_static! {
 
 fn cached_manifest() -> Option<Manifest> {
     MANIFEST_CACHE.read().as_ref().map(|entry| entry.manifest.clone())
+}
+
+fn manifest_request_url(country_hint: Option<&str>) -> Result<url::Url, String> {
+    let mut url = url::Url::parse(gyroflow_core::distribution::manifest_api())
+        .map_err(|err| format!("invalid manifest url: {err}"))?;
+    let country = country_hint.and_then(normalize_cached_country_header);
+    {
+        let mut pairs = url.query_pairs_mut();
+        pairs
+            .append_pair("platform", platform_name())
+            .append_pair("arch", std::env::consts::ARCH)
+            .append_pair("app_version", env!("CARGO_PKG_VERSION"));
+        if let Some(country) = country.as_deref() {
+            pairs.append_pair("country", country);
+        }
+    }
+    Ok(url)
 }
 
 pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
@@ -194,15 +216,11 @@ pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
         }
     }
 
-    let mut url = url::Url::parse(gyroflow_core::distribution::manifest_api())
-        .map_err(|err| format!("invalid manifest url: {err}"))?;
-    url.query_pairs_mut()
-        .append_pair("platform", platform_name())
-        .append_pair("arch", std::env::consts::ARCH)
-        .append_pair("app_version", env!("CARGO_PKG_VERSION"));
+    let local_country = local_country_hint();
+    let url = manifest_request_url(local_country.as_deref())?;
 
     let started = Instant::now();
-    let body = configure_geo_request(ureq::get(url.as_str()))
+    let body = configure_geo_request(crate::network::get(url.as_str()))
         .call()
         .map_err(|err| format!("fetch manifest failed: {err}"))?
         .into_body()
@@ -216,13 +234,12 @@ pub fn fetch_manifest(force: bool) -> Result<Manifest, String> {
         Err(err) => log::warn!("Serialize manifest for logging failed: {}", err),
     }
     log::info!(
-        "Distribution geo context: country={}, region={}, city={}, country_source={}, selected_source={}, disable_proxy={}, http_proxy={}, https_proxy={}, all_proxy={}",
+        "Distribution geo context: country={}, region={}, city={}, country_source={}, selected_source={}, proxy=disabled, http_proxy={}, https_proxy={}, all_proxy={}",
         manifest.country,
         manifest.region,
         manifest.city,
         manifest.country_source,
         manifest.selected_source,
-        disable_proxy_enabled(),
         env_value_for_log("HTTP_PROXY"),
         env_value_for_log("HTTPS_PROXY"),
         env_value_for_log("ALL_PROXY"),
@@ -276,7 +293,7 @@ fn sync_package(
 
     let started = Instant::now();
     let result = (|| -> Result<usize, String> {
-        let response = configure_geo_request(ureq::get(&release.url))
+        let response = configure_geo_request(crate::network::get(&release.url))
             .call()
             .map_err(|err| format!("download {package_name} failed: {err}"))?;
         let mut reader = response.into_body().into_reader();
@@ -474,7 +491,7 @@ pub fn report_download_event(
     };
 
     crate::core::run_threaded(move || {
-        if let Err(err) = configure_geo_request(ureq::post(&endpoint))
+        if let Err(err) = configure_geo_request(crate::network::post(&endpoint))
             .header("Content-Type", "application/json")
             .send(body.as_str())
         {
@@ -484,10 +501,7 @@ pub fn report_download_event(
 }
 
 fn configure_geo_request<T>(request: ureq::RequestBuilder<T>) -> ureq::RequestBuilder<T> {
-    let mut request = request;
-    if disable_proxy_enabled() {
-        request = request.config().proxy(None).build();
-    }
+    let mut request = crate::network::configure(request);
     if geo_debug_enabled() {
         request = request.header("x-telemetry-debug", "1");
     }
@@ -503,10 +517,6 @@ fn geo_debug_enabled() -> bool {
 
 fn geo_bypass_cache_enabled() -> bool {
     env_flag("NIYIEN_GEO_BYPASS_CACHE")
-}
-
-fn disable_proxy_enabled() -> bool {
-    env_flag("NIYIEN_DISABLE_PROXY")
 }
 
 fn env_flag(name: &str) -> bool {
@@ -527,7 +537,85 @@ fn env_value_for_log(name: &str) -> &'static str {
     }
 }
 
-#[cfg(test)]
+fn local_country_hint() -> Option<String> {
+    let cached_country = cached_local_country();
+    let now_ms = now_millis();
+    if cached_country.is_some()
+        && timestamp_is_fresh(
+            now_ms,
+            gyroflow_core::settings::get_u64(LOCAL_COUNTRY_CHECKED_AT_KEY, 0),
+            LOCAL_COUNTRY_CACHE_TTL_MS,
+        )
+    {
+        return cached_country;
+    }
+    if timestamp_is_fresh(
+        now_ms,
+        gyroflow_core::settings::get_u64(LOCAL_COUNTRY_FAILED_AT_KEY, 0),
+        LOCAL_COUNTRY_FAILURE_TTL_MS,
+    ) {
+        return cached_country;
+    }
+
+    let ipinfo_country = lookup_ipinfo_country();
+    if ipinfo_country.is_none() {
+        gyroflow_core::settings::set(LOCAL_COUNTRY_FAILED_AT_KEY, now_ms.into());
+    }
+    select_local_country_hint(ipinfo_country.as_deref(), cached_country.as_deref())
+}
+
+fn select_local_country_hint(
+    ipinfo_country: Option<&str>,
+    cached_country: Option<&str>,
+) -> Option<String> {
+    ipinfo_country
+        .and_then(normalize_cached_country_header)
+        .or_else(|| cached_country.and_then(normalize_cached_country_header))
+}
+
+fn cached_local_country() -> Option<String> {
+    let value = gyroflow_core::settings::get_str("distributionCountry", "");
+    normalize_cached_country_header(&value)
+}
+
+fn lookup_ipinfo_country() -> Option<String> {
+    let body = crate::network::get("https://ipinfo.io/json")
+        .config()
+        .timeout_global(Some(Duration::from_secs(3)))
+        .build()
+        .call()
+        .ok()?
+        .into_body()
+        .read_to_string()
+        .ok()?;
+    let country = country_from_ipinfo_body(&body)?;
+    gyroflow_core::settings::set("distributionCountry", country.clone().into());
+    gyroflow_core::settings::set(LOCAL_COUNTRY_CHECKED_AT_KEY, now_millis().into());
+    gyroflow_core::settings::set(LOCAL_COUNTRY_FAILED_AT_KEY, 0.into());
+    Some(country)
+}
+
+fn country_from_ipinfo_body(body: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(body).ok()?;
+    value
+        .get("country")
+        .and_then(|value| value.as_str())
+        .and_then(normalize_cached_country_header)
+}
+
+fn timestamp_is_fresh(now_ms: u64, checked_at_ms: u64, ttl_ms: u64) -> bool {
+    checked_at_ms > 0 && now_ms.saturating_sub(checked_at_ms) < ttl_ms
+}
+
+fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
 fn normalize_cached_country_header(value: &str) -> Option<String> {
     let value = value.trim();
     if value.len() == 2 && value.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -883,7 +971,7 @@ where
         );
     }
 
-    let response = configure_geo_request(ureq::get(url))
+    let response = configure_geo_request(crate::network::get(url))
         .call()
         .map_err(|err| format!("download {label} failed: {err}"))?;
     let total = response
@@ -984,7 +1072,7 @@ fn download_nightly_wrapped_update_file<F>(
 where
     F: FnMut(u64, u64, &str),
 {
-    let response = configure_geo_request(ureq::get(url))
+    let response = configure_geo_request(crate::network::get(url))
         .call()
         .map_err(|err| format!("download {label} (nightly wrapper) failed: {err}"))?;
     let wrapper_total = response
@@ -1602,6 +1690,45 @@ mod app_update_tests {
         assert_eq!(normalize_cached_country_header("USA"), None);
         assert_eq!(normalize_cached_country_header("1N"), None);
         assert_eq!(normalize_cached_country_header(""), None);
+    }
+
+    #[test]
+    fn manifest_url_includes_normalized_local_country() {
+        let url = manifest_request_url(Some(" cn ")).unwrap();
+        let pairs: std::collections::BTreeMap<_, _> = url.query_pairs().into_owned().collect();
+        assert_eq!(pairs.get("country"), Some(&"CN".to_owned()));
+    }
+
+    #[test]
+    fn ipinfo_body_country_parses_only_two_letter_codes() {
+        assert_eq!(
+            country_from_ipinfo_body(r#"{"ip":"203.0.113.1","country":"cn"}"#),
+            Some("CN".to_owned())
+        );
+        assert_eq!(
+            country_from_ipinfo_body(r#"{"ip":"203.0.113.1","country":"USA"}"#),
+            None
+        );
+        assert_eq!(country_from_ipinfo_body("not json"), None);
+    }
+
+    #[test]
+    fn local_country_hint_prefers_fresh_ipinfo_over_cached_country() {
+        assert_eq!(
+            select_local_country_hint(Some("CN"), Some("US")),
+            Some("CN".to_owned())
+        );
+        assert_eq!(
+            select_local_country_hint(None, Some("us")),
+            Some("US".to_owned())
+        );
+    }
+
+    #[test]
+    fn local_country_timestamp_freshness_uses_ttl_window() {
+        assert!(timestamp_is_fresh(10_000, 9_000, 2_000));
+        assert!(!timestamp_is_fresh(10_000, 7_000, 2_000));
+        assert!(!timestamp_is_fresh(10_000, 0, 2_000));
     }
 
     #[test]

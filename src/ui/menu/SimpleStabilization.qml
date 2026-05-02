@@ -23,6 +23,12 @@ Column {
         }
         return [];
     }
+    readonly property bool _queueShown: !!(window && window.videoArea && window.videoArea.queue && window.videoArea.queue.shown)
+    readonly property bool _queueAutoRotateContext: {
+        return !!(
+            root._queueShown && root._batchGyroFilesInfo.some((info) => root.isSenseFlowSource(info.detected_source || ""))
+        );
+    }
     readonly property string _detectedGyroSource: {
         if (root._batchActive) {
             for (const info of root._batchGyroFilesInfo) {
@@ -32,6 +38,13 @@ Column {
             }
             if (window && window.batchState && window.batchState.detectedSource) {
                 return window.batchState.detectedSource;
+            }
+        }
+        if (window && window.videoArea && window.videoArea.queue && window.videoArea.queue.shown) {
+            for (const info of root._batchGyroFilesInfo) {
+                if (root.isSenseFlowSource(info.detected_source || "")) {
+                    return info.detected_source || "";
+                }
             }
         }
         if (window && window.motionData && window.motionData.detectedFormat) {
@@ -49,6 +62,22 @@ Column {
     property bool _syncingBatchAutoRotate: false
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
+
+    function autoRotateBatchJobIds(): var {
+        if (!window.videoArea || !window.videoArea.queue) return [];
+
+        const selected = Object.keys(window.videoArea.queue.selectedJobs || {}).map(Number);
+        if (selected.length > 0) return selected;
+
+        if (!root._queueShown || !render_queue.has_match_results()) return [];
+
+        try {
+            return JSON.parse(render_queue.get_assigned_gyro_job_ids_json());
+        } catch(e) {
+            console.log("autoRotateBatchJobIds error:", e);
+            return [];
+        }
+    }
 
     function updateHorizonLock(): void {
         if (window.batchState && window.batchState.active) return;
@@ -203,21 +232,21 @@ Column {
 
     CheckBox {
         id: autoRotateCb;
-        visible: root.isSenseFlow;
+        visible: root.isSenseFlow && (root._baselineRotation === 0 || root._queueAutoRotateContext);
         text: qsTranslate("Stabilization", "Auto rotate");
         checked: false;
         onCheckedChanged: {
-            if (root._batchActive) {
+            const batchJobIds = root.autoRotateBatchJobIds();
+            if (root._batchActive || root._queueShown || batchJobIds.length > 0) {
                 if (root._syncingBatchAutoRotate) return;
                 if (window.batchState) {
                     window.batchState.autoRotate = checked;
                 }
                 if (window.videoArea && window.videoArea.queue) {
-                    const jobIds = Object.keys(window.videoArea.queue.selectedJobs || {}).map(Number);
-                    if (jobIds.length > 0) {
-                        render_queue.set_batch_auto_rotate(JSON.stringify(jobIds), checked);
+                    if (batchJobIds.length > 0) {
+                        render_queue.set_batch_auto_rotate(JSON.stringify(batchJobIds), checked);
                         if (render_queue.has_match_results()) {
-                            render_queue.reapply_batch_auto_rotate(JSON.stringify(jobIds));
+                            render_queue.reapply_batch_auto_rotate(JSON.stringify(batchJobIds));
                         }
                         window.videoArea.queue.matchVersion++;
                     }

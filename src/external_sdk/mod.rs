@@ -84,7 +84,7 @@ pub fn install<F: Fn((f64, &'static str, String)) + Send + Sync + Clone + 'stati
         crate::core::run_threaded(move || {
             let result = (|| -> Result<()> {
                 log::info!("Downloading from {}", url);
-                let reader = ureq::get(url)
+                let reader = crate::network::get(url)
                     .call()
                     .map_err(|e| Error::new(ErrorKind::Other, e.to_string()))?;
                 let size = reader

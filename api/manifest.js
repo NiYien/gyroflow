@@ -15,6 +15,25 @@ const {
   toAbsoluteManifestUrl,
 } = require("./_distribution");
 
+function envFlagEnabled(name) {
+  return ["1", "true", "yes", "on"].includes(
+    String(process.env[name] || "").trim().toLowerCase()
+  );
+}
+
+function buildDownloadApiDirectory(req, scope, tag) {
+  if (!scope || !tag) {
+    return "";
+  }
+  const encodedTag = String(tag)
+    .trim()
+    .split("/")
+    .filter((item) => item)
+    .map((item) => encodeURIComponent(item))
+    .join("/");
+  return encodedTag ? `${getDownloadApiBase(req)}/${scope}/${encodedTag}/` : "";
+}
+
 module.exports = async function handler(req, res) {
   const config = loadDistributionConfig();
   const releasePolicy = loadReleasePolicy();
@@ -46,6 +65,9 @@ module.exports = async function handler(req, res) {
     platformPackage.installer_url || platformPackage.package_url || ""
   );
   const activeTag = autoEntry ? autoEntry.tag : `v${releasePolicy.auto_version}`;
+  const lensDisabled = envFlagEnabled("NIYIEN_LENS_DISABLED");
+  const pluginsDisabled = envFlagEnabled("NIYIEN_PLUGINS_DISABLED");
+  const sdkDisabled = envFlagEnabled("NIYIEN_SDK_DISABLED");
   // Decoupled bundle layout: lens lives in `releases/lens-<sha12>/` and plugin
   // in `releases/plugin-<sha12>/`. legacy fallback: when the new tags are
   // missing, fall back to the coupled `releases/<content_tag>/[plugins/]`
@@ -56,13 +78,17 @@ module.exports = async function handler(req, res) {
     process.env.NIYIEN_DATA_RELEASE_TAG ||
     activeTag;
   const lensTag =
-    autoEntry?.lens_tag ||
-    process.env.NIYIEN_LENS_RELEASE_TAG ||
-    legacyContentTag;
+    lensDisabled
+      ? ""
+      : autoEntry?.lens_tag ||
+        process.env.NIYIEN_LENS_RELEASE_TAG ||
+        legacyContentTag;
   const pluginTag =
-    autoEntry?.plugin_tag ||
-    process.env.NIYIEN_PLUGIN_RELEASE_TAG ||
-    (legacyContentTag ? `${legacyContentTag}/plugins` : "");
+    pluginsDisabled
+      ? ""
+      : autoEntry?.plugin_tag ||
+        process.env.NIYIEN_PLUGIN_RELEASE_TAG ||
+        (legacyContentTag ? `${legacyContentTag}/plugins` : "");
   const legacyLensVersion =
     process.env.NIYIEN_WIDE_LENS_VERSION ||
     process.env.NIYIEN_CAMERA_DB_VERSION ||
@@ -73,15 +99,23 @@ module.exports = async function handler(req, res) {
     "";
   const lensAssetName = config.data.lens.asset_name;
   const lensUrl =
-    source.region === "cn"
+    lensDisabled
+      ? ""
+      : source.region === "cn"
       ? buildDownloadApiUrl(req, "content", lensTag, lensAssetName)
       : buildReleaseAssetUrl(source.base, activeTag, lensAssetName);
   const sdkBase =
-    source.region === "cn" ? `${getDownloadApiBase(req)}/content/sdk/` : `${source.base}/sdk/`;
+    sdkDisabled
+      ? ""
+      : source.region === "cn"
+        ? `${getDownloadApiBase(req)}/content/sdk/`
+        : autoEntry?.global_sdk_base || process.env.NIYIEN_SDK_BASE || `${source.base}/sdk/`;
   const pluginsBase =
-    source.region === "cn"
-      ? `${buildDownloadApiUrl(req, "content", pluginTag, "")}`
-      : `${source.base}/${pluginTag}/`;
+    pluginsDisabled
+      ? ""
+      : source.region === "cn"
+        ? buildDownloadApiDirectory(req, "content", pluginTag)
+        : autoEntry?.global_plugins_base || `${source.base}/${pluginTag}/`;
 
   res.setHeader("Content-Type", "application/json; charset=utf-8");
   res.status(200).json({
@@ -96,11 +130,23 @@ module.exports = async function handler(req, res) {
       packages: appPackages,
     },
     lens: {
-      version: Number(
-        process.env.NIYIEN_LENS_VERSION || legacyLensVersion || lensMeta.version || 1
-      ),
+      version: lensDisabled
+        ? 0
+        : Number(
+          autoEntry?.lens_version ||
+          process.env.NIYIEN_LENS_VERSION ||
+          legacyLensVersion ||
+          lensMeta.version ||
+          1
+        ),
       url: toAbsoluteManifestUrl(req, lensUrl),
-      sha256: process.env.NIYIEN_LENS_SHA256 || legacyLensSha || lensMeta.sha256 || "",
+      sha256: lensDisabled
+        ? ""
+        : autoEntry?.lens_sha256 ||
+          process.env.NIYIEN_LENS_SHA256 ||
+          legacyLensSha ||
+          lensMeta.sha256 ||
+          "",
     },
     // SDK is shared across releases — uploaded to a flat `releases/sdk/`
     // directory by publish_pan123_release.py (since the decoupling change),

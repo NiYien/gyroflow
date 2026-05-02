@@ -232,6 +232,14 @@ function normalizePolicyEntry(entry) {
     app_urls: normalizeAppUrls(entry.app_urls),
     packages: normalizePackages(entry.packages),
     content_tag: typeof entry.content_tag === "string" ? entry.content_tag.trim() : "",
+    lens_tag: typeof entry.lens_tag === "string" ? entry.lens_tag.trim() : "",
+    lens_release_tag:
+      typeof entry.lens_release_tag === "string" ? entry.lens_release_tag.trim() : "",
+    lens_version: coercePositiveInteger(entry.lens_version),
+    lens_sha256: typeof entry.lens_sha256 === "string" ? entry.lens_sha256.trim() : "",
+    plugin_tag: typeof entry.plugin_tag === "string" ? entry.plugin_tag.trim() : "",
+    plugins_release_tag:
+      typeof entry.plugins_release_tag === "string" ? entry.plugins_release_tag.trim() : "",
     plugins_source_mode:
       typeof entry.plugins_source_mode === "string" && entry.plugins_source_mode.trim()
         ? entry.plugins_source_mode.trim().toLowerCase()
@@ -242,6 +250,8 @@ function normalizePolicyEntry(entry) {
       typeof entry.plugins_source_tag === "string" ? entry.plugins_source_tag.trim() : "",
     global_plugins_base:
       typeof entry.global_plugins_base === "string" ? entry.global_plugins_base.trim() : "",
+    global_sdk_base:
+      typeof entry.global_sdk_base === "string" ? entry.global_sdk_base.trim() : "",
   };
 }
 

@@ -324,7 +324,10 @@
             <h2 class="text-xl font-semibold">资源编排</h2>
             <p class="text-sm text-slate-500">Lens / Plugin / SDK 只做准备和状态查看,最终推送走上方发布计划</p>
           </div>
-          <button id="resources-reload-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">重新读取</button>
+          <div class="flex items-center gap-2">
+            <button id="open-manifest-modal-btn" class="px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white hover:bg-blue-700">查看 manifest</button>
+            <button id="resources-reload-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">重新读取</button>
+          </div>
         </header>
         <p id="resources-status" class="text-sm mb-4"></p>
 

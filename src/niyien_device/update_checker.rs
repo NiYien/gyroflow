@@ -51,7 +51,7 @@ pub struct FirmwareUpdateInfo {
 }
 
 pub fn check_update(current_version: &str) -> Result<Option<FirmwareUpdateInfo>> {
-    let body = ureq::get(
+    let body = crate::network::get(
         gyroflow_core::distribution::config()
             .endpoints
             .firmware_manifest
@@ -70,7 +70,7 @@ pub fn download_firmware(info: &FirmwareUpdateInfo) -> Result<Vec<u8>> {
     let cache_dir = firmware_cache_dir()?;
     download_firmware_with_cache(info, &cache_dir, || {
         let url = firmware_download_url(&info.filename)?;
-        let response = ureq::get(url.as_str())
+        let response = crate::network::get(url.as_str())
             .call()
             .map_err(|err| UpdateError::Http(err.to_string()))?;
         let mut reader = response.into_body().into_reader();

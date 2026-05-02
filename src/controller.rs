@@ -3278,7 +3278,7 @@ impl Controller {
                         if upload {
                             core::run_threaded(move || {
                                 if let Ok(Ok(body)) =
-                                    ureq::post("https://api.gyroflow.xyz/upload_profile")
+                                    crate::network::post("https://api.gyroflow.xyz/upload_profile")
                                         .header("Content-Type", "application/json; charset=utf-8")
                                         .send(&json)
                                         .map(|x| x.into_body().read_to_string())
@@ -3393,9 +3393,11 @@ impl Controller {
         {
             core::run_threaded(move || {
                 if let Ok(Ok(body)) =
-                    ureq::get("https://api.github.com/repos/gyroflow/lens_profiles/releases")
-                        .call()
-                        .map(|x| x.into_body().read_to_string())
+                    crate::network::get(
+                        "https://api.github.com/repos/gyroflow/lens_profiles/releases",
+                    )
+                    .call()
+                    .map(|x| x.into_body().read_to_string())
                 {
                     (|| -> Option<()> {
                         let v: Vec<serde_json::Value> = serde_json::from_str(&body).ok()?;
@@ -3414,7 +3416,7 @@ impl Controller {
                                     if let Some(download_url) =
                                         obj["assets"][0]["browser_download_url"].as_str()
                                     {
-                                        if let Ok(mut content) = ureq::get(download_url)
+                                        if let Ok(mut content) = crate::network::get(download_url)
                                             .call()
                                             .map(|x| x.into_body().into_reader())
                                         {
@@ -3466,7 +3468,7 @@ impl Controller {
             url.query_pairs_mut()
                 .append_pair("filename", &name.to_string());
 
-            if let Ok(Ok(body)) = ureq::post(url.to_string())
+            if let Ok(Ok(body)) = crate::network::post(url.to_string())
                 .header("Content-Type", "application/json; charset=utf-8")
                 .send(&json.to_string())
                 .map(|x| x.into_body().read_to_string())
@@ -3481,9 +3483,10 @@ impl Controller {
         });
         let db = self.stabilizer.lens_profile_db.clone();
         core::run_threaded(move || {
-            if let Ok(Ok(body)) = ureq::get("https://api.gyroflow.xyz/rate?get_ratings=1")
-                .call()
-                .map(|x| x.into_body().read_to_string())
+            if let Ok(Ok(body)) =
+                crate::network::get("https://api.gyroflow.xyz/rate?get_ratings=1")
+                    .call()
+                    .map(|x| x.into_body().read_to_string())
             {
                 db.write().set_profile_ratings(body.as_str());
                 update(());

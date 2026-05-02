@@ -480,6 +480,17 @@ fn denormalize_video_rotation_metadata(normalized_rotation: f64) -> i32 {
     (360 - normalized).rem_euclid(360)
 }
 
+fn should_apply_auto_rotate(
+    has_metadata_rotation: bool,
+    job_auto_rotate: bool,
+    queue_auto_rotate: bool,
+    gyro_detected_source: &str,
+) -> bool {
+    !has_metadata_rotation
+        && (job_auto_rotate || queue_auto_rotate)
+        && gyro_detected_source.starts_with("SenseFlow")
+}
+
 fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
     serde_json::from_str(job_ids_json).unwrap_or_default()
 }
@@ -722,6 +733,7 @@ pub struct RenderQueue {
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
+    get_assigned_gyro_job_ids_json: qt_method!(fn(&self) -> QString),
     get_adjacent_gyro_index: qt_method!(fn(&self, job_id: u32, offset: i32) -> i32),
     enter_pairing_mode: qt_method!(fn(&mut self, gyro_index: usize)),
     exit_pairing_mode: qt_method!(fn(&mut self)),
@@ -4864,6 +4876,7 @@ impl RenderQueue {
             Some(r) => r.results.clone(),
             None => return,
         };
+        let queue_auto_rotate = filter_job_ids.is_none() && self.auto_rotate;
 
         let global_lens_group_config = self.stabilizer.lens_group_config.read().clone();
         // Build a mapping from parsed gyro index back to gyro_files index.
@@ -5460,9 +5473,12 @@ impl RenderQueue {
                     let has_metadata_rotation =
                         item.original_video_rotation.round() as i32 != 0 && !is_r3d;
                     if !is_r3d
-                        && !has_metadata_rotation
-                        && item.auto_rotate
-                        && detected_source.starts_with("SenseFlow")
+                        && should_apply_auto_rotate(
+                            has_metadata_rotation,
+                            item.auto_rotate,
+                            queue_auto_rotate,
+                            detected_source,
+                        )
                     {
                         ::log::info!(
                             "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={}",
@@ -5503,6 +5519,8 @@ impl RenderQueue {
                         );
                         let mut md =
                             clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
+                        let auto_rotate_detected_source =
+                            md.detected_source.as_deref().unwrap_or("").to_string();
                         let imu_count = md.raw_imu.len();
                         let quat_count = md.quaternions.len();
                         ::log::info!(
@@ -5557,8 +5575,6 @@ impl RenderQueue {
                         let camera_id = md.camera_identifier.clone();
                         let lens_profile_metadata = lens_profile_metadata_for_group_build(&md);
 
-                        let detected_source =
-                            md.detected_source.as_deref().unwrap_or("").to_string();
                         let metadata_raw_rotation =
                             denormalize_video_rotation_metadata(item.original_video_rotation);
 
@@ -5589,9 +5605,14 @@ impl RenderQueue {
                         );
 
                         // Priority 2: gyroscope rotation (only when no metadata rotation)
-                        let should_apply_auto_rotate =
-                            !has_metadata_rotation && item.auto_rotate && detected_source.starts_with("SenseFlow");
-                        let auto_rotation = if should_apply_auto_rotate {
+                        let should_apply_auto_rotation = !is_r3d
+                            && should_apply_auto_rotate(
+                                has_metadata_rotation,
+                                item.auto_rotate,
+                                queue_auto_rotate,
+                                &auto_rotate_detected_source,
+                            );
+                        let auto_rotation = if should_apply_auto_rotation {
                             auto_rotation_results
                                 .get(&item.job_id)
                                 .copied()
@@ -5679,7 +5700,7 @@ impl RenderQueue {
                             ::log::info!(
                                 "[auto_rotate compare] file='{}' detected_source='{}' metadata_raw={} metadata_normalized={} auto_rotate_result={} matches_normalized={}",
                                 item.render_options.input_filename,
-                                detected_source,
+                                auto_rotate_detected_source,
                                 metadata_raw_rotation,
                                 item.original_video_rotation,
                                 rotation,
@@ -5703,11 +5724,11 @@ impl RenderQueue {
                                 item.render_options.output_width,
                                 item.render_options.output_height
                             );
-                        } else if should_apply_auto_rotate {
+                        } else if should_apply_auto_rotation {
                             ::log::info!(
                                 "[auto_rotate compare] file='{}' detected_source='{}' metadata_raw={} metadata_normalized={} auto_rotate_result=None matches_normalized=false",
                                 item.render_options.input_filename,
-                                detected_source,
+                                auto_rotate_detected_source,
                                 metadata_raw_rotation,
                                 item.original_video_rotation
                             );
@@ -6208,6 +6229,33 @@ impl RenderQueue {
             }
         }
         QString::from("{\"status\":\"none\"}")
+    }
+
+    fn get_assigned_gyro_job_ids_json(&self) -> QString {
+        let job_ids = self.get_ordered_job_ids();
+        let queue_ids: HashSet<u32> = job_ids.iter().copied().collect();
+        let mut assigned = Vec::new();
+
+        if let Some(ref results) = self.match_results {
+            for result in &results.results {
+                if result.gyro_index.is_none()
+                    || !matches!(result.status, core::gyro_match::MatchStatus::Matched)
+                {
+                    continue;
+                }
+
+                let job_id = result
+                    .job_id
+                    .or_else(|| job_ids.get(result.video_index).copied());
+                if let Some(job_id) = job_id {
+                    if queue_ids.contains(&job_id) && !assigned.contains(&job_id) {
+                        assigned.push(job_id);
+                    }
+                }
+            }
+        }
+
+        QString::from(serde_json::to_string(&assigned).unwrap_or_else(|_| "[]".to_owned()))
     }
 
     /// 获取相邻 job 的 matchGyroIndex，用于 QML 判断同组 gyro。
@@ -7813,6 +7861,77 @@ mod tests {
         queue.clear_gyro_files();
 
         assert!(queue.same_gyro_cache.is_empty());
+    }
+
+    #[test]
+    fn assigned_gyro_job_ids_include_only_matched_render_jobs() {
+        let mut queue = RenderQueue::default();
+        for job_id in [10, 11, 12, 13] {
+            queue.queue.borrow_mut().push(RenderQueueItem {
+                job_id,
+                ..Default::default()
+            });
+        }
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results: vec![
+                core::gyro_match::MatchResult {
+                    video_index: 0,
+                    job_id: Some(10),
+                    gyro_index: Some(0),
+                    status: core::gyro_match::MatchStatus::Matched,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 1,
+                    job_id: Some(11),
+                    gyro_index: Some(0),
+                    status: core::gyro_match::MatchStatus::CalibrationPair,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 2,
+                    job_id: Some(12),
+                    gyro_index: None,
+                    status: core::gyro_match::MatchStatus::Unmatched,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 3,
+                    job_id: Some(13),
+                    gyro_index: None,
+                    status: core::gyro_match::MatchStatus::NoCreationTime,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+            ],
+            global_offset_ms: None,
+            error: None,
+        });
+
+        let ids: Vec<u32> =
+            serde_json::from_str(&queue.get_assigned_gyro_job_ids_json().to_string()).unwrap();
+
+        assert_eq!(ids, vec![10]);
+    }
+
+    #[test]
+    fn auto_rotate_decision_accepts_job_or_queue_state_for_senseflow_only() {
+        assert!(should_apply_auto_rotate(false, true, false, "SenseFlow Mini"));
+        assert!(should_apply_auto_rotate(false, false, true, "SenseFlow"));
+        assert!(!should_apply_auto_rotate(false, false, false, "SenseFlow Mini"));
+        assert!(!should_apply_auto_rotate(true, true, true, "SenseFlow Mini"));
+        assert!(!should_apply_auto_rotate(false, true, true, "Sony FX3"));
     }
 
     #[test]

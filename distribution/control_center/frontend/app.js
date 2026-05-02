@@ -89,6 +89,7 @@ function renderDashboard(state) {
   function sourceTag(source) {
     if (source === 'vercel') return '<span class="text-emerald-600 text-[11px]">· vercel (已推送)</span>';
     if (source === 'defaults') return '<span class="text-amber-600 text-[11px]">· publish_defaults (未推送)</span>';
+    if (source === 'hidden') return '<span class="text-slate-500 text-[11px]">· 已隐藏</span>';
     return '<span class="text-slate-400 text-[11px]">· 未配置</span>';
   }
 
@@ -102,7 +103,7 @@ function renderDashboard(state) {
     lensMeta.innerHTML = `${bits.join(' ')} ${sourceTag(state.lens.source)}`.trim();
   } else {
     lensEl.textContent = '-';
-    lensMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag('none');
+    lensMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag(state.lens?.source || 'none');
   }
   // Lens upgrade banner
   renderUpdateBanner(
@@ -147,7 +148,7 @@ function renderDashboard(state) {
     }
   } else {
     pluginEl.textContent = '-';
-    pluginMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag('none');
+    pluginMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag(state.plugin?.source || 'none');
   }
   // Plugin upgrade banner (release mode only — backend already filters)
   renderUpdateBanner(
@@ -186,7 +187,7 @@ function renderDashboard(state) {
     sdkMeta.innerHTML = sdkMetaHtml;
   } else {
     sdkEl.textContent = '-';
-    sdkMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag('none');
+    sdkMeta.innerHTML = state.errors.vercel ? 'Vercel 未连接' : sourceTag(state.sdk?.source || 'none');
   }
 
   // Recent releases
@@ -581,6 +582,10 @@ function releasePlanActionUsesPan123(action) {
   return RELEASE_PLAN_ACTIONS.has(action);
 }
 
+function releasePlanActionUsesResourceScope(action) {
+  return releasePlanActionUsesPan123(action) || action === 'hide_version';
+}
+
 function clearReleasePlanOutcomeIfIdle() {
   if (releasePlanState.running) return;
   releasePlanState.lastResult = '';
@@ -799,23 +804,27 @@ function releasePlanFields() {
 }
 
 function releasePlanSdkWillRun(scope, fields) {
-  return !!fields.include_sdk && (scope.includes('lens') || scope.includes('plugin'));
+  return !!fields.include_sdk && (scope.includes('lens') || scope.includes('plugin') || scope.includes('sdk'));
 }
 
 function releasePlanScope(actionValue) {
-  if (!releasePlanActionUsesPan123(actionValue)) return [];
-  if (!publishState.selected || publishState.selected.kind === 'orphan') return [];
+  if (!releasePlanActionUsesResourceScope(actionValue)) return [];
+  if (!publishState.selected) return [];
+  const hideAction = actionValue === 'hide_version';
+  if (!hideAction && publishState.selected.kind === 'orphan') return [];
   const fields = releasePlanFields();
   const scope = ['app'];
   const includeLens = !!document.getElementById('plan-include-lens')?.checked;
   const includePlugin = !!document.getElementById('plan-include-plugin')?.checked;
-  if (includeLens && fields.lens_tag) scope.push('lens');
+  const includeSdk = !!document.getElementById('plan-include-sdk')?.checked;
+  if (includeLens && (hideAction || fields.lens_tag)) scope.push('lens');
   if (includePlugin) {
     const pluginSelected = fields.plugin_mode === 'artifact'
       ? !!fields.plugin_artifact_name
       : !!fields.plugin_tag;
-    if (pluginSelected) scope.push('plugin');
+    if (hideAction || pluginSelected) scope.push('plugin');
   }
+  if (hideAction && includeSdk) scope.push('sdk');
   return scope;
 }
 
@@ -829,17 +838,20 @@ function fillReleasePlanFieldsFromResourcesPayload(payload) {
   const includeLens = document.getElementById('plan-include-lens');
   const includePlugin = document.getElementById('plan-include-plugin');
   const includeSdk = document.getElementById('plan-include-sdk');
-  if (lens) lens.value = cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '';
-  if (pluginTag) pluginTag.value = cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '';
+  const lensHidden = envFlagEnabled(cur.NIYIEN_LENS_DISABLED);
+  const pluginHidden = envFlagEnabled(cur.NIYIEN_PLUGINS_DISABLED);
+  const sdkHidden = envFlagEnabled(cur.NIYIEN_SDK_DISABLED);
+  if (lens) lens.value = lensHidden ? '' : cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '';
+  if (pluginTag) pluginTag.value = pluginHidden ? '' : cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '';
   setPlanPluginArtifactValue(
-    cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
-    cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
+    pluginHidden ? '' : cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
+    pluginHidden ? '' : cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
   );
-  if (sdkBase) sdkBase.value = cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/';
-  if (includeLens) includeLens.checked = true;
-  if (includePlugin) includePlugin.checked = true;
-  if (includeSdk) includeSdk.checked = true;
-  setReleasePlanPluginMode((cur.NIYIEN_PLUGINS_SOURCE_MODE || d.plugins_source_mode || 'release').toLowerCase());
+  if (sdkBase) sdkBase.value = sdkHidden ? '' : cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/';
+  if (includeLens) includeLens.checked = !lensHidden;
+  if (includePlugin) includePlugin.checked = !pluginHidden;
+  if (includeSdk) includeSdk.checked = !sdkHidden;
+  setReleasePlanPluginMode((pluginHidden ? 'release' : cur.NIYIEN_PLUGINS_SOURCE_MODE || d.plugins_source_mode || 'release').toLowerCase());
   refreshReleasePlanChecklist();
 }
 
@@ -851,17 +863,18 @@ function refreshReleasePlanChecklist() {
   const includePlugin = !!document.getElementById('plan-include-plugin')?.checked;
   const scope = releasePlanScope(action);
   const sdkSelected = releasePlanSdkWillRun(scope, fields);
+  const hideAction = action === 'hide_version';
   const needsPan123 = selected
     && publishState.selected?.kind !== 'orphan'
     && releasePlanActionUsesPan123(action);
   setReleasePlanStep('app', selected ? 'done' : 'pending');
-  setReleasePlanStep('lens', includeLens ? (fields.lens_tag ? 'done' : 'pending') : 'skipped');
+  setReleasePlanStep('lens', includeLens ? (hideAction || fields.lens_tag ? 'done' : 'pending') : 'skipped');
   if (fields.plugin_mode === 'artifact') {
-    setReleasePlanStep('plugin', includePlugin ? (fields.plugin_artifact_name ? 'done' : 'pending') : 'skipped');
+    setReleasePlanStep('plugin', includePlugin ? (hideAction || fields.plugin_artifact_name ? 'done' : 'pending') : 'skipped');
   } else {
-    setReleasePlanStep('plugin', includePlugin ? (fields.plugin_tag ? 'done' : 'pending') : 'skipped');
+    setReleasePlanStep('plugin', includePlugin ? (hideAction || fields.plugin_tag ? 'done' : 'pending') : 'skipped');
   }
-  setReleasePlanStep('sdk', sdkSelected ? (fields.sdk_base ? 'done' : 'pending') : 'skipped');
+  setReleasePlanStep('sdk', sdkSelected ? (hideAction || fields.sdk_base ? 'done' : 'pending') : 'skipped');
   if (releasePlanState.running && needsPan123) {
     setReleasePlanStep('pan123', 'active');
     setReleasePlanStep('manifest', 'pending');
@@ -1024,7 +1037,7 @@ const ACTION_HINTS = {
   manual_only: '上传所选 App/资源后加入手动版本列表,不会改变 auto_version',
   publish_and_push: '上传所选 App/资源后设为当前自动推送版本',
   switch_auto: '上传/校验所选 App/资源后把自动推送切换为此版本',
-  hide_version: '从 policy.versions[] 白名单移除此版本,如果它正在自动推送会切到其他版本',
+  hide_version: '从 policy.versions[] 白名单移除此版本,并按资源勾选项同步处理',
 };
 
 // Actions that keep the "recommended" flag meaningful (manual_only / publish_and_push / switch_auto).
@@ -1492,6 +1505,9 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
   const scope = releasePlanScope(payload.action);
   payload.scope = scope;
   const sdkWillRun = releasePlanSdkWillRun(scope, payload.resources);
+  const directActionNote = payload.action === 'hide_version'
+    ? `Scope: ${scope.join(', ')}\n勾选的资源会同步隐藏; 未勾选的资源会保留。`
+    : '此操作直接维护版本列表。';
   if (!confirm(`确定执行 "${payload.action}" 操作,版本 ${version}?\n\n` +
                (useReleasePlan
                  ? `Scope: ${scope.join(', ')}\n` +
@@ -1499,7 +1515,7 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
                    `Plugin: ${document.getElementById('plan-include-plugin')?.checked ? `${payload.resources.plugin_mode} ${payload.resources.plugin_tag || payload.resources.plugin_artifact_name || '(空)'}` : '(未选)'}\n` +
                    `SDK: ${sdkWillRun ? (payload.resources.sdk_base || '(空)') : '(未执行: 需选择 Lens 或 Plugin)'}\n\n` +
                    `123 完成前不会推送 manifest。`
-                 : '此操作直接维护版本列表。'))) return;
+                 : directActionNote))) return;
   resultEl.textContent = '执行中...';
   resultEl.className = 'text-sm text-slate-600';
   releasePlanState.running = useReleasePlan;
@@ -1589,6 +1605,10 @@ function setInputValueIfPresent(id, value) {
   if (el) el.value = value;
 }
 
+function envFlagEnabled(value) {
+  return ['1', 'true', 'yes', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
 async function loadResourcesState() {
   const statusEl = document.getElementById('resources-status');
   if (!statusEl) return;
@@ -1603,19 +1623,22 @@ async function loadResourcesState() {
     }
     const d = r.defaults || {};
     const cur = r.current || {};
-    setInputValueIfPresent('plan-lens-tag', cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '');
-    setInputValueIfPresent('plan-plugin-tag', cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '');
+    const lensHidden = envFlagEnabled(cur.NIYIEN_LENS_DISABLED);
+    const pluginHidden = envFlagEnabled(cur.NIYIEN_PLUGINS_DISABLED);
+    const sdkHidden = envFlagEnabled(cur.NIYIEN_SDK_DISABLED);
+    setInputValueIfPresent('plan-lens-tag', lensHidden ? '' : cur.NIYIEN_LENS_DATA_TAG || d.lens_data_tag || '');
+    setInputValueIfPresent('plan-plugin-tag', pluginHidden ? '' : cur.NIYIEN_PLUGINS_TAG || d.plugins_tag || '');
     setPlanPluginArtifactValue(
-      cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
-      cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
+      pluginHidden ? '' : cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
+      pluginHidden ? '' : cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
     );
-    setInputValueIfPresent('plan-sdk-base', cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/');
+    setInputValueIfPresent('plan-sdk-base', sdkHidden ? '' : cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/');
     const includeLens = document.getElementById('plan-include-lens');
-    if (includeLens) includeLens.checked = true;
+    if (includeLens) includeLens.checked = !lensHidden;
     const includePlugin = document.getElementById('plan-include-plugin');
-    if (includePlugin) includePlugin.checked = true;
+    if (includePlugin) includePlugin.checked = !pluginHidden;
     const includeSdk = document.getElementById('plan-include-sdk');
-    if (includeSdk) includeSdk.checked = true;
+    if (includeSdk) includeSdk.checked = !sdkHidden;
 
     const curEl = document.getElementById('resources-current');
     if (curEl) {
@@ -1924,7 +1947,34 @@ document.getElementById('rebuild-btn')?.addEventListener('click', async () => {
 
 // ---- Manifest preview modal ----
 
+const MANIFEST_PREVIEW_COUNTRY_KEY = 'niyien-manifest-preview-country';
+const MANIFEST_PREVIEW_PLATFORM_KEY = 'niyien-manifest-preview-platform';
+const MANIFEST_PREVIEW_PLATFORMS = ['windows', 'macos', 'linux', 'android', 'ios'];
+
+function currentHostManifestPlatform() {
+  const platform = String(navigator.platform || '').toLowerCase();
+  const ua = String(navigator.userAgent || '').toLowerCase();
+  if (platform.includes('mac') || ua.includes('mac os')) return 'macos';
+  if (ua.includes('android')) return 'android';
+  if (platform.includes('linux') || ua.includes('linux')) return 'linux';
+  if (platform.includes('iphone') || platform.includes('ipad') || ua.includes('iphone') || ua.includes('ipad')) return 'ios';
+  return 'windows';
+}
+
+function savedManifestPlatform() {
+  const value = localStorage.getItem(MANIFEST_PREVIEW_PLATFORM_KEY);
+  return MANIFEST_PREVIEW_PLATFORMS.includes(value) ? value : '';
+}
+
 function openManifestModal() {
+  const countryEl = document.getElementById('manifest-country');
+  const platformEl = document.getElementById('manifest-platform');
+  if (countryEl) {
+    countryEl.value = localStorage.getItem(MANIFEST_PREVIEW_COUNTRY_KEY) || countryEl.value || 'CN';
+  }
+  if (platformEl) {
+    platformEl.value = savedManifestPlatform() || currentHostManifestPlatform();
+  }
   document.getElementById('manifest-modal').classList.remove('hidden');
 }
 function closeManifestModal() {
@@ -1939,6 +1989,8 @@ document.getElementById('manifest-fetch-btn')?.addEventListener('click', async (
   const platform = document.getElementById('manifest-platform').value;
   const status = document.getElementById('manifest-status');
   const result = document.getElementById('manifest-result');
+  localStorage.setItem(MANIFEST_PREVIEW_COUNTRY_KEY, country);
+  localStorage.setItem(MANIFEST_PREVIEW_PLATFORM_KEY, platform);
   status.textContent = '查询中...';
   try {
     const r = await pywebview.api.preview_manifest(country, platform);

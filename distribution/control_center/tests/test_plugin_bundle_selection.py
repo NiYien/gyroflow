@@ -1,4 +1,6 @@
+import json
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,6 +9,8 @@ from unittest import mock
 from _scripts import publish_pan123_release as publish_module
 from distribution.control_center.backend import api as api_module
 from distribution.control_center.backend.api import Api
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 class FakeVercel:
@@ -108,6 +112,18 @@ class FailingResolveApi(FakeApi):
 
 class FakePolicyVercel:
     def __init__(self):
+        self.envs = {
+            "NIYIEN_LENS_DATA_TAG": "data-v1",
+            "NIYIEN_LENS_RELEASE_TAG": "lens-old",
+            "NIYIEN_LENS_VERSION": "9",
+            "NIYIEN_LENS_SHA256": "lenssha",
+            "NIYIEN_PLUGINS_SOURCE_MODE": "release",
+            "NIYIEN_PLUGINS_TAG": "v2.0.0",
+            "NIYIEN_PLUGINS_ARTIFACT_NAME": "",
+            "NIYIEN_PLUGINS_RUN_ID": "",
+            "NIYIEN_PLUGIN_RELEASE_TAG": "plugin-live",
+            "NIYIEN_SDK_BASE": "https://download.example.test/sdk/",
+        }
         self.policy_json = """{
   "auto_version": "1.0.0",
   "versions": [
@@ -129,10 +145,11 @@ class FakePolicyVercel:
         return self.policy_json
 
     def list_envs_decrypted(self):
-        return {"NIYIEN_RELEASE_POLICY_JSON": self.policy_json}
+        return {**self.envs, "NIYIEN_RELEASE_POLICY_JSON": self.policy_json}
 
     def upsert_envs(self, mapping):
         self.upserts.append(dict(mapping))
+        self.envs.update(mapping)
         if "NIYIEN_RELEASE_POLICY_JSON" in mapping:
             self.policy_json = mapping["NIYIEN_RELEASE_POLICY_JSON"]
         return {"ok": True}
@@ -262,6 +279,44 @@ class PluginBundleSelectionTests(unittest.TestCase):
         self.assertIn("NIYIEN_RELEASE_POLICY_JSON", upsert)
         self.assertIn('"plugin_tag": "plugin-new"', upsert["NIYIEN_RELEASE_POLICY_JSON"])
         self.assertIn('"plugins_source_ref": "actions-run-2"', upsert["NIYIEN_RELEASE_POLICY_JSON"])
+
+    def test_manual_resource_finalize_clears_disabled_resource_flags(self):
+        api = FakeApi()
+
+        note = api._finalize_resource_envs_to_vercel(
+            {},
+            {
+                "scope": ["lens", "plugin"],
+                "lens_tag": "lens-new",
+                "plugin_tag": "plugin-new",
+                "lens_version": 10,
+                "lens_sha256": "newsha",
+                "global_sdk_base": "https://download.example.test/sdk/",
+            },
+        )
+
+        self.assertIn("deploy hook skipped", note)
+        upsert = api.vercel.upserts[0]
+        self.assertEqual(upsert["NIYIEN_LENS_RELEASE_TAG"], "lens-new")
+        self.assertEqual(upsert["NIYIEN_LENS_DISABLED"], "")
+        self.assertEqual(upsert["NIYIEN_PLUGIN_RELEASE_TAG"], "plugin-new")
+        self.assertEqual(upsert["NIYIEN_PLUGINS_DISABLED"], "")
+        self.assertEqual(upsert["NIYIEN_SDK_BASE"], "https://download.example.test/sdk/")
+        self.assertEqual(upsert["NIYIEN_SDK_DISABLED"], "")
+
+    def test_app_only_finalize_does_not_unhide_sdk_from_global_sdk_base(self):
+        api = FakeApi()
+
+        note = api._finalize_resource_envs_to_vercel(
+            {},
+            {
+                "scope": ["app"],
+                "global_sdk_base": "https://download.example.test/sdk/",
+            },
+        )
+
+        self.assertIn("no resource env", note)
+        self.assertEqual(api.vercel.upserts, [])
 
     def test_list_plugin_action_builds_returns_run_metadata_and_artifact_names(self):
         api = FakeApi()
@@ -493,10 +548,13 @@ class PluginBundleSelectionTests(unittest.TestCase):
         self.assertEqual(len(api.vercel.upserts), 1)
         upsert = api.vercel.upserts[0]
         self.assertEqual(upsert["NIYIEN_LENS_DATA_TAG"], "data-v20260501.1")
+        self.assertEqual(upsert["NIYIEN_LENS_DISABLED"], "")
         self.assertEqual(upsert["NIYIEN_PLUGINS_SOURCE_MODE"], "artifact")
         self.assertEqual(upsert["NIYIEN_PLUGINS_TAG"], "")
         self.assertEqual(upsert["NIYIEN_PLUGINS_ARTIFACT_NAME"], "GyroflowNiyien-Adobe-macos-zip")
+        self.assertEqual(upsert["NIYIEN_PLUGINS_DISABLED"], "")
         self.assertEqual(upsert["NIYIEN_SDK_BASE"], "https://download.example.test/sdk/")
+        self.assertEqual(upsert["NIYIEN_SDK_DISABLED"], "")
         policy_json = upsert["NIYIEN_RELEASE_POLICY_JSON"]
         self.assertIn('"auto_version": "1.2.3-0.ni.7"', policy_json)
         self.assertIn('"tag": "run-55"', policy_json)
@@ -624,6 +682,319 @@ class PluginBundleSelectionTests(unittest.TestCase):
         note = api.captured_finalize({})
         self.assertIn("deploy hook skipped", note)
         self.assertNotIn("NIYIEN_SDK_BASE", api.vercel.upserts[0])
+
+    def test_distribution_policy_normalizer_preserves_resource_fields_for_manifest(self):
+        script = """
+const { loadReleasePolicy } = require('./api/_distribution');
+process.env.NIYIEN_RELEASE_POLICY_JSON = JSON.stringify({
+  auto_version: '2.0.0',
+  versions: [{
+    version: '2.0.0',
+    tag: 'v2.0.0',
+    channels: ['auto', 'manual'],
+    lens_tag: 'lens-live',
+    lens_release_tag: 'data-v2',
+    lens_version: 9,
+    lens_sha256: 'lenssha',
+    plugin_tag: 'plugin-live',
+    plugins_release_tag: 'v2.0.0',
+    plugins_source_mode: 'release',
+    plugins_source_ref: 'v2.0.0',
+    plugins_source_tag: 'v2.0.0',
+    global_plugins_base: 'https://example.test/plugins/',
+    global_sdk_base: 'https://example.test/sdk/'
+  }]
+});
+const entry = loadReleasePolicy().versions[0];
+const expected = {
+  lens_tag: 'lens-live',
+  lens_release_tag: 'data-v2',
+  lens_version: 9,
+  lens_sha256: 'lenssha',
+  plugin_tag: 'plugin-live',
+  plugins_release_tag: 'v2.0.0',
+  global_plugins_base: 'https://example.test/plugins/',
+  global_sdk_base: 'https://example.test/sdk/'
+};
+for (const [key, value] of Object.entries(expected)) {
+  if (entry[key] !== value) {
+    throw new Error(`${key} was ${entry[key]}`);
+  }
+}
+"""
+        subprocess.run(["node", "-e", script], cwd=REPO_ROOT, check=True)
+
+    def test_manifest_honors_hidden_resource_flags_without_falling_back(self):
+        script = """
+const handler = require('./api/manifest');
+process.env.NIYIEN_RELEASE_POLICY_JSON = JSON.stringify({
+  auto_version: '2.0.0',
+  versions: [{
+    version: '2.0.0',
+    tag: 'v2.0.0',
+    channels: ['auto', 'manual']
+  }]
+});
+process.env.NIYIEN_LENS_DISABLED = '1';
+process.env.NIYIEN_PLUGINS_DISABLED = '1';
+process.env.NIYIEN_SDK_DISABLED = '1';
+const req = {
+  query: { country: 'CN', platform: 'windows' },
+  headers: { host: 'www.niyien.com', 'x-forwarded-proto': 'https' },
+  socket: {}
+};
+const res = {
+  statusCode: 0,
+  headers: {},
+  setHeader(key, value) { this.headers[key] = value; },
+  status(code) { this.statusCode = code; return this; },
+  json(payload) { this.payload = payload; }
+};
+handler(req, res).then(() => {
+  if (res.payload.lens.url !== '') throw new Error(`lens url: ${res.payload.lens.url}`);
+  if (res.payload.lens.version !== 0) throw new Error(`lens version: ${res.payload.lens.version}`);
+  if (res.payload.plugins_base !== '') throw new Error(`plugins_base: ${res.payload.plugins_base}`);
+  if (res.payload.sdk_base !== '') throw new Error(`sdk_base: ${res.payload.sdk_base}`);
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+        subprocess.run(["node", "-e", script], cwd=REPO_ROOT, check=True)
+
+    def test_manifest_uses_policy_plugin_tag_after_hide_app_only_promotes_auto(self):
+        script = """
+const handler = require('./api/manifest');
+process.env.NIYIEN_RELEASE_POLICY_JSON = JSON.stringify({
+  auto_version: '1.0.0',
+  versions: [{
+    version: '1.0.0',
+    tag: 'v1.0.0',
+    channels: ['auto', 'manual'],
+    plugin_tag: 'plugin-live'
+  }]
+});
+delete process.env.NIYIEN_PLUGIN_RELEASE_TAG;
+delete process.env.NIYIEN_PLUGINS_DISABLED;
+const req = {
+  query: { country: 'CN', platform: 'windows' },
+  headers: { host: 'www.niyien.com', 'x-forwarded-proto': 'https' },
+  socket: {}
+};
+const res = {
+  setHeader() {},
+  status() { return this; },
+  json(payload) { this.payload = payload; }
+};
+handler(req, res).then(() => {
+  if (!res.payload.plugins_base.includes('/plugin-live/')) {
+    throw new Error(`plugins_base: ${res.payload.plugins_base}`);
+  }
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+        subprocess.run(["node", "-e", script], cwd=REPO_ROOT, check=True)
+
+    def test_manifest_preserves_legacy_plugin_fallback_slash_in_cn_base(self):
+        script = """
+const handler = require('./api/manifest');
+process.env.NIYIEN_RELEASE_POLICY_JSON = JSON.stringify({
+  auto_version: '2.0.0',
+  versions: [{
+    version: '2.0.0',
+    tag: 'v2.0.0',
+    channels: ['auto', 'manual']
+  }]
+});
+delete process.env.NIYIEN_PLUGIN_RELEASE_TAG;
+delete process.env.NIYIEN_PLUGINS_DISABLED;
+delete process.env.NIYIEN_CONTENT_RELEASE_TAG;
+delete process.env.NIYIEN_DATA_RELEASE_TAG;
+const req = {
+  query: { country: 'CN', platform: 'windows' },
+  headers: { host: 'www.niyien.com', 'x-forwarded-proto': 'https' },
+  socket: {}
+};
+const res = {
+  setHeader() {},
+  status() { return this; },
+  json(payload) { this.payload = payload; }
+};
+handler(req, res).then(() => {
+  if (!res.payload.plugins_base.endsWith('/content/v2.0.0/plugins/')) {
+    throw new Error(`plugins_base: ${res.payload.plugins_base}`);
+  }
+  if (res.payload.plugins_base.includes('%2Fplugins')) {
+    throw new Error(`encoded slash: ${res.payload.plugins_base}`);
+  }
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+        subprocess.run(["node", "-e", script], cwd=REPO_ROOT, check=True)
+
+    def test_hide_version_preserves_unchecked_plugin_on_promoted_auto_version(self):
+        api = ReleasePlanApi()
+        api.vercel.policy_json = """{
+  "auto_version": "2.0.0",
+  "versions": [
+    {
+      "version": "2.0.0",
+      "tag": "v2.0.0",
+      "channels": ["auto", "manual"],
+      "plugin_tag": "plugin-live",
+      "plugins_source_mode": "release",
+      "plugins_source_ref": "v2.0.0",
+      "plugins_source_tag": "v2.0.0",
+      "global_plugins_base": "https://example.test/plugins/"
+    },
+    {
+      "version": "1.0.0",
+      "tag": "v1.0.0",
+      "channels": ["manual"]
+    }
+  ]
+}"""
+
+        result = Api.execute_app_action(
+            api,
+            {
+                "action": "hide_version",
+                "source_kind": "release",
+                "version": "2.0.0",
+                "tag": "v2.0.0",
+                "scope": ["app"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        policy_json = api.vercel.upserts[0]["NIYIEN_RELEASE_POLICY_JSON"]
+        self.assertIn('"auto_version": "1.0.0"', policy_json)
+        self.assertIn('"version": "1.0.0"', policy_json)
+        self.assertIn('"plugin_tag": "plugin-live"', policy_json)
+        self.assertIn('"plugins_source_mode": "release"', policy_json)
+        self.assertIn('"plugins_source_ref": "v2.0.0"', policy_json)
+
+    def test_hide_version_preserves_unchecked_plugin_only_on_promoted_auto_entry(self):
+        api = ReleasePlanApi()
+        api.vercel.envs["NIYIEN_PLUGIN_RELEASE_TAG"] = "plugin-current-env"
+        api.vercel.policy_json = """{
+  "auto_version": "2.0.0",
+  "versions": [
+    {
+      "version": "2.0.0",
+      "tag": "v2.0.0",
+      "channels": ["auto", "manual"],
+      "plugin_tag": "plugin-hidden-stale",
+      "plugins_source_mode": "release",
+      "plugins_source_ref": "v2.0.0",
+      "plugins_source_tag": "v2.0.0"
+    },
+    {
+      "version": "1.0.0",
+      "tag": "v1.0.0",
+      "channels": ["manual"]
+    },
+    {
+      "version": "0.9.0",
+      "tag": "v0.9.0",
+      "channels": ["manual"],
+      "plugin_tag": "plugin-manual"
+    }
+  ]
+}"""
+
+        result = Api.execute_app_action(
+            api,
+            {
+                "action": "hide_version",
+                "source_kind": "release",
+                "version": "2.0.0",
+                "tag": "v2.0.0",
+                "scope": ["app"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        policy = json.loads(api.vercel.upserts[0]["NIYIEN_RELEASE_POLICY_JSON"])
+        promoted = next(v for v in policy["versions"] if v["version"] == "1.0.0")
+        manual = next(v for v in policy["versions"] if v["version"] == "0.9.0")
+        self.assertEqual(promoted["plugin_tag"], "plugin-current-env")
+        self.assertNotIn("plugin-hidden-stale", api.vercel.upserts[0]["NIYIEN_RELEASE_POLICY_JSON"])
+        self.assertEqual(manual["plugin_tag"], "plugin-manual")
+
+    def test_hide_version_clears_checked_plugin_resources(self):
+        api = ReleasePlanApi()
+        api.vercel.policy_json = """{
+  "auto_version": "2.0.0",
+  "versions": [
+    {
+      "version": "2.0.0",
+      "tag": "v2.0.0",
+      "channels": ["auto", "manual"],
+      "plugin_tag": "plugin-live",
+      "plugins_source_mode": "release",
+      "plugins_source_ref": "v2.0.0",
+      "plugins_source_tag": "v2.0.0"
+    },
+    {
+      "version": "1.0.0",
+      "tag": "v1.0.0",
+      "channels": ["manual"],
+      "plugin_tag": "plugin-live",
+      "plugins_source_mode": "release",
+      "plugins_source_ref": "v2.0.0",
+      "plugins_source_tag": "v2.0.0"
+    }
+  ]
+}"""
+
+        result = Api.execute_app_action(
+            api,
+            {
+                "action": "hide_version",
+                "source_kind": "release",
+                "version": "2.0.0",
+                "tag": "v2.0.0",
+                "scope": ["app", "plugin"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        upsert = api.vercel.upserts[0]
+        self.assertEqual(upsert["NIYIEN_PLUGIN_RELEASE_TAG"], "")
+        self.assertEqual(upsert["NIYIEN_PLUGINS_DISABLED"], "1")
+        self.assertEqual(upsert["NIYIEN_PLUGINS_SOURCE_MODE"], "")
+        self.assertEqual(upsert["NIYIEN_PLUGINS_TAG"], "")
+        policy_json = upsert["NIYIEN_RELEASE_POLICY_JSON"]
+        self.assertIn('"auto_version": "1.0.0"', policy_json)
+        self.assertNotIn('"plugin_tag": "plugin-live"', policy_json)
+        self.assertNotIn('"plugins_source_ref": "v2.0.0"', policy_json)
+
+    def test_hide_version_clears_checked_lens_and_sdk_resources(self):
+        api = ReleasePlanApi()
+
+        result = Api.execute_app_action(
+            api,
+            {
+                "action": "hide_version",
+                "source_kind": "release",
+                "version": "1.0.0",
+                "tag": "v1.0.0",
+                "scope": ["app", "lens", "sdk"],
+            },
+        )
+
+        self.assertTrue(result["ok"])
+        upsert = api.vercel.upserts[0]
+        self.assertEqual(upsert["NIYIEN_LENS_DISABLED"], "1")
+        self.assertEqual(upsert["NIYIEN_SDK_DISABLED"], "1")
+        self.assertEqual(upsert["NIYIEN_LENS_DATA_TAG"], "")
+        self.assertEqual(upsert["NIYIEN_LENS_RELEASE_TAG"], "")
+        self.assertEqual(upsert["NIYIEN_SDK_BASE"], "")
 
     def test_release_plan_switch_auto_preserves_recommended_when_not_explicitly_set(self):
         api = ReleasePlanApi()

@@ -330,15 +330,16 @@ class Api:
                 }
 
         # Lens/Plugin/SDK: fallback to publish_defaults if Vercel envs missing
+        lens_hidden = self._env_flag_enabled(envs, "NIYIEN_LENS_DISABLED")
         lens_tag_env = str(envs.get("NIYIEN_LENS_DATA_TAG", "")).strip()
-        lens_tag = lens_tag_env or str(defaults.get("lens_data_tag", "")).strip()
+        lens_tag = "" if lens_hidden else lens_tag_env or str(defaults.get("lens_data_tag", "")).strip()
         # NIYIEN_LENS_RELEASE_TAG = the bundle directory name on 123 网盘
         # (`lens-<sha12>/`). Set by the publish script's finalize_summary.
         lens_release_tag = str(envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip()
         state["lens"] = {
             "tag": lens_tag,
-            "version": str(envs.get("NIYIEN_LENS_VERSION", "")).strip(),
-            "source": "vercel" if lens_tag_env else ("defaults" if lens_tag else "none"),
+            "version": "" if lens_hidden else str(envs.get("NIYIEN_LENS_VERSION", "")).strip(),
+            "source": "hidden" if lens_hidden else ("vercel" if lens_tag_env else ("defaults" if lens_tag else "none")),
             # Pan123 probe results (parallel to plugin / sdk probes).
             "missing_files": None,
             "pan123_error": None,
@@ -346,12 +347,13 @@ class Api:
             "expected_count": len(EXPECTED_LENS_FILENAMES),
         }
 
+        plugin_hidden = self._env_flag_enabled(envs, "NIYIEN_PLUGINS_DISABLED")
         plugin_mode_env = str(envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "")).strip().lower()
-        plugin_mode = plugin_mode_env or str(defaults.get("plugins_source_mode", "release")).strip().lower() or "release"
+        plugin_mode = "" if plugin_hidden else plugin_mode_env or str(defaults.get("plugins_source_mode", "release")).strip().lower() or "release"
         plugin_tag_env = str(envs.get("NIYIEN_PLUGINS_TAG", "")).strip()
-        plugin_tag = plugin_tag_env or str(defaults.get("plugins_tag", "")).strip()
+        plugin_tag = "" if plugin_hidden else plugin_tag_env or str(defaults.get("plugins_tag", "")).strip()
         plugin_artifact_env = str(envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip()
-        plugin_artifact = plugin_artifact_env or str(defaults.get("plugins_artifact_name", "")).strip()
+        plugin_artifact = "" if plugin_hidden else plugin_artifact_env or str(defaults.get("plugins_artifact_name", "")).strip()
         has_plugin_env = bool(plugin_mode_env or plugin_tag_env or plugin_artifact_env)
         # NIYIEN_PLUGIN_RELEASE_TAG = the bundle directory name on 123 网盘
         # (`plugin-<sha12>/`). Set by the publish script's finalize_summary.
@@ -360,7 +362,7 @@ class Api:
             "mode": plugin_mode,
             "tag": plugin_tag,
             "artifact_name": plugin_artifact,
-            "source": "vercel" if has_plugin_env else ("defaults" if (plugin_tag or plugin_artifact or plugin_mode_env) else "none"),
+            "source": "hidden" if plugin_hidden else ("vercel" if has_plugin_env else ("defaults" if (plugin_tag or plugin_artifact or plugin_mode_env) else "none")),
             # Filled below by the plugin pan123 probe (parallel to the SDK probe).
             # None = probe didn't run; [] = all expected files present;
             # non-empty list = filenames missing from `releases/plugin-<x>/`.
@@ -370,11 +372,12 @@ class Api:
             "expected_count": len(EXPECTED_PLUGIN_ASSETS),
         }
 
+        sdk_hidden = self._env_flag_enabled(envs, "NIYIEN_SDK_DISABLED")
         sdk_base_env = str(envs.get("NIYIEN_SDK_BASE", "")).strip()
-        sdk_base = sdk_base_env or str(defaults.get("sdk_base", "")).strip()
+        sdk_base = "" if sdk_hidden else sdk_base_env or str(defaults.get("sdk_base", "")).strip()
         state["sdk"] = {
             "base": sdk_base,
-            "source": "vercel" if sdk_base_env else ("defaults" if sdk_base else "none"),
+            "source": "hidden" if sdk_hidden else ("vercel" if sdk_base_env else ("defaults" if sdk_base else "none")),
             # Filled below by the pan123 probe. None = probe didn't run (no creds
             # / network error); [] = all expected SDK files present; non-empty
             # list = filenames missing from `releases/sdk/` on pan123.
@@ -1410,6 +1413,9 @@ class Api:
                     "NIYIEN_PLUGINS_ARTIFACT_NAME": envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", ""),
                     "NIYIEN_PLUGINS_RUN_ID": envs.get("NIYIEN_PLUGINS_RUN_ID", ""),
                     "NIYIEN_SDK_BASE": envs.get("NIYIEN_SDK_BASE", ""),
+                    "NIYIEN_LENS_DISABLED": envs.get("NIYIEN_LENS_DISABLED", ""),
+                    "NIYIEN_PLUGINS_DISABLED": envs.get("NIYIEN_PLUGINS_DISABLED", ""),
+                    "NIYIEN_SDK_DISABLED": envs.get("NIYIEN_SDK_DISABLED", ""),
                 },
             }
         except Exception as e:
@@ -1507,6 +1513,9 @@ class Api:
                 "NIYIEN_PLUGINS_ARTIFACT_NAME": plugin_artifact if plugin_mode == "artifact" else "",
                 "NIYIEN_PLUGINS_RUN_ID": str(plugin_run_id) if plugin_mode == "artifact" and plugin_run_id > 0 else "",
                 "NIYIEN_SDK_BASE": sdk_base,
+                "NIYIEN_LENS_DISABLED": "",
+                "NIYIEN_PLUGINS_DISABLED": "",
+                "NIYIEN_SDK_DISABLED": "",
             }
             # Pull lens version/sha256 from the release's metadata.json so
             # the manifest API can hand a non-zero lens.version to clients.
@@ -2194,14 +2203,25 @@ class Api:
         """
         import time as _time
         upsert: dict[str, str] = {}
+        summary_scope = {
+            str(item).strip().lower()
+            for item in finalize_summary.get("scope", [])
+            if str(item).strip()
+        } if isinstance(finalize_summary.get("scope"), (list, tuple, set)) else set()
+        sdk_in_scope = bool({"lens", "plugin", "sdk"} & summary_scope)
         if finalize_summary.get("lens_tag"):
             upsert["NIYIEN_LENS_RELEASE_TAG"] = str(finalize_summary["lens_tag"])
+            upsert["NIYIEN_LENS_DISABLED"] = ""
         if finalize_summary.get("plugin_tag"):
             upsert["NIYIEN_PLUGIN_RELEASE_TAG"] = str(finalize_summary["plugin_tag"])
+            upsert["NIYIEN_PLUGINS_DISABLED"] = ""
         if finalize_summary.get("lens_version") is not None:
             upsert["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
         if finalize_summary.get("lens_sha256"):
             upsert["NIYIEN_LENS_SHA256"] = str(finalize_summary["lens_sha256"])
+        if sdk_in_scope and finalize_summary.get("global_sdk_base"):
+            upsert["NIYIEN_SDK_BASE"] = str(finalize_summary["global_sdk_base"])
+            upsert["NIYIEN_SDK_DISABLED"] = ""
         if not upsert:
             return "no resource env to upsert (scope=app only?)"
         last_err: Exception | None = None
@@ -2582,6 +2602,129 @@ class Api:
                 return
         versions.append(entry)
 
+    @staticmethod
+    def _apply_hide_resource_scope(policy: dict, hidden_entry: dict | None,
+                                   scope: set[str], preserve_unchecked: bool,
+                                   current_envs: dict | None = None) -> dict[str, str]:
+        """Apply hide_version's resource checkboxes to policy/env state.
+
+        App versions are per-entry, but Lens/Plugin metadata is mirrored into
+        policy entries so a promoted auto version can keep the same resources.
+        Checked resources are explicitly disabled so manifest fallback does not
+        expose legacy paths. When the hidden entry was the active auto version,
+        unchecked resources are copied only into the promoted auto entry.
+        """
+        source = hidden_entry if isinstance(hidden_entry, dict) else {}
+        envs = current_envs if isinstance(current_envs, dict) else {}
+        versions = [v for v in policy.get("versions", []) if isinstance(v, dict)]
+        policy_fields = {
+            "lens": ("lens_tag", "lens_release_tag", "lens_version", "lens_sha256"),
+            "plugin": (
+                "plugin_tag",
+                "plugins_release_tag",
+                "plugins_source_mode",
+                "plugins_source_ref",
+                "plugins_source_tag",
+                "global_plugins_base",
+            ),
+            "sdk": ("global_sdk_base",),
+        }
+        env_fields = {
+            "lens": (
+                "NIYIEN_LENS_DATA_TAG",
+                "NIYIEN_LENS_RELEASE_TAG",
+                "NIYIEN_LENS_VERSION",
+                "NIYIEN_LENS_SHA256",
+            ),
+            "plugin": (
+                "NIYIEN_PLUGINS_SOURCE_MODE",
+                "NIYIEN_PLUGINS_TAG",
+                "NIYIEN_PLUGINS_ARTIFACT_NAME",
+                "NIYIEN_PLUGINS_RUN_ID",
+                "NIYIEN_PLUGIN_RELEASE_TAG",
+            ),
+            "sdk": ("NIYIEN_SDK_BASE",),
+        }
+        disabled_fields = {
+            "lens": "NIYIEN_LENS_DISABLED",
+            "plugin": "NIYIEN_PLUGINS_DISABLED",
+            "sdk": "NIYIEN_SDK_DISABLED",
+        }
+
+        def _env_preserved_fields(resource: str) -> dict:
+            if resource == "lens":
+                preserved = {}
+                if str(envs.get("NIYIEN_LENS_RELEASE_TAG", "")).strip():
+                    preserved["lens_tag"] = str(envs["NIYIEN_LENS_RELEASE_TAG"]).strip()
+                if str(envs.get("NIYIEN_LENS_DATA_TAG", "")).strip():
+                    preserved["lens_release_tag"] = str(envs["NIYIEN_LENS_DATA_TAG"]).strip()
+                if str(envs.get("NIYIEN_LENS_VERSION", "")).strip():
+                    try:
+                        preserved["lens_version"] = int(str(envs["NIYIEN_LENS_VERSION"]).strip())
+                    except (TypeError, ValueError):
+                        preserved["lens_version"] = str(envs["NIYIEN_LENS_VERSION"]).strip()
+                if str(envs.get("NIYIEN_LENS_SHA256", "")).strip():
+                    preserved["lens_sha256"] = str(envs["NIYIEN_LENS_SHA256"]).strip()
+                return preserved
+            if resource == "plugin":
+                preserved = {}
+                mode = str(envs.get("NIYIEN_PLUGINS_SOURCE_MODE", "")).strip().lower()
+                plugin_tag = str(envs.get("NIYIEN_PLUGINS_TAG", "")).strip()
+                artifact = str(envs.get("NIYIEN_PLUGINS_ARTIFACT_NAME", "")).strip()
+                run_id = str(envs.get("NIYIEN_PLUGINS_RUN_ID", "")).strip()
+                if str(envs.get("NIYIEN_PLUGIN_RELEASE_TAG", "")).strip():
+                    preserved["plugin_tag"] = str(envs["NIYIEN_PLUGIN_RELEASE_TAG"]).strip()
+                if mode:
+                    preserved["plugins_source_mode"] = mode
+                if mode == "release" and plugin_tag:
+                    preserved["plugins_release_tag"] = plugin_tag
+                    preserved["plugins_source_ref"] = plugin_tag
+                    preserved["plugins_source_tag"] = plugin_tag
+                    preserved["global_plugins_base"] = ""
+                elif mode == "artifact":
+                    if run_id:
+                        preserved["plugins_source_ref"] = f"actions-run-{run_id}"
+                    if artifact:
+                        preserved["plugins_source_tag"] = artifact
+                return preserved
+            if resource == "sdk":
+                sdk_base = str(envs.get("NIYIEN_SDK_BASE", "")).strip()
+                return {"global_sdk_base": sdk_base} if sdk_base else {}
+            return {}
+
+        env_overrides: dict[str, str] = {}
+        for resource, fields in policy_fields.items():
+            if resource in scope:
+                for entry in versions:
+                    for field in fields:
+                        entry.pop(field, None)
+                env_overrides[disabled_fields[resource]] = "1"
+                for key in env_fields.get(resource, ()):
+                    env_overrides[key] = ""
+                continue
+            if not preserve_unchecked:
+                continue
+            if Api._env_flag_enabled(envs, disabled_fields[resource]):
+                continue
+            promoted = next(
+                (entry for entry in versions
+                 if entry.get("version") == policy.get("auto_version")),
+                None,
+            )
+            if promoted is None:
+                continue
+            preserved = _env_preserved_fields(resource)
+            source_preserved = {field: source[field] for field in fields if field in source}
+            if preserved:
+                for field, value in source_preserved.items():
+                    preserved.setdefault(field, value)
+            else:
+                preserved = source_preserved
+            if not preserved:
+                continue
+            promoted.update(preserved)
+        return env_overrides
+
     def _finalize_publish_to_manifest(self, cfg: dict, policy_json: str,
                                        finalize_summary: dict | None = None,
                                        *, target_version: str = "",
@@ -2616,6 +2759,12 @@ class Api:
         # clobber the other component's existing tag.
         upsert_map = {"NIYIEN_RELEASE_POLICY_JSON": policy_json}
         if finalize_summary:
+            summary_scope = {
+                str(item).strip().lower()
+                for item in finalize_summary.get("scope", [])
+                if str(item).strip()
+            } if isinstance(finalize_summary.get("scope"), (list, tuple, set)) else set()
+            sdk_in_scope = bool({"lens", "plugin", "sdk"} & summary_scope)
             try:
                 policy = _json.loads(policy_json)
                 auto_v = str(target_version or policy.get("auto_version", "")).strip()
@@ -2647,6 +2796,8 @@ class Api:
                     # release-latest, which is wrong for nightly publishes.
                     if finalize_summary.get("global_plugins_base"):
                         target["global_plugins_base"] = str(finalize_summary["global_plugins_base"])
+                    if sdk_in_scope and finalize_summary.get("global_sdk_base"):
+                        target["global_sdk_base"] = str(finalize_summary["global_sdk_base"])
                     packages = finalize_summary.get("packages")
                     if isinstance(packages, dict):
                         target["packages"] = packages
@@ -2665,12 +2816,17 @@ class Api:
             # plugin-only publish must not nuke NIYIEN_LENS_RELEASE_TAG.
             if finalize_summary.get("lens_tag"):
                 upsert_map["NIYIEN_LENS_RELEASE_TAG"] = str(finalize_summary["lens_tag"])
+                upsert_map["NIYIEN_LENS_DISABLED"] = ""
             if finalize_summary.get("plugin_tag"):
                 upsert_map["NIYIEN_PLUGIN_RELEASE_TAG"] = str(finalize_summary["plugin_tag"])
+                upsert_map["NIYIEN_PLUGINS_DISABLED"] = ""
             if finalize_summary.get("lens_version") is not None:
                 upsert_map["NIYIEN_LENS_VERSION"] = str(finalize_summary["lens_version"])
             if finalize_summary.get("lens_sha256"):
                 upsert_map["NIYIEN_LENS_SHA256"] = str(finalize_summary["lens_sha256"])
+            if sdk_in_scope and finalize_summary.get("global_sdk_base"):
+                upsert_map["NIYIEN_SDK_BASE"] = str(finalize_summary["global_sdk_base"])
+                upsert_map["NIYIEN_SDK_DISABLED"] = ""
         if extra_envs:
             for key, value in extra_envs.items():
                 if key:
@@ -2771,6 +2927,10 @@ class Api:
             "changelog": str(payload.get("changelog", "")).strip(),
             "recommended": payload.get("recommended") if "recommended" in payload else None,
         }
+
+    @staticmethod
+    def _env_flag_enabled(envs: dict, key: str) -> bool:
+        return str(envs.get(key, "")).strip().lower() in {"1", "true", "yes", "on"}
 
     @staticmethod
     def _normalize_scope(raw_scope) -> list[str]:
@@ -2911,7 +3071,9 @@ class Api:
             extra: dict[str, str] = {}
             if "lens" in scope_set and lens_tag:
                 extra["NIYIEN_LENS_DATA_TAG"] = lens_tag
+                extra["NIYIEN_LENS_DISABLED"] = ""
             if "plugin" in scope_set:
+                extra["NIYIEN_PLUGINS_DISABLED"] = ""
                 if plugin_mode == "release" and plugin_tag:
                     extra["NIYIEN_PLUGINS_SOURCE_MODE"] = "release"
                     extra["NIYIEN_PLUGINS_TAG"] = plugin_tag
@@ -2924,8 +3086,10 @@ class Api:
                     extra["NIYIEN_PLUGINS_RUN_ID"] = plugin_run_id
                 if include_sdk and sdk_base:
                     extra["NIYIEN_SDK_BASE"] = sdk_base
+                    extra["NIYIEN_SDK_DISABLED"] = ""
             elif "lens" in scope_set and include_sdk and sdk_base:
                 extra["NIYIEN_SDK_BASE"] = sdk_base
+                extra["NIYIEN_SDK_DISABLED"] = ""
             return extra
 
         base_message = (
@@ -3037,6 +3201,12 @@ class Api:
             policy = self._load_current_policy(cfg, vercel, env_records)
             versions = policy.get("versions", [])
             already_present = any(v.get("version") == version for v in versions)
+            hidden_entry = next((v for v in versions if v.get("version") == version), None)
+            hidden_was_auto = policy.get("auto_version") == version
+            hide_resource_envs: dict[str, str] = {}
+            hide_current_envs: dict[str, str] = {}
+            if action == "hide_version":
+                hide_current_envs = vercel.list_envs_decrypted()
 
             if action == "manual_only":
                 self._upsert_version_entry(
@@ -3120,6 +3290,20 @@ class Api:
                     policy["versions"][0].get("version", "") if policy["versions"] else ""
                 )
 
+            if action == "hide_version":
+                hide_scope = {
+                    item for item in self._normalize_scope(payload.get("scope"))
+                    if item in {"app", "lens", "plugin", "sdk"}
+                } or {"app"}
+                hide_scope.add("app")
+                hide_resource_envs = self._apply_hide_resource_scope(
+                    policy,
+                    hidden_entry,
+                    hide_scope,
+                    hidden_was_auto,
+                    hide_current_envs,
+                )
+
             # Stage policy_json — it will be pushed to Vercel either inline
             # (no pan123 needed) or from the pan123 task success callback
             # (after upload completes, so cn clients see new manifest only
@@ -3193,7 +3377,11 @@ class Api:
             else:
                 # Actions that don't move release artifacts (manual_only,
                 # hide_version): push manifest immediately.
-                hook_note = self._finalize_publish_to_manifest(cfg, staged_policy_json)
+                hook_note = self._finalize_publish_to_manifest(
+                    cfg,
+                    staged_policy_json,
+                    extra_envs=hide_resource_envs or None,
+                )
                 result["deploy_hook"] = hook_note
                 result["message"] = f"{base_message} · {hook_note}"
 
