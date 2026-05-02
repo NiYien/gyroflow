@@ -66,22 +66,126 @@ Item {
     // Touch drag is intentionally NOT hooked into drag-select — it scrolls the list instead.
     property var selectedJobs: ({})
     property int selectedCount: Object.keys(selectedJobs).length
+    property int primarySelectedJobId: 0
     property int _lastClickedIndex: -1
+    property bool _dragSelecting: false
+    property int _dragSelectStartIndex: -1
+    property bool _dragSelectAddMode: true
+    property var _dragSelectSnapshot: ({})
+    property real _dragSelectViewY: -1
+    // Touch: long-press in the checkbox column arms a selection-drag mode that the
+    // touch DragHandler then takes over. ListView.interactive is suspended while
+    // active so the Flickable does not steal the gesture.
+    property bool _touchSelectActive: false
+
+    function jobIdAtModelIndex(modelIndex) {
+        // render_queue.queue is a SimpleListModel (QAbstractListModel) — direct
+        // [i] indexing returns undefined in QML. Read jobId off the instantiated
+        // delegate instead, mirroring the original implementation.
+        const item = lv.itemAtIndex(modelIndex);
+        return (item && item.jobId) ? item.jobId : 0;
+    }
+
+    function selectedJobsWithRange(baseSelection, fromIndex, toIndex, addMode) {
+        let s = Object.assign({}, baseSelection);
+        const from = Math.min(fromIndex, toIndex);
+        const to = Math.max(fromIndex, toIndex);
+        for (let i = from; i <= to; i++) {
+            const jobId = jobIdAtModelIndex(i);
+            if (!jobId) continue;
+            if (addMode) s[jobId] = true;
+            else delete s[jobId];
+        }
+        return s;
+    }
+
+    function setSelectedJobs(newSelectedJobs, primaryJobId) {
+        selectedJobs = newSelectedJobs;
+        if (primaryJobId !== undefined && newSelectedJobs[primaryJobId]) {
+            primarySelectedJobId = primaryJobId;
+            return;
+        }
+        if (primarySelectedJobId && newSelectedJobs[primarySelectedJobId]) {
+            return;
+        }
+        primarySelectedJobId = 0;
+        for (let i = 0; i < lv.count; i++) {
+            const jobId = jobIdAtModelIndex(i);
+            if (jobId && newSelectedJobs[jobId]) {
+                primarySelectedJobId = jobId;
+                return;
+            }
+        }
+    }
+
+    function getPrimarySelectedJobId() {
+        if (primarySelectedJobId && selectedJobs[primarySelectedJobId]) {
+            return primarySelectedJobId;
+        }
+        for (let i = 0; i < lv.count; i++) {
+            const jobId = jobIdAtModelIndex(i);
+            if (jobId && selectedJobs[jobId]) return jobId;
+        }
+        return 0;
+    }
+
     function toggleJobSelection(jobId) {
         let s = Object.assign({}, selectedJobs);
         if (s[jobId]) delete s[jobId];
         else s[jobId] = true;
-        selectedJobs = s;
+        setSelectedJobs(s, s[jobId] ? jobId : undefined);
+    }
+    function handleSelectionClick(jobId, modelIndex, modifiers) {
+        // Excel-style anchor: Shift+click extends from the last plain click without moving
+        // the anchor; only a plain click resets the anchor for subsequent ranges.
+        if ((modifiers & Qt.ShiftModifier) && _lastClickedIndex >= 0) {
+            setSelectedJobs(selectedJobsWithRange(selectedJobs, _lastClickedIndex, modelIndex, true), jobId);
+            return;
+        }
+        toggleJobSelection(jobId);
+        _lastClickedIndex = modelIndex;
     }
     function selectAllJobs() {
         let s = {};
+        let firstJobId = 0;
         for (let i = 0; i < lv.count; i++) {
-            const item = lv.itemAtIndex(i);
-            if (item && item.jobId) s[item.jobId] = true;
+            const jobId = jobIdAtModelIndex(i);
+            if (jobId) {
+                s[jobId] = true;
+                if (!firstJobId) firstJobId = jobId;
+            }
         }
-        selectedJobs = s;
+        setSelectedJobs(s, firstJobId);
     }
-    function deselectAllJobs() { selectedJobs = {}; }
+    function deselectAllJobs() { setSelectedJobs({}); }
+    function beginDragSelection(startIndex, addMode) {
+        _dragSelecting = true;
+        _dragSelectStartIndex = startIndex;
+        _dragSelectAddMode = addMode;
+        _dragSelectSnapshot = Object.assign({}, selectedJobs);
+        _dragSelectViewY = -1;
+        _lastClickedIndex = startIndex;
+    }
+    function updateDragSelectionAtContentY(contentY) {
+        if (!_dragSelecting || _dragSelectStartIndex < 0) return;
+        const idx = lv.indexAt(1, contentY);
+        if (idx < 0) return;
+        const s = idx === _dragSelectStartIndex
+            ? Object.assign({}, _dragSelectSnapshot)
+            : selectedJobsWithRange(_dragSelectSnapshot, _dragSelectStartIndex, idx, _dragSelectAddMode);
+        setSelectedJobs(s, jobIdAtModelIndex(_dragSelectStartIndex));
+    }
+    function updateDragSelectionFromViewY(viewY) {
+        if (!_dragSelecting || _dragSelectStartIndex < 0 || viewY < 0) return;
+        _dragSelectViewY = viewY;
+        updateDragSelectionAtContentY(lv.contentY + viewY);
+    }
+    function endDragSelection() {
+        _dragSelecting = false;
+        _dragSelectStartIndex = -1;
+        _dragSelectSnapshot = ({});
+        _dragSelectViewY = -1;
+    }
 
     // [queue-gyro-column] 左列宽度，有陀螺仪时展开
     property real gyroColumnWidth: hasGyroFiles ? 65 * dpiScale : 0
@@ -164,8 +268,12 @@ Item {
         // [T22] Close the overlay after matching and data loading have both finished.
         function onMatch_apply_finished(): void {
             loader.active = false;
+            root.matchVersion++;
             root.requestQueueLayout();
             console.log("[QML T22] match_apply_finished: loader closed");
+        }
+        function onProcessing_done(job_id, by_preset): void {
+            root.matchVersion++;
         }
         function onPairing_mode_changed(): void {
             if (!render_queue.is_in_pairing_mode()) {
@@ -559,7 +667,30 @@ Item {
         // [T20] Spacing is handled inside delegates so same-gyro color bars can stay continuous.
         spacing: 0;
         onCountChanged: root.requestQueueLayout();
+        onContentYChanged: root.updateDragSelectionFromViewY(root._dragSelectViewY);
         QQC.ScrollIndicator.vertical: QQC.ScrollIndicator { }
+
+        // Autoscroll while drag-selecting: when the cursor / finger nears the top or
+        // bottom edge of the visible region, advance contentY so the selection range
+        // can extend past the viewport. onContentYChanged then re-runs the selection
+        // recompute against the updated viewport, no extra wiring needed.
+        Timer {
+            id: autoScrollTimer;
+            interval: 16;
+            repeat: true;
+            running: root._dragSelecting;
+            onTriggered: {
+                if (root._dragSelectViewY < 0) return;
+                const edge = 40 * dpiScale;
+                const speed = 6 * dpiScale;
+                if (root._dragSelectViewY < edge) {
+                    lv.contentY = Math.max(lv.originY, lv.contentY - speed);
+                } else if (root._dragSelectViewY > lv.height - edge) {
+                    const maxY = Math.max(lv.originY, lv.contentHeight - lv.height + lv.originY);
+                    lv.contentY = Math.min(maxY, lv.contentY + speed);
+                }
+            }
+        }
 
         // [queue-lifecycle T3] Manual drag-reorder state was removed.
         property bool isDragging: false  // Kept as a constant for external references in VideoArea.qml.
@@ -649,12 +780,23 @@ Item {
             Ease on opacity { }
 
             ContextMenuMouseArea {
+                id: rowContextArea;
+                // Do not cover the checkbox column. A parent MouseArea that anchors.fills
+                // the row would grab pointer events away from the checkbox column's
+                // DragHandler / TapHandler. Anchoring left to checkboxCol.right gives the
+                // checkbox column an independent hit region.
+                anchors.fill: undefined;
+                anchors.left: checkboxCol.right;
+                anchors.right: parent.right;
+                anchors.top: parent.top;
+                anchors.bottom: parent.bottom;
                 acceptedButtons: Qt.LeftButton | Qt.RightButton;
                 hoverEnabled: true;
                 onContextMenu: (isHold, x, y) => contextMenu.popup(dlg, x, y)
 
                 onPressed: (mouse) => {
-                    // T8: Handle pairing mode click
+                    // Pairing mode is triggered on press (not click) so it fires before
+                    // any potential drag-reorder swallows the gesture.
                     if (root.pairingGyroIndex >= 0 && mouse.button === Qt.LeftButton) {
                         render_queue.manual_set_calibration_pair(job_id, root.pairingGyroIndex);
                         render_queue.exit_pairing_mode();
@@ -662,27 +804,18 @@ Item {
                         root.pairingGyroFilename = "";
                         return;
                     }
-                    // Selection — mirrors the always-visible CheckBox column:
-                    //   plain tap  → toggle (consistent with tapping the checkbox)
-                    //   Shift+tap  → range select from the last-clicked row
-                    //   Ctrl+tap   → toggle (explicit alias)
-                    // Drag-select is driven only by the CheckBox column's DragHandler (mouse only).
-                    if (mouse.button === Qt.LeftButton) {
-                        const currentIndex = index;
-                        if (mouse.modifiers & Qt.ShiftModifier && root._lastClickedIndex >= 0) {
-                            const from = Math.min(root._lastClickedIndex, currentIndex);
-                            const to = Math.max(root._lastClickedIndex, currentIndex);
-                            let s = Object.assign({}, root.selectedJobs);
-                            for (let i = from; i <= to; i++) {
-                                const item = lv.itemAtIndex(i);
-                                if (item && item.jobId) s[item.jobId] = true;
-                            }
-                            root.selectedJobs = s;
-                        } else {
-                            root.toggleJobSelection(job_id);
-                        }
-                        root._lastClickedIndex = currentIndex;
-                    }
+                }
+                onClicked: (mouse) => {
+                    // Selection on the row body mirrors the checkbox column:
+                    //   plain click  → toggle
+                    //   Shift+click  → range select anchored at the last plain click
+                    //   Ctrl+click   → toggle (explicit alias)
+                    // Use onClicked instead of onPressed: a drag suppresses onClicked,
+                    // so starting a drag does not first toggle the anchor row. (Drag
+                    // itself is only wired in the checkbox column.)
+                    if (mouse.button !== Qt.LeftButton) return;
+                    if (root.pairingGyroIndex >= 0) return;
+                    root.handleSelectionClick(job_id, index, mouse.modifiers);
                 }
             }
             Component {
@@ -714,7 +847,7 @@ Item {
                         // LensGroupConfig.batchScope kicks in and the
                         // per-job hint + "Apply globally" button appear in
                         // the main view editor.
-                        root.selectedJobs = { [job_id]: true };
+                        root.setSelectedJobs({ [job_id]: true }, job_id);
                         const data = render_queue.get_gyroflow_data(job_id);
                         if (data) {
                             window.videoArea.loadGyroflowData(JSON.parse(data), job_id);
@@ -812,10 +945,59 @@ Item {
                     scale: 0.85;
                 }
 
+                // Mouse: split by Shift modifier. acceptedModifiers filters which keyboard
+                // state each handler accepts; only the matching one fires per click. Each
+                // is restricted to PointerDevice.Mouse so touch input does not get split.
+                // gesturePolicy defaults to DragThreshold, so press-then-drag yields the
+                // grab to the sibling DragHandler.
                 TapHandler {
-                    onTapped: {
-                        root.toggleJobSelection(dlg.jobId);
-                        root._lastClickedIndex = index;
+                    acceptedDevices: PointerDevice.Mouse;
+                    acceptedModifiers: Qt.NoModifier;
+                    onTapped: root.handleSelectionClick(dlg.jobId, index, 0);
+                }
+                TapHandler {
+                    acceptedDevices: PointerDevice.Mouse;
+                    acceptedModifiers: Qt.ShiftModifier;
+                    onTapped: root.handleSelectionClick(dlg.jobId, index, Qt.ShiftModifier);
+                }
+                TapHandler {
+                    acceptedDevices: PointerDevice.Mouse;
+                    acceptedModifiers: Qt.ControlModifier;
+                    onTapped: root.handleSelectionClick(dlg.jobId, index, 0);
+                }
+                // Touch: single tap toggles. Long-press arms touch selection-drag mode
+                // (the sibling TouchScreen DragHandler takes over once armed).
+                TapHandler {
+                    id: touchTapHandler;
+                    acceptedDevices: PointerDevice.TouchScreen;
+                    onTapped: root.handleSelectionClick(dlg.jobId, index, 0);
+                    onLongPressed: {
+                        root.beginDragSelection(index, !dlg.isSelected);
+                        root._touchSelectActive = true;
+                        lv.interactive = false;
+                    }
+                }
+
+                // Touch laser-brush. Disabled until the long-press arms it, otherwise it
+                // would compete with the ListView Flickable for normal scroll gestures.
+                DragHandler {
+                    id: touchDragSelectHandler;
+                    acceptedDevices: PointerDevice.TouchScreen;
+                    enabled: root._touchSelectActive;
+                    target: null;
+                    onActiveChanged: {
+                        if (!active) {
+                            root.endDragSelection();
+                            root._touchSelectActive = false;
+                            lv.interactive = true;
+                        }
+                    }
+                    onCentroidChanged: {
+                        if (!active) return;
+                        const contentPt = touchDragSelectHandler.parent.mapToItem(lv.contentItem, centroid.position.x, centroid.position.y);
+                        const viewPt = touchDragSelectHandler.parent.mapToItem(lv, centroid.position.x, centroid.position.y);
+                        root._dragSelectViewY = viewPt.y;
+                        root.updateDragSelectionAtContentY(contentPt.y);
                     }
                 }
 
@@ -834,37 +1016,19 @@ Item {
                     //       idx !== startIndex → [min,max] painted with paint mode (anchor included)
                     //   Dragging forward paints outward; dragging back to the anchor fully
                     //   reverses; crossing the anchor paints the other side.
-                    property int _startIndex: -1;
-                    property bool _addMode: true;
-                    property var _snapshot: ({});
                     onActiveChanged: {
                         if (active) {
-                            _startIndex = index;
-                            _addMode = !dlg.isSelected;
-                            _snapshot = Object.assign({}, root.selectedJobs);
-                            root._lastClickedIndex = index;
+                            root.beginDragSelection(index, !dlg.isSelected);
                         } else {
-                            _startIndex = -1;
-                            _snapshot = ({});
+                            root.endDragSelection();
                         }
                     }
                     onCentroidChanged: {
-                        if (!active || _startIndex < 0) return;
-                        const pt = dragSelectHandler.parent.mapToItem(lv.contentItem, centroid.position.x, centroid.position.y);
-                        const idx = lv.indexAt(pt.x, pt.y);
-                        if (idx < 0) return;
-                        let s = Object.assign({}, _snapshot);
-                        if (idx !== _startIndex) {
-                            const from = Math.min(_startIndex, idx);
-                            const to = Math.max(_startIndex, idx);
-                            for (let i = from; i <= to; i++) {
-                                const it = lv.itemAtIndex(i);
-                                if (!it || !it.jobId) continue;
-                                if (_addMode) s[it.jobId] = true;
-                                else delete s[it.jobId];
-                            }
-                        }
-                        root.selectedJobs = s;
+                        if (!active) return;
+                        const contentPt = dragSelectHandler.parent.mapToItem(lv.contentItem, centroid.position.x, centroid.position.y);
+                        const viewPt = dragSelectHandler.parent.mapToItem(lv, centroid.position.x, centroid.position.y);
+                        root._dragSelectViewY = viewPt.y;
+                        root.updateDragSelectionAtContentY(contentPt.y);
                     }
                 }
             }
@@ -1191,7 +1355,7 @@ Item {
                     Flow {
                         spacing: 10 * dpiScale;
                         width: parent.width;
-                        height: visible ? childrenRect.height : 0;
+                        height: visible ? implicitHeight : 0;
                         BasicText {
                             text: qsTranslate("Stabilization", "Smoothness") + " <b>" + ((dlg.displayParams.smoothness || 0.5) * 100).toFixed(0) + "%</b>";
                             font.pixelSize: basicTextSize;
@@ -1224,7 +1388,7 @@ Item {
                     Flow {
                         visible: (dlg.displayParams.lens_group_display_mode || "auto") !== "auto";
                         width: parent.width;
-                        height: visible ? childrenRect.height : 0;
+                        height: visible ? implicitHeight : 0;
                         spacing: 10 * dpiScale;
 
                         BasicText {

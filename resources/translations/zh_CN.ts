@@ -4248,6 +4248,16 @@ Make sure you have proper rolling shutter value set before syncing.</source>
         <source>Export</source>
         <translation>导出</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="994"/>
+        <source>Video &amp;&amp; Gyro</source>
+        <translation>视频和陀螺仪</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="994"/>
+        <source>Stabilize &amp;&amp; Settings</source>
+        <translation>稳定和设置</translation>
+    </message>
 </context>
 <context>
     <name>Timeline</name>

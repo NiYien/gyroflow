@@ -583,6 +583,7 @@ impl GyroSource {
         progress_cb: F,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<FileMetadata, crate::GyroflowCoreError> {
+        let t_total = std::time::Instant::now();
         // path comes from QML/QUrl callers as a file:// URL (sometimes percent-
         // encoded, sometimes not). Normalize to a native filesystem path so the
         // same file always hits the same cache slot, and so std::fs::metadata
@@ -596,11 +597,26 @@ impl GyroSource {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let key = format!("{}|{}|{}|{options:?}|{size:?}|{fps}", native_path, mtime, filesize);
+        log::info!(
+            "[parse_telemetry] begin path='{}' filesize={} mtime={} header_only={} time_range_ms={:?} size={:?} fps={:.6}",
+            native_path,
+            filesize,
+            mtime,
+            options.header_only,
+            options.time_range_ms,
+            size,
+            fps
+        );
         static CACHE: RwLock<BTreeMap<String, FileMetadata>> = RwLock::new(BTreeMap::new());
         {
             let cache = CACHE.read();
             if let Some(md) = cache.get(&key) {
-                log::info!("[parse_telemetry] cache hit: {} (mtime={})", native_path, mtime);
+                log::info!(
+                    "[parse_telemetry] cache hit: {} (mtime={}, elapsed_ms={:.1})",
+                    native_path,
+                    mtime,
+                    t_total.elapsed().as_secs_f64() * 1000.0
+                );
                 return Ok(md.clone());
             }
         }
@@ -619,14 +635,43 @@ impl GyroSource {
             time_range_ms: options.time_range_ms,
             ..Default::default()
         };
-        let mut input = Input::from_stream_with_options(
+        let t_input = std::time::Instant::now();
+        log::info!(
+            "[parse_telemetry:input] begin path='{}' header_only={} time_range_ms={:?}",
+            native_path,
+            options.header_only,
+            options.time_range_ms
+        );
+        let input_result = Input::from_stream_with_options(
             stream,
             filesize,
             &path,
             progress_cb,
             cancel_flag,
             tpoptions,
-        )?;
+        );
+        let mut input = match input_result {
+            Ok(input) => {
+                log::info!(
+                    "[parse_telemetry:input] end path='{}' elapsed_ms={:.1} camera_type='{}' camera_model={:?} samples={}",
+                    native_path,
+                    t_input.elapsed().as_secs_f64() * 1000.0,
+                    input.camera_type(),
+                    input.camera_model(),
+                    input.samples.as_ref().map(|s| s.len()).unwrap_or_default()
+                );
+                input
+            }
+            Err(e) => {
+                log::warn!(
+                    "[parse_telemetry:input] error path='{}' elapsed_ms={:.1} error={}",
+                    native_path,
+                    t_input.elapsed().as_secs_f64() * 1000.0,
+                    e
+                );
+                return Err(e.into());
+            }
+        };
 
         let camera_identifier =
             CameraIdentifier::from_telemetry_parser(&input, size.0, size.1, fps).ok();
@@ -1384,6 +1429,20 @@ impl GyroSource {
             cache.insert(key, md.clone());
         }
 
+        log::info!(
+            "[parse_telemetry] end path='{}' elapsed_ms={:.1} raw_imu={} quats={} lens_params={} lens_positions={} duration_ms={:.3} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
+            native_path,
+            t_total.elapsed().as_secs_f64() * 1000.0,
+            md.raw_imu.len(),
+            md.quaternions.len(),
+            md.lens_params.len(),
+            md.lens_positions.len(),
+            md.duration_ms,
+            md.creation_date_utc,
+            md.has_accurate_timestamps,
+            md.detected_source,
+            md.is_komodo
+        );
         Ok(md)
     }
 
@@ -1433,10 +1492,6 @@ impl GyroSource {
                 .unwrap_or_default();
             let imu_duration = (last_ts - first_ts) * ((len + 1.0) / len);
             if (imu_duration - self.duration_ms).abs() > 0.01 {
-                log::warn!(
-                    "IMU duration {imu_duration} is different than video duration ({})",
-                    self.duration_ms
-                );
                 if imu_duration > 0.0 {
                     self.duration_ms = imu_duration;
                 }
@@ -1459,10 +1514,6 @@ impl GyroSource {
                     .unwrap_or_default();
                 let imu_duration = (last_ts - first_ts) * ((len + 1.0) / len);
                 if (imu_duration - self.duration_ms).abs() > 0.01 {
-                    log::warn!(
-                        "IMU duration {imu_duration} is different than video duration ({})",
-                        self.duration_ms
-                    );
                     if imu_duration > 0.0 {
                         self.duration_ms = imu_duration;
                     }
@@ -2078,6 +2129,19 @@ mod tests {
     fn compute_auto_rotation_without_init_quaternion_returns_none() {
         let raw_imu = vec![imu_sample(0.0, [0.0, 0.0, 9.80665])];
         assert_eq!(compute_auto_rotation(None, &raw_imu, 1.0, false), None);
+    }
+
+    #[test]
+    fn load_from_telemetry_duration_mismatch_warning_removed() {
+        let source = include_str!("mod.rs");
+        let needle = concat!(
+            "IMU duration",
+            " {imu_duration}",
+            " is different",
+            " than video duration"
+        );
+
+        assert!(!source.contains(needle));
     }
 
     #[test]

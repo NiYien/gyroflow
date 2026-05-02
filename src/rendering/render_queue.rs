@@ -495,6 +495,116 @@ fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
     serde_json::from_str(job_ids_json).unwrap_or_default()
 }
 
+fn update_project_data_batch_params(data: &mut serde_json::Value, params: &serde_json::Value) {
+    let Some(obj) = data.as_object_mut() else {
+        return;
+    };
+
+    if let Some(stab) = obj.get_mut("stabilization").and_then(|s| s.as_object_mut()) {
+        if let Some(smoothness) = params.get("smoothness").and_then(|v| v.as_f64()) {
+            if let Some(sp) = stab
+                .get_mut("smoothing_params")
+                .and_then(|p| p.as_array_mut())
+            {
+                for p in sp.iter_mut() {
+                    if p.get("name").and_then(|n| n.as_str()) == Some("smoothness") {
+                        p.as_object_mut().map(|o| {
+                            o.insert("value".into(), serde_json::json!(smoothness))
+                        });
+                    }
+                }
+            }
+        }
+        if let Some(amount) = params.get("horizon_lock_amount").and_then(|v| v.as_f64()) {
+            stab.insert("horizon_lock_amount".into(), serde_json::json!(amount));
+        }
+        if let Some(zoom_mode) = params.get("zoom_mode").and_then(|v| v.as_str()) {
+            let az = match zoom_mode {
+                "static" => -1.0,
+                "dynamic" => 4.0,
+                _ => 0.0,
+            };
+            stab.insert("adaptive_zoom_window".into(), serde_json::json!(az));
+        }
+        if let Some(zoom_speed) = params.get("zoom_speed").and_then(|v| v.as_f64()) {
+            stab.insert(
+                "adaptive_zoom_window".into(),
+                serde_json::json!(zoom_speed),
+            );
+        }
+        if let Some(lc) = params.get("lens_correction").and_then(|v| v.as_f64()) {
+            stab.insert("lens_correction_amount".into(), serde_json::json!(lc));
+        }
+    }
+
+    if let Some(video_info) = obj.get_mut("video_info").and_then(|v| v.as_object_mut()) {
+        if let Some(fps) = params.get("framerate").and_then(|v| v.as_f64()) {
+            let source_fps = video_info.get("fps").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if source_fps > 0.0 {
+                let fps_scale = fps / source_fps;
+                if (fps_scale - 1.0).abs() > 0.0001 {
+                    video_info.insert("fps_scale".into(), serde_json::json!(fps_scale));
+                    video_info.insert("vfr_fps".into(), serde_json::json!(fps));
+                    if let Some(duration_ms) =
+                        video_info.get("duration_ms").and_then(|v| v.as_f64())
+                    {
+                        video_info.insert(
+                            "vfr_duration_ms".into(),
+                            serde_json::json!(duration_ms / fps_scale),
+                        );
+                    }
+                } else {
+                    video_info.remove("fps_scale");
+                    video_info.insert("vfr_fps".into(), serde_json::json!(source_fps));
+                    if let Some(duration_ms) =
+                        video_info.get("duration_ms").and_then(|v| v.as_f64())
+                    {
+                        video_info.insert("vfr_duration_ms".into(), serde_json::json!(duration_ms));
+                    }
+                }
+            } else {
+                video_info.insert("vfr_fps".into(), serde_json::json!(fps));
+            }
+        }
+    }
+}
+
+fn apply_batch_params_to_stab(stab: &StabilizationManager, params: &serde_json::Value) {
+    if let Some(smoothness) = params.get("smoothness").and_then(|v| v.as_f64()) {
+        stab.set_smoothing_param("smoothness", smoothness);
+    }
+    if let Some(amount) = params.get("horizon_lock_amount").and_then(|v| v.as_f64()) {
+        let horizon = stab.smoothing.read().horizon_lock.clone();
+        stab.set_horizon_lock(
+            amount,
+            horizon.horizonroll,
+            horizon.lock_pitch,
+            horizon.horizonpitch,
+            horizon.automatic_lock,
+            horizon.turn_threshold,
+            horizon.turn_smoothing_ms,
+            horizon.turn_multiplier,
+            horizon.tilt_accel_limit,
+        );
+    }
+    if let Some(zoom_speed) = params.get("zoom_speed").and_then(|v| v.as_f64()) {
+        stab.set_adaptive_zoom(zoom_speed);
+    } else if let Some(zoom_mode) = params.get("zoom_mode").and_then(|v| v.as_str()) {
+        let az = match zoom_mode {
+            "static" => -1.0,
+            "dynamic" => 4.0,
+            _ => 0.0,
+        };
+        stab.set_adaptive_zoom(az);
+    }
+    if let Some(lc) = params.get("lens_correction").and_then(|v| v.as_f64()) {
+        stab.set_lens_correction_amount(lc);
+    }
+    if let Some(fps) = params.get("framerate").and_then(|v| v.as_f64()) {
+        stab.override_video_fps(fps, true);
+    }
+}
+
 fn lens_profile_metadata_for_group_build(metadata: &FileMetadata) -> FileMetadata {
     let mut snapshot = metadata.thin();
     snapshot.lens_params = metadata.lens_params.clone();
@@ -718,6 +828,7 @@ pub struct RenderQueue {
     get_gyro_file_count: qt_method!(fn(&self) -> usize),
     get_gyro_file_info_json: qt_method!(fn(&self, index: usize) -> QString),
     has_gyro_files: qt_method!(fn(&self) -> bool),
+    batch_motion_ready: qt_method!(fn(&self) -> bool),
     batch_match_gyro: qt_method!(fn(&mut self)),
     apply_match_results: qt_method!(fn(&mut self)),
     reapply_batch_auto_rotate: qt_method!(fn(&mut self, job_ids_json: String)),
@@ -1161,7 +1272,7 @@ impl RenderQueue {
                 itm.output_folder = QString::from(render_options.output_folder.as_str());
                 itm.output_filename = QString::from(render_options.output_filename.as_str());
                 itm.display_output_path = QString::from(filesystem::display_folder_filename(render_options.output_folder.as_str(), render_options.output_filename.as_str()));
-                itm.export_settings = QString::from(render_options.settings_string(params.fps));
+                itm.export_settings = QString::from(render_options.settings_string(params.get_scaled_fps()));
                 itm.thumbnail_url = thumbnail_url;
                 itm.current_frame = 0;
                 itm.total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
@@ -1185,7 +1296,7 @@ impl RenderQueue {
                     render_options.output_folder.as_str(),
                     render_options.output_filename.as_str(),
                 )),
-                export_settings: QString::from(render_options.settings_string(params.fps)),
+                export_settings: QString::from(render_options.settings_string(params.get_scaled_fps())),
                 thumbnail_url,
                 current_frame: 0,
                 total_frames: (params.frame_count as f64 * trim_ratio).ceil() as u64,
@@ -1247,6 +1358,14 @@ impl RenderQueue {
         self.update_queue_indices();
 
         self.queue_changed();
+        ::log::info!(
+            "[queue_signal] added job_id={} source=add_internal input='{}'",
+            job_id,
+            self.jobs
+                .get(&job_id)
+                .map(|job| job.render_options.input_filename.as_str())
+                .unwrap_or_default()
+        );
         self.added(job_id);
     }
 
@@ -1855,16 +1974,26 @@ impl RenderQueue {
                     } else {
                         "none"
                     };
-                    let framerate = v
-                        .get("video_info")
-                        .and_then(|vi| vi.get("fps"))
-                        .and_then(|f| f.as_f64())
-                        .unwrap_or(0.0);
                     let focal_length = v
                         .get("video_info")
                         .and_then(|vi| vi.get("focal_length"))
                         .and_then(|f| f.as_f64())
                         .unwrap_or(0.0);
+                    let source_fps = v
+                        .get("video_info")
+                        .and_then(|vi| vi.get("fps"))
+                        .and_then(|f| f.as_f64())
+                        .unwrap_or(0.0);
+                    let fps_scale = v
+                        .get("video_info")
+                        .and_then(|vi| vi.get("fps_scale"))
+                        .and_then(|f| f.as_f64());
+                    let framerate = v
+                        .get("video_info")
+                        .and_then(|vi| vi.get("vfr_fps"))
+                        .and_then(|f| f.as_f64())
+                        .or_else(|| fps_scale.map(|scale| source_fps * scale))
+                        .unwrap_or(source_fps);
                     let display_focal_length = if focal_length
                         > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
                     {
@@ -1889,6 +2018,8 @@ impl RenderQueue {
                         "lens_correction": lens_correction,
                         "zoom_mode": zoom_mode,
                         "framerate": framerate,
+                        "source_fps": source_fps,
+                        "fps_scale": fps_scale,
                         "focal_length": display_focal_length,
                         "detected_source": detected_source,
                         "auto_rotate": job.auto_rotate,
@@ -1904,6 +2035,8 @@ impl RenderQueue {
 
             let result = serde_json::json!({
                 "auto_rotate": job.auto_rotate,
+                "source_fps": 0.0,
+                "framerate": 0.0,
                 "focal_length": metadata_focal_length,
                 "lens_group_display_mode": lens_group_mode,
                 "lens_group_display_number": lens_group_number,
@@ -2122,76 +2255,24 @@ impl RenderQueue {
         };
 
         for &job_id in &job_ids {
+            let mut export_settings = None;
             if let Some(job) = self.jobs.get_mut(&job_id) {
                 if let Some(ref mut data_str) = job.project_data {
                     if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(data_str) {
-                        let stab = data
-                            .get_mut("stabilization")
-                            .and_then(|s| s.as_object_mut());
-                        if let Some(stab) = stab {
-                            if let Some(smoothness) =
-                                params.get("smoothness").and_then(|v| v.as_f64())
-                            {
-                                // Update smoothing_params array
-                                if let Some(sp) = stab
-                                    .get_mut("smoothing_params")
-                                    .and_then(|p| p.as_array_mut())
-                                {
-                                    for p in sp.iter_mut() {
-                                        if p.get("name").and_then(|n| n.as_str())
-                                            == Some("smoothness")
-                                        {
-                                            p.as_object_mut().map(|o| {
-                                                o.insert(
-                                                    "value".into(),
-                                                    serde_json::json!(smoothness),
-                                                )
-                                            });
-                                        }
-                                    }
-                                }
-                            }
-                            if let Some(amount) =
-                                params.get("horizon_lock_amount").and_then(|v| v.as_f64())
-                            {
-                                stab.insert(
-                                    "horizon_lock_amount".into(),
-                                    serde_json::json!(amount),
-                                );
-                            }
-                            if let Some(zoom_mode) =
-                                params.get("zoom_mode").and_then(|v| v.as_str())
-                            {
-                                let az = match zoom_mode {
-                                    "static" => -1.0,
-                                    "dynamic" => 4.0,
-                                    _ => 0.0,
-                                };
-                                stab.insert("adaptive_zoom_window".into(), serde_json::json!(az));
-                            }
-                            if let Some(zoom_speed) =
-                                params.get("zoom_speed").and_then(|v| v.as_f64())
-                            {
-                                stab.insert(
-                                    "adaptive_zoom_window".into(),
-                                    serde_json::json!(zoom_speed),
-                                );
-                            }
-                            if let Some(lc) = params.get("lens_correction").and_then(|v| v.as_f64())
-                            {
-                                stab.insert("lens_correction_amount".into(), serde_json::json!(lc));
-                            }
-                        }
-                        if let Some(fps) = params.get("framerate").and_then(|v| v.as_f64()) {
-                            if let Some(output) =
-                                data.get_mut("output").and_then(|o| o.as_object_mut())
-                            {
-                                output.insert("output_fps".into(), serde_json::json!(fps));
-                            }
-                        }
+                        update_project_data_batch_params(&mut data, &params);
                         *data_str = serde_json::to_string(&data).unwrap_or_default();
                     }
                 }
+                if let Some(ref stab) = job.stab {
+                    apply_batch_params_to_stab(stab, &params);
+                    export_settings =
+                        Some(job.render_options.settings_string(stab.params.read().get_scaled_fps()));
+                }
+            }
+            if let Some(export_settings) = export_settings {
+                update_model!(self, job_id, itm {
+                    itm.export_settings = QString::from(export_settings.as_str());
+                });
             }
         }
         self.queue_changed();
@@ -2957,6 +3038,12 @@ impl RenderQueue {
                     itm.error_string = QString::from(arg.clone());
                     itm.status = JobStatus::Error;
                 });
+                ::log::warn!(
+                    "[queue_signal] error job_id={} source=add_file msg='{}' arg='{}'",
+                    job_id,
+                    msg,
+                    arg
+                );
                 this.error(
                     job_id,
                     QString::from(msg),
@@ -2989,11 +3076,20 @@ impl RenderQueue {
                                 itm.error_string = msg.clone();
                                 itm.status = JobStatus::Error;
                             });
+                            ::log::warn!(
+                                "[queue_signal] error job_id={} source=add_file_exists arg='{}'",
+                                job_id,
+                                msg
+                            );
                             this.error(job_id, msg, QString::default(), QString::default());
                         }
                     }
                 }
 
+                ::log::info!(
+                    "[queue_signal] processing_done job_id={} by_preset=false source=add_file",
+                    job_id
+                );
                 this.processing_done(job_id, false);
             },
         );
@@ -3109,6 +3205,11 @@ impl RenderQueue {
                         QPointer::from(self as &Self),
                         move |this, (preset, to_job_id): (String, u32)| {
                             this.apply_to_all(preset, additional_data3.clone(), to_job_id);
+                            ::log::info!(
+                                "[queue_signal] added emitted_job_id={} source=apply_preset preset_target_job_id={}",
+                                job_id,
+                                to_job_id
+                            );
                             this.added(job_id);
                         },
                     );
@@ -3116,12 +3217,39 @@ impl RenderQueue {
                     core::run_threaded(move || {
                         let fetch_thumb =
                             |video_url: &str, ratio: f64| -> Result<(), rendering::FFmpegError> {
+                                let t_thumb = std::time::Instant::now();
+                                ::log::info!(
+                                    "[queue_add:fetch_thumb] begin job_id={} file='{}' ratio={:.6}",
+                                    job_id,
+                                    filesystem::get_filename(video_url),
+                                    ratio
+                                );
                                 let mut fetched = false;
                                 if !crate::cli::will_run_in_console() {
                                     // Don't fetch thumbs in the CLI
-                                    let mut proc = rendering::VideoProcessor::from_file(
+                                    let t_proc = std::time::Instant::now();
+                                    let mut proc = match rendering::VideoProcessor::from_file(
                                         video_url, false, 0, None,
-                                    )?;
+                                    ) {
+                                        Ok(proc) => proc,
+                                        Err(e) => {
+                                            ::log::warn!(
+                                                "[queue_add:fetch_thumb] processor_error job_id={} file='{}' elapsed_ms={:.1} total_elapsed_ms={:.1} error={}",
+                                                job_id,
+                                                filesystem::get_filename(video_url),
+                                                t_proc.elapsed().as_secs_f64() * 1000.0,
+                                                t_thumb.elapsed().as_secs_f64() * 1000.0,
+                                                e
+                                            );
+                                            return Err(e);
+                                        }
+                                    };
+                                    ::log::info!(
+                                        "[queue_add:fetch_thumb] processor_ready job_id={} file='{}' elapsed_ms={:.1}",
+                                        job_id,
+                                        filesystem::get_filename(video_url),
+                                        t_proc.elapsed().as_secs_f64() * 1000.0
+                                    );
                                     proc.on_frame(move |_timestamp_us, input_frame, _output_frame, converter, _rate_control| {
                                     let sf = converter.scale(input_frame, ffmpeg_next::format::Pixel::RGBA, (50.0 * ratio).round() as u32, 50)?;
 
@@ -3132,11 +3260,41 @@ impl RenderQueue {
 
                                     Ok(())
                                 });
+                                    let t_decode = std::time::Instant::now();
+                                    ::log::info!(
+                                        "[thumb_decoder] start job_id={} file='{}' ranges={:?}",
+                                        job_id,
+                                        filesystem::get_filename(video_url),
+                                        vec![(0.0, 50.0)]
+                                    );
                                     proc.start_decoder_only(
                                         vec![(0.0, 50.0)],
                                         Arc::new(AtomicBool::new(true)),
-                                    )?;
+                                    )
+                                    .map_err(|e| {
+                                        ::log::warn!(
+                                            "[thumb_decoder] error job_id={} file='{}' elapsed_ms={:.1} total_elapsed_ms={:.1} error={}",
+                                            job_id,
+                                            filesystem::get_filename(video_url),
+                                            t_decode.elapsed().as_secs_f64() * 1000.0,
+                                            t_thumb.elapsed().as_secs_f64() * 1000.0,
+                                            e
+                                        );
+                                        e
+                                    })?;
+                                    ::log::info!(
+                                        "[thumb_decoder] end job_id={} file='{}' elapsed_ms={:.1}",
+                                        job_id,
+                                        filesystem::get_filename(video_url),
+                                        t_decode.elapsed().as_secs_f64() * 1000.0
+                                    );
                                 }
+                                ::log::info!(
+                                    "[queue_add:fetch_thumb] end job_id={} file='{}' elapsed_ms={:.1}",
+                                    job_id,
+                                    filesystem::get_filename(video_url),
+                                    t_thumb.elapsed().as_secs_f64() * 1000.0
+                                );
                                 Ok(())
                             };
 
@@ -3198,7 +3356,15 @@ impl RenderQueue {
                                             params.size.0 as f64 / params.size.1 as f64
                                         };
 
+                                        let t_thumb_call = std::time::Instant::now();
                                         if let Err(e) = fetch_thumb(out, ratio) {
+                                            ::log::warn!(
+                                                "[queue_add:fetch_thumb] error job_id={} file='{}' elapsed_ms={:.1} error={}",
+                                                job_id,
+                                                filesystem::get_filename(out),
+                                                t_thumb_call.elapsed().as_secs_f64() * 1000.0,
+                                                e
+                                            );
                                             err((
                                                 "An error occured: %1".to_string(),
                                                 e.to_string(),
@@ -3227,29 +3393,61 @@ impl RenderQueue {
                                     ));
                                 }
                             }
-                        } else if let Ok(info) = rendering::VideoProcessor::get_video_info(&url) {
-                            ::log::debug!("Loaded {:?}", &info);
-
-                            render_options.bitrate = render_options.bitrate.max(info.bitrate);
-                            if !has_output_width {
-                                render_options.output_width = info.width as usize;
-                            }
-                            if !has_output_height {
-                                render_options.output_height = info.height as usize;
-                            }
-                            render_options.output_folder =
-                                Self::get_output_folder(&url, &render_options.output_folder);
-                            render_options.output_filename = Self::get_output_filename(
-                                &url,
-                                &suffix,
-                                &render_options,
-                                override_ext.as_deref(),
+                        } else {
+                            let t_add = std::time::Instant::now();
+                            ::log::info!(
+                                "[queue_add] start job_id={} file='{}' url='{}' gyro_url='{}' is_gf_data={}",
+                                job_id,
+                                filesystem::get_filename(&url),
+                                url,
+                                gyro_url,
+                                is_gf_data
                             );
+                            let t_info = std::time::Instant::now();
+                            ::log::info!(
+                                "[queue_add:get_video_info] begin job_id={} file='{}'",
+                                job_id,
+                                filesystem::get_filename(&url)
+                            );
+                            match rendering::VideoProcessor::get_video_info(&url) {
+                                Ok(info) => {
+                                    ::log::info!(
+                                        "[queue_add:get_video_info] end job_id={} file='{}' elapsed_ms={:.1} width={} height={} fps={:.6} duration_ms={:.3} frame_count={} created_at={:?} rotation={} bitrate={}",
+                                        job_id,
+                                        filesystem::get_filename(&url),
+                                        t_info.elapsed().as_secs_f64() * 1000.0,
+                                        info.width,
+                                        info.height,
+                                        info.fps,
+                                        info.duration_ms,
+                                        info.frame_count,
+                                        info.created_at,
+                                        info.rotation,
+                                        info.bitrate
+                                    );
+                                    ::log::debug!("Loaded {:?}", &info);
 
-                            let ratio = info.width as f64 / info.height as f64;
+                                    render_options.bitrate =
+                                        render_options.bitrate.max(info.bitrate);
+                                    if !has_output_width {
+                                        render_options.output_width = info.width as usize;
+                                    }
+                                    if !has_output_height {
+                                        render_options.output_height = info.height as usize;
+                                    }
+                                    render_options.output_folder =
+                                        Self::get_output_folder(&url, &render_options.output_folder);
+                                    render_options.output_filename = Self::get_output_filename(
+                                        &url,
+                                        &suffix,
+                                        &render_options,
+                                        override_ext.as_deref(),
+                                    );
 
-                            if info.duration_ms > 0.0 && info.fps > 0.0 {
-                                let video_size = (info.width as usize, info.height as usize);
+                                    let ratio = info.width as f64 / info.height as f64;
+
+                                    if info.duration_ms > 0.0 && info.fps > 0.0 {
+                                        let video_size = (info.width as usize, info.height as usize);
 
                                 stab.init_from_video_data(
                                     info.duration_ms,
@@ -3277,11 +3475,32 @@ impl RenderQueue {
                                     &url
                                 };
                                 {
-                                    if let Ok(mut file) =
-                                        filesystem::open_file(&gyro_url, false, false)
-                                    {
-                                        let filesize = file.size;
-                                        let _ = stab.load_gyro_data(
+                                    let t_open = std::time::Instant::now();
+                                    ::log::info!(
+                                        "[queue_add:open_gyro] begin job_id={} file='{}' url='{}'",
+                                        job_id,
+                                        filesystem::get_filename(&gyro_url),
+                                        gyro_url
+                                    );
+                                    match filesystem::open_file(&gyro_url, false, false) {
+                                        Ok(mut file) => {
+                                            let filesize = file.size;
+                                            ::log::info!(
+                                                "[queue_add:open_gyro] end job_id={} file='{}' filesize={} elapsed_ms={:.1}",
+                                                job_id,
+                                                filesystem::get_filename(&gyro_url),
+                                                filesize,
+                                                t_open.elapsed().as_secs_f64() * 1000.0
+                                            );
+                                            let t_load = std::time::Instant::now();
+                                            ::log::info!(
+                                                "[queue_add:load_gyro_data] begin job_id={} file='{}' filesize={} is_main_video={} header_only=false time_range_ms=None",
+                                                job_id,
+                                                filesystem::get_filename(&gyro_url),
+                                                filesize,
+                                                is_main_video
+                                            );
+                                            let load_result = stab.load_gyro_data(
                                             file.get_file(),
                                             filesize,
                                             &gyro_url,
@@ -3289,7 +3508,67 @@ impl RenderQueue {
                                             &Default::default(),
                                             |_| (),
                                             Arc::new(AtomicBool::new(false)),
-                                        );
+                                            );
+                                            match load_result {
+                                                Ok(()) => {
+                                                    let (
+                                                        raw_imu,
+                                                        quaternions,
+                                                        lens_params,
+                                                        lens_positions,
+                                                        creation_date_utc,
+                                                        has_accurate_timestamps,
+                                                        detected_source,
+                                                        is_komodo,
+                                                    ) = {
+                                                        let gyro = stab.gyro.read();
+                                                        let md = gyro.file_metadata.read();
+                                                        (
+                                                            md.raw_imu.len(),
+                                                            md.quaternions.len(),
+                                                            md.lens_params.len(),
+                                                            md.lens_positions.len(),
+                                                            md.creation_date_utc.clone(),
+                                                            md.has_accurate_timestamps,
+                                                            md.detected_source.clone(),
+                                                            md.is_komodo,
+                                                        )
+                                                    };
+                                                    ::log::info!(
+                                                        "[queue_add:load_gyro_data] end job_id={} file='{}' elapsed_ms={:.1} raw_imu={} quats={} lens_params={} lens_positions={} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
+                                                        job_id,
+                                                        filesystem::get_filename(&gyro_url),
+                                                        t_load.elapsed().as_secs_f64() * 1000.0,
+                                                        raw_imu,
+                                                        quaternions,
+                                                        lens_params,
+                                                        lens_positions,
+                                                        creation_date_utc,
+                                                        has_accurate_timestamps,
+                                                        detected_source,
+                                                        is_komodo
+                                                    );
+                                                }
+                                                Err(e) => {
+                                                    ::log::warn!(
+                                                        "[queue_add:load_gyro_data] error job_id={} file='{}' elapsed_ms={:.1} error={}",
+                                                        job_id,
+                                                        filesystem::get_filename(&gyro_url),
+                                                        t_load.elapsed().as_secs_f64() * 1000.0,
+                                                        e
+                                                    );
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            ::log::warn!(
+                                                "[queue_add:open_gyro] error job_id={} file='{}' elapsed_ms={:.1} error={}",
+                                                job_id,
+                                                filesystem::get_filename(&gyro_url),
+                                                t_open.elapsed().as_secs_f64() * 1000.0,
+                                                e
+                                            );
+                                        }
                                     }
                                 }
                                 // Prefer telemetry-parser's creation_date_utc over ffmpeg's creation_time
@@ -3368,10 +3647,27 @@ impl RenderQueue {
                                     render_options.output_height,
                                 );
 
+                                let t_recompute = std::time::Instant::now();
+                                ::log::info!(
+                                    "[queue_add:recompute] begin job_id={} file='{}'",
+                                    job_id,
+                                    filesystem::get_filename(&url)
+                                );
                                 stab.recompute_blocking();
+                                ::log::info!(
+                                    "[queue_add:recompute] end job_id={} file='{}' elapsed_ms={:.1}",
+                                    job_id,
+                                    filesystem::get_filename(&url),
+                                    t_recompute.elapsed().as_secs_f64() * 1000.0
+                                );
 
                                 // println!("{}", stab.export_gyroflow_data(true, serde_json::to_string(&render_options).unwrap_or_default()));
 
+                                ::log::info!(
+                                    "[queue_add:loaded] emit job_id={} file='{}'",
+                                    job_id,
+                                    filesystem::get_filename(&url)
+                                );
                                 loaded(render_options);
 
                                 Self::update_sync_settings(&stab, &sync_options);
@@ -3381,23 +3677,76 @@ impl RenderQueue {
                                 let default_preset2 = gyroflow_core::settings::data_dir()
                                     .join("lens_profiles")
                                     .join("default.gyroflow");
+                                let t_preset = std::time::Instant::now();
                                 if let Ok(data) = std::fs::read_to_string(default_preset2) {
+                                    ::log::info!(
+                                        "[queue_add:default_preset] apply user preset job_id={} file='{}' read_elapsed_ms={:.1}",
+                                        job_id,
+                                        filesystem::get_filename(&url),
+                                        t_preset.elapsed().as_secs_f64() * 1000.0
+                                    );
                                     apply_preset((data, job_id));
                                 } else if let Ok(data) = std::fs::read_to_string(default_preset) {
+                                    ::log::info!(
+                                        "[queue_add:default_preset] apply bundled preset job_id={} file='{}' read_elapsed_ms={:.1}",
+                                        job_id,
+                                        filesystem::get_filename(&url),
+                                        t_preset.elapsed().as_secs_f64() * 1000.0
+                                    );
                                     apply_preset((data, job_id));
+                                } else {
+                                    ::log::info!(
+                                        "[queue_add:default_preset] none job_id={} file='{}' elapsed_ms={:.1}",
+                                        job_id,
+                                        filesystem::get_filename(&url),
+                                        t_preset.elapsed().as_secs_f64() * 1000.0
+                                    );
                                 }
 
+                                let t_thumb_call = std::time::Instant::now();
                                 if let Err(e) = fetch_thumb(&url, ratio) {
+                                    ::log::warn!(
+                                        "[queue_add:fetch_thumb] error job_id={} file='{}' elapsed_ms={:.1} error={}",
+                                        job_id,
+                                        filesystem::get_filename(&url),
+                                        t_thumb_call.elapsed().as_secs_f64() * 1000.0,
+                                        e
+                                    );
                                     err(("An error occured: %1".to_string(), e.to_string()));
                                 }
 
-                                processing_done(());
+                                ::log::info!(
+                                    "[queue_add] end job_id={} file='{}' elapsed_ms={:.1}",
+                                    job_id,
+                                    filesystem::get_filename(&url),
+                                    t_add.elapsed().as_secs_f64() * 1000.0
+                                );
+                                        processing_done(());
+                                    } else {
+                                        ::log::warn!(
+                                            "[queue_add] invalid_video_info job_id={} file='{}' elapsed_ms={:.1} duration_ms={:.3} fps={:.6}",
+                                            job_id,
+                                            filesystem::get_filename(&url),
+                                            t_add.elapsed().as_secs_f64() * 1000.0,
+                                            info.duration_ms,
+                                            info.fps
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    ::log::warn!(
+                                        "[queue_add:get_video_info] error job_id={} file='{}' elapsed_ms={:.1} error={}",
+                                        job_id,
+                                        filesystem::get_filename(&url),
+                                        t_info.elapsed().as_secs_f64() * 1000.0,
+                                        e
+                                    );
+                                    err((
+                                        "An error occured: %1".to_string(),
+                                        "Unable to read the video file.".to_string(),
+                                    ));
+                                }
                             }
-                        } else {
-                            err((
-                                "An error occured: %1".to_string(),
-                                "Unable to read the video file.".to_string(),
-                            ));
                         }
                     });
                 }
@@ -3769,11 +4118,20 @@ impl RenderQueue {
         }
         let processing_done =
             util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, job_id: u32| {
+                ::log::info!(
+                    "[queue_signal] processing_done job_id={} by_preset=true source=apply_to_all",
+                    job_id
+                );
                 this.processing_done(job_id, true);
             });
         let err = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this, (job_id, msg): (u32, String)| {
+                ::log::warn!(
+                    "[queue_signal] error job_id={} source=apply_to_all msg='{}'",
+                    job_id,
+                    msg
+                );
                 this.error(
                     job_id,
                     QString::from(msg),
@@ -3826,7 +4184,8 @@ impl RenderQueue {
                         );
                         if let Some(ref stab) = job.stab {
                             itm.export_settings = QString::from(
-                                job.render_options.settings_string(stab.params.read().fps),
+                                job.render_options
+                                    .settings_string(stab.params.read().get_scaled_fps()),
                             );
                         }
                         itm.output_filename =
@@ -4391,6 +4750,51 @@ impl RenderQueue {
 
     fn has_gyro_files(&self) -> bool {
         !self.gyro_files.is_empty()
+    }
+
+    fn batch_motion_ready(&self) -> bool {
+        let Ok(queue) = self.queue.try_borrow() else {
+            return false;
+        };
+        let mut has_renderable_job = false;
+        for item in queue.iter() {
+            if matches!(item.status, JobStatus::Error | JobStatus::Skipped) {
+                continue;
+            }
+            let Some(job) = self.jobs.get(&item.job_id) else {
+                return false;
+            };
+            if item.status == JobStatus::Finished {
+                if job.last_finished_export_project == Some(2) {
+                    has_renderable_job = true;
+                    if !job
+                        .project_data
+                        .as_ref()
+                        .map(|data| StabilizationManager::project_has_motion_data(data.as_bytes()))
+                        .unwrap_or(false)
+                    {
+                        return false;
+                    }
+                }
+                continue;
+            }
+            if item.status != JobStatus::Queued || item.total_frames == 0 {
+                continue;
+            }
+            has_renderable_job = true;
+            let Some(stab) = job.stab.as_ref() else {
+                return false;
+            };
+            let gyro = stab.gyro.read();
+            let file_metadata = gyro.file_metadata.read();
+            if gyro.raw_imu(&file_metadata).is_empty()
+                && gyro.quaternions.is_empty()
+                && file_metadata.quaternions.is_empty()
+            {
+                return false;
+            }
+        }
+        has_renderable_job
     }
 
     fn update_gyro_file_parse_result(
@@ -5132,7 +5536,7 @@ impl RenderQueue {
                         }
                         if let Some(ref stab) = job.stab {
                             export_settings =
-                                Some(job.render_options.settings_string(stab.params.read().fps));
+                                Some(job.render_options.settings_string(stab.params.read().get_scaled_fps()));
                         }
                     }
                     if let Some(export_settings) = export_settings {
@@ -7158,6 +7562,18 @@ mod tests {
         serde_json::from_str(&queue.get_job_display_params(1).to_string()).unwrap()
     }
 
+    fn smoothing_param_value(data: &serde_json::Value, name: &str) -> Option<f64> {
+        data.get("stabilization")
+            .and_then(|stab| stab.get("smoothing_params"))
+            .and_then(|params| params.as_array())
+            .and_then(|params| {
+                params.iter().find(|param| {
+                    param.get("name").and_then(|n| n.as_str()) == Some(name)
+                })
+            })
+            .and_then(|param| param.get("value").and_then(|v| v.as_f64()))
+    }
+
     fn auto_focal_metadata() -> core::gyro_source::FileMetadata {
         core::gyro_source::FileMetadata {
             additional_data: serde_json::json!({ "lens_index": 0 }),
@@ -7225,6 +7641,39 @@ mod tests {
         queue
     }
 
+    fn add_motion_to_job(queue: &mut RenderQueue, job_id: u32, use_quats: bool) {
+        let stab = queue
+            .jobs
+            .get(&job_id)
+            .and_then(|job| job.stab.as_ref())
+            .cloned()
+            .expect("test job has stab");
+        {
+            let mut params = stab.params.write();
+            params.duration_ms = 1_000.0;
+            params.fps = 10.0;
+            params.frame_count = 10;
+        }
+        stab.gyro.write().init_from_params(&stab.params.read());
+        let mut metadata = core::gyro_source::FileMetadata {
+            duration_ms: 1_000.0,
+            ..Default::default()
+        };
+        if use_quats {
+            metadata
+                .quaternions
+                .insert(0, core::gyro_source::Quat64::identity());
+        } else {
+            metadata.raw_imu.push(core::gyro_source::TimeIMU {
+                timestamp_ms: 0.0,
+                gyro: Some([0.0, 0.0, 0.0]),
+                accl: None,
+                magn: None,
+            });
+        }
+        stab.gyro.write().load_from_telemetry(metadata);
+    }
+
     fn autosync_additional_data() -> String {
         serde_json::json!({
             "synchronization": {
@@ -7250,6 +7699,7 @@ mod tests {
         let release_stab = status == JobStatus::Finished;
         let mut queue = queue_with_eta_job(status);
         let additional_data = autosync_additional_data();
+        add_motion_to_job(&mut queue, 1, false);
         let (stab, render_options) = {
             let job = queue.jobs.get(&1).unwrap();
             (job.stab.as_ref().unwrap().clone(), job.render_options.clone())
@@ -7435,6 +7885,73 @@ mod tests {
     }
 
     #[test]
+    fn batch_update_params_updates_live_stab_and_display_params() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let (stab, render_options) = {
+            let job = queue.jobs.get(&1).unwrap();
+            (job.stab.as_ref().unwrap().clone(), job.render_options.clone())
+        };
+
+        let project_data = RenderQueue::get_gyroflow_data_internal(
+            &stab,
+            "{}",
+            &render_options,
+        )
+        .expect("project data export succeeds");
+
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+        }
+
+        queue.batch_update_params(
+            serde_json::json!([1]).to_string(),
+            serde_json::json!({
+                "smoothness": 0.8,
+                "horizon_lock_amount": 75.0,
+                "zoom_mode": "static",
+                "lens_correction": 0.25,
+                "framerate": 25.0,
+            })
+            .to_string(),
+        );
+
+        let display = serde_json::from_str::<serde_json::Value>(
+            &queue.get_job_display_params(1).to_string(),
+        )
+        .expect("display params parse");
+        assert_eq!(display["smoothness"].as_f64(), Some(0.8));
+        assert_eq!(display["horizon_lock_amount"].as_f64(), Some(75.0));
+        assert_eq!(display["zoom_mode"].as_str(), Some("static"));
+        assert_eq!(display["lens_correction"].as_f64(), Some(0.25));
+        assert_eq!(display["source_fps"].as_f64(), Some(10.0));
+        assert_eq!(display["framerate"].as_f64(), Some(25.0));
+
+        let job = queue.jobs.get(&1).unwrap();
+        let stab = job.stab.as_ref().unwrap();
+        let live_data = serde_json::from_str::<serde_json::Value>(
+            &stab
+                .export_gyroflow_data(core::GyroflowProjectType::Simple, "{}", None)
+                .expect("live stab export succeeds"),
+        )
+        .expect("live stab export parses");
+        assert_eq!(smoothing_param_value(&live_data, "smoothness"), Some(0.8));
+        assert_eq!(
+            live_data["stabilization"]["horizon_lock_amount"].as_f64(),
+            Some(75.0)
+        );
+        assert_eq!(
+            live_data["stabilization"]["adaptive_zoom_window"].as_f64(),
+            Some(-1.0)
+        );
+        assert_eq!(
+            live_data["stabilization"]["lens_correction_amount"].as_f64(),
+            Some(0.25)
+        );
+        assert_eq!(live_data["video_info"]["vfr_fps"].as_f64(), Some(25.0));
+    }
+
+    #[test]
     fn queue_eta_model_waits_for_required_video_sample() {
         let model = QueueEtaEstimateModel::default();
 
@@ -7484,6 +8001,103 @@ mod tests {
         });
 
         assert_eq!(model.estimate_remaining_ms(0, 0, 1), None);
+    }
+
+    #[test]
+    fn batch_motion_ready_requires_motion_for_each_renderable_job() {
+        let mut queue = RenderQueue::default();
+
+        assert!(!queue.batch_motion_ready());
+
+        queue = queue_with_eta_job(JobStatus::Queued);
+        assert!(!queue.batch_motion_ready());
+
+        add_motion_to_job(&mut queue, 1, false);
+        assert!(queue.batch_motion_ready());
+
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 2,
+            total_frames: 100,
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        queue.jobs.insert(
+            2,
+            Job {
+                queue_index: 1,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                last_finished_export_project: None,
+                stab: Some(Arc::new(StabilizationManager::default())),
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+        assert!(!queue.batch_motion_ready());
+
+        add_motion_to_job(&mut queue, 2, true);
+        assert!(queue.batch_motion_ready());
+    }
+
+    #[test]
+    fn batch_motion_ready_accepts_finished_sync_only_jobs() {
+        let queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+
+        assert!(queue.batch_motion_ready());
+    }
+
+    #[test]
+    fn batch_motion_ready_skips_finished_video_exports() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(4));
+
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 2,
+            total_frames: 100,
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        queue.jobs.insert(
+            2,
+            Job {
+                queue_index: 1,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                last_finished_export_project: None,
+                stab: Some(Arc::new(StabilizationManager::default())),
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+        assert!(!queue.batch_motion_ready());
+
+        add_motion_to_job(&mut queue, 2, false);
+        assert!(queue.batch_motion_ready());
+    }
+
+    #[test]
+    fn batch_motion_ready_requires_motion_for_finished_sync_only_jobs() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        queue.jobs.get_mut(&1).unwrap().project_data = Some("{}".to_owned());
+
+        assert!(!queue.batch_motion_ready());
     }
 
     #[test]
@@ -8460,6 +9074,10 @@ mod tests {
         assert!(branch.contains("videoArea.queue && videoArea.queue.shown"));
         assert!(branch.contains("simpleExportBtnRow.queueRowCount > 0"));
         assert!(
+            branch.contains("render_queue.batch_motion_ready()"),
+            "simple-mode batch stabilized export must require batch motion data"
+        );
+        assert!(
             branch.contains("render_queue.export_project = 4;"),
             "simple-mode batch stabilized export must use export_project=4"
         );
@@ -8477,6 +9095,72 @@ mod tests {
         assert!(
             !branch.contains("render_queue.export_project = 0;"),
             "simple-mode batch stabilized export must not use export_project=0"
+        );
+    }
+
+    #[test]
+    fn simple_mode_batch_auto_sync_requires_motion_data() {
+        let qml = include_str!("../ui/App.qml");
+        let marker_idx = qml
+            .find("id: simpleAutoSyncBtn")
+            .expect("simple auto sync button exists");
+        let remaining = &qml[marker_idx..];
+        let branch_end = remaining
+            .find("id: simpleExportStabilizedBtn")
+            .expect("simple export button exists after auto sync button");
+        let branch = &remaining[..branch_end];
+
+        assert!(branch.contains("render_queue.batch_motion_ready()"));
+        let click_idx = branch
+            .find("onClicked:")
+            .expect("auto sync button has click handler");
+        let click_branch = &branch[click_idx..];
+        let ready_idx = click_branch
+            .find("if (!simpleAutoSyncBtn._queueMotionReady) return;")
+            .expect("auto sync click branch hard-checks batch motion readiness");
+        let start_idx = click_branch
+            .find("render_queue.start();")
+            .expect("auto sync branch starts the queue");
+        assert!(
+            ready_idx < start_idx,
+            "simple-mode batch auto sync must check motion readiness before starting"
+        );
+        assert!(branch.contains("render_queue.export_project = 2;"));
+    }
+
+    #[test]
+    fn render_queue_match_apply_refreshes_batch_motion_bindings() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let marker_idx = qml
+            .find("function onMatch_apply_finished")
+            .expect("match apply finished handler exists");
+        let remaining = &qml[marker_idx..];
+        let branch_end = remaining
+            .find("function onPairing_mode_changed")
+            .expect("pairing mode handler follows match apply handler");
+        let handler = &remaining[..branch_end];
+
+        assert!(
+            handler.contains("root.matchVersion++"),
+            "match apply completion must refresh batch motion readiness bindings"
+        );
+    }
+
+    #[test]
+    fn render_queue_processing_done_refreshes_batch_motion_bindings() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let marker_idx = qml
+            .find("function onProcessing_done")
+            .expect("processing done handler exists");
+        let remaining = &qml[marker_idx..];
+        let branch_end = remaining
+            .find("function onPairing_mode_changed")
+            .expect("pairing mode handler follows processing done handler");
+        let handler = &remaining[..branch_end];
+
+        assert!(
+            handler.contains("root.matchVersion++"),
+            "queue processing completion must refresh embedded-motion readiness bindings"
         );
     }
 
@@ -8509,5 +9193,146 @@ mod tests {
             !top_progress.contains("processing_progress"),
             "top queue progress must not scan per-job processing progress in QML"
         );
+    }
+
+    #[test]
+    fn render_queue_display_flows_do_not_bind_height_to_children_rect() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let marker_idx = qml
+            .find("Aligned display params")
+            .expect("display params block exists");
+        let remaining = &qml[marker_idx..];
+        let block_end = remaining
+            .find("Match status annotation")
+            .expect("display params block ends before match status");
+        let display_params_block = &remaining[..block_end];
+
+        assert!(
+            !display_params_block.contains("height: visible ? childrenRect.height : 0;"),
+            "display parameter Flow blocks must not bind height directly to childrenRect"
+        );
+    }
+
+    #[test]
+    fn render_queue_selection_uses_model_job_ids_not_delegate_instances() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        assert!(
+            !qml.contains("lv.itemAtIndex("),
+            "batch selection must use render_queue.queue job ids instead of virtualized ListView delegates"
+        );
+        assert!(
+            qml.contains("render_queue.queue"),
+            "batch selection must read job ids from the queue model"
+        );
+    }
+
+    #[test]
+    fn render_queue_checkbox_shift_select_has_explicit_modifier_handler() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        assert!(
+            qml.contains("acceptedModifiers: Qt.ShiftModifier"),
+            "checkbox selection must have a Shift-specific tap handler"
+        );
+        assert!(
+            qml.contains("root.handleSelectionClick(dlg.jobId, index, Qt.ShiftModifier)"),
+            "checkbox Shift tap must pass ShiftModifier into range selection"
+        );
+    }
+
+    #[test]
+    fn render_queue_drag_select_uses_content_coordinates_for_index_lookup() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        assert!(
+            qml.contains("mapToItem(lv.contentItem"),
+            "drag-select pointer movement must map to ListView content coordinates"
+        );
+        assert!(
+            qml.contains("function updateDragSelectionAtContentY(contentY)"),
+            "drag-select must update from stable content coordinates"
+        );
+        assert!(
+            !qml.contains("lv.indexAt(1, lv.contentY + viewY)"),
+            "drag-select must not mix ListView viewport and content coordinates"
+        );
+    }
+
+    #[test]
+    fn batch_stabilization_controls_write_batch_state_directly() {
+        let simple_qml = include_str!("../ui/menu/SimpleStabilization.qml");
+        let full_qml = include_str!("../ui/menu/Stabilization.qml");
+
+        for needle in [
+            "window.batchState.smoothness = value;",
+            "window.batchState.zoomMode = currentIndex;",
+            "window.batchState.lensCorrection = checked ? 1.0 : 0.0;",
+            "window.batchState.framerate = value;",
+        ] {
+            assert!(
+                simple_qml.contains(needle),
+                "SimpleStabilization.qml must directly update batch state: {needle}"
+            );
+        }
+
+        for needle in [
+            "window.batchState.smoothness = value * 100.0;",
+            "window.batchState.zoomMode = currentIndex;",
+            "window.batchState.lensCorrection = value;",
+            "window.batchState.framerate = value;",
+        ] {
+            assert!(
+                full_qml.contains(needle),
+                "Stabilization.qml must directly update batch state: {needle}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_batch_sync_uses_primary_selection_and_explicit_framerate_controls() {
+        let qml = include_str!("../ui/App.qml");
+
+        assert!(
+            qml.contains("videoArea.queue.getPrimarySelectedJobId()"),
+            "batch parameter loading must use a stable primary selected job"
+        );
+        assert!(
+            !qml.contains("render_queue.get_job_display_params(+keys[0])"),
+            "batch parameter loading must not depend on Object.keys(selectedJobs)[0]"
+        );
+        assert!(
+            qml.contains("window.stab.batchFramerateField.value = batchState.framerate")
+                && qml.contains("simpleStab.batchFramerateField.value = batchState.framerate"),
+            "batch framerate controls must be explicitly synchronized from batchState"
+        );
+    }
+
+    #[test]
+    fn app_batch_state_changes_apply_to_selected_jobs_immediately() {
+        let qml = include_str!("../ui/App.qml");
+
+        assert!(
+            qml.contains("function scheduleApplyBatchParams()"),
+            "batch state edits must schedule applying params to selected render queue jobs"
+        );
+        assert!(
+            qml.contains("property bool _batchApplySuppressed"),
+            "batch state loading/syncing must suppress auto-apply"
+        );
+
+        for needle in [
+            "onSmoothnessChanged: window.scheduleApplyBatchParams()",
+            "onHorizonLockChanged: window.scheduleApplyBatchParams()",
+            "onHorizonLockAmountChanged: window.scheduleApplyBatchParams()",
+            "onZoomModeChanged: window.scheduleApplyBatchParams()",
+            "onLensCorrectionChanged: window.scheduleApplyBatchParams()",
+            "onFramerateChanged: window.scheduleApplyBatchParams()",
+        ] {
+            assert!(
+                qml.contains(needle),
+                "batch state change must auto-apply: {needle}"
+            );
+        }
     }
 }

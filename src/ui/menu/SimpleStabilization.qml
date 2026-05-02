@@ -16,6 +16,7 @@ Column {
     property alias croppingMode: croppingMode;
     property alias lensCorrectionToggle: lensCorrectionToggle;
     property alias autoRotateCb: autoRotateCb;
+    property alias batchFramerateField: batchFramerateField;
 
     readonly property var _batchGyroFilesInfo: {
         if (window && window.videoArea && window.videoArea.queue && window.videoArea.queue.gyroFilesInfo) {
@@ -80,7 +81,11 @@ Column {
     }
 
     function updateHorizonLock(): void {
-        if (window.batchState && window.batchState.active) return;
+        if (window.batchState && window.batchState.active) {
+            window.batchState.horizonLock = horizonCb.checked;
+            window.batchState.horizonLockAmount = horizonCb.checked ? horizonSlider.value : 0.0;
+            return;
+        }
         const lockAmount = horizonCb.checked ? horizonSlider.value : 0.0;
         const roll = horizonCb.checked ? horizonRollSlider.value : 0.0;
         controller.set_horizon_lock(lockAmount, roll, false, 0, false, 5.0, 500.0, 1.0, Infinity);
@@ -180,7 +185,10 @@ Column {
             scaler: 1.0;
             keyframe: "SmoothingParamSmoothness";
             onValueChanged: {
-                if (window.batchState && window.batchState.active) return;
+                if (window.batchState && window.batchState.active) {
+                    window.batchState.smoothness = value;
+                    return;
+                }
                 controller.set_smoothing_param("smoothness", value / 100.0);
             }
         }
@@ -270,7 +278,10 @@ Column {
         width: parent.width;
         model: [QT_TRANSLATE_NOOP("Popup", "No zooming"), QT_TRANSLATE_NOOP("Popup", "Dynamic zooming"), QT_TRANSLATE_NOOP("Popup", "Static zoom")];
         onCurrentIndexChanged: {
-            if (window.batchState && window.batchState.active) return;
+            if (window.batchState && window.batchState.active) {
+                window.batchState.zoomMode = currentIndex;
+                return;
+            }
             switch (currentIndex) {
                 case 0: controller.adaptive_zoom = 0.0; break;
                 case 1: controller.adaptive_zoom = 4.0; break;
@@ -285,7 +296,10 @@ Column {
         text: qsTranslate("Stabilization", "Lens correction");
         checked: true;
         onCheckedChanged: {
-            if (window.batchState && window.batchState.active) return;
+            if (window.batchState && window.batchState.active) {
+                window.batchState.lensCorrection = checked ? 1.0 : 0.0;
+                return;
+            }
             controller.lens_correction_amount = checked ? 100.0 : 0.0;
         }
     }
@@ -297,7 +311,7 @@ Column {
         text: qsTr("Frame rate (0=unchanged)");
         width: parent.width;
         NumberField {
-            id: simpleBatchFramerateField;
+            id: batchFramerateField;
             width: parent.width;
             value: window.batchState ? window.batchState.framerate : 0;
             defaultValue: 0;

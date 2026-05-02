@@ -33,6 +33,64 @@ Rectangle {
         // method the user picked while temporarily in Full mode.
         controller.set_smoothing_method(window.defaultSmoothingIndex);
     }
+    // Hidden helper used by pushToEnd() to force re-ordering by transient detach.
+    // Setting parent to the same value is a no-op (children stay in place); detaching
+    // first guarantees the next attach appends to the end of the new parent's children.
+    Item { id: reparentOrphanage; width: 0; height: 0; visible: false; enabled: false; }
+    function pushToEnd(item, target): void {
+        if (!item || !target) return;
+        item.parent = reparentOrphanage;
+        item.parent = target;
+    }
+    // Mobile Simple mode reparents the 4 Simple sections into 2 tabs (regardless of orientation).
+    // Desktop keeps them in simpleModeContainer.
+    function reparentSimplePanels(): void {
+        if (!simpleVideoInfoSection || !simpleModeContainer) return;
+        const useTabs = isMobileLayout && isSimpleMode;
+        const tab1 = useTabs ? simpleVideoGyroTab.inner : simpleModeContainer;
+        const tab2 = useTabs ? simpleStabSettingsTab.inner : simpleModeContainer;
+        pushToEnd(simpleVideoInfoSection,  tab1);
+        pushToEnd(simpleVideoInfoHr,       tab1);
+        pushToEnd(simpleSensorLensSection, tab1);
+        pushToEnd(simpleSensorLensHr,      tab1);
+        pushToEnd(simpleStabSection,       tab2);
+        pushToEnd(simpleStabHr,            tab2);
+        pushToEnd(simpleSettingsSection,   tab2);
+        if (useTabs) {
+            // Push per-tab Full-mode LinkButtons to the end after sections are placed.
+            pushToEnd(videoGyroFullModeBtn,   simpleVideoGyroTab.inner);
+            pushToEnd(stabSettingsFullModeBtn, simpleStabSettingsTab.inner);
+        } else {
+            // Push desktop Simple's bottom toggle back to the end of simpleModeContainer.
+            pushToEnd(simpleContainerFullModeBtnSpacerTop,    simpleModeContainer);
+            pushToEnd(simpleContainerFullModeBtn,             simpleModeContainer);
+            pushToEnd(simpleContainerFullModeBtnSpacerBottom, simpleModeContainer);
+        }
+        // Mobile Simple sticky bottom bar: move the two Simple buttons (Auto-sync / Export) into
+        // a Column on the left and queueBtn on the right. Desktop reverts to its original
+        // placement: two buttons in simpleExportBtnRow (Row) and queueBtn in renderBtnRow.
+        // queueBtn.anchors.right must be toggled because Rectangle requires explicit anchors,
+        // while Row auto-layouts its children.
+        if (simpleAutoSyncBtn && simpleExportStabilizedBtn && queueBtn) {
+            if (useTabs) {
+                simpleAutoSyncBtn.parent        = mobileSimpleExportBtnCol;
+                simpleExportStabilizedBtn.parent = mobileSimpleExportBtnCol;
+                queueBtn.parent = mobileSimpleExportBar;
+                queueBtn.anchors.right = mobileSimpleExportBar.right;
+                queueBtn.anchors.rightMargin = 20 * dpiScale;
+            } else {
+                queueBtn.anchors.right = undefined;
+                queueBtn.anchors.rightMargin = 0;
+                simpleAutoSyncBtn.parent        = simpleExportBtnRow;
+                simpleExportStabilizedBtn.parent = simpleExportBtnRow;
+                queueBtn.parent = renderBtnRow;
+            }
+        }
+        Qt.callLater(() => {
+            if (tabs) tabs.updateHeights();
+            if (simpleTabs) simpleTabs.updateHeights();
+        });
+    }
     onIsSimpleModeChanged: {
         render_queue.simple_mode = isSimpleMode;
         // [parallel-mode] Simple forces 3; Full honors user setting (defaults to 3)
@@ -40,6 +98,7 @@ Rectangle {
         // [simple-overwrite] Simple forces silent overwrite (1); Full honors user setting
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
         if (isSimpleMode) applySimpleModeDefaults();
+        reparentSimplePanels();
     }
 
     function _isSenseFlow(s) { return (s || "").indexOf("SenseFlow") >= 0; }
@@ -198,6 +257,14 @@ Rectangle {
             outputPathLabel.parent = exportbar;
             renderBtnRow   .parent = exportbar;
         }
+        // Push per-tab "← Simple mode" LinkButtons to the end of each Full-mode tab.
+        if (isMobileLayout) {
+            pushToEnd(inputsExitToSimpleBtn, inputsTab.inner);
+            pushToEnd(paramsExitToSimpleBtn, paramsTab.inner);
+            pushToEnd(exportExitToSimpleBtn, exportTab.inner);
+        }
+        reparentSimplePanels();
+        if (isMobileLayout && simpleTabs) simpleTabs.currentIndex = 0;
     }
     property alias vidInfo: vidInfo.item;
     property alias videoArea: videoArea;
@@ -248,6 +315,22 @@ Rectangle {
         property int zoomMode: 1;    // 0=none, 1=dynamic, 2=static
         property real lensCorrection: 1.0;     // 0.0-1.0
         property real framerate: 0;            // 0=don't override
+
+        onSmoothnessChanged: window.scheduleApplyBatchParams()
+        onHorizonLockChanged: window.scheduleApplyBatchParams()
+        onHorizonLockAmountChanged: window.scheduleApplyBatchParams()
+        onZoomModeChanged: window.scheduleApplyBatchParams()
+        onLensCorrectionChanged: window.scheduleApplyBatchParams()
+        onFramerateChanged: window.scheduleApplyBatchParams()
+    }
+
+    property bool _batchApplySuppressed: false
+
+    Timer {
+        id: batchApplyTimer;
+        interval: 0;
+        repeat: false;
+        onTriggered: window.applyBatchParams();
     }
 
 
@@ -291,8 +374,14 @@ Rectangle {
             batchState.detectedSource = "";
             return;
         }
+        _batchApplySuppressed = true;
         try {
-            const p = JSON.parse(render_queue.get_job_display_params(+keys[0]));
+            const jobId = videoArea.queue.getPrimarySelectedJobId();
+            if (!jobId) {
+                batchState.detectedSource = "";
+                return;
+            }
+            const p = JSON.parse(render_queue.get_job_display_params(jobId));
             batchState.smoothness = (p.smoothness || 0.5) * 100;
             batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
             batchState.autoRotate = !!p.auto_rotate;
@@ -300,10 +389,21 @@ Rectangle {
             const zm = p.zoom_mode || "dynamic";
             batchState.zoomMode = zm === "static" ? 2 : zm === "dynamic" ? 1 : 0;
             batchState.lensCorrection = p.lens_correction !== undefined ? p.lens_correction : 1.0;
-            batchState.framerate = p.framerate || 0;
+            batchState.framerate = (p.fps_scale !== undefined && p.fps_scale !== null)
+                ? (p.framerate || 0)
+                : 0;
             batchState.detectedSource = p.detected_source || "";
             syncBatchToStabPanel();
-        } catch(e) { console.log("loadBatchParams error:", e); }
+        } catch(e) {
+            console.log("loadBatchParams error:", e);
+        } finally {
+            _batchApplySuppressed = false;
+        }
+    }
+
+    function scheduleApplyBatchParams() {
+        if (_batchApplySuppressed || !batchState.active || !videoArea.queue || videoArea.queue.selectedCount <= 0) return;
+        batchApplyTimer.restart();
     }
 
     function applyBatchParams() {
@@ -317,7 +417,9 @@ Rectangle {
         if (batchState.framerate > 0) params.framerate = batchState.framerate;
 
         const jobIds = Object.keys(videoArea.queue.selectedJobs).map(Number);
+        if (jobIds.length === 0) return;
         render_queue.auto_rotate = batchState.autoRotate;
+        render_queue.set_batch_auto_rotate(JSON.stringify(jobIds), batchState.autoRotate);
         render_queue.batch_update_params(JSON.stringify(jobIds), JSON.stringify(params));
         videoArea.queue.matchVersion++;
     }
@@ -327,21 +429,23 @@ Rectangle {
         if (window.stab) {
             const smoothEl = window.stab.getParamElement("smoothness");
             if (smoothEl) smoothEl.value = batchState.smoothness / 100.0;  // controller uses 0-1 range
-            window.stab.horizonCb.checked = batchState.horizonLock;
             if (batchState.horizonLock) window.stab.horizonSlider.value = batchState.horizonLockAmount;
+            window.stab.horizonCb.checked = batchState.horizonLock;
             window.stab.croppingMode.currentIndex = batchState.zoomMode;
             window.stab.correctionAmount.value = batchState.lensCorrection;
+            if (window.stab.batchFramerateField) window.stab.batchFramerateField.value = batchState.framerate;
         }
         // Simple mode: SimpleStabilization.qml
         if (simpleStab) {
             simpleStab.smoothnessSlider.value = batchState.smoothness;
+            if (batchState.horizonLock) simpleStab.horizonSlider.value = batchState.horizonLockAmount;
             simpleStab.horizonCb.checked = batchState.horizonLock;
             simpleStab._syncingBatchAutoRotate = true;
             simpleStab.autoRotateCb.checked = batchState.autoRotate;
             simpleStab._syncingBatchAutoRotate = false;
-            if (batchState.horizonLock) simpleStab.horizonSlider.value = batchState.horizonLockAmount;
             simpleStab.croppingMode.currentIndex = batchState.zoomMode;
             simpleStab.lensCorrectionToggle.checked = batchState.lensCorrection >= 0.5;
+            if (simpleStab.batchFramerateField) simpleStab.batchFramerateField.value = batchState.framerate;
         }
     }
 
@@ -551,16 +655,20 @@ Rectangle {
                         height: 36 * dpiScale;
                         leftPadding: 16 * dpiScale;
                         rightPadding: 16 * dpiScale;
+                        // Stretch full-width inside the mobile sticky bar's Column.
+                        width: parent === mobileSimpleExportBtnCol ? mobileSimpleExportBtnCol.width : implicitWidth;
                         // Queue path: when the render queue is visible with pending jobs, run the
                         // queue with export_project=2 so each job performs autosync and writes a
                         // .gyroflow project file — no video encode. Uses the queue's built-in
                         // parallel_renders for concurrency. Otherwise falls back to main-canvas sync.
                         readonly property bool _queueMode: videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
+                        readonly property bool _queueMotionReady: _queueMode && videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready();
                         enabled: _queueMode
-                            ? (render_queue.status !== "active")
+                            ? (render_queue.status !== "active" && _queueMotionReady)
                             : (window.videoArea.vid.loaded && !controller.sync_in_progress);
                         onClicked: {
                             if (simpleAutoSyncBtn._queueMode) {
+                                if (!simpleAutoSyncBtn._queueMotionReady) return;
                                 render_queue.export_project = 2;
                                 render_queue.start();
                                 return;
@@ -581,9 +689,12 @@ Rectangle {
                         height: 36 * dpiScale;
                         leftPadding: 16 * dpiScale;
                         rightPadding: 16 * dpiScale;
+                        // Stretch full-width inside the mobile sticky bar's Column.
+                        width: parent === mobileSimpleExportBtnCol ? mobileSimpleExportBtnCol.width : implicitWidth;
                         enabled: render_queue.status === "active"
-                              || (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
-                              || window.videoArea.vid.loaded;
+                              || ((videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
+                                  ? (videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready())
+                                  : window.videoArea.vid.loaded);
 
                         // Set when we kicked off autosync and are waiting to resume render.
                         property bool pendingRenderAfterSync: false;
@@ -618,6 +729,7 @@ Rectangle {
                             }
                             // Batch path — render queue panel is open with pending jobs
                             if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
+                                if (!render_queue.batch_motion_ready()) return;
                                 render_queue.export_project = 4;
                                 render_queue.prepare_finished_jobs_for_video_export();
                                 render_queue.start();
@@ -985,7 +1097,8 @@ Rectangle {
             maxWidth: parent.width - leftPanel.width - 50 * dpiScale;
             implicitWidth: settings.value("rightPanelSize", defaultWidth);
             onWidthChanged: settings.setValue("rightPanelSize", width);
-            col.visible: !isMobileLayout || window.isSimpleMode;
+            // Mobile uses sibling Tabs (tabs / simpleTabs) for both Simple and Full, so col is desktop-only.
+            col.visible: !isMobileLayout;
 
             Tabs {
                 id: tabs;
@@ -995,9 +1108,97 @@ Rectangle {
                 tabsIcons: ["video", "settings", "save"];
                 tabsIconsSize: [20, 24, 24];
 
-                TabColumn { id: inputsTab; parentHeight: rightPanel.height; }
-                TabColumn { id: paramsTab; parentHeight: rightPanel.height; }
-                TabColumn { id: exportTab; parentHeight: rightPanel.height; inner.spacing: 10 * dpiScale; }
+                TabColumn { id: inputsTab; parentHeight: rightPanel.height;
+                    LinkButton {
+                        id: inputsExitToSimpleBtn;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        text: qsTr("← Simple mode");
+                        font.pixelSize: 14 * dpiScale;
+                        opacity: 0.7;
+                        onClicked: window.isSimpleMode = true;
+                    }
+                }
+                TabColumn { id: paramsTab; parentHeight: rightPanel.height;
+                    LinkButton {
+                        id: paramsExitToSimpleBtn;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        text: qsTr("← Simple mode");
+                        font.pixelSize: 14 * dpiScale;
+                        opacity: 0.7;
+                        onClicked: window.isSimpleMode = true;
+                    }
+                }
+                TabColumn { id: exportTab; parentHeight: rightPanel.height; inner.spacing: 10 * dpiScale;
+                    LinkButton {
+                        id: exportExitToSimpleBtn;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        text: qsTr("← Simple mode");
+                        font.pixelSize: 14 * dpiScale;
+                        opacity: 0.7;
+                        onClicked: window.isSimpleMode = true;
+                    }
+                }
+            }
+
+            // Mobile Simple sticky bottom bar. Hosts two stacked buttons (Auto-sync / Export)
+            // on the left and queueBtn on the right. Children are re-parented in by reparentSimplePanels()
+            // so both Tabs share the same actions.
+            Rectangle {
+                id: mobileSimpleExportBar;
+                Component.onCompleted: { parent = rightPanel; }
+                // Bottom safe-area inset (avoids gesture/home-indicator strips on real mobile).
+                property real safeAreaBottom: visible ? 16 * dpiScale : 0;
+                // Total vertical space this bar occupies (height + bottom margin) for layout sizing.
+                property real totalSpace: height + safeAreaBottom;
+                anchors.bottom: parent.bottom;
+                anchors.bottomMargin: safeAreaBottom;
+                width: parent.width;
+                height: visible ? 108 * dpiScale : 0;
+                visible: isMobileLayout && window.isSimpleMode;
+                color: styleBackground2;
+                z: 100;
+                Hr { width: parent.width; }
+                Column {
+                    id: mobileSimpleExportBtnCol;
+                    // Reserve room on the right for queueBtn (48dp) + 36dp inter-margin.
+                    anchors.left: parent.left;
+                    anchors.leftMargin: 20 * dpiScale;
+                    anchors.right: parent.right;
+                    anchors.rightMargin: 84 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    spacing: 12 * dpiScale;
+                }
+            }
+
+            // Mobile Simple: 2-tab layout (any orientation). Sections reparented into these tabs by reparentSimplePanels().
+            Tabs {
+                id: simpleTabs;
+                Component.onCompleted: { parent = rightPanel; currentIndex = 0; }
+                visible: isMobileLayout && window.isSimpleMode;
+                tabs: [QT_TRANSLATE_NOOP("Tabs", "Video && Gyro"), QT_TRANSLATE_NOOP("Tabs", "Stabilize && Settings")];
+                tabsIcons: ["video", "gyroflow"];
+                tabsIconsSize: [20, 24];
+
+                TabColumn { id: simpleVideoGyroTab; parentHeight: rightPanel.height - mobileSimpleExportBar.totalSpace;
+                    LinkButton {
+                        id: videoGyroFullModeBtn;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        text: qsTr("Full mode →");
+                        font.pixelSize: 14 * dpiScale;
+                        opacity: 0.7;
+                        onClicked: window.isSimpleMode = false;
+                    }
+                }
+                TabColumn { id: simpleStabSettingsTab; parentHeight: rightPanel.height - mobileSimpleExportBar.totalSpace;
+                    LinkButton {
+                        id: stabSettingsFullModeBtn;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        text: qsTr("Full mode →");
+                        font.pixelSize: 14 * dpiScale;
+                        opacity: 0.7;
+                        onClicked: window.isSimpleMode = false;
+                    }
+                }
             }
 
             // ── Batch Banner (Full mode) ──
@@ -1080,17 +1281,29 @@ Rectangle {
                         height: exportSettings.height + exportHr.height + advanced.height + advancedHr.height + nlePlugins.height;
                         hoverEnabled: true;
                     }
+
+                    // Desktop Full → Simple toggle (mobile Full uses per-tab LinkButton instead).
+                    Item { width: 1; height: 5 * dpiScale; visible: !window.isMobileLayout; }
+                    LinkButton {
+                        visible: !window.isMobileLayout;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        text: qsTr("← Simple mode");
+                        font.pixelSize: 14 * dpiScale;
+                        opacity: 0.7;
+                        onClicked: window.isSimpleMode = true;
+                    }
+                    Item { width: 1; height: 5 * dpiScale; visible: !window.isMobileLayout; }
                 }
             }
 
             // ── Simple mode panels ──
             // Mode switcher moved to bottom (see simpleModeToggle below)
 
-            // ── Simple mode: 4 collapsible sections ──
+            // ── Simple mode: 4 collapsible sections (desktop only; mobile Simple uses simpleTabs) ──
             Column {
                 id: simpleModeContainer;
                 width: parent.width;
-                visible: window.isSimpleMode;
+                visible: window.isSimpleMode && !isMobileLayout;
                 spacing: 0;
 
                 // Batch banner removed — RenderQueue.qml multi-select toolbar "Done" button
@@ -1098,6 +1311,8 @@ Rectangle {
 
                 // ── 1. Video information + Export ──
                 MenuItem {
+                    id: simpleVideoInfoSection;
+                    width: parent ? parent.width : 0;
                     text: qsTranslate("VideoInformation", "Video information");
                     iconName: "info";
                     objectName: "simple-info";
@@ -1122,13 +1337,15 @@ Rectangle {
                         }
                     }
                 }
-                Hr { }
+                Hr { id: simpleVideoInfoHr; width: parent ? parent.width : 0; }
 
                 // ── 2. Sensor & Lens ──
                 // Outer MenuItem stays fully enabled in batch mode so LensGroupConfig can
                 // handle the multi-selected queue jobs via its own batchScope path.
                 // Individual children opt in to disable when a batch edit is active.
                 MenuItem {
+                    id: simpleSensorLensSection;
+                    width: parent ? parent.width : 0;
                     text: qsTr("Sensor && Lens");
                     iconName: "chart";
                     objectName: "simple-sensor-lens";
@@ -1199,10 +1416,12 @@ Rectangle {
                         sourceComponent: Component { Menu.LensGroupConfig { } }
                     }
                 }
-                Hr { }
+                Hr { id: simpleSensorLensHr; width: parent ? parent.width : 0; }
 
                 // ── 3. Stabilization ──
                 MenuItem {
+                    id: simpleStabSection;
+                    width: parent ? parent.width : 0;
                     text: qsTranslate("Stabilization", "Stabilization");
                     iconName: "gyroflow";
                     objectName: "simple-stab";
@@ -1212,10 +1431,12 @@ Rectangle {
                         width: parent.width;
                     }
                 }
-                Hr { }
+                Hr { id: simpleStabHr; width: parent ? parent.width : 0; }
 
                 // ── 4. Settings ──
                 MenuItem {
+                    id: simpleSettingsSection;
+                    width: parent ? parent.width : 0;
                     text: qsTr("Settings");
                     iconName: "settings";
                     objectName: "simple-settings";
@@ -1323,27 +1544,24 @@ Rectangle {
                     }
                 }
 
-                // Simple→Full toggle at bottom
-                Item { width: 1; height: 5 * dpiScale; }
+                // Simple→Full toggle at bottom. Has an ID so reparentSimplePanels can push
+                // it back to the bottom whenever sections are re-parented (Qt re-parenting
+                // appends to the new parent's children, which would otherwise leave this
+                // button stranded above the sections).
+                Item { id: simpleContainerFullModeBtnSpacerTop; width: 1; height: 5 * dpiScale; }
                 LinkButton {
+                    id: simpleContainerFullModeBtn;
                     anchors.horizontalCenter: parent.horizontalCenter;
                     text: qsTr("Full mode →");
                     font.pixelSize: 14 * dpiScale;
                     opacity: 0.7;
                     onClicked: window.isSimpleMode = false;
                 }
-                Item { width: 1; height: 5 * dpiScale; }
+                Item { id: simpleContainerFullModeBtnSpacerBottom; width: 1; height: 5 * dpiScale; }
             }
-
-            // Full→Simple toggle at bottom of rightPanel (only in Full mode)
-            LinkButton {
-                visible: !window.isSimpleMode;
-                anchors.horizontalCenter: parent.horizontalCenter;
-                text: qsTr("← Simple mode");
-                font.pixelSize: 14 * dpiScale;
-                opacity: 0.7;
-                onClicked: window.isSimpleMode = true;
-            }
+            // Full→Simple toggle moved into fullModeCol (desktop) and per-tab LinkButton (mobile),
+            // because the previous bottom button lived under SidePanel.col which gets hidden in
+            // mobile + Full mode (col.visible: !isMobileLayout || isSimpleMode).
         }
     }
 

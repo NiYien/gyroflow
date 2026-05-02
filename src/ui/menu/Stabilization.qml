@@ -24,6 +24,7 @@ MenuItem {
     property alias automaticHorizonLock: autoLockCb.checked;
     property alias correctionAmount: correctionAmount;
     property alias horizonSlider: horizonSlider;
+    property alias batchFramerateField: batchFramerateField;
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
 
@@ -164,8 +165,11 @@ MenuItem {
     }
 
     function setSmoothingParam(name: string, value: real): void {
+        if (window.batchState && window.batchState.active) {
+            if (name === "smoothness") window.batchState.smoothness = value * 100.0;
+            return;
+        }
         if (name === "smoothness") root.smoothnessChanged(value);
-        if (window.batchState && window.batchState.active) return;
         settings.setValue("smoothing-" + smoothingMethod.currentIndex + "-" + name, value);
         controller.set_smoothing_param(name, value);
     }
@@ -196,8 +200,12 @@ MenuItem {
 
 
     function updateHorizonLock(): void {
-        if (window.batchState && window.batchState.active) return;
         const lockAmount = horizonCb.checked? (autoLockCb.checked ? 100.0 : horizonSlider.value) : 0.0;
+        if (window.batchState && window.batchState.active) {
+            window.batchState.horizonLock = horizonCb.checked;
+            window.batchState.horizonLockAmount = lockAmount;
+            return;
+        }
         const roll = horizonCb.checked? horizonRollSlider.value : 0.0;
         const pitch = horizonCb.checked && lockPitchCb.checked? horizonPitchSlider.value : 0.0;
         const lockPitch = horizonCb.checked && lockPitchCb.checked;
@@ -630,7 +638,10 @@ MenuItem {
         model: [QT_TRANSLATE_NOOP("Popup", "No zooming"), QT_TRANSLATE_NOOP("Popup", "Dynamic zooming"), QT_TRANSLATE_NOOP("Popup", "Static zoom")];
         Component.onCompleted: currentIndexChanged();
         onCurrentIndexChanged: {
-            if (window.batchState && window.batchState.active) return;
+            if (window.batchState && window.batchState.active) {
+                window.batchState.zoomMode = currentIndex;
+                return;
+            }
             switch (currentIndex) {
                 case 0: controller.adaptive_zoom = 0.0; break;
                 case 1: controller.adaptive_zoom = adaptiveZoom.value; break;
@@ -696,7 +707,13 @@ MenuItem {
             width: parent.width;
             keyframe: "LensCorrectionStrength";
             scaler: 100.0;
-            onValueChanged: Qt.callLater(() => { if (!(window.batchState && window.batchState.active)) controller.lens_correction_amount = value; });
+            onValueChanged: Qt.callLater(() => {
+                if (window.batchState && window.batchState.active) {
+                    window.batchState.lensCorrection = value;
+                    return;
+                }
+                controller.lens_correction_amount = value;
+            });
         }
     }
 

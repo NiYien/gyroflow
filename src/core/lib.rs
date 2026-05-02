@@ -580,6 +580,15 @@ impl StabilizationManager {
         progress_cb: F,
         cancel_flag: Arc<AtomicBool>,
     ) -> std::result::Result<(), GyroflowCoreError> {
+        let t_total = std::time::Instant::now();
+        log::info!(
+            "[load_gyro_data] begin url='{}' filesize={} is_main_video={} header_only={} time_range_ms={:?}",
+            url,
+            filesize,
+            is_main_video,
+            options.header_only,
+            options.time_range_ms
+        );
         let backup_lens_data = if !is_main_video {
             let gyro = self.gyro.read();
             let fm = gyro.file_metadata.read();
@@ -590,6 +599,11 @@ impl StabilizationManager {
             if fm.is_komodo {
                 log::info!(
                     "[red_arbitration] main video is RED Komodo, ignoring external IMU file: {url}"
+                );
+                log::info!(
+                    "[load_gyro_data] end url='{}' elapsed_ms={:.1} skipped=komodo_external_imu",
+                    url,
+                    t_total.elapsed().as_secs_f64() * 1000.0
                 );
                 return Ok(());
             }
@@ -627,7 +641,7 @@ impl StabilizationManager {
         };
 
         let cancel_flag2 = cancel_flag.clone();
-        let mut md = GyroSource::parse_telemetry_file(
+        let parse_result = GyroSource::parse_telemetry_file(
             stream,
             filesize,
             &url,
@@ -636,7 +650,19 @@ impl StabilizationManager {
             fps,
             progress_cb,
             cancel_flag2,
-        )?;
+        );
+        let mut md = match parse_result {
+            Ok(md) => md,
+            Err(e) => {
+                log::warn!(
+                    "[load_gyro_data] error url='{}' elapsed_ms={:.1} error={}",
+                    url,
+                    t_total.elapsed().as_secs_f64() * 1000.0,
+                    e
+                );
+                return Err(e);
+            }
+        };
 
         if is_main_video {
             self.apply_main_video_telemetry(&mut md, &url, false);
@@ -661,9 +687,50 @@ impl StabilizationManager {
         }
         let camera_id = md.camera_identifier.clone();
         if !cancel_flag.load(SeqCst) {
-            let mut gyro = self.gyro.write();
-            gyro.load_from_telemetry(md);
-            gyro.file_load_options = options.clone();
+            let (
+                raw_imu,
+                quaternions,
+                lens_params,
+                lens_positions,
+                creation_date_utc,
+                has_accurate_timestamps,
+                detected_source,
+                is_komodo,
+            ) = {
+                let mut gyro = self.gyro.write();
+                gyro.load_from_telemetry(md);
+                gyro.file_load_options = options.clone();
+                let fm = gyro.file_metadata.read();
+                (
+                    fm.raw_imu.len(),
+                    fm.quaternions.len(),
+                    fm.lens_params.len(),
+                    fm.lens_positions.len(),
+                    fm.creation_date_utc.clone(),
+                    fm.has_accurate_timestamps,
+                    fm.detected_source.clone(),
+                    fm.is_komodo,
+                )
+            };
+            log::info!(
+                "[load_gyro_data] end url='{}' elapsed_ms={:.1} canceled=false raw_imu={} quats={} lens_params={} lens_positions={} creation_date_utc={:?} accurate_ts={} detected={:?} is_komodo={}",
+                url,
+                t_total.elapsed().as_secs_f64() * 1000.0,
+                raw_imu,
+                quaternions,
+                lens_params,
+                lens_positions,
+                creation_date_utc,
+                has_accurate_timestamps,
+                detected_source,
+                is_komodo
+            );
+        } else {
+            log::info!(
+                "[load_gyro_data] end url='{}' elapsed_ms={:.1} canceled=true",
+                url,
+                t_total.elapsed().as_secs_f64() * 1000.0
+            );
         }
 
         if let Some(id) = camera_id {

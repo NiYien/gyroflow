@@ -34,6 +34,11 @@ MenuItem {
     readonly property color mapOceanColor: root.lightTheme ? "#eff4f8" : "#0f1721"
     readonly property color cityDotColor: root.lightTheme ? "#245d84" : "#8ed9ff"
     readonly property color cityDotSelectedColor: styleAccentColor
+    readonly property int deviceSyncNoticeNone: 0
+    readonly property int deviceSyncNoticeSuccess: 1
+    readonly property int deviceSyncNoticeError: 2
+    property int deviceSyncNoticeType: deviceSyncNoticeNone
+    property string deviceSyncNoticeText: ""
 
     function regionChoices(region: var): var {
         return region && region.choices ? region.choices : []
@@ -57,6 +62,37 @@ MenuItem {
     }
     function translatedDeviceText(text: string): string {
         return text && text.length > 0 ? qsTranslate("Device", text) : ""
+    }
+    function deviceSyncNoticeBackgroundColor(): color {
+        if (root.deviceSyncNoticeType === root.deviceSyncNoticeError)
+            return root.lightTheme ? "#fdeceb" : "#341818"
+        if (root.deviceSyncNoticeType === root.deviceSyncNoticeSuccess)
+            return root.lightTheme ? "#e7f7ef" : "#142d20"
+        return root.lightTheme ? "#eef2f6" : "#1d1d1d"
+    }
+    function deviceSyncNoticeBorderColor(): color {
+        if (root.deviceSyncNoticeType === root.deviceSyncNoticeError)
+            return root.lightTheme ? "#f0b4b4" : "#6f3131"
+        if (root.deviceSyncNoticeType === root.deviceSyncNoticeSuccess)
+            return root.lightTheme ? "#a7dfbe" : "#2c6a47"
+        return root.lightTheme ? "#d8dde6" : Qt.rgba(1, 1, 1, 0.14)
+    }
+    function deviceSyncNoticeTextColor(): color {
+        if (root.deviceSyncNoticeType === root.deviceSyncNoticeError)
+            return root.lightTheme ? "#b83e3e" : "#ffb1b1"
+        if (root.deviceSyncNoticeType === root.deviceSyncNoticeSuccess)
+            return root.lightTheme ? "#1d7b48" : "#98e0b2"
+        return root.lightTheme ? "#44556a" : "#d8dde6"
+    }
+    function showDeviceSyncNotice(success: bool, message: string): void {
+        root.deviceSyncNoticeType = success ? root.deviceSyncNoticeSuccess : root.deviceSyncNoticeError
+        root.deviceSyncNoticeText = root.translatedDeviceText(message)
+        deviceSyncNoticeTimer.restart()
+    }
+    function clearDeviceSyncNotice(): void {
+        deviceSyncNoticeTimer.stop()
+        root.deviceSyncNoticeType = root.deviceSyncNoticeNone
+        root.deviceSyncNoticeText = ""
     }
     function applyTimezoneChoice(choice: var, region: var): void {
         root.selectedRegion = region
@@ -192,8 +228,15 @@ MenuItem {
         target: controller
         function onDevice_state_changed(): void { root.refreshDeviceTime() }
         function onDevice_time_sync_finished(success: bool, message: string): void {
-            window.showNotification(success ? Modal.Success : Modal.Error, root.translatedDeviceText(message))
+            root.showDeviceSyncNotice(success, message)
         }
+    }
+
+    Timer {
+        id: deviceSyncNoticeTimer
+        interval: 4000
+        repeat: false
+        onTriggered: root.clearDeviceSyncNotice()
     }
 
     Timer {
@@ -449,13 +492,47 @@ MenuItem {
                             accent: true
                             text: controller.device_time_sync_in_progress ? qsTranslate("Device", "Syncing...") : qsTranslate("Device", "Sync Time")
                             enabled: controller.device_connected && !controller.device_time_sync_in_progress && controller.ota_state !== "updating"
-                            onClicked: controller.sync_device_time(root.selectedTimezone.offsetMinutes)
+                            onClicked: {
+                                root.clearDeviceSyncNotice()
+                                controller.sync_device_time(root.selectedTimezone.offsetMinutes)
+                            }
                         }
 
                         Button {
                             width: (parent.width - parent.spacing) / 2
                             text: qsTranslate("Device", "Set timezone")
                             onClicked: timezonePopup.open()
+                        }
+                    }
+
+                    Item {
+                        width: parent.width
+                        height: root.deviceSyncNoticeText.length > 0 ? deviceSyncNoticeBox.height : 0
+                        visible: height > 0
+
+                        Rectangle {
+                            id: deviceSyncNoticeBox
+                            width: parent.width
+                            height: Math.max(24 * dpiScale, deviceSyncNoticeLabel.implicitHeight + 12 * dpiScale)
+                            radius: 8 * dpiScale
+                            color: root.deviceSyncNoticeBackgroundColor()
+                            border.width: 1 * dpiScale
+                            border.color: root.deviceSyncNoticeBorderColor()
+                            visible: root.deviceSyncNoticeText.length > 0
+
+                            BasicText {
+                                id: deviceSyncNoticeLabel
+                                anchors.fill: parent
+                                anchors.margins: 6 * dpiScale
+                                leftPadding: 0
+                                text: root.deviceSyncNoticeText
+                                font.pixelSize: 11 * dpiScale
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                                wrapMode: Text.WordWrap
+                                color: root.deviceSyncNoticeTextColor()
+                            }
                         }
                     }
                 }
