@@ -22,11 +22,12 @@ jobs:
   build:
     strategy:
       fail-fast: false
-      # 临时：仅 mac+win。linux/android 后续恢复（见 followup issue）。
+      # Linux remains paused; Android APK publishing is restored.
       matrix:
         targets: [
           { os: macos-14,      type: macos },
-          { os: windows-2022,  type: windows }
+          { os: windows-2022,  type: windows },
+          { os: windows-2022,  type: android }
         ]
     name: Build gyroflow(niyien) for ${{ matrix.targets.type }}
     runs-on: ${{ matrix.targets.os }}
@@ -76,6 +77,13 @@ jobs:
       - name: Save keystore to file
         if: ${{ matrix.targets.type == 'android' }}
         run: |
+          if (-not "${{ secrets.ANDROID_RELEASE_KEYSTORE }}") {
+            if ("${{ github.ref_type }}" -eq "tag") {
+              throw "ANDROID_RELEASE_KEYSTORE is required for Android tag releases"
+            }
+            Write-Host "ANDROID_RELEASE_KEYSTORE is empty; Android workflow_dispatch will build without release signing"
+            exit 0
+          }
           echo "${{ secrets.ANDROID_RELEASE_KEYSTORE }}" > ${{ github.workspace }}/android_release.keystore.b64
           certutil -decode ${{ github.workspace }}/android_release.keystore.b64 ${{ github.workspace }}/android_release.keystore
 
@@ -104,12 +112,17 @@ jobs:
       - name: Build gyroflow(niyien) (Android)
         if: ${{ matrix.targets.type == 'android' }}
         env:
-          KEY_STORE_PATH: ${{ github.workspace }}/android_release.keystore
           KEY_STORE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_ALIAS }}
           KEY_STORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASS }}
           BUILD_PROFILE: deploy
         run: |
           $Env:JAVA_HOME = $Env:JAVA_HOME_21_X64
+          if (Test-Path "${{ github.workspace }}/android_release.keystore") {
+            $Env:KEY_STORE_PATH = "${{ github.workspace }}/android_release.keystore"
+          } else {
+            $Env:KEY_STORE_ALIAS = ""
+            $Env:KEY_STORE_PASS = ""
+          }
           just android install-deps
           just android deploy
 
@@ -138,6 +151,15 @@ jobs:
         with:
           name: gyroflow-niyien-mac-universal.dmg
           path: _deployment/_binaries/gyroflow-niyien-mac-universal.dmg
+          archive: false
+          if-no-files-found: error
+
+      - name: Upload Android package (release)
+        if: ${{ matrix.targets.type == 'android' && startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gyroflow-niyien.apk
+          path: _deployment/_binaries/gyroflow-niyien.apk
           archive: false
           if-no-files-found: error
 
@@ -170,6 +192,14 @@ jobs:
           path: _deployment/_binaries/gyroflow-niyien-mac-universal.dmg
           if-no-files-found: error
 
+      - name: Upload Android package (nightly)
+        if: ${{ matrix.targets.type == 'android' && github.event_name == 'workflow_dispatch' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gyroflow-niyien-android
+          path: _deployment/_binaries/gyroflow-niyien.apk
+          if-no-files-found: error
+
   github_release:
     name: Create GitHub release
     needs: build
@@ -186,9 +216,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           prerelease: false
-          # 临时：仅 windows + mac，linux/android 后续恢复
+          # Linux remains paused; Windows, macOS, and Android are published.
           files: |
             ./release_artifacts/gyroflow-niyien-windows64-setup.exe
             ./release_artifacts/gyroflow-niyien-windows64.zip
             ./release_artifacts/gyroflow-niyien-mac-universal.dmg
+            ./release_artifacts/gyroflow-niyien.apk
 

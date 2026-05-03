@@ -2159,3 +2159,256 @@ mod app_update_tests {
         assert_eq!(app_update_filename(&android), "gyroflow-niyien.apk");
     }
 }
+
+#[cfg(test)]
+mod release_automation_tests {
+    use std::{fs, path::PathBuf, process::Command};
+
+    fn repo_root() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    fn read_repo_file(path: &str) -> String {
+        fs::read_to_string(repo_root().join(path)).unwrap()
+    }
+
+    fn run_script(program: &str, script: &str) {
+        let eval_arg = if program == "node" { "-e" } else { "-c" };
+        let output = Command::new(program)
+            .arg(eval_arg)
+            .arg(script)
+            .current_dir(repo_root())
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run {program}: {err}"));
+        assert!(
+            output.status.success(),
+            "{program} script failed\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn release_automation_workflow_publishes_android_apk() {
+        let workflow = read_repo_file(".github/workflows/release.yml");
+
+        assert!(workflow.contains("{ os: windows-2022,  type: android }"));
+        assert!(workflow.contains("matrix.targets.type == 'android'"));
+        assert!(workflow.contains("name: Upload Android package (release)"));
+        assert!(workflow.contains("uses: actions/upload-artifact@v7"));
+        assert!(workflow.contains("name: gyroflow-niyien.apk"));
+        assert!(workflow.contains("path: _deployment/_binaries/gyroflow-niyien.apk"));
+        assert!(workflow.contains("archive: false"));
+        assert!(workflow.contains("name: Upload Android package (nightly)"));
+        assert!(workflow.contains("uses: actions/upload-artifact@v4"));
+        assert!(workflow.contains("name: gyroflow-niyien-android"));
+        assert!(workflow.contains("./release_artifacts/gyroflow-niyien.apk"));
+        assert!(!workflow.contains("linux/android"));
+    }
+
+    #[test]
+    fn release_automation_android_deploy_restores_sources_and_requires_apk() {
+        let script = read_repo_file("_scripts/android.just");
+
+        assert!(script.contains("function Restore-TemporarySourceEdits"));
+        assert!(script.contains("try {"));
+        assert!(script.contains("finally {"));
+        assert!(script.contains("function Assert-NativeCommandSucceeded"));
+        assert!(script.contains("src\\ui\\components\\Modal.qml"));
+        assert!(script.contains("Cargo.toml"));
+        assert!(script.contains("_deployment\\android\\AndroidManifest.xml"));
+        assert!(script.contains("[System.IO.File]::ReadAllText($CargoTomlPath) -ne $OriginalCargoToml"));
+        assert!(script.contains("[System.IO.File]::ReadAllText($ModalQmlPath) -ne $OriginalModalQml"));
+        assert!(
+            script.contains("[System.IO.File]::ReadAllText($AndroidManifestPath) -ne $OriginalAndroidManifest")
+        );
+        assert!(script.contains("function Require-AndroidReleaseSigning"));
+        assert!(script.contains("function Set-CargoApkDebugSigningEnvironment"));
+        assert!(script.contains("KEY_STORE_PATH"));
+        assert!(script.contains("KEY_STORE_ALIAS"));
+        assert!(script.contains("KEY_STORE_PASS"));
+        assert!(script.contains("$HasReleaseSigningEnv = $Env:KEY_STORE_PATH -and $Env:KEY_STORE_ALIAS -and $Env:KEY_STORE_PASS"));
+        assert!(script.contains("cargo apk only needs a signing key for the intermediate build."));
+        assert!(script.contains("CARGO_APK_${ProfileEnv}_KEYSTORE"));
+        assert!(script.contains(".android\\debug.keystore"));
+        assert!(script.contains("GITHUB_REF_TYPE"));
+        assert!(script.contains("BUILD_PROFILE"));
+        assert!(script.contains("$CargoApkProfile = $Env:BUILD_PROFILE"));
+        assert!(script.contains("cargo apk build --profile $CargoApkProfile"));
+        assert!(script.contains("networkTimeout=120000"));
+        assert!(script.contains("Assert-NativeCommandSucceeded \"cargo apk build\""));
+        assert!(script.contains("Assert-NativeCommandSucceeded \"androiddeployqt apk\""));
+        assert!(script.contains("Expected APK was not produced"));
+        assert!(!script.contains("{{ArtifactPrefix}}.apk\" -Force -ErrorAction SilentlyContinue"));
+    }
+
+    #[test]
+    fn release_automation_publish_script_derives_android_asset_and_wrapper() {
+        run_script(
+            "python",
+            r#"
+from pathlib import Path
+from _scripts import publish_pan123_release as publish
+
+workflow = Path(".github/workflows/release.yml").read_text(encoding="utf-8")
+required = publish.derive_required_app_asset_names(workflow_text=workflow)
+assert "gyroflow-niyien.apk" in required, required
+assert publish.pan123_remote_name_for("gyroflow-niyien.apk") == "gyroflow-niyien-android.zip"
+"#,
+        );
+    }
+
+    #[test]
+    fn release_automation_summary_records_android_package_metadata() {
+        run_script(
+            "python",
+            r#"
+import hashlib
+from pathlib import Path
+from _scripts import publish_pan123_release as publish
+
+apk_content_source = Path("openspec/changes/distribution-restore-linux-android-ci/proposal.md")
+payload = apk_content_source.read_bytes()
+packages = publish.build_app_packages_metadata({"gyroflow-niyien.apk": apk_content_source})
+
+android = packages["android"]
+assert android["kind"] == "apk", android
+assert android["package_filename"] == "gyroflow-niyien-android.zip", android
+assert android["package_sha256"] == hashlib.sha256(payload).hexdigest(), android
+assert android["package_size"] == len(payload), android
+"#,
+        );
+    }
+
+    #[test]
+    fn release_automation_control_center_inventory_uses_android_remote_wrapper() {
+        run_script(
+            "python",
+            r#"
+from distribution.control_center.backend import api
+
+assert "gyroflow-niyien-android.zip" in api.EXPECTED_APP_ASSETS, api.EXPECTED_APP_ASSETS
+assert "gyroflow-niyien.apk" not in api.EXPECTED_APP_ASSETS, api.EXPECTED_APP_ASSETS
+"#,
+        );
+    }
+
+    #[test]
+    fn release_automation_manifest_release_urls_ignore_pan123_wrapper_filenames() {
+        run_script(
+            "node",
+            r#"
+const { buildPlatformPackage } = require('./api/_distribution');
+
+const req = { headers: {}, socket: {} };
+const source = { region: 'global', base: 'https://github.com/NiYien/gyroflow/releases/download' };
+const entry = {
+  tag: 'v9.9.9',
+  packages: {
+    windows: {
+      kind: 'web_installer_zip',
+      installer_filename: 'gyroflow-niyien-win-setup.zip',
+      package_filename: 'gyroflow-niyien-windows64.zip'
+    },
+    android: {
+      kind: 'apk',
+      package_filename: 'gyroflow-niyien-android.zip'
+    }
+  }
+};
+
+const windows = buildPlatformPackage(req, entry, source, 'windows');
+if (!windows.installer_url.endsWith('/v9.9.9/gyroflow-niyien-windows64-setup.exe')) {
+  throw new Error(`windows installer_url=${windows.installer_url}`);
+}
+if (!windows.package_url.endsWith('/v9.9.9/gyroflow-niyien-windows64.zip')) {
+  throw new Error(`windows package_url=${windows.package_url}`);
+}
+
+const android = buildPlatformPackage(req, entry, source, 'android');
+if (android.installer_url) {
+  throw new Error(`android installer_url=${android.installer_url}`);
+}
+if (!android.package_url.endsWith('/v9.9.9/gyroflow-niyien.apk')) {
+  throw new Error(`android package_url=${android.package_url}`);
+}
+if (android.package_url.endsWith('/gyroflow-niyien-android.zip')) {
+  throw new Error(`android release URL used Pan123 wrapper: ${android.package_url}`);
+}
+"#,
+        );
+    }
+
+    #[test]
+    fn release_automation_manifest_android_is_package_only() {
+        run_script(
+            "node",
+            r#"
+const handler = require('./api/manifest');
+
+process.env.NIYIEN_RELEASE_POLICY_JSON = JSON.stringify({
+  auto_version: '9.9.9',
+  versions: [{
+    version: '9.9.9',
+    tag: 'v9.9.9',
+    channels: ['auto', 'manual'],
+    packages: {
+      android: {
+        kind: 'apk',
+        package_filename: 'gyroflow-niyien-android.zip',
+        package_sha256: 'a'.repeat(64),
+        package_size: 123
+      }
+    }
+  }]
+});
+process.env.NIYIEN_LENS_DISABLED = '1';
+process.env.NIYIEN_PLUGINS_DISABLED = '1';
+process.env.NIYIEN_SDK_DISABLED = '1';
+
+const req = {
+  query: { country: 'CN', platform: 'android' },
+  headers: { host: 'www.niyien.com', 'x-forwarded-proto': 'https' },
+  socket: {}
+};
+
+function callManifest(country) {
+  const request = { ...req, query: { country, platform: 'android' } };
+  const response = {
+    setHeader() {},
+    status() { return this; },
+    json(payload) { this.payload = payload; }
+  };
+  return handler(request, response).then(() => response.payload);
+}
+
+Promise.all([callManifest('CN'), callManifest('US')]).then(([cn, global]) => {
+  const android = cn.app.packages.android;
+  if (android.kind !== 'apk') throw new Error(`kind=${android.kind}`);
+  if ('installer_url' in android && android.installer_url) {
+    throw new Error(`installer_url=${android.installer_url}`);
+  }
+  if (cn.app.url !== android.package_url) {
+    throw new Error(`url=${cn.app.url}, package_url=${android.package_url}`);
+  }
+  if (!android.package_url.includes('/gyroflow-niyien-android.zip')) {
+    throw new Error(`package_url=${android.package_url}`);
+  }
+  const globalAndroid = global.app.packages.android;
+  if (global.app.url !== globalAndroid.package_url) {
+    throw new Error(`global url=${global.app.url}, package_url=${globalAndroid.package_url}`);
+  }
+  if (!globalAndroid.package_url.endsWith('/gyroflow-niyien.apk')) {
+    throw new Error(`global package_url=${globalAndroid.package_url}`);
+  }
+  if (globalAndroid.package_url.endsWith('/gyroflow-niyien-android.zip')) {
+    throw new Error(`global package_url uses wrapper: ${globalAndroid.package_url}`);
+  }
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"#,
+        );
+    }
+}

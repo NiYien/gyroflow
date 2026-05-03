@@ -456,14 +456,16 @@ function resolvePlatformPackageUrls(req, entry, source, platform, metadata) {
     };
   }
 
+  const releaseInstallerFilename = appInstallerAssetName(platform);
+  const releasePackageFilename = appPackageAssetName(platform);
   return {
-    installer_url: appInstallerAssetName(platform)
-      ? buildReleaseAssetUrl(source.base, entry.tag, metadata.installer_filename || appInstallerAssetName(platform))
+    installer_url: releaseInstallerFilename
+      ? buildReleaseAssetUrl(source.base, entry.tag, releaseInstallerFilename)
       : "",
     package_url: buildReleaseAssetUrl(
       source.base,
       entry.tag,
-      metadata.package_filename || appPackageAssetName(platform)
+      releasePackageFilename
     ),
   };
 }

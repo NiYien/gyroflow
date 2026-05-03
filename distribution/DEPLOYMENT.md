@@ -20,7 +20,8 @@
 
 ### `gyroflow` 仓库负责
 
-- Windows / macOS / Linux / Android 安装包
+- Windows / macOS / Android 安装包
+- Linux 发布产物当前仍暂停，不在本次 Android APK 恢复范围内
 - `lens` 数据包
   - 内含 `lens/`
   - 内含 `camera_db/`
@@ -188,6 +189,9 @@ https://download.niyien.com/releases/<tag>/...
 - `ANDROID_RELEASE_KEYSTORE_ALIAS`
 - `ANDROID_RELEASE_KEYSTORE_PASS`
 
+tag release 的 Android 构建必须三者全部配置，且 `ANDROID_RELEASE_KEYSTORE`
+必须能解码成有效 keystore 文件；缺失时构建应直接失败，不能上传 debug APK。
+
 #### 国内镜像同步
 
 - `NIYIEN_MIRROR_HOST`
@@ -228,9 +232,16 @@ v1.6.3
 
 - `gyroflow-niyien-windows64.zip`
 - `gyroflow-niyien-mac-universal.dmg`
-- `gyroflow-niyien-linux64.AppImage`
-- `gyroflow-niyien-linux64.tar.gz`
 - `gyroflow-niyien.apk`
+
+其中 Android APK 来源于 release workflow 的 Android target，并由
+`just android deploy` 生成到：
+
+```text
+_deployment/_binaries/gyroflow-niyien.apk
+```
+
+Linux 产物仍暂停；如果后续恢复 Linux，应单独更新 workflow、发布清单和验收步骤。
 
 ### 步骤 6：发布数据版本
 
@@ -421,6 +432,18 @@ just run
 3. 高级设置里能查看手动白名单版本
 4. 下载按钮打开 manifest 返回的具体 URL
 5. `lens` 包可以更新，并且其中的 `camera_db` 会跟随一起更新
+6. `/api/manifest?platform=android` 返回 `app.packages.android.package_url`
+   且 `app.url` 与该 URL 一致，不返回 Android `installer_url`
+
+### 发布产物
+
+确认：
+
+1. `workflow_dispatch` 后出现 macOS、Windows、Android 三类 artifacts
+2. Android artifact 名为 `gyroflow-niyien-android`，下载后包含 `gyroflow-niyien.apk`
+3. tag release 的 GitHub Release assets 包含裸文件 `gyroflow-niyien.apk`
+4. 控制中心 / 123 inventory 检查 Android 时使用远端 wrapper 名
+   `gyroflow-niyien-android.zip`，不是裸 `gyroflow-niyien.apk`
 
 ### telemetry
 
