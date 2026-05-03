@@ -23,6 +23,9 @@ class UpstashKvClient:
         self.token = rest_token
         self.timeout = int(timeout)
         self._session = requests.Session()
+        # Bypass any system HTTP_PROXY / HTTPS_PROXY — Upstash REST traffic
+        # carries the KV bearer token; a transparent proxy could log it.
+        self._session.trust_env = False
 
     def _headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.token}"}

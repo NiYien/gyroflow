@@ -26,7 +26,7 @@ pub use uploader::{FeedbackJobState, JobOutcome, SubmitArgs};
 
 // --- shared constants -----------------------------------------------------
 
-pub const NIYIEN_FEEDBACK_BASE: &str = "https://niyien.com/api";
+pub const NIYIEN_FEEDBACK_BASE: &str = "https://www.niyien.com/api";
 pub const MAX_PACKAGE_SIZE_BYTES: u64 = 50_000_000;
 pub const RETRY_ATTEMPTS: u32 = 3;
 pub const BACKOFF_SECS: [u64; 3] = [1, 2, 4];

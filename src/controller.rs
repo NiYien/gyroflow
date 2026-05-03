@@ -3513,6 +3513,11 @@ impl Controller {
     fn list_gpu_devices(&self) {
         let finished =
             util::qt_queued_callback(QPointer::from(self as &Self), |this, list: Vec<String>| {
+                // Cache first GPU descriptor for feedback meta (Phase 4).
+                // Submission's Meta::collect() reads this; without it gpu="?".
+                if let Some(first) = list.first() {
+                    crate::feedback::meta::set_gpu(first.clone());
+                }
                 this.gpu_list_loaded(util::serde_json_to_qt_array(&serde_json::json!(list)))
             });
         self.stabilizer.list_gpu_devices(finished);

@@ -1935,6 +1935,15 @@ Rectangle {
             feedbackDialog.pendingCrashCount = count;
             feedbackDialog.open();
         }
+        function onFeedbackCompleted(success, id, error) {
+            // Modal popup lives in App.qml so it can reach `window`/`messageBox`
+            // (ids and root functions are file-scoped; FeedbackDialog cannot see them).
+            if (success) {
+                messageBox(Modal.Success, qsTr("Thanks! Your feedback has been submitted."), [{ text: qsTr("Ok") }]);
+            } else {
+                messageBox(Modal.Error, qsTr("Submission failed: %1").arg(error), [{ text: qsTr("Ok") }]);
+            }
+        }
     }
 
     Component.onCompleted: {

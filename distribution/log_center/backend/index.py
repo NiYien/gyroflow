@@ -94,7 +94,7 @@ class IndexDB:
         # it up and recreate from scratch (per spec).
         if path.exists():
             try:
-                conn = sqlite3.connect(str(path), isolation_level=None)
+                conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
                 conn.row_factory = sqlite3.Row
                 row = conn.execute("PRAGMA integrity_check").fetchone()
                 if row is None or str(row[0]).lower() != "ok":
@@ -125,7 +125,7 @@ class IndexDB:
                     f"moved corrupt db to {bak}, recreating empty",
                     file=sys.stderr,
                 )
-        conn = sqlite3.connect(str(path), isolation_level=None)
+        conn = sqlite3.connect(str(path), isolation_level=None, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         conn.executescript(SCHEMA_SQL)
         return conn

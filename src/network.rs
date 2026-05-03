@@ -20,6 +20,10 @@ pub fn post(uri: impl AsRef<str>) -> ureq::RequestBuilder<ureq::typestate::WithB
     configure(ureq::post(uri.as_ref()))
 }
 
+pub fn put(uri: impl AsRef<str>) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
+    configure(ureq::put(uri.as_ref()))
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};

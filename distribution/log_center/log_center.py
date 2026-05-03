@@ -23,13 +23,13 @@ FRONTEND_DIR = HERE / "frontend"
 
 
 def _fail(message: str) -> None:
-    print(f"[log_center] FATAL: {message}", file=sys.stderr)
+    print(f"[log_center] 致命错误：{message}", file=sys.stderr)
     sys.exit(1)
 
 
 def main() -> None:
     if not FRONTEND_DIR.exists():
-        _fail(f"frontend directory missing: {FRONTEND_DIR}")
+        _fail(f"前端目录缺失：{FRONTEND_DIR}")
 
     try:
         config = load_config()
@@ -42,14 +42,14 @@ def main() -> None:
     try:
         import webview  # type: ignore
     except ImportError:
-        _fail("`pywebview` is not installed. Run: pip install -r requirements.txt")
+        _fail("未安装 `pywebview`。请运行：pip install -r requirements.txt")
 
     from backend.orchestrator import BackendAPI  # noqa: E402
 
     backend = BackendAPI(config)
 
     window = webview.create_window(
-        title="NiYien Feedback Log Center",
+        title="NiYien 反馈日志中心",
         url=str(FRONTEND_DIR / "index.html"),
         js_api=backend,
         width=1340,
@@ -61,7 +61,7 @@ def main() -> None:
         try:
             backend.shutdown()
         except Exception as exc:  # noqa: BLE001
-            print(f"[log_center] shutdown error: {exc}", file=sys.stderr)
+            print(f"[log_center] 关闭时出错：{exc}", file=sys.stderr)
 
     window.events.closing += _on_closing
 

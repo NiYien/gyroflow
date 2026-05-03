@@ -248,7 +248,7 @@ class BackendAPI:
             r["size_human"] = human_size(int(r.get("size") or 0))
         return _ok(rows)
 
-    def download_one(self, id_: str, *, force: bool = False) -> dict[str, Any]:
+    def download_one(self, id_: str, force: bool = False) -> dict[str, Any]:
         with self._row_lock(id_):
             row = self._get_row(id_)
             if not row:

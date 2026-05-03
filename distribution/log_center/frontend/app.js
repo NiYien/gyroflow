@@ -84,7 +84,7 @@
     const tbody = document.getElementById("feedback-tbody");
     tbody.innerHTML = "";
     if (!state.rows.length) {
-      tbody.innerHTML = `<tr class="empty-row"><td colspan="11">No matches.</td></tr>`;
+      tbody.innerHTML = `<tr class="empty-row"><td colspan="11">无匹配项。</td></tr>`;
       updateRowCount();
       return;
     }
@@ -104,24 +104,24 @@
     const downloaded = !!row.downloaded;
 
     const regionBadge = row.region === "cn"
-      ? `<span class="badge badge-cn">cn</span>`
-      : `<span class="badge badge-global">global</span>`;
+      ? `<span class="badge badge-cn">国内</span>`
+      : `<span class="badge badge-global">海外</span>`;
     const statusBadge = downloaded
-      ? `<span class="badge badge-downloaded">Downloaded</span>`
-      : `<span class="badge badge-pending">Pending</span>`;
+      ? `<span class="badge badge-downloaded">已下载</span>`
+      : `<span class="badge badge-pending">待下载</span>`;
 
     const actions = [];
     if (busy) {
-      actions.push(`<span class="spinner"></span>working...`);
+      actions.push(`<span class="spinner"></span>处理中...`);
     } else {
       if (downloaded) {
-        actions.push(`<button class="btn btn-sm" data-act="open">Open local</button>`);
-        actions.push(`<button class="btn btn-sm" data-act="copy_prompt">Copy prompt</button>`);
-        actions.push(`<button class="btn btn-sm" data-act="redownload">Re-download</button>`);
+        actions.push(`<button class="btn btn-sm" data-act="open">打开本地</button>`);
+        actions.push(`<button class="btn btn-sm" data-act="copy_prompt">复制 prompt</button>`);
+        actions.push(`<button class="btn btn-sm" data-act="redownload">重新下载</button>`);
       } else {
-        actions.push(`<button class="btn btn-sm" data-act="download">Download</button>`);
+        actions.push(`<button class="btn btn-sm" data-act="download">下载</button>`);
       }
-      actions.push(`<button class="btn btn-sm btn-danger" data-act="delete">Delete</button>`);
+      actions.push(`<button class="btn btn-sm btn-danger" data-act="delete">删除</button>`);
     }
 
     tr.innerHTML = `
@@ -133,7 +133,7 @@
       <td class="col-env">${escape((row.os || "") + (row.gpu ? " / " + row.gpu : ""))}</td>
       <td class="col-summary">
         <span class="summary-cell" title="${escape(row.summary || "")}">${escape(truncate(row.summary, 80))}</span>
-        <textarea class="notes-editor" rows="1" placeholder="local notes (not uploaded)">${escape(row.notes || "")}</textarea>
+        <textarea class="notes-editor" rows="1" placeholder="本地备注（不上传）">${escape(row.notes || "")}</textarea>
       </td>
       <td class="col-email">${escape(row.email || "")}</td>
       <td class="col-size">${escape(row.size_human || "")}</td>
@@ -157,7 +157,7 @@
           await api().update_notes(row.id, notesEl.value);
           row.notes = notesEl.value;
         } catch (e) {
-          toast("notes save failed: " + e.message, "error");
+          toast("备注保存失败：" + e.message, "error");
         }
       }, 600);
     });
@@ -172,7 +172,7 @@
 
   function updateRowCount() {
     const el = document.getElementById("row-count");
-    el.textContent = state.rows.length ? `${state.rows.length} rows` : "";
+    el.textContent = state.rows.length ? `共 ${state.rows.length} 行` : "";
   }
 
   function updateBatchButton() {
@@ -197,17 +197,17 @@
     const limit = parseInt(document.getElementById("filter-limit").value, 10) || 500;
     const btn = document.getElementById("refresh-btn");
     btn.disabled = true;
-    btn.textContent = "Refreshing…";
+    btn.textContent = "刷新中…";
     try {
       const res = await api().refresh(since, limit);
       if (!res.ok) throw new Error(res.error);
-      toast(`Refreshed: +${res.data.inserted} new, ${res.data.updated} updated`, "success");
+      toast(`刷新完成：新增 ${res.data.inserted} 条，更新 ${res.data.updated} 条`, "success");
       await applyFilter();
     } catch (e) {
-      toast("Refresh failed: " + e.message, "error");
+      toast("刷新失败：" + e.message, "error");
     } finally {
       btn.disabled = false;
-      btn.textContent = "Refresh";
+      btn.textContent = "刷新";
     }
   }
 
@@ -231,7 +231,7 @@
       renderTable();
       await refreshCacheSize();
     } catch (e) {
-      toast("List failed: " + e.message, "error");
+      toast("列表加载失败：" + e.message, "error");
     }
   }
 
@@ -247,16 +247,16 @@
   async function onRowAction(row, act) {
     if (act === "download" || act === "redownload") {
       if (act === "redownload") {
-        const ok = window.confirm(`Already downloaded (${row.id}). Re-download and overwrite?`);
+        const ok = window.confirm(`${row.id} 已下载。是否重新下载并覆盖？`);
         if (!ok) return;
       }
       setRowBusy(row.id, true);
       try {
         const res = await api().download_one(row.id, act === "redownload");
         if (!res.ok) throw new Error(res.error);
-        toast(`Downloaded ${row.id}`, "success");
+        toast(`已下载 ${row.id}`, "success");
       } catch (e) {
-        toast("Download failed: " + e.message, "error");
+        toast("下载失败：" + e.message, "error");
       } finally {
         setRowBusy(row.id, false);
         await applyFilter();
@@ -266,7 +266,7 @@
         const res = await api().open_local(row.id);
         if (!res.ok) throw new Error(res.error);
       } catch (e) {
-        toast("Open failed: " + e.message, "error");
+        toast("打开失败：" + e.message, "error");
       }
     } else if (act === "copy_prompt") {
       try {
@@ -274,17 +274,17 @@
         if (!res.ok) throw new Error(res.error);
         const mech = res.data.mechanism;
         if (mech.startsWith("file:")) {
-          toast(`Clipboard tool unavailable; saved to ${mech.slice(5)}`, "warn", 6000);
+          toast(`剪贴板工具不可用；已保存到 ${mech.slice(5)}`, "warn", 6000);
         } else {
-          toast(`Prompt copied (${res.data.chars} chars). Paste into Claude.`, "success");
+          toast(`Prompt 已复制（${res.data.chars} 字符），粘贴到 Claude 即可。`, "success");
         }
       } catch (e) {
-        toast("Copy prompt failed: " + e.message, "error");
+        toast("复制 prompt 失败：" + e.message, "error");
       }
     } else if (act === "delete") {
       const ok = window.confirm(
-        `Delete feedback ${row.id}?\nSummary: ${row.summary || "(none)"}\n\n` +
-        `This removes the file from R2/123, the KV index entry, and the local cache.`
+        `确认删除反馈 ${row.id}？\n描述：${row.summary || "（无）"}\n\n` +
+        `将同时从 R2/123、KV 索引、本地缓存移除。`
       );
       if (!ok) return;
       setRowBusy(row.id, true);
@@ -293,12 +293,12 @@
         if (!res.ok) throw new Error(res.error);
         const failures = (res.data && res.data.failures) || [];
         if (failures.length) {
-          toast("Deleted with warnings: " + failures.join("; "), "warn", 6000);
+          toast("删除完成（含警告）：" + failures.join("; "), "warn", 6000);
         } else {
-          toast(`Deleted ${row.id}`, "success");
+          toast(`已删除 ${row.id}`, "success");
         }
       } catch (e) {
-        toast("Delete failed: " + e.message, "error");
+        toast("删除失败：" + e.message, "error");
       } finally {
         setRowBusy(row.id, false);
         await applyFilter();
@@ -312,28 +312,28 @@
     const head = ids.slice(0, 10).join("\n  ");
     const tail = ids.length > 10 ? `\n  ... (${ids.length - 10} more)` : "";
     const ok = window.confirm(
-      `Delete ${ids.length} feedback record(s)?\n\n  ${head}${tail}\n\n` +
-      `Each one will be removed from R2/123 + KV + local cache. Sequential, not parallel.`
+      `确认删除 ${ids.length} 条反馈？\n\n  ${head}${tail}\n\n` +
+      `将逐条从 R2/123 + KV + 本地缓存移除（顺序执行，非并行）。`
     );
     if (!ok) return;
     const btn = document.getElementById("batch-delete-btn");
     btn.disabled = true;
-    btn.textContent = "Deleting…";
+    btn.textContent = "删除中…";
     try {
       const res = await api().delete_many(ids);
       if (!res.ok) throw new Error(res.error);
       const succ = res.data.succeeded;
       const fail = res.data.failed.length;
       const cls = fail ? "warn" : "success";
-      toast(`Batch delete done: ${succ} ok, ${fail} failed`, cls, 6000);
+      toast(`批量删除完成：成功 ${succ}，失败 ${fail}`, cls, 6000);
       if (fail) {
         console.warn("Failed deletes:", res.data.failed);
       }
       state.selected.clear();
     } catch (e) {
-      toast("Batch delete failed: " + e.message, "error");
+      toast("批量删除失败：" + e.message, "error");
     } finally {
-      btn.textContent = `Delete selected (0)`;
+      btn.textContent = `批量删除 (0)`;
       await applyFilter();
     }
   }
@@ -341,18 +341,18 @@
   async function onClean() {
     const days = parseInt(document.getElementById("clean-days").value, 10);
     if (isNaN(days) || days < 0) {
-      toast("Invalid threshold days", "error");
+      toast("无效的天数阈值", "error");
       return;
     }
-    const ok = window.confirm(`Clean every downloaded extracted dir whose ts is older than ${days} days?`);
+    const ok = window.confirm(`确认清理所有早于 ${days} 天的已下载解压目录？`);
     if (!ok) return;
     try {
       const res = await api().clean_cache(days);
       if (!res.ok) throw new Error(res.error);
-      toast(`Cleaned ${res.data.cleaned} extracted dir(s)`, "success");
+      toast(`已清理 ${res.data.cleaned} 个解压目录`, "success");
       await applyFilter();
     } catch (e) {
-      toast("Clean failed: " + e.message, "error");
+      toast("清理失败：" + e.message, "error");
     }
   }
 
@@ -383,10 +383,10 @@
       const ping = await a.ping();
       if (ping.ok) {
         document.getElementById("connection-info").textContent =
-          ping.data.niyien_api_base + " — cache @ " + ping.data.cache_root;
+          ping.data.niyien_api_base + " — 缓存 @ " + ping.data.cache_root;
       }
     } catch (e) {
-      toast("Init ping failed: " + e.message, "error");
+      toast("初始化连接失败：" + e.message, "error");
     }
     await applyFilter();
     await refreshCacheSize();

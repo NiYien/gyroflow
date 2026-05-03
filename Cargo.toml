@@ -9,7 +9,7 @@ build = "build.rs"
 members = ["src/core"]
 
 [workspace.package]
-version = "1.6.3"
+version = "1.6.3-niyien.1"
 
 [features]
 default = ["opencv", "niyien-serialport"]

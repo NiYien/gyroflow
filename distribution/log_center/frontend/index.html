@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>NiYien Feedback Log Center</title>
+<title>NiYien 反馈日志中心</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -10,47 +10,47 @@
   <header class="topbar">
     <div class="title">
       <span class="logo">NiYien</span>
-      <span class="subtitle">Feedback Log Center</span>
+      <span class="subtitle">反馈日志中心</span>
     </div>
     <div class="header-actions">
-      <span id="connection-info" class="conn-info">connecting...</span>
-      <button id="refresh-btn" class="btn btn-primary" title="Pull latest from /api/feedback/list">Refresh</button>
+      <span id="connection-info" class="conn-info">连接中...</span>
+      <button id="refresh-btn" class="btn btn-primary" title="从 /api/feedback/list 拉取最新">刷新</button>
     </div>
   </header>
 
   <section class="filters">
     <div class="filter-group">
-      <label>Since</label>
+      <label>起始日期</label>
       <input type="date" id="filter-since">
     </div>
     <div class="filter-group">
-      <label>Until</label>
+      <label>截止日期</label>
       <input type="date" id="filter-until">
     </div>
     <div class="filter-group">
-      <label>Region</label>
+      <label>区域</label>
       <select id="filter-region">
-        <option value="all">all</option>
-        <option value="cn">cn</option>
-        <option value="global">global</option>
+        <option value="all">全部</option>
+        <option value="cn">国内</option>
+        <option value="global">海外</option>
       </select>
     </div>
     <div class="filter-group">
-      <label>State</label>
+      <label>状态</label>
       <select id="filter-downloaded">
-        <option value="">any</option>
-        <option value="yes">downloaded</option>
-        <option value="no">pending</option>
+        <option value="">全部</option>
+        <option value="yes">已下载</option>
+        <option value="no">待下载</option>
       </select>
     </div>
     <div class="filter-group">
-      <label>Limit</label>
+      <label>数量上限</label>
       <input type="number" id="filter-limit" min="10" max="2000" value="500">
     </div>
     <div class="filter-spacer"></div>
-    <button id="apply-filter-btn" class="btn">Apply</button>
+    <button id="apply-filter-btn" class="btn">应用筛选</button>
     <button id="batch-delete-btn" class="btn btn-danger" disabled>
-      Delete selected (<span id="selected-count">0</span>)
+      批量删除 (<span id="selected-count">0</span>)
     </button>
   </section>
 
@@ -60,20 +60,20 @@
         <tr>
           <th class="col-check"><input type="checkbox" id="select-all"></th>
           <th class="col-id">ID</th>
-          <th class="col-region">Region</th>
-          <th class="col-ts">Timestamp</th>
-          <th class="col-version">App version</th>
-          <th class="col-env">OS / GPU</th>
-          <th class="col-summary">Summary</th>
-          <th class="col-email">Email</th>
-          <th class="col-size">Size</th>
-          <th class="col-status">Status</th>
-          <th class="col-actions">Actions</th>
+          <th class="col-region">区域</th>
+          <th class="col-ts">时间</th>
+          <th class="col-version">版本</th>
+          <th class="col-env">系统 / GPU</th>
+          <th class="col-summary">描述</th>
+          <th class="col-email">邮箱</th>
+          <th class="col-size">大小</th>
+          <th class="col-status">状态</th>
+          <th class="col-actions">操作</th>
         </tr>
       </thead>
       <tbody id="feedback-tbody">
         <tr class="empty-row">
-          <td colspan="11">No data yet — click <strong>Refresh</strong> to fetch.</td>
+          <td colspan="11">暂无数据 — 点击 <strong>刷新</strong> 拉取。</td>
         </tr>
       </tbody>
     </table>
@@ -81,15 +81,15 @@
 
   <footer class="footer">
     <div class="footer-left">
-      <span>Cache: <span id="cache-size">-</span></span>
+      <span>缓存: <span id="cache-size">-</span></span>
       <span class="muted" id="row-count"></span>
     </div>
     <div class="footer-right">
-      <label>Clean older than
+      <label>清理早于
         <input type="number" id="clean-days" min="0" value="60" class="small-input">
-        days
+        天的解压目录
       </label>
-      <button id="clean-btn" class="btn">Clean</button>
+      <button id="clean-btn" class="btn">清理</button>
     </div>
   </footer>
 

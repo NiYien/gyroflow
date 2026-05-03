@@ -55,14 +55,10 @@ Rectangle {
             statusLabel.text = qsTr("Stage: %1 (%2%)").arg(stage).arg(pct);
         }
         function onFeedbackCompleted(success, id, error) {
+            // Just close — App.qml's Connections handles the user-facing toast.
             progressBar.visible = false;
             submitBtn.enabled = true;
-            if (success) {
-                statusLabel.text = qsTr("Submitted. Reference ID: %1").arg(id);
-                Qt.callLater(root.close);
-            } else {
-                statusLabel.text = qsTr("Failed: %1").arg(error);
-            }
+            root.close();
         }
     }
 

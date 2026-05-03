@@ -33,6 +33,10 @@ class NiyenApiClient:
         self.admin_token = admin_token
         self.timeout = int(timeout)
         self._session = requests.Session()
+        # Bypass any system HTTP_PROXY / HTTPS_PROXY — niyien admin tool runs
+        # locally and must hit niyien.com directly (a proxy could silently
+        # intercept the bearer token).
+        self._session.trust_env = False
 
     def _headers(self) -> dict[str, str]:
         return {

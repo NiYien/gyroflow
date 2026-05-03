@@ -53,7 +53,14 @@ class R2Client:
             aws_access_key_id=access_key_id,
             aws_secret_access_key=secret_access_key,
             region_name="auto",
-            config=BotoConfig(signature_version="s3v4", retries={"max_attempts": 3}),
+            # proxies={} explicitly disables boto3's default env-based
+            # HTTP_PROXY pickup, matching the bypass policy used by api.py /
+            # kv.py / pan123.py.
+            config=BotoConfig(
+                signature_version="s3v4",
+                retries={"max_attempts": 3},
+                proxies={},
+            ),
         )
 
     def normalize_key(self, bucket_path: str) -> str:

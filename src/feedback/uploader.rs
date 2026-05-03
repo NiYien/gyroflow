@@ -146,7 +146,7 @@ fn request_token(meta: &Meta, summary: &str, email: &str, size: u64, sha256: &st
         "email":       email,
     });
     let url = format!("{}/feedback", super::NIYIEN_FEEDBACK_BASE);
-    let resp = ureq::post(&url)
+    let resp = crate::network::post(&url)
         .header("Content-Type", "application/json")
         .send(serde_json::to_string(&body).map_err(|e| format!("encode: {e}"))?.as_str())
         .map_err(|e| format!("HTTP error: {e}"))?;
@@ -166,7 +166,7 @@ fn request_token(meta: &Meta, summary: &str, email: &str, size: u64, sha256: &st
 fn upload_r2(token: &TokenResponse, bytes: &[u8], events: &Sender<FeedbackJobState>) -> Result<(), String> {
     let upload = &token.upload;
     let _ = events.send(FeedbackJobState::Uploading { pct: 10 });
-    let mut req = ureq::put(&upload.url);
+    let mut req = crate::network::put(&upload.url);
     for (k, v) in &upload.headers {
         req = req.header(k.as_str(), v.as_str());
     }
@@ -322,7 +322,7 @@ fn upload_pan123_slice(
     body.extend_from_slice(b"\r\n");
     write!(body, "--{boundary}--\r\n").unwrap();
 
-    let resp = ureq::post(url)
+    let resp = crate::network::post(url)
         .header("Authorization", &format!("Bearer {access}"))
         .header("Platform", "open_platform")
         .header("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
@@ -345,7 +345,7 @@ fn upload_pan123_slice(
 
 fn pan123_post<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str, body: &serde_json::Value) -> Result<T, String> {
     let body_str = serde_json::to_string(body).map_err(|e| format!("encode: {e}"))?;
-    let resp = ureq::post(url)
+    let resp = crate::network::post(url)
         .header("Authorization", &format!("Bearer {access}"))
         .header("Content-Type", "application/json")
         .header("Platform", "open_platform")
@@ -364,7 +364,7 @@ fn pan123_post<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str, 
 }
 
 fn pan123_get<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str) -> Result<T, String> {
-    let resp = ureq::get(url)
+    let resp = crate::network::get(url)
         .header("Authorization", &format!("Bearer {access}"))
         .header("Platform", "open_platform")
         .call()
@@ -386,7 +386,7 @@ fn pan123_get<T: for<'de> Deserialize<'de> + Default>(url: &str, access: &str) -
 fn confirm(id: &str, size: u64, sha256: &str) -> Result<(), String> {
     let body = serde_json::json!({ "id": id, "size": size, "sha256": sha256 });
     let url = format!("{}/feedback/confirm", super::NIYIEN_FEEDBACK_BASE);
-    let resp = ureq::post(&url)
+    let resp = crate::network::post(&url)
         .header("Content-Type", "application/json")
         .send(serde_json::to_string(&body).map_err(|e| format!("encode: {e}"))?.as_str())
         .map_err(|e| format!("HTTP error: {e}"))?;
