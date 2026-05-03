@@ -51,3 +51,10 @@ test_block_question.pdb
 /distribution/control_center/backend/__pycache__
 /distribution/control_center/__pycache__
 /distribution/control_center/_cache
+# log_center (Phase 5 feedback management tool) — config has live secrets,
+# never commit. The .example.json template stays tracked.
+distribution/log_center/log_center.config.json
+/distribution/log_center/_cache
+/distribution/log_center/__pycache__
+/distribution/log_center/backend/__pycache__
+/distribution/log_center/tests/__pycache__

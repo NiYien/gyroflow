@@ -1,0 +1,20 @@
+{
+  "niyien_api_base": "https://niyien.com/api",
+  "feedback_admin_token": "REPLACE_WITH_FEEDBACK_ADMIN_TOKEN_32_HEX_BYTES_OR_MORE",
+  "pan123": {
+    "client_id": "REPLACE_WITH_PAN123_CLIENT_ID",
+    "client_secret": "REPLACE_WITH_PAN123_CLIENT_SECRET",
+    "feedback_root_dir": "/feedback"
+  },
+  "r2": {
+    "account_id": "REPLACE_WITH_CLOUDFLARE_R2_ACCOUNT_ID",
+    "access_key_id": "REPLACE_WITH_R2_ACCESS_KEY_ID",
+    "secret_access_key": "REPLACE_WITH_R2_SECRET_ACCESS_KEY",
+    "bucket": "gyroflow-feedback"
+  },
+  "upstash_kv": {
+    "url": "https://REPLACE_WITH_UPSTASH_HOST.upstash.io",
+    "token": "REPLACE_WITH_UPSTASH_REST_TOKEN"
+  },
+  "local_cache_dir": "_cache/feedback"
+}
