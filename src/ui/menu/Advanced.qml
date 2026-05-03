@@ -478,4 +478,12 @@ MenuItem {
         anchors.horizontalCenter: parent.horizontalCenter;
         onClicked: filesystem.open_file_externally(controller.data_folder());
     }
+
+    // ---- Feedback (Phase 4) ----
+    LinkButton {
+        text: qsTr("Report a problem");
+        iconName: "info";
+        anchors.horizontalCenter: parent.horizontalCenter;
+        onClicked: window.feedbackDialog.open();
+    }
 }

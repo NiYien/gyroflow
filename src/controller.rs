@@ -407,6 +407,14 @@ pub struct Controller {
     processing_info: qt_property!(QString; NOTIFY processing_info_changed),
     processing_info_changed: qt_signal!(),
 
+    // Feedback system (Phase 4)
+    estimateFeedbackSize: qt_method!(fn(&self, options_json: QString) -> i64),
+    submitFeedback: qt_method!(fn(&mut self, description: QString, email: QString, options_json: QString)),
+    scanCrashCheckpoints: qt_method!(fn(&mut self)),
+    feedbackProgress: qt_signal!(stage: QString, pct: i32),
+    feedbackCompleted: qt_signal!(success: bool, id: QString, error: QString),
+    crashCheckpointFound: qt_signal!(count: i32),
+
     cancel_flag: Arc<AtomicBool>,
     preview_pipeline: Arc<AtomicUsize>,
 
@@ -4289,6 +4297,105 @@ impl Controller {
                 .to_str()
                 .unwrap_or_default(),
         )))
+    }
+
+    // ----- Feedback bridge (Phase 4) ----------------------------------
+
+    fn build_feedback_inputs(&self) -> crate::feedback::PackageInputs {
+        let logs = crate::logger::log_dir().map(|p| p.to_path_buf());
+        let mut inputs = crate::feedback::packager::PackageInputs::default();
+        if let Some(dir) = logs {
+            let cur = dir.join("gyroflow.log");
+            if cur.exists() { inputs.current_log = Some(cur); }
+            for i in 1..=4 {
+                let p = dir.join(format!("gyroflow.log.{i}"));
+                if p.exists() { inputs.history_logs.push(p); }
+            }
+            let inc = dir.join("gyroflow-incidents.log");
+            if inc.exists() { inputs.incidents_log = Some(inc); }
+            inputs.crash_zips = crate::feedback::pending_crash_zips();
+        }
+        let data_dir = gyroflow_core::settings::data_dir();
+        let lens = data_dir.join("lens.json");
+        if lens.exists() { inputs.lens_file = Some(lens); }
+        let queue = data_dir.join("render_queue.json");
+        if queue.exists() { inputs.queue_file = Some(queue); }
+        let settings = data_dir.join("settings.json");
+        if settings.exists() { inputs.settings_file = Some(settings); }
+        // project_file: omitted in Phase 4 baseline; controller exposes a
+        // hook later if user wants the current .gyroflow snapshot wired.
+        inputs
+    }
+
+    fn build_feedback_options(json: &str) -> crate::feedback::packager::PackageOptions {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(json) {
+            let g = |k: &str, default: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(default);
+            crate::feedback::packager::PackageOptions {
+                include_current_log:    g("current_log",    true),
+                include_history_logs:   g("history_logs",   true),
+                include_incidents:      g("incidents",      true),
+                include_project:        g("project",        true),
+                include_video_meta:     g("video_meta",     true),
+                include_lens:           g("lens",           true),
+                include_queue_settings: g("queue_settings", true),
+                include_system_info:    g("system_info",    true),
+                include_crashes:        g("crashes",        true),
+            }
+        } else {
+            crate::feedback::packager::PackageOptions::default()
+        }
+    }
+
+    fn estimateFeedbackSize(&self, options_json: QString) -> i64 {
+        let inputs = self.build_feedback_inputs();
+        let opts = Self::build_feedback_options(&options_json.to_string());
+        crate::feedback::packager::estimate_size(&inputs, &opts) as i64
+    }
+
+    fn submitFeedback(&mut self, description: QString, email: QString, options_json: QString) {
+        let inputs = self.build_feedback_inputs();
+        let opts = Self::build_feedback_options(&options_json.to_string());
+        let summary = description.to_string();
+        let email = email.to_string();
+        let meta = crate::feedback::meta::Meta::collect();
+
+        // Channel for state events. Forwarded to QML via Qt-queued callback.
+        let (tx, rx) = std::sync::mpsc::channel::<crate::feedback::FeedbackJobState>();
+        let progress_cb = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, st: crate::feedback::FeedbackJobState| {
+                use crate::feedback::FeedbackJobState as S;
+                match st {
+                    S::Packaging       => this.feedbackProgress(QString::from("packaging"), 0),
+                    S::RequestingToken => this.feedbackProgress(QString::from("requesting_token"), 5),
+                    S::Uploading{pct}  => this.feedbackProgress(QString::from("uploading"), pct as i32),
+                    S::Confirming      => this.feedbackProgress(QString::from("confirming"), 96),
+                    S::Cleanup         => this.feedbackProgress(QString::from("cleanup"), 99),
+                    S::Done{id}        => this.feedbackCompleted(true, QString::from(id), QString::default()),
+                    S::Failed{reason, ..} => this.feedbackCompleted(false, QString::default(), QString::from(reason)),
+                }
+            },
+        );
+        // Forwarder thread: receive Sync events from worker → invoke Qt callback.
+        std::thread::Builder::new().name("feedback-progress".into()).spawn(move || {
+            while let Ok(st) = rx.recv() {
+                progress_cb(st);
+            }
+        }).ok();
+
+        // Worker thread: actual submit pipeline.
+        std::thread::Builder::new().name("feedback-submit".into()).spawn(move || {
+            let _ = crate::feedback::uploader::submit(crate::feedback::uploader::SubmitArgs {
+                inputs, options: opts, summary, email, meta, events: tx,
+            });
+        }).ok();
+    }
+
+    fn scanCrashCheckpoints(&mut self) {
+        let count = crate::feedback::crash_pickup::scan().len() as i32;
+        if count > 0 {
+            self.crashCheckpointFound(count);
+        }
     }
 }
 

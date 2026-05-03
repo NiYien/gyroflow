@@ -1572,6 +1572,12 @@ Rectangle {
                         anchors.horizontalCenter: parent.horizontalCenter;
                         onClicked: window.showAvailableAppVersions();
                     }
+                    LinkButton {
+                        text: qsTr("Report a problem");
+                        iconName: "info";
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        onClicked: window.feedbackDialog.open();
+                    }
 
                     SectionDivider { visible: controller.is_nle_installed(); }
                     ItemLoader {
@@ -1919,8 +1925,22 @@ Rectangle {
         }
     }
 
+    // Feedback (Phase 4) — instance + crash startup hook.
+    property alias feedbackDialog: feedbackDialog;
+    FeedbackDialog { id: feedbackDialog; }
+    Connections {
+        target: controller;
+        function onCrashCheckpointFound(count) {
+            feedbackDialog.crashMode = true;
+            feedbackDialog.pendingCrashCount = count;
+            feedbackDialog.open();
+        }
+    }
+
     Component.onCompleted: {
         controller.check_updates();
+        // Defer crash scan one tick so QML overlay z-stack is ready.
+        Qt.callLater(controller.scanCrashCheckpoints);
         updateLensGroupPanelState();
         render_queue.simple_mode = isSimpleMode;
         // [parallel-mode] Initialize parallel_renders per current mode

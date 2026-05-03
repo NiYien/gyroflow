@@ -94,6 +94,12 @@ log-panics = { version = "2.1", features = ["with-backtrace"] }
 uuid = { version = "1", features = ["v4"] }
 percent-encoding = "2"
 
+# Feedback submission (Phase 4 of feedback system)
+sysinfo = { version = "0.32", default-features = false, features = ["system"] }
+os_info = { version = "3", default-features = false }
+thiserror = "2"
+md-5 = "0.10"
+
 keep-awake = { git = "https://github.com/AdrianEddy/keep-awake-rs.git", rev = "4f2a93f" }
 
 [patch.crates-io]

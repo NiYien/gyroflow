@@ -99,6 +99,15 @@ fn entry() {
         crash::maybe_trigger_test_panic();
     }
 
+    // Phase 4: retry any pending feedback uploads from a prior session in
+    // the background. Idempotent — failed retries leave files in place.
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        std::thread::Builder::new().name("feedback-retry-pending".into()).spawn(|| {
+            feedback::uploader::retry_pending();
+        }).ok();
+    }
+
     // Enable cubecl SPIR-V pipeline cache before any wgpu device probe so the
     // cubecl GlobalConfig can still accept `set()`. Without this, NeuFlow Burn
     // warmup recompiles every kernel on every launch (~4-5 s).

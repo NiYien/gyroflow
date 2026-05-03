@@ -1,12 +1,37 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2026 Gyroflow contributors
 
-// Feedback / crash report module. Phase 1 only exposes the pending-crash
-// detection API so other code (Phase 4 client UI / startup hook) can decide
-// whether to surface a "previous crash" dialog. Packaging, uploading, and
-// retry live in Phase 4.
+// Feedback / crash report module. Phase 4 entry. Public surface:
+//
+// * `pending_crash_zips()` — startup scan for unuploaded crash dumps
+//   (Phase 1 API, kept stable)
+// * `PackageOptions` / `Packager` — compose a feedback zip from local
+//   artifacts (Phase 4 §2)
+// * `Meta::collect()` — system info snapshot for the manifest (Phase 4 §3)
+// * `Uploader::submit()` — three-step POST/PUT/POST flow with retry
+//   (Phase 4 §4); branches on `upload.kind` between r2_presigned_put
+//   and pan123_multipart per docs/feedback-schema.md §6
+// * `crash_pickup::scan_and_notify` — startup hook for crash dialog
+//   (Phase 4 §5)
 
 use std::path::PathBuf;
+
+pub mod crash_pickup;
+pub mod meta;
+pub mod packager;
+pub mod uploader;
+
+pub use packager::{PackageInputs, PackageOptions};
+pub use uploader::{FeedbackJobState, JobOutcome, SubmitArgs};
+
+// --- shared constants -----------------------------------------------------
+
+pub const NIYIEN_FEEDBACK_BASE: &str = "https://niyien.com/api";
+pub const MAX_PACKAGE_SIZE_BYTES: u64 = 50_000_000;
+pub const RETRY_ATTEMPTS: u32 = 3;
+pub const BACKOFF_SECS: [u64; 3] = [1, 2, 4];
+
+// --- pending_crash_zips (Phase 1 API) -------------------------------------
 
 /// Scan `<data_dir>/logs/crashes/` for `*.zip` files lacking a sibling
 /// `<base>.uploaded` marker. Returns full paths sorted by filename
@@ -41,6 +66,14 @@ pub fn pending_crash_zips_in(dir: &std::path::Path) -> Vec<PathBuf> {
     }
     zips.sort();
     zips
+}
+
+/// Pending feedback (failed uploads) live alongside the logs/ dir under a
+/// sibling `feedback/pending/` directory. The uploader writes both the zip
+/// and a JSON descriptor here on retry exhaustion.
+pub fn pending_feedback_dir() -> Option<PathBuf> {
+    let logs = crate::logger::log_dir()?;
+    Some(logs.parent()?.join("feedback").join("pending"))
 }
 
 #[cfg(test)]
