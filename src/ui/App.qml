@@ -73,17 +73,35 @@ Rectangle {
         // while Row auto-layouts its children.
         if (simpleAutoSyncBtn && simpleExportStabilizedBtn && queueBtn) {
             if (useTabs) {
-                simpleAutoSyncBtn.parent        = mobileSimpleExportBtnCol;
-                simpleExportStabilizedBtn.parent = mobileSimpleExportBtnCol;
-                queueBtn.parent = mobileSimpleExportBar;
-                queueBtn.anchors.right = mobileSimpleExportBar.right;
-                queueBtn.anchors.rightMargin = 20 * dpiScale;
-            } else {
-                queueBtn.anchors.right = undefined;
+                // Use pushToEnd (orphan→target) to force-reset positioner state,
+                // then explicitly reset x and re-bind width via Qt.binding so a
+                // stale Row-positioner x or stale width from a prior parent does
+                // not survive the reparent (root cause of the mobile→desktop→mobile
+                // layout corruption).
+                pushToEnd(simpleAutoSyncBtn,         mobileSimpleExportBtnCol);
+                pushToEnd(simpleExportStabilizedBtn, mobileSimpleExportBtnCol);
+                simpleAutoSyncBtn.x = 0;
+                simpleExportStabilizedBtn.x = 0;
+                simpleAutoSyncBtn.width         = Qt.binding(function() { return mobileSimpleExportBtnCol.width; });
+                simpleExportStabilizedBtn.width = Qt.binding(function() { return mobileSimpleExportBtnCol.width; });
+                // Clear Rectangle-style anchors BEFORE reparenting into a Column,
+                // so the Column positioner takes over without anchor warnings.
+                queueBtn.anchors.right       = undefined;
                 queueBtn.anchors.rightMargin = 0;
-                simpleAutoSyncBtn.parent        = simpleExportBtnRow;
-                simpleExportStabilizedBtn.parent = simpleExportBtnRow;
-                queueBtn.parent = renderBtnRow;
+                pushToEnd(clearQueueBtn, mobileQueueBtnCol);  // top of Column
+                pushToEnd(queueBtn,      mobileQueueBtnCol);  // bottom of Column
+                clearQueueBtn.x = 0;
+                queueBtn.x = 0;
+            } else {
+                queueBtn.anchors.right       = undefined;
+                queueBtn.anchors.rightMargin = 0;
+                pushToEnd(simpleAutoSyncBtn,         simpleExportBtnRow);
+                pushToEnd(simpleExportStabilizedBtn, simpleExportBtnRow);
+                simpleAutoSyncBtn.width         = Qt.binding(function() { return simpleAutoSyncBtn.implicitWidth; });
+                simpleExportStabilizedBtn.width = Qt.binding(function() { return simpleExportStabilizedBtn.implicitWidth; });
+                // Restore original child order in renderBtnRow: clearQueueBtn before queueBtn.
+                pushToEnd(clearQueueBtn, renderBtnRow);
+                pushToEnd(queueBtn,      renderBtnRow);
             }
         }
         Qt.callLater(() => {
@@ -656,7 +674,9 @@ Rectangle {
                         leftPadding: 16 * dpiScale;
                         rightPadding: 16 * dpiScale;
                         // Stretch full-width inside the mobile sticky bar's Column.
-                        width: parent === mobileSimpleExportBtnCol ? mobileSimpleExportBtnCol.width : implicitWidth;
+                        // Gate on stable layout flags rather than dynamic `parent` reference,
+                        // so the binding reliably re-evaluates after theme/mode toggles.
+                        width: (window.isMobileLayout && window.isSimpleMode) ? mobileSimpleExportBtnCol.width : implicitWidth;
                         // Queue path: when the render queue is visible with pending jobs, run the
                         // queue with export_project=2 so each job performs autosync and writes a
                         // .gyroflow project file — no video encode. Uses the queue's built-in
@@ -690,7 +710,9 @@ Rectangle {
                         leftPadding: 16 * dpiScale;
                         rightPadding: 16 * dpiScale;
                         // Stretch full-width inside the mobile sticky bar's Column.
-                        width: parent === mobileSimpleExportBtnCol ? mobileSimpleExportBtnCol.width : implicitWidth;
+                        // Gate on stable layout flags rather than dynamic `parent` reference,
+                        // so the binding reliably re-evaluates after theme/mode toggles.
+                        width: (window.isMobileLayout && window.isSimpleMode) ? mobileSimpleExportBtnCol.width : implicitWidth;
                         enabled: render_queue.status === "active"
                               || ((videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
                                   ? (videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready())
@@ -1017,7 +1039,9 @@ Rectangle {
                         id: clearQueueBtn;
                         width: 36 * dpiScale;
                         height: 44 * dpiScale;
-                        anchors.verticalCenter: parent.verticalCenter;
+                        // Mobile Simple reparents this into mobileQueueBtnCol (Column),
+                        // where verticalCenter anchors are ignored by the positioner.
+                        anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
                         visible: videoArea.queue.shown;
                         LinkButton {
                             anchors.centerIn: parent;
@@ -1044,7 +1068,9 @@ Rectangle {
                         id: queueBtn;
                         width: 44 * dpiScale;
                         height: 44 * dpiScale;
-                        anchors.verticalCenter: parent.verticalCenter;
+                        // Mobile Simple reparents this into mobileQueueBtnCol (Column),
+                        // where verticalCenter anchors are ignored by the positioner.
+                        anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
                         // [T17] 移除了移动端圆形背景 Rectangle
                         LinkButton {
                             anchors.centerIn: parent;
@@ -1167,6 +1193,17 @@ Rectangle {
                     anchors.rightMargin: 84 * dpiScale;
                     anchors.verticalCenter: parent.verticalCenter;
                     spacing: 12 * dpiScale;
+                }
+                // Right-side Column hosting clearQueueBtn (top, conditional) and
+                // queueBtn (bottom, always). Both are reparented in by reparentSimplePanels()
+                // when entering mobile Simple mode. verticalCenter-anchored so the pair is
+                // visually centered as a group when both buttons are visible.
+                Column {
+                    id: mobileQueueBtnCol;
+                    anchors.right: parent.right;
+                    anchors.rightMargin: 20 * dpiScale;
+                    anchors.verticalCenter: parent.verticalCenter;
+                    spacing: 4 * dpiScale;
                 }
             }
 

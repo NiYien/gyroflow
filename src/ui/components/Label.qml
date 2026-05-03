@@ -15,7 +15,10 @@ Grid {
     property alias t: t;
     onPositionChanged: t.height = root.position === Label.TopPosition? undefined : Qt.binding(() => inner.height);
 
-    rows:    position === Label.TopPosition? 2 : 1;
+    // Only set columns; Grid auto-derives rows from item count. Setting both
+    // creates a transient `rows=1,columns=1` mid-update when `position` flips
+    // (one binding fires before the other), triggering "Grid contains more
+    // visible items (2) than rows*columns (1)" warnings on theme/mode toggles.
     columns: position === Label.TopPosition? 1 : 2;
     spacing: 8 * dpiScale;
     width: parent.width;
