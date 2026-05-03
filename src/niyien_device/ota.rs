@@ -161,6 +161,13 @@ impl OtaManager {
     }
 
     pub fn start_at(&mut self, now: Instant) -> Vec<u8> {
+        // Logging context: each public OTA entry point (start/on_frame/
+        // on_timeout) installs its own short-lived RAII scope. Storing the
+        // guard on self would break Clone/Debug derives and the RAII
+        // invariant under struct moves.
+        let _log_ctx = gyroflow_core::log_context::LogContext::enter(
+            gyroflow_core::log_context::LogContextUpdate::default().op("ota"),
+        );
         self.chunk_index = 0;
         self.last_error = None;
         self.send_step(OtaState::Version, now)

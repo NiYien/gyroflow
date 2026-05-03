@@ -24,6 +24,11 @@ mod resources;
 #[cfg(not(compiled_qml))]
 mod resources_qml;
 pub mod util;
+pub use gyroflow_core::log_context;
+pub mod logger;
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
+pub mod crash;
+pub mod feedback;
 pub mod ui {
     pub mod ui_tools;
     pub mod components {
@@ -83,6 +88,16 @@ fn entry() {
     util::update_rlimit();
     util::set_android_context();
     log_panics::init();
+
+    // Rust-panic crash dump (Phase 1 of feedback system). Installed AFTER
+    // log_panics so this becomes the outermost wrapper: capture zip first,
+    // then delegate to log_panics (which logs via log::error!) and finally
+    // the default hook (terminal backtrace).
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    {
+        crash::register_panic_hook();
+        crash::maybe_trigger_test_panic();
+    }
 
     // Enable cubecl SPIR-V pipeline cache before any wgpu device probe so the
     // cubecl GlobalConfig can still accept `set()`. Without this, NeuFlow Burn

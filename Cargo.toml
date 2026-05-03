@@ -90,6 +90,10 @@ toml = "0.9"
 
 log-panics = { version = "2.1", features = ["with-backtrace"] }
 
+# Logging infrastructure (Phase 1 of feedback system)
+uuid = { version = "1", features = ["v4"] }
+percent-encoding = "2"
+
 keep-awake = { git = "https://github.com/AdrianEddy/keep-awake-rs.git", rev = "4f2a93f" }
 
 [patch.crates-io]
@@ -160,6 +164,7 @@ codegen-units = 1
 
 [dev-dependencies]
 test-case = "3.3.1"
+tempfile = "3"
 
 # -------------------------- Android stuff --------------------------
 

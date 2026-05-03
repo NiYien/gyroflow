@@ -648,6 +648,11 @@ impl PoseEstimator {
         progress_cb: F,
         cancel_flag: Arc<AtomicBool>,
     ) -> Vec<(f64, f64, f64, f64)> {
+        // Logging context for the sync pipeline. Per-segment scope is left
+        // to the inner find_offset::* impls (Phase 2 audit refines this).
+        let _log_ctx = crate::log_context::LogContext::enter(
+            crate::log_context::LogContextUpdate::default().op("sync"),
+        );
         // Vec<(timestamp, offset, cost, confidence)>
         match self.offset_method.load(SeqCst) {
             0 => find_offset::essential_matrix::find_offsets(

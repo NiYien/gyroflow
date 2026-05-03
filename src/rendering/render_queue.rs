@@ -2279,6 +2279,11 @@ impl RenderQueue {
     }
 
     pub fn render_job(&mut self, job_id: u32) {
+        // Logging context for this queue item. RAII guard restores on return.
+        let _log_ctx = crate::log_context::LogContext::enter(
+            crate::log_context::LogContextUpdate::default()
+                .op(format!("render@item{job_id}")),
+        );
         if let Some(job) = self.jobs.get(&job_id) {
             {
                 let mut q = self.queue.borrow_mut();

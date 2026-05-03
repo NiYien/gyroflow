@@ -288,6 +288,10 @@ impl LensCalibrator {
     }
 
     pub fn calibrate(&mut self, only_used: bool) -> Result<(), opencv::Error> {
+        // Logging context for the lens calibration pipeline.
+        let _log_ctx = crate::log_context::LogContext::enter(
+            crate::log_context::LogContextUpdate::default().op("calib"),
+        );
         let calib_criteria = TermCriteria::new(
             TermCriteria_Type::EPS as i32 | TermCriteria_Type::COUNT as i32,
             30,

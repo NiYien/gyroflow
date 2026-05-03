@@ -17,6 +17,7 @@ use qml_video_rs::video_item::MDKVideoItem;
 
 use crate::core;
 use crate::core::StabilizationManager;
+use crate::log_context;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
 use crate::core::filesystem;
@@ -471,6 +472,13 @@ impl Controller {
         self.gyro_changed();
         let url = util::qurl_to_encoded(url.clone());
         let filename = filesystem::get_filename(&url);
+
+        // Push log context for this load. RAII guard restores on scope exit.
+        let _log_ctx = log_context::LogContext::enter(
+            log_context::LogContextUpdate::default()
+                .op("video.load")
+                .video_path(util::normalize_path_for_log(&filename)),
+        );
 
         // Load current (clean) state to the UI
         if self.stabilizer.lens_calibrator.read().is_none() {

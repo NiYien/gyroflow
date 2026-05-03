@@ -209,6 +209,78 @@ pub fn qurl_to_encoded(url: QUrl) -> String {
     })
     .to_string()
 }
+
+/// Normalize a path string for logging: strip `file://` scheme, percent-decode,
+/// and on Windows convert forward slashes to backslashes for visual parity with
+/// the OS. Used in two places: (a) at controller entry points where QML pushes
+/// `QUrl` strings, (b) inside `LogContext::enter` when storing `video_path`.
+pub fn normalize_path_for_log(s: &str) -> String {
+    let trimmed = s.strip_prefix("file:///")
+        .or_else(|| s.strip_prefix("file://"))
+        .unwrap_or(s);
+    // percent-decode; lossy fallback on malformed sequences
+    let decoded = percent_encoding::percent_decode_str(trimmed)
+        .decode_utf8_lossy()
+        .into_owned();
+    if cfg!(target_os = "windows") {
+        decoded.replace('/', "\\")
+    } else {
+        decoded
+    }
+}
+
+#[cfg(test)]
+mod normalize_path_tests {
+    use super::normalize_path_for_log;
+
+    #[test]
+    fn windows_qurl_with_chinese() {
+        let input = "file:///D:/%E4%B8%8B%E8%BD%BD/clip.mp4";
+        let out = normalize_path_for_log(input);
+        if cfg!(target_os = "windows") {
+            assert_eq!(out, "D:\\下载\\clip.mp4");
+        } else {
+            assert_eq!(out, "D:/下载/clip.mp4");
+        }
+    }
+
+    #[test]
+    fn linux_passthrough() {
+        let input = "/home/user/video clip.mp4";
+        assert_eq!(normalize_path_for_log(input), if cfg!(target_os = "windows") {
+            "\\home\\user\\video clip.mp4"
+        } else {
+            "/home/user/video clip.mp4"
+        });
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(normalize_path_for_log(""), "");
+    }
+
+    #[test]
+    fn malformed_percent_sequence() {
+        // %ZZ is not valid hex; percent_decode_str preserves the original bytes,
+        // and the result remains UTF-8 valid.
+        let out = normalize_path_for_log("/tmp/foo%ZZ.mp4");
+        if cfg!(target_os = "windows") {
+            assert_eq!(out, "\\tmp\\foo%ZZ.mp4");
+        } else {
+            assert_eq!(out, "/tmp/foo%ZZ.mp4");
+        }
+    }
+
+    #[test]
+    fn double_slash_only_strips_file_prefix() {
+        let out = normalize_path_for_log("file://server/share/file.mp4");
+        if cfg!(target_os = "windows") {
+            assert_eq!(out, "server\\share\\file.mp4");
+        } else {
+            assert_eq!(out, "server/share/file.mp4");
+        }
+    }
+}
 pub fn catch_qt_file_open<F: FnMut(QUrl)>(cb: F) {
     let func: Box<dyn FnMut(QUrl)> = Box::new(cb);
     let cb_ptr = Box::into_raw(func);
@@ -280,52 +352,35 @@ pub fn set_android_context() {
 }
 
 pub fn init_logging() {
-    use simplelog::*;
-
-    let log_config = ["mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls", "mdk"]
-        .into_iter()
-        .fold(ConfigBuilder::new(), |mut cfg, x| {
-            cfg.add_filter_ignore_str(x);
-            cfg
-        })
-        .build();
-    let file_log_config = ["mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls"]
-        .into_iter()
-        .fold(ConfigBuilder::new(), |mut cfg, x| {
-            cfg.add_filter_ignore_str(x);
-            cfg
-        })
-        .build();
-
+    // Phase 1: delegated to crate::logger which writes to data_dir/logs/.
+    // Android still goes through simplelog::WriteLogger to AndroidLog (no
+    // file system / stderr equivalent), keeping legacy behavior on mobile.
     #[cfg(target_os = "android")]
-    WriteLogger::init(
-        LevelFilter::Debug,
-        log_config,
-        crate::util::AndroidLog::default(),
-    )
-    .unwrap();
+    {
+        use simplelog::*;
+        let log_config = ["mp4parse", "wgpu", "naga", "akaze", "ureq", "rustls", "mdk"]
+            .into_iter()
+            .fold(ConfigBuilder::new(), |mut cfg, x| {
+                cfg.add_filter_ignore_str(x);
+                cfg
+            })
+            .build();
+        WriteLogger::init(
+            LevelFilter::Debug,
+            log_config,
+            crate::util::AndroidLog::default(),
+        )
+        .unwrap();
+        // Even on Android we want a session id in LogContext for any future
+        // panic / feedback wiring. Generated inline since the file-based
+        // logger module is not used here.
+        let sid = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
+        crate::log_context::LogContext::set_session_id(sid);
+    }
 
     #[cfg(not(target_os = "android"))]
     {
-        let exe_loc = gyroflow_core::settings::data_dir().join("gyroflow.log");
-        if let Ok(file_log) = std::fs::File::create(exe_loc) {
-            let _ = CombinedLogger::init(vec![
-                TermLogger::new(
-                    LevelFilter::Debug,
-                    log_config,
-                    TerminalMode::Mixed,
-                    ColorChoice::Auto,
-                ),
-                WriteLogger::new(LevelFilter::Debug, file_log_config, file_log),
-            ]);
-        } else {
-            let _ = TermLogger::init(
-                LevelFilter::Debug,
-                log_config,
-                TerminalMode::Mixed,
-                ColorChoice::Auto,
-            );
-        }
+        crate::logger::init();
     }
 
     qmetaobject::log::init_qt_to_rust();

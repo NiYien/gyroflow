@@ -327,6 +327,10 @@ impl<'a> FfmpegProcessor<'a> {
         cancel_flag: Arc<AtomicBool>,
         pause_flag: Arc<AtomicBool>,
     ) -> Result<(), FFmpegError> {
+        // Logging context for the encode pipeline.
+        let _log_ctx = gyroflow_core::log_context::LogContext::enter(
+            gyroflow_core::log_context::LogContextUpdate::default().op("encode"),
+        );
         let output_url = filesystem::get_file_url(output_folder, output_filename, true);
         let mut file = FfmpegPathWrapper::new(&output_url, true)
             .map_err(|e| FFmpegError::CannotOpenOutputFile((output_url.to_string(), e)))?;
