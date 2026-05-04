@@ -510,8 +510,8 @@ Ze względu na ograniczenia systemowych enkoderów wideo, renderowanie w tle nie
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Po otwarciu DMG przeciągnij Gyroflow.app do folderu Applications.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Po otwarciu DMG przeciągnij Gyroflow(NiYien).app do folderu Applications.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

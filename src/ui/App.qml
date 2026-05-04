@@ -1423,7 +1423,9 @@ Rectangle {
                     SectionDivider { visible: simpleDevice.active; }
                     ItemLoader {
                         id: simpleDevice;
-                        active: controller.device_connected || controller.ota_state !== "none";
+                        active: controller.device_connected
+                            || controller.ota_state !== "none"
+                            || ["requesting_permission", "permission_denied", "unsupported", "error"].indexOf(controller.device_connection_status) >= 0;
                         width: parent.width;
                         opacity: batchState.active ? 0.4 : 1.0;
                         enabled: !batchState.active;
@@ -1842,7 +1844,7 @@ Rectangle {
             if (url && url.length > 0) {
                 Qt.openUrlExternally(url);
             } else if (Qt.platform.os == "android") {
-                Qt.openUrlExternally("https://play.google.com/store/apps/details?id=xyz.gyroflow");
+                Qt.openUrlExternally("https://play.google.com/store/apps/details?id=com.niyien.gyroflow");
             } else if (Qt.platform.os == "ios") {
                 Qt.openUrlExternally("https://apps.apple.com/us/app/gyroflow/id6447994244");
             } else if (Qt.platform.os == "osx" && isStorePackage) {
@@ -1872,7 +1874,7 @@ Rectangle {
             window.closeAppUpdateDialog();
             const quitWarning = qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");
             const extra = platform === "macos"
-                ? "\n\n" + qsTr("After the DMG opens, drag Gyroflow.app to the Applications folder.")
+                ? "\n\n" + qsTr("After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.")
                 : "";
             appUpdateDialog = messageBox(Modal.Info, qsTr("Update is ready.") + "\n\n" + quitWarning + extra, [
                 { text: platform === "macos" ? qsTr("Open DMG and quit") : qsTr("Install and quit"), accent: true, clicked: () => controller.open_downloaded_update_and_quit() },

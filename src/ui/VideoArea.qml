@@ -795,6 +795,7 @@ Item {
                     }
                     property bool errorShown: false;
                     onMetadataChanged: {
+                        controller.log_video_metadata_state(vid.videoWidth, vid.videoHeight, vid.duration, vid.frameRate, vid.frameCount);
                         if (vid.videoWidth > 0) {
                             // Trigger seek to buffer the video frames
                             if (vid.duration == 0) {

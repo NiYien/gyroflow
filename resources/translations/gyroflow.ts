@@ -501,7 +501,7 @@ Due to limitations of the system video encoders, rendering in the background is 
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

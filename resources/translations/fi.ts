@@ -509,8 +509,8 @@ Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tu
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Kun DMG avautuu, vedä Gyroflow.app Applications-kansioon.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Kun DMG avautuu, vedä Gyroflow(NiYien).app Applications-kansioon.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

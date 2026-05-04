@@ -510,8 +510,8 @@ A causa delle limitazioni degli encoder video di sistema, il rendering in backgr
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Una volta aperto il DMG, trascina Gyroflow.app nella cartella Applications.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Una volta aperto il DMG, trascina Gyroflow(NiYien).app nella cartella Applications.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

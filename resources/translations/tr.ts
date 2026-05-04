@@ -508,8 +508,8 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>DMG açıldıktan sonra Gyroflow.app'i Applications klasörüne sürükleyin.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>DMG açıldıktan sonra Gyroflow(NiYien).app'i Applications klasörüne sürükleyin.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

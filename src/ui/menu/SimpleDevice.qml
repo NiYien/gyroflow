@@ -15,7 +15,9 @@ MenuItem {
     iconName: "plugin"
     objectName: "simple-device"
     opened: true
-    visible: controller.device_connected || controller.ota_state !== "none"
+    visible: controller.device_connected
+        || controller.ota_state !== "none"
+        || root.connectionStatusNeedsPanel()
 
     property string deviceTimeText: ""
     property string lastDeviceTimeSource: ""
@@ -62,6 +64,33 @@ MenuItem {
     }
     function translatedDeviceText(text: string): string {
         return text && text.length > 0 ? qsTranslate("Device", text) : ""
+    }
+    function connectionStatusNeedsPanel(): bool {
+        return ["requesting_permission", "permission_denied", "unsupported", "error"].indexOf(controller.device_connection_status) >= 0
+    }
+    function connectionStatusTitle(): string {
+        if (controller.device_connection_status === "requesting_permission")
+            return qsTranslate("Device", "Requesting device permission")
+        if (controller.device_connection_status === "permission_denied")
+            return qsTranslate("Device", "Device permission denied")
+        if (controller.device_connection_status === "unsupported")
+            return qsTranslate("Device", "Device connection unsupported")
+        if (controller.device_connection_status === "error")
+            return qsTranslate("Device", "Device connection error")
+        return ""
+    }
+    function connectionStatusColor(): color {
+        if (controller.device_connection_status === "requesting_permission")
+            return styleAccentColor
+        if (controller.device_connection_status === "permission_denied" || controller.device_connection_status === "error")
+            return root.lightTheme ? "#b83e3e" : "#ffb1b1"
+        if (controller.device_connection_status === "unsupported")
+            return root.lightTheme ? "#7a5a18" : "#f0cf79"
+        return root.mutedTextColor
+    }
+    function connectionStatusMessage(): string {
+        const message = root.translatedDeviceText(controller.device_connection_message)
+        return message.length > 0 ? message : root.connectionStatusTitle()
     }
     function deviceSyncNoticeBackgroundColor(): color {
         if (root.deviceSyncNoticeType === root.deviceSyncNoticeError)
@@ -192,6 +221,7 @@ MenuItem {
         root.deviceTimeText = current ? Qt.formatDateTime(current, "yyyy-MM-dd hh:mm:ss") : controller.device_time
     }
     function firmwareStatusTitle(): string {
+        if (!controller.device_connected && root.connectionStatusNeedsPanel()) return root.connectionStatusTitle()
         if (controller.ota_state === "checking") return qsTranslate("Device", "Checking for updates")
         if (controller.ota_state === "update_available") return qsTranslate("Device", "Update available")
         if (controller.ota_state === "updating") return qsTranslate("Device", "Updating firmware")
@@ -201,6 +231,7 @@ MenuItem {
         return qsTranslate("Device", "Waiting for device")
     }
     function firmwareStatusColor(): color {
+        if (!controller.device_connected && root.connectionStatusNeedsPanel()) return root.connectionStatusColor()
         if (controller.ota_state === "failed") return "#d9534f"
         if (controller.ota_state === "update_available") return "#d68a1e"
         if (controller.ota_state === "success") return "#2f9e67"
@@ -209,6 +240,8 @@ MenuItem {
     }
     function firmwareDetailText(): string {
         const currentVersion = controller.device_soft_version.length > 0 ? controller.device_soft_version : "--"
+        if (!controller.device_connected && root.connectionStatusNeedsPanel())
+            return root.connectionStatusMessage()
         if (controller.ota_state === "up_to_date")
             return qsTranslate("Device", "Current firmware: %1. Your device is already on the latest firmware.").arg(currentVersion)
         if (controller.ota_state === "checking")
@@ -342,6 +375,14 @@ MenuItem {
         QT_TRANSLATE_NOOP("Device", "Device time synchronized successfully")
         QT_TRANSLATE_NOOP("Device", "Failed to synchronize device time")
         QT_TRANSLATE_NOOP("Device", "The device was disconnected during OTA transfer")
+        QT_TRANSLATE_NOOP("Device", "Requesting device permission")
+        QT_TRANSLATE_NOOP("Device", "Device permission denied")
+        QT_TRANSLATE_NOOP("Device", "Device connection unsupported")
+        QT_TRANSLATE_NOOP("Device", "Device connection error")
+        QT_TRANSLATE_NOOP("Device", "iOS cannot access the NiYien A1 real-time device channel on this build")
+        QT_TRANSLATE_NOOP("Device", "mobile device bridge is not connected")
+        QT_TRANSLATE_NOOP("Device", "Device command channel is unavailable")
+        QT_TRANSLATE_NOOP("Device", "Device event channel is unavailable")
         QT_TRANSLATE_NOOP("Device", "NiYien A1")
     }
 
@@ -534,6 +575,17 @@ MenuItem {
                                 color: root.deviceSyncNoticeTextColor()
                             }
                         }
+                    }
+
+                    BasicText {
+                        width: parent.width
+                        leftPadding: 0
+                        visible: !controller.device_connected && root.connectionStatusNeedsPanel() && text.length > 0
+                        text: root.connectionStatusMessage()
+                        color: root.connectionStatusColor()
+                        font.pixelSize: 11 * dpiScale
+                        font.bold: true
+                        wrapMode: Text.WordWrap
                     }
                 }
             }

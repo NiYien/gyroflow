@@ -764,6 +764,7 @@ pub struct RenderQueue {
 
     get_prev_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
     get_next_item_id: qt_method!(fn(&self, job_id: u32) -> u32),
+    get_job_id_at_model_index: qt_method!(fn(&self, index: i32) -> u32),
     get_encoder_options: qt_method!(fn(&self, encoder: String) -> String),
     get_default_encoder: qt_method!(fn(&self, codec: String, gpu: bool) -> String),
     get_active_render_count: qt_method!(fn(&self) -> usize),
@@ -4379,6 +4380,18 @@ impl RenderQueue {
         } else {
             Vec::new()
         }
+    }
+
+    fn get_job_id_at_model_index(&self, index: i32) -> u32 {
+        if index < 0 {
+            return 0;
+        }
+        if let Ok(queue) = self.queue.try_borrow() {
+            if index < queue.row_count() {
+                return queue[index as usize].job_id;
+            }
+        }
+        0
     }
 
     // T1: Add a gyro file to the list and start background parsing (T2).
@@ -9233,6 +9246,27 @@ mod tests {
     }
 
     #[test]
+    fn render_queue_job_id_lookup_reads_queue_model_by_index() {
+        let queue = RenderQueue::default();
+        {
+            let mut model = queue.queue.borrow_mut();
+            model.push(RenderQueueItem {
+                job_id: 11,
+                ..Default::default()
+            });
+            model.push(RenderQueueItem {
+                job_id: 22,
+                ..Default::default()
+            });
+        }
+
+        assert_eq!(queue.get_job_id_at_model_index(0), 11);
+        assert_eq!(queue.get_job_id_at_model_index(1), 22);
+        assert_eq!(queue.get_job_id_at_model_index(-1), 0);
+        assert_eq!(queue.get_job_id_at_model_index(2), 0);
+    }
+
+    #[test]
     fn render_queue_checkbox_shift_select_has_explicit_modifier_handler() {
         let qml = include_str!("../ui/RenderQueue.qml");
 
@@ -9261,6 +9295,60 @@ mod tests {
         assert!(
             !qml.contains("lv.indexAt(1, lv.contentY + viewY)"),
             "drag-select must not mix ListView viewport and content coordinates"
+        );
+    }
+
+    #[test]
+    fn render_queue_mobile_add_entry_uses_existing_batch_loader() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        assert!(
+            qml.contains("id: mobileAddFilesDialog"),
+            "mobile render queue must define a file picker"
+        );
+        assert!(
+            qml.contains("fileMode: FileDialog.OpenFiles"),
+            "mobile file picker must allow selecting multiple files"
+        );
+        assert!(
+            qml.contains("dt.loadFiles(selectedFiles)"),
+            "mobile file picker must reuse the existing batch load path"
+        );
+        assert!(
+            qml.contains("id: mobileAddFolderDialog"),
+            "mobile render queue must define a folder picker"
+        );
+        assert!(
+            qml.contains("dt.loadFiles([selectedFolder])"),
+            "mobile folder picker must reuse the existing folder load path"
+        );
+    }
+
+    #[test]
+    fn render_queue_mobile_add_bar_and_drop_hint_visibility_are_layout_specific() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        let add_area_idx = qml
+            .find("id: mobileAddArea")
+            .expect("mobile add area exists");
+        let add_area = &qml[add_area_idx..];
+        assert!(
+            add_area.contains("visible: window.isMobileLayout"),
+            "mobile add area must only be visible on mobile layout"
+        );
+        assert!(add_area.contains("mobileAddFilesDialog.open2()"));
+        assert!(add_area.contains("mobileAddFolderDialog.open()"));
+
+        let hint_idx = qml
+            .find("Drop video files or gyroscope data here")
+            .expect("drop hint exists");
+        let hint_block_start = qml[..hint_idx]
+            .rfind("BasicText {")
+            .expect("drop hint text block starts before text");
+        let hint_block = &qml[hint_block_start..hint_idx + 80.min(qml.len() - hint_idx)];
+        assert!(
+            hint_block.contains("visible: lv.count === 0 && !window.isMobileLayout"),
+            "drop hint must be hidden on mobile layout"
         );
     }
 

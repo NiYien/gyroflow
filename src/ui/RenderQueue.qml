@@ -3,6 +3,7 @@
 
 import QtQuick
 import QtQuick.Controls as QQC
+import QtQuick.Dialogs as QQD
 
 import "components/"
 import "Util.js" as Util;
@@ -79,11 +80,7 @@ Item {
     property bool _touchSelectActive: false
 
     function jobIdAtModelIndex(modelIndex) {
-        // render_queue.queue is a SimpleListModel (QAbstractListModel) — direct
-        // [i] indexing returns undefined in QML. Read jobId off the instantiated
-        // delegate instead, mirroring the original implementation.
-        const item = lv.itemAtIndex(modelIndex);
-        return (item && item.jobId) ? item.jobId : 0;
+        return render_queue.get_job_id_at_model_index(modelIndex);
     }
 
     function selectedJobsWithRange(baseSelection, fromIndex, toIndex, addMode) {
@@ -339,6 +336,25 @@ Item {
     }
 
     Hr { width: parent.width - 10 * dpiScale; y: 35 * dpiScale; color: "#fff"; opacity: 0.3; }
+
+    FileDialog {
+        id: mobileAddFilesDialog;
+        title: qsTr("Choose files")
+        nameFilters: Qt.platform.os == "android"? undefined : [qsTr("Video files") + " (*." + fileDialog.extensions.concat(fileDialog.extensions.map(x => x.toUpperCase())).join(" *.") + ")"];
+        type: "video";
+        fileMode: FileDialog.OpenFiles;
+        onAccepted: dt.loadFiles(selectedFiles);
+    }
+
+    QQD.FolderDialog {
+        id: mobileAddFolderDialog;
+        title: qsTr("Choose folder")
+        onAccepted: {
+            filesystem.folder_access_granted(selectedFolder);
+            Qt.callLater(filesystem.save_allowed_folders);
+            dt.loadFiles([selectedFolder]);
+        }
+    }
 
     Row {
         id: progressRow;
@@ -651,13 +667,51 @@ Item {
         }
     }
 
+    Rectangle {
+        id: mobileAddArea;
+        visible: window.isMobileLayout;
+        x: 10 * dpiScale;
+        anchors.top: matchWarningBar.bottom;
+        anchors.topMargin: visible ? 6 * dpiScale : 0;
+        width: parent.width - 20 * dpiScale;
+        height: visible ? 42 * dpiScale : 0;
+        color: "transparent";
+        clip: true;
+
+        Row {
+            anchors.fill: parent;
+            spacing: 8 * dpiScale;
+
+            Button {
+                text: qsTr("Add files");
+                iconName: "plus";
+                width: (parent.width - parent.spacing) / 2;
+                height: parent.height;
+                font.pixelSize: 13 * dpiScale;
+                leftPadding: 10 * dpiScale;
+                rightPadding: 10 * dpiScale;
+                onClicked: mobileAddFilesDialog.open2();
+            }
+            Button {
+                text: qsTr("Add folder");
+                iconName: "folder";
+                width: (parent.width - parent.spacing) / 2;
+                height: parent.height;
+                font.pixelSize: 13 * dpiScale;
+                leftPadding: 10 * dpiScale;
+                rightPadding: 10 * dpiScale;
+                onClicked: mobileAddFolderDialog.open();
+            }
+        }
+    }
+
     ListView {
         id: lv;
         anchors.left: parent.left;
         anchors.leftMargin: 10 * dpiScale;
         anchors.right: parent.right;
         anchors.rightMargin: 10 * dpiScale;
-        anchors.top: matchWarningBar.bottom;
+        anchors.top: mobileAddArea.bottom;
         anchors.topMargin: 5 * dpiScale;
         anchors.bottom: multiSelectBar.visible ? multiSelectBar.top : (topGyroButtons.visible ? topGyroButtons.top : parent.bottom);
         anchors.bottomMargin: (multiSelectBar.visible || topGyroButtons.visible) ? 5 * dpiScale : 30 * dpiScale;
@@ -1628,7 +1682,7 @@ Item {
 
     // [queue-gyro-column] 空状态拖拽提示
     BasicText {
-        visible: lv.count === 0;
+        visible: lv.count === 0 && !window.isMobileLayout;
         text: qsTr("Drop video files or gyroscope data here");
         anchors.centerIn: lv;
         color: styleTextColor;

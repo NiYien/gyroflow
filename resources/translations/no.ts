@@ -510,8 +510,8 @@ På grunn av begrensninger for systemets videokodere, støttes ikke gjengivelse 
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Når DMG-filen åpnes, drar du Gyroflow.app til Applications-mappen.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Når DMG-filen åpnes, drar du Gyroflow(NiYien).app til Applications-mappen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

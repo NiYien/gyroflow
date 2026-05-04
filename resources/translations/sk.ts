@@ -510,8 +510,8 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Po otvorení DMG pretiahnite Gyroflow.app do priečinka Applications.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Po otvorení DMG pretiahnite Gyroflow(NiYien).app do priečinka Applications.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

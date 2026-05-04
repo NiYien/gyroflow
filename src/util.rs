@@ -154,7 +154,7 @@ cpp! {{
 #[cfg(target_os = "android")]
 #[allow(non_snake_case)]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_xyz_gyroflow_MainActivity_urlReceived(
+pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlReceived(
     _vm: *mut c_void,
     _: *mut c_void,
     jstr: *mut c_void,
@@ -624,7 +624,7 @@ pub fn save_exe_location() {
                 if let Some(parent) = parent.parent() {
                     // Contents
                     if let Some(parent) = parent.parent() {
-                        // Gyroflow.app
+                        // App bundle
                         gyroflow_core::settings::set(
                             "exeLocation",
                             parent.to_string_lossy().into(),

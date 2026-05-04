@@ -385,8 +385,8 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>打開 DMG 後，請將 Gyroflow.app 拖入 Applications 資料夾。</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>打開 DMG 後，請將 Gyroflow(NiYien).app 拖入 Applications 資料夾。</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

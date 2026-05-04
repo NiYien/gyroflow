@@ -509,8 +509,8 @@ Debido a las limitaciones de los codificadores de vídeo del sistema, no se admi
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Cuando se abra el DMG, arrastra Gyroflow.app a la carpeta Applications.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Cuando se abra el DMG, arrastra Gyroflow(NiYien).app a la carpeta Applications.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

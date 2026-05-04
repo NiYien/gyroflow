@@ -15,7 +15,6 @@ pub mod controller;
 pub mod distribution;
 pub mod external_sdk;
 pub mod network;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub mod niyien_device;
 #[cfg(any(target_os = "windows", target_os = "macos"))]
 pub mod nle_plugins;

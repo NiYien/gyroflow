@@ -511,8 +511,8 @@ Rendering di latar belakang tidak didukung, karena keterbatasan sistem encoder v
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Setelah DMG terbuka, seret Gyroflow.app ke folder Applications.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Setelah DMG terbuka, seret Gyroflow(NiYien).app ke folder Applications.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>

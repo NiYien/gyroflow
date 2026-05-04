@@ -183,3 +183,73 @@ fn dir_has_payload_recursive(path: &Path) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::DistributionConfig;
+
+    #[test]
+    fn niyien_brand_display_name_drives_window_title_format() {
+        let raw_config = include_str!("../../distribution/niyien.toml");
+        let config: DistributionConfig = toml::from_str(raw_config).unwrap();
+        let display_name = config.brand.display_name.as_str();
+
+        assert_eq!(display_name, "Gyroflow(NiYien)");
+
+        let main_window_qml = include_str!("../ui/main_window.qml");
+        assert!(main_window_qml.contains(r#"title: brandDisplayName + " " + version;"#));
+        assert!(!main_window_qml.contains(r#"title: "Gyroflow "#));
+
+        assert_eq!(
+            format!("{display_name} {}", "1.6.3"),
+            "Gyroflow(NiYien) 1.6.3"
+        );
+        assert_eq!(
+            format!("{display_name} {}", "1.6.3(ni42)"),
+            "Gyroflow(NiYien) 1.6.3(ni42)"
+        );
+    }
+
+    #[test]
+    fn niyien_active_platform_identifiers_use_niyien_namespace() {
+        let mac_plist = include_str!("../../_deployment/mac/Gyroflow.app/Contents/Info.plist");
+        assert!(mac_plist.contains("<string>com.niyien.gyroflow</string>"));
+        assert!(mac_plist.contains("<key>CFBundleDisplayName</key>                 <string>Gyroflow(NiYien)</string>"));
+        assert!(mac_plist.contains("<key>CFBundleName</key>                        <string>Gyroflow(NiYien)</string>"));
+        assert!(mac_plist.contains("com.niyien.gyroflow.project"));
+        assert!(!mac_plist.contains("xyz.gyroflow"));
+
+        let android_manifest = include_str!("../../_deployment/android/AndroidManifest.xml");
+        assert!(android_manifest.contains(r#"package="com.niyien.gyroflow""#));
+        assert!(android_manifest.contains(r#"android:name="com.niyien.gyroflow.MainActivity""#));
+        assert!(android_manifest.contains(r#"android:label="Gyroflow(NiYien)""#));
+        assert!(!android_manifest.contains("xyz.gyroflow"));
+
+        let main_activity = include_str!(
+            "../../_deployment/android/src/com/niyien/gyroflow/MainActivity.java"
+        );
+        assert!(main_activity.contains("package com.niyien.gyroflow;"));
+
+        let util_rs = include_str!("../util.rs");
+        assert!(util_rs.contains("Java_com_niyien_gyroflow_MainActivity_urlReceived"));
+        assert!(!util_rs.contains("Java_xyz_gyroflow_MainActivity_urlReceived"));
+
+        let android_just = include_str!("../../_scripts/android.just");
+        assert!(
+            android_just.contains("com.niyien.gyroflow/com.niyien.gyroflow.MainActivity")
+        );
+
+        let app_qml = include_str!("../ui/App.qml");
+        assert!(
+            app_qml.contains("https://play.google.com/store/apps/details?id=com.niyien.gyroflow")
+        );
+        assert!(app_qml.contains("After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder."));
+        assert!(!app_qml.contains("id=xyz.gyroflow"));
+
+        let macos_just = include_str!("../../_scripts/macos.just");
+        assert!(macos_just.contains(r#"BundleIdentifier              := "com.niyien.gyroflow""#));
+        assert!(macos_just.contains(r#"AppBundleName                 := "Gyroflow(NiYien).app""#));
+        assert!(macos_just.contains("_deployment/_binaries/mac/{{AppBundleName}}"));
+        assert!(!macos_just.contains("_deployment/_binaries/mac/Gyroflow.app"));
+    }
+}

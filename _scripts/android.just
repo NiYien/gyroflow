@@ -380,7 +380,7 @@ deploy *param:
             Assert-NativeCommandSucceeded "adb install"
             adb logcat -c
             Assert-NativeCommandSucceeded "adb logcat clear"
-            adb shell am start -n xyz.gyroflow/xyz.gyroflow.MainActivity
+            adb shell am start -n com.niyien.gyroflow/com.niyien.gyroflow.MainActivity
             Assert-NativeCommandSucceeded "adb start"
             adb logcat -s Gyroflow
             Assert-NativeCommandSucceeded "adb logcat"

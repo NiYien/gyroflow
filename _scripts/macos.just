@@ -1,7 +1,7 @@
 import 'common.just'
 
 TeamID                        := "RR3ZC2L4DF"
-BundleIdentifier              := "xyz.gyroflow"
+BundleIdentifier              := "com.niyien.gyroflow"
 DistributionCertificateSHA    := "05AC9B1B232615B6DBE1FECD5A02AC21BBE967A9"
 DistributionMacInstallerSHA   := "67FDE536BC3BEBDB68E1224CF5DB17B8EB936F49"
 DistributionProvisioning      := ProjectDir / "_deployment/mac/Gyroflow_mac_app_store.provisionprofile"
@@ -9,8 +9,11 @@ DistributionProvisioning      := ProjectDir / "_deployment/mac/Gyroflow_mac_app_
 # For local sandbox testing:
 # DistributionCertificateSHA    := "D125BE70B690030172EB74A828C10C1AE77FDE9A"
 # DistributionProvisioning      := ProjectDir / "_deployment/mac/Gyroflow_mac_developer_id.provisionprofile"
+# macOS release signing prerequisites: NiYien Apple App ID, provisioning profile,
+# and signing certificates must match {{BundleIdentifier}}.
 
-AppBundle := ProjectDir / "_deployment/_binaries/mac/Gyroflow.app"
+AppBundleName                 := "Gyroflow(NiYien).app"
+AppBundle := ProjectDir / "_deployment/_binaries/mac/{{AppBundleName}}"
 
 export CPATH := if os() == "macos" {
     if path_exists(`xcode-select --print-path` + "/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/usr/include") == "true" {
@@ -132,6 +135,7 @@ deploy *param:
     : "${CARGO_TARGET:=$PROJECT_DIR/target/release}"
     : "${QT_DIR:=$PROJECT_DIR/ext/{{QtVersion}}/macos}"
     : "${OPENCV_DIR:=$PROJECT_DIR/ext/vcpkg/installed}"
+    APP_BUNDLE="$PROJECT_DIR/_deployment/_binaries/mac/{{AppBundleName}}"
 
     rm -rf "$PROJECT_DIR/_deployment/_binaries/mac"
 
@@ -190,19 +194,20 @@ deploy *param:
     rm -rf $ICON_OUT/../AppIcon.iconset
 
     if [ "{{param}}" == "local" ] || [ "{{param}}" == "universal" ]; then
-        mkdir -p "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_presets/"
-        CARGO_TARGET="$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/MacOS"
-        cp -Rf "$PROJECT_DIR/_deployment/mac/Gyroflow.app"    "$PROJECT_DIR/_deployment/_binaries/mac/"
-        cp -f  "$PROJECT_DIR/target/deploy/gyroflow"          "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/MacOS/"
-        strip "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/MacOS/gyroflow"
-        cp -Rf "$PROJECT_DIR/target/Frameworks/mdk.framework" "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks/" || true
-        cp -Rf "$PROJECT_DIR/target/x86_64-apple-darwin/Frameworks/mdk.framework" "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks/"
-        # cp -Rf "$PROJECT_DIR/resources/camera_presets"        "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/"
-        # rm -rf "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_presets/.git"
-        cp -f "$PROJECT_DIR/resources/camera_presets/profiles.cbor.gz" "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_presets/profiles.cbor.gz"
+        mkdir -p "$PROJECT_DIR/_deployment/_binaries/mac"
+        cp -Rf "$PROJECT_DIR/_deployment/mac/Gyroflow.app" "$APP_BUNDLE"
+        mkdir -p "$APP_BUNDLE/Contents/Resources/camera_presets/"
+        CARGO_TARGET="$APP_BUNDLE/Contents/MacOS"
+        cp -f  "$PROJECT_DIR/target/deploy/gyroflow"          "$APP_BUNDLE/Contents/MacOS/"
+        strip "$APP_BUNDLE/Contents/MacOS/gyroflow"
+        cp -Rf "$PROJECT_DIR/target/Frameworks/mdk.framework" "$APP_BUNDLE/Contents/Frameworks/" || true
+        cp -Rf "$PROJECT_DIR/target/x86_64-apple-darwin/Frameworks/mdk.framework" "$APP_BUNDLE/Contents/Frameworks/"
+        # cp -Rf "$PROJECT_DIR/resources/camera_presets"        "$APP_BUNDLE/Contents/Resources/"
+        # rm -rf "$APP_BUNDLE/Contents/Resources/camera_presets/.git"
+        cp -f "$PROJECT_DIR/resources/camera_presets/profiles.cbor.gz" "$APP_BUNDLE/Contents/Resources/camera_presets/profiles.cbor.gz"
         # Niyien: camera_db (populated by src/core/build.rs from niyien-lens-data release)
-        mkdir -p "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_db/"
-        cp -f "$PROJECT_DIR/resources/camera_db/"*.json "$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/camera_db/"
+        mkdir -p "$APP_BUNDLE/Contents/Resources/camera_db/"
+        cp -f "$PROJECT_DIR/resources/camera_db/"*.json "$APP_BUNDLE/Contents/Resources/camera_db/"
     fi
 
     cp -af "$QT_DIR/lib/QtCore.framework"                     "$CARGO_TARGET/../Frameworks/"
@@ -231,7 +236,7 @@ deploy *param:
     cp -af "$QT_DIR/lib/QtWidgets.framework"                  "$CARGO_TARGET/../Frameworks/"
 
     if [ "{{param}}" == "local" ] || [ "{{param}}" == "universal" ]; then
-        CARGO_TARGET="$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/qml"
+        CARGO_TARGET="$APP_BUNDLE/Contents/Resources/qml"
     fi
 
     mkdir -p "$CARGO_TARGET/QtCore/"
@@ -296,7 +301,7 @@ deploy *param:
     cp -f $QT_DIR/qml/QtQuick/Effects/qmldir                                                          "$CARGO_TARGET/QtQuick/Effects/" || true
 
     if [ "{{param}}" == "local" ] || [ "{{param}}" == "universal" ]; then
-        CARGO_TARGET="$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/PlugIns"
+        CARGO_TARGET="$APP_BUNDLE/Contents/PlugIns"
     fi
     mkdir -p "$CARGO_TARGET/iconengines/"
     mkdir -p "$CARGO_TARGET/imageformats/"
@@ -307,17 +312,17 @@ deploy *param:
     cp -f $QT_DIR/plugins/platforms/libqcocoa.dylib                                                   "$CARGO_TARGET/platforms/"
 
     if [ "{{param}}" == "local" ] || [ "{{param}}" == "universal" ]; then
-        xattr -c $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Info.plist
-        xattr -c $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Resources/AppIcon.icns
-        rm -f $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/MacOS/.empty
-        rm -f $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/PlugIns/.empty
-        rm -f $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks/.empty
-        rm -f $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks/mdk.framework/Versions/A/libass.dylib
+        xattr -c "$APP_BUNDLE/Contents/Info.plist"
+        xattr -c "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+        rm -f "$APP_BUNDLE/Contents/MacOS/.empty"
+        rm -f "$APP_BUNDLE/Contents/PlugIns/.empty"
+        rm -f "$APP_BUNDLE/Contents/Frameworks/.empty"
+        rm -f "$APP_BUNDLE/Contents/Frameworks/mdk.framework/Versions/A/libass.dylib"
 
         # Bundle BRAW and RED SDK so users don't hit a runtime download.
         # Mirrors upstream gyroflow `_scripts/macos.just::bundle`; placed before
         # codesign here so the SDK dylibs are signed + notarized together with the app.
-        FrameworksDir="$PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/Frameworks"
+        FrameworksDir="$APP_BUNDLE/Contents/Frameworks"
         : "${SDK_BASE:=https://api.gyroflow.xyz/sdk}"
         if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
             curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.1.2.tar.gz" -o /tmp/red_sdk.tar.gz
@@ -334,11 +339,11 @@ deploy *param:
         if [ "$SIGNING_FINGERPRINT" != "" ]; then
             # Certificate needs to be "Developer ID Application"
 
-            find $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents \( -name "*.dylib" -or -path "*/Versions/A/*" \) -and ! \( \
+            find "$APP_BUNDLE/Contents" \( -name "*.dylib" -or -path "*/Versions/A/*" \) -and ! \( \
                 -path "*/Headers/*" -or -path "*/A/Resources/*" -or -name "CodeResources" -or -name "module.modulemap" \) -type f | sort | xargs -r \
                 codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT
 
-            codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app/Contents/MacOS/gyroflow
+            codesign -vvvv --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT "$APP_BUNDLE/Contents/MacOS/gyroflow"
 
             # --deep so the nested BlackmagicRawAPI.framework gets re-sealed
             # after the find/xargs above resigned its inner Libraries/* binaries.
@@ -346,9 +351,9 @@ deploy *param:
             # expects pre-resign hashes and `codesign --deep --verify` below
             # reports "file modified" for DecoderMetal / DecoderOpenCL /
             # InstructionSetServicesAVX[2].
-            codesign -vvvv --deep --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app
+            codesign -vvvv --deep --strict --options runtime --timestamp --force -s $SIGNING_FINGERPRINT "$APP_BUNDLE"
 
-            codesign -vvvv --deep --verify $PROJECT_DIR/_deployment/_binaries/mac/Gyroflow.app
+            codesign -vvvv --deep --verify "$APP_BUNDLE"
         fi
 
         if [ -z "$DONT_BUILD_DMG" ]; then

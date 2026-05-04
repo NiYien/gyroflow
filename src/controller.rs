@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 
 use qml_video_rs::video_item::MDKVideoItem;
@@ -25,8 +24,7 @@ use crate::core::keyframes::*;
 use crate::core::stabilization::KernelParamsFlags;
 use crate::core::synchronization;
 use crate::core::synchronization::AutosyncProcess;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::niyien_device::{DeviceCommand, DeviceEvent, DeviceManager};
+use crate::niyien_device::{DeviceCommand, DeviceConnectionStatus, DeviceEvent, DeviceManager};
 use crate::qt_gpu::qrhi_undistort;
 use crate::rendering;
 use crate::rendering::VideoProcessor;
@@ -57,6 +55,12 @@ pub struct Controller {
     init_player: qt_method!(fn(&self, player: QJSValue)),
     reset_player: qt_method!(fn(&self, player: QJSValue)),
     load_video: qt_method!(fn(&self, url: QUrl, player: QJSValue)),
+    log_video_file_dialog: qt_method!(
+        fn(&self, selected_count: i32, first_url: QUrl, selected_file: QUrl, current_folder: QUrl, selected_files_raw: QString)
+    ),
+    log_video_metadata_state: qt_method!(
+        fn(&self, width: i32, height: i32, duration_ms: f64, fps: f64, frame_count: i32)
+    ),
     video_file_loaded: qt_method!(fn(&self, player: QJSValue)),
     load_telemetry: qt_method!(
         fn(
@@ -309,6 +313,8 @@ pub struct Controller {
     device_state_changed: qt_signal!(),
     device_time_sync_finished: qt_signal!(success: bool, message: QString),
     device_connected: qt_property!(bool; NOTIFY device_state_changed),
+    device_connection_status: qt_property!(QString; NOTIFY device_state_changed),
+    device_connection_message: qt_property!(QString; NOTIFY device_state_changed),
     device_name: qt_property!(QString; NOTIFY device_state_changed),
     device_soft_version: qt_property!(QString; NOTIFY device_state_changed),
     device_hard_version: qt_property!(QString; NOTIFY device_state_changed),
@@ -420,14 +426,47 @@ pub struct Controller {
 
     ongoing_computations: BTreeSet<u64>,
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     device_manager: Option<DeviceManager>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     device_command_tx: Option<Sender<DeviceCommand>>,
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     device_event_rx: Option<Arc<Mutex<Receiver<DeviceEvent>>>>,
 
     pub stabilizer: Arc<StabilizationManager>,
+}
+
+fn video_log_scheme(url: &str) -> &'static str {
+    if url.is_empty() {
+        "empty"
+    } else if url.starts_with("content://") {
+        "content"
+    } else if url.starts_with("file://") {
+        "file"
+    } else if url.contains("://") {
+        "url"
+    } else {
+        "path"
+    }
+}
+
+fn video_log_decoder_label(custom_decoder: &str) -> &'static str {
+    if custom_decoder.is_empty() {
+        "default"
+    } else if custom_decoder.starts_with("FFmpeg:") {
+        "FFmpeg"
+    } else if custom_decoder.starts_with("BRAW:") {
+        "BRAW"
+    } else if custom_decoder.starts_with("R3D:") {
+        "R3D"
+    } else {
+        "custom"
+    }
+}
+
+fn enter_video_load_log_context(filename: &str) -> log_context::CtxScope {
+    log_context::LogContext::enter(
+        log_context::LogContextUpdate::default()
+            .op("video.load")
+            .video_path(util::normalize_path_for_log(filename)),
+    )
 }
 
 impl Controller {
@@ -436,15 +475,13 @@ impl Controller {
             preview_resolution: -1,
             processing_resolution: 720,
             ota_state: QString::from("none"),
+            device_connection_status: QString::from(DeviceConnectionStatus::Idle.as_str()),
             ..Default::default()
         };
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            let device_manager = DeviceManager::new();
-            this.device_command_tx = Some(device_manager.command_sender());
-            this.device_event_rx = Some(device_manager.event_receiver());
-            this.device_manager = Some(device_manager);
-        }
+        let device_manager = DeviceManager::new();
+        this.device_command_tx = Some(device_manager.command_sender());
+        this.device_event_rx = Some(device_manager.event_receiver());
+        this.device_manager = Some(device_manager);
         this
     }
 
@@ -480,13 +517,34 @@ impl Controller {
         self.gyro_changed();
         let url = util::qurl_to_encoded(url.clone());
         let filename = filesystem::get_filename(&url);
+        let url_scheme = video_log_scheme(&url);
 
         // Push log context for this load. RAII guard restores on scope exit.
-        let _log_ctx = log_context::LogContext::enter(
-            log_context::LogContextUpdate::default()
-                .op("video.load")
-                .video_path(util::normalize_path_for_log(&filename)),
+        let _log_ctx = enter_video_load_log_context(&filename);
+        ::log::info!(
+            target: "video.load",
+            "load_video request: filename={} scheme={} android_content={} preview_resolution={}",
+            filename,
+            url_scheme,
+            cfg!(target_os = "android") && url_scheme == "content",
+            self.preview_resolution,
         );
+        #[cfg(target_os = "android")]
+        if !matches!(url_scheme, "content" | "file") {
+            ::log::warn!(
+                target: "video.load",
+                "load_video received an unusual Android URL scheme: scheme={} filename_empty={}",
+                url_scheme,
+                filename.is_empty(),
+            );
+        }
+        if filename.is_empty() {
+            ::log::warn!(
+                target: "video.load",
+                "load_video received URL without a resolved filename: scheme={}",
+                url_scheme,
+            );
+        }
 
         // Load current (clean) state to the UI
         if self.stabilizer.lens_calibrator.read().is_none() {
@@ -548,16 +606,95 @@ impl Controller {
             custom_decoder = format!("R3D:gpu=auto{}", options);
         }
         if !custom_decoder.is_empty() {
-            ::log::debug!("Custom decoder: {custom_decoder}");
+            ::log::debug!(target: "video.load", "Custom decoder: {custom_decoder}");
         }
 
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
             filesystem::stop_accessing_url(&util::qurl_to_encoded(vid.url.clone()), false);
             filesystem::start_accessing_url(&url, false);
+            ::log::info!(
+                target: "video.load",
+                "MDK setUrl: filename={} scheme={} decoder={}",
+                filename,
+                url_scheme,
+                video_log_decoder_label(&custom_decoder),
+            );
             vid.setUrl(
                 QUrl::from(QString::from(url)),
                 QString::from(custom_decoder),
+            );
+        }
+    }
+
+    fn log_video_file_dialog(
+        &self,
+        selected_count: i32,
+        first_url: QUrl,
+        selected_file: QUrl,
+        current_folder: QUrl,
+        selected_files_raw: QString,
+    ) {
+        let first_url = util::qurl_to_encoded(first_url);
+        let selected_file = util::qurl_to_encoded(selected_file);
+        let current_folder = util::qurl_to_encoded(current_folder);
+        let selected_files_raw = selected_files_raw.to_string();
+        let first_filename = filesystem::get_filename(&first_url);
+        let selected_filename = filesystem::get_filename(&selected_file);
+        let context_filename = if !first_filename.is_empty() {
+            first_filename.as_str()
+        } else {
+            selected_filename.as_str()
+        };
+        let _log_ctx = enter_video_load_log_context(context_filename);
+        ::log::info!(
+            target: "video.load",
+            "FileDialog accepted: selected_count={} first_scheme={} first_filename={} selected_file_scheme={} selected_file_filename={} current_folder_scheme={} selected_files_raw={}",
+            selected_count,
+            video_log_scheme(&first_url),
+            first_filename,
+            video_log_scheme(&selected_file),
+            selected_filename,
+            video_log_scheme(&current_folder),
+            selected_files_raw,
+        );
+        if selected_count < 1 && selected_file.is_empty() {
+            ::log::warn!(
+                target: "video.load",
+                "FileDialog accepted without selected files",
+            );
+        }
+    }
+
+    fn log_video_metadata_state(
+        &self,
+        width: i32,
+        height: i32,
+        duration_ms: f64,
+        fps: f64,
+        frame_count: i32,
+    ) {
+        let input_url = self.stabilizer.input_file.read().url.clone();
+        let filename = filesystem::get_filename(&input_url);
+        let _log_ctx = enter_video_load_log_context(&filename);
+        ::log::info!(
+            target: "video.load",
+            "MDK metadata state: duration_ms={:.3} fps={:.6} frame_count={} width={} height={}",
+            duration_ms,
+            fps,
+            frame_count,
+            width,
+            height,
+        );
+        if width <= 0 || height <= 0 || duration_ms <= 0.0 || fps <= 0.0 {
+            ::log::warn!(
+                target: "video.load",
+                "MDK metadata state is invalid: duration_ms={:.3} fps={:.6} frame_count={} width={} height={}",
+                duration_ms,
+                fps,
+                frame_count,
+                width,
+                height,
             );
         }
     }
@@ -1032,6 +1169,9 @@ impl Controller {
 
     fn video_file_loaded(&mut self, player: QJSValue) {
         let stab = self.stabilizer.clone();
+        let input_url = self.stabilizer.input_file.read().url.clone();
+        let filename = filesystem::get_filename(&input_url);
+        let _log_ctx = enter_video_load_log_context(&filename);
 
         if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
             let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
@@ -1045,6 +1185,27 @@ impl Controller {
             if self.image_sequence_fps > 0.0 && frame_count > 0 {
                 fps = self.image_sequence_fps;
                 duration_ms = frame_count as f64 * 1000.0 / fps;
+            }
+
+            ::log::info!(
+                target: "video.load",
+                "video_file_loaded: duration_ms={:.3} fps={:.6} frame_count={} width={} height={}",
+                duration_ms,
+                fps,
+                frame_count,
+                video_size.0,
+                video_size.1,
+            );
+            if video_size.0 == 0 || video_size.1 == 0 || duration_ms <= 0.0 || fps <= 0.0 {
+                ::log::warn!(
+                    target: "video.load",
+                    "video_file_loaded has invalid media properties: duration_ms={:.3} fps={:.6} frame_count={} width={} height={}",
+                    duration_ms,
+                    fps,
+                    frame_count,
+                    video_size.0,
+                    video_size.1,
+                );
             }
 
             self.set_preview_resolution(self.preview_resolution, player);
@@ -1067,6 +1228,8 @@ impl Controller {
         let url = util::qurl_to_encoded(url);
         let stab = self.stabilizer.clone();
         let filename = filesystem::get_filename(&url);
+        let url_scheme = video_log_scheme(&url);
+        let _log_ctx = enter_video_load_log_context(&filename);
         let mut load_options = gyroflow_core::gyro_source::FileLoadOptions::default();
         load_options.project_version = project_version as _;
 
@@ -1083,6 +1246,31 @@ impl Controller {
             if self.image_sequence_fps > 0.0 && frame_count > 0 {
                 fps = self.image_sequence_fps;
                 duration_ms = frame_count as f64 * 1000.0 / fps;
+            }
+
+            ::log::info!(
+                target: "video.load",
+                "load_telemetry start: filename={} scheme={} main_video={} sample_index={} project_version={} duration_ms={:.3} fps={:.6} frame_count={} width={} height={}",
+                filename,
+                url_scheme,
+                is_main_video,
+                sample_index,
+                project_version,
+                duration_ms,
+                fps,
+                frame_count,
+                video_size.0,
+                video_size.1,
+            );
+            if duration_ms <= 0.0 || fps <= 0.0 {
+                ::log::warn!(
+                    target: "video.load",
+                    "load_telemetry skipped because media timing is invalid: filename={} scheme={} duration_ms={:.3} fps={:.6}",
+                    filename,
+                    url_scheme,
+                    duration_ms,
+                    fps,
+                );
             }
 
             if is_main_video {
@@ -2615,7 +2803,7 @@ impl Controller {
                     let path = prepared.path.display().to_string();
                     let platform = prepared.selection.platform.clone();
                     let message = if platform == "macos" {
-                        "After the DMG opens, drag Gyroflow.app to the Applications folder."
+                        "After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder."
                             .to_owned()
                     } else {
                         "Update package is ready".to_owned()
@@ -2642,24 +2830,21 @@ impl Controller {
     fn sync_device_time(&mut self, tz_offset_minutes: i32) {
         ::log::info!("NiYien: sync_device_time requested");
         if !self.device_connected {
-            self.device_time_sync_finished(false, QString::from("Device is not connected"));
+            self.device_time_sync_finished(false, self.device_unavailable_message());
             return;
         }
         self.device_time_sync_in_progress = true;
         self.device_state_changed();
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            if let Some(tx) = self.device_command_tx.as_ref() {
-                let offset = tz_offset_minutes.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-                if tx.send(DeviceCommand::SyncTime(offset)).is_ok() {
-                    return;
-                }
+        if let Some(tx) = self.device_command_tx.as_ref() {
+            let offset = tz_offset_minutes.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+            if tx.send(DeviceCommand::SyncTime(offset)).is_ok() {
+                return;
             }
         }
 
         self.device_time_sync_in_progress = false;
         self.device_state_changed();
-        self.device_time_sync_finished(false, QString::from("Device manager is unavailable"));
+        self.device_time_sync_finished(false, QString::from("Device command channel is unavailable"));
     }
 
     fn check_firmware_update(&mut self) {
@@ -2671,21 +2856,26 @@ impl Controller {
         self.firmware_changelog = QString::default();
         self.device_state_changed();
 
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            if let Some(tx) = self.device_command_tx.as_ref() {
-                let current_version = if self.device_soft_version.is_empty() {
-                    "0.0.0".to_owned()
-                } else {
-                    self.device_soft_version.to_string()
-                };
-                let _ = tx.send(DeviceCommand::CheckUpdate(current_version));
+        if !self.device_connected {
+            self.ota_state = QString::from("failed");
+            self.ota_error = self.device_unavailable_message();
+            self.device_state_changed();
+            return;
+        }
+
+        if let Some(tx) = self.device_command_tx.as_ref() {
+            let current_version = if self.device_soft_version.is_empty() {
+                "0.0.0".to_owned()
+            } else {
+                self.device_soft_version.to_string()
+            };
+            if tx.send(DeviceCommand::CheckUpdate(current_version)).is_ok() {
                 return;
             }
         }
 
         self.ota_state = QString::from("failed");
-        self.ota_error = QString::from("Device manager is unavailable");
+        self.ota_error = QString::from("Device command channel is unavailable");
         self.device_state_changed();
     }
 
@@ -2697,58 +2887,84 @@ impl Controller {
             self.device_state_changed();
             return;
         }
+        if !self.device_connected {
+            self.ota_state = QString::from("failed");
+            self.ota_error = self.device_unavailable_message();
+            self.device_state_changed();
+            return;
+        }
 
         self.ota_progress = 0.0;
         self.ota_error = QString::default();
         self.ota_state = QString::from("updating");
         self.device_state_changed();
 
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            if let Some(tx) = self.device_command_tx.as_ref() {
-                let _ = tx.send(DeviceCommand::StartOta);
+        if let Some(tx) = self.device_command_tx.as_ref() {
+            if tx.send(DeviceCommand::StartOta).is_ok() {
                 return;
             }
         }
 
         self.ota_state = QString::from("failed");
-        self.ota_error = QString::from("Device manager is unavailable");
+        self.ota_error = QString::from("Device command channel is unavailable");
         self.device_state_changed();
     }
 
     fn poll_device_events(&mut self) {
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        {
-            let Some(rx) = self.device_event_rx.as_ref().map(Arc::clone) else {
-                return;
-            };
+        let Some(rx) = self.device_event_rx.as_ref().map(Arc::clone) else {
+            return;
+        };
 
-            loop {
-                let event = {
-                    let rx = rx.lock();
-                    rx.try_recv()
-                };
-                match event {
-                    Ok(event) => self.handle_device_event(event),
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
-                        self.device_connected = false;
-                        self.device_state_changed();
-                        break;
-                    }
+        loop {
+            let event = {
+                let rx = rx.lock();
+                rx.try_recv()
+            };
+            match event {
+                Ok(event) => self.handle_device_event(event),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    self.device_connected = false;
+                    self.device_connection_status =
+                        QString::from(DeviceConnectionStatus::Error.as_str());
+                    self.device_connection_message =
+                        QString::from("Device event channel is unavailable");
+                    self.device_state_changed();
+                    break;
                 }
             }
         }
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn handle_device_event(&mut self, event: DeviceEvent) {
         match event {
+            DeviceEvent::ConnectionStatus(status, message) => {
+                self.device_connection_status = QString::from(status.as_str());
+                self.device_connection_message = QString::from(message);
+                if status != DeviceConnectionStatus::Connected {
+                    self.device_connected = false;
+                    self.device_time_sync_in_progress = false;
+                }
+                if matches!(
+                    status,
+                    DeviceConnectionStatus::PermissionDenied
+                        | DeviceConnectionStatus::Unsupported
+                        | DeviceConnectionStatus::Error
+                ) && self.ota_state == QString::from("updating")
+                {
+                    self.ota_state = QString::from("failed");
+                    self.ota_error = self.device_unavailable_message();
+                }
+                self.device_state_changed();
+            }
             DeviceEvent::Connected(info) => {
                 let soft_version = info.soft_version.clone();
                 let hard_version = info.hard_version.clone();
                 let serial = Self::format_device_serial(&info.serial_number);
                 self.device_connected = true;
+                self.device_connection_status =
+                    QString::from(DeviceConnectionStatus::Connected.as_str());
+                self.device_connection_message = QString::default();
                 self.device_name = QString::from(format!("A1:{serial}"));
                 self.device_soft_version = QString::from(info.soft_version);
                 self.device_hard_version = QString::from(info.hard_version);
@@ -2771,6 +2987,9 @@ impl Controller {
             }
             DeviceEvent::Disconnected => {
                 self.device_connected = false;
+                self.device_connection_status =
+                    QString::from(DeviceConnectionStatus::Idle.as_str());
+                self.device_connection_message = QString::default();
                 self.device_time_sync_in_progress = false;
                 self.device_name = QString::default();
                 self.device_soft_version = QString::default();
@@ -2862,7 +3081,13 @@ impl Controller {
         }
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
+    fn device_unavailable_message(&self) -> QString {
+        if !self.device_connection_message.is_empty() {
+            return self.device_connection_message.clone();
+        }
+        QString::from("Device is not connected")
+    }
+
     fn format_device_serial(serial_number: &[u8; 12]) -> String {
         let ascii_bytes: Vec<u8> = serial_number
             .iter()
@@ -2881,7 +3106,6 @@ impl Controller {
         hex
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     fn format_device_time(time: &crate::niyien_device::commands::DeviceTime) -> String {
         format!(
             "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
@@ -4401,6 +4625,27 @@ impl Controller {
         if count > 0 {
             self.crashCheckpointFound(count);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn video_log_scheme_classifies_mobile_and_local_urls() {
+        assert_eq!(video_log_scheme("content://media/external/video/media/42"), "content");
+        assert_eq!(video_log_scheme("file:///sdcard/DCIM/clip.mp4"), "file");
+        assert_eq!(video_log_scheme("C:/Users/Jhe/Videos/clip.mp4"), "path");
+        assert_eq!(video_log_scheme(""), "empty");
+    }
+
+    #[test]
+    fn video_log_decoder_label_keeps_values_coarse() {
+        assert_eq!(video_log_decoder_label(""), "default");
+        assert_eq!(video_log_decoder_label("FFmpeg:avformat_options=start_number=1"), "FFmpeg");
+        assert_eq!(video_log_decoder_label("BRAW:gpu=no:scale=1920x1080"), "BRAW");
+        assert_eq!(video_log_decoder_label("R3D:gpu=auto:scale=1920x1080"), "R3D");
     }
 }
 

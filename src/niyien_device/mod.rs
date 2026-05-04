@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use std::{
     io,
     sync::{
@@ -13,39 +12,33 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use chrono::{Datelike, Timelike, Utc};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use parking_lot::Mutex;
 
 pub mod commands;
+#[cfg(any(target_os = "android", target_os = "ios"))]
+pub mod mobile_backend;
 pub mod ota;
 pub mod protocol;
 pub mod serial_backend;
+pub mod transport;
 pub mod update_checker;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use crate::niyien_device::protocol::FrameParser;
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use commands::{DeviceTime, VersionInfo};
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use ota::{FirmwarePackage, OtaAction, OtaManager, OtaState};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use serial_backend::{
-    DefaultSerialBackend, RetryBackoff, ScanTracker, SerialBackend, SerialConnectionConfig,
-    SerialPortCandidate, SerialStream, filter_matching_ports,
+use serial_backend::DefaultSerialBackend;
+use transport::{
+    DeviceConnectionConfig, DevicePortCandidate, DeviceTransportBackend, DeviceTransportError,
+    DeviceTransportEvent, DeviceTransportStream, RetryBackoff, ScanTracker, filter_matching_ports,
 };
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 use update_checker::FirmwareUpdateInfo;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const SERIAL_LOOP_TICK: Duration = Duration::from_millis(50);
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const NETWORK_LOOP_TICK: Duration = Duration::from_millis(100);
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 const A1_DEVICE_PRODUCT_ID: u8 = 0xA1;
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Debug)]
 pub enum DeviceCommand {
     SyncTime(i16),
@@ -54,9 +47,32 @@ pub enum DeviceCommand {
     Stop,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceConnectionStatus {
+    Idle,
+    RequestingPermission,
+    Connected,
+    PermissionDenied,
+    Unsupported,
+    Error,
+}
+
+impl DeviceConnectionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Idle => "idle",
+            Self::RequestingPermission => "requesting_permission",
+            Self::Connected => "connected",
+            Self::PermissionDenied => "permission_denied",
+            Self::Unsupported => "unsupported",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub enum DeviceEvent {
+    ConnectionStatus(DeviceConnectionStatus, String),
     Connected(VersionInfo),
     Disconnected,
     TimeReceived(DeviceTime),
@@ -68,20 +84,17 @@ pub enum DeviceEvent {
     OtaFailed(String),
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-enum SerialCommand {
+enum TransportCommand {
     SyncTime(i16),
     Stop,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 enum NetworkCommand {
     CheckUpdate(String),
     StartOta,
     Stop,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Default)]
 struct DeviceSharedState {
     latest_update: Option<FirmwareUpdateInfo>,
@@ -92,8 +105,7 @@ struct DeviceSharedState {
     ota_last_progress_at: Option<Instant>,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-struct SerialSession<P: SerialStream> {
+struct DeviceSession<P: DeviceTransportStream> {
     port_name: String,
     stream: P,
     parser: FrameParser,
@@ -102,33 +114,54 @@ struct SerialSession<P: SerialStream> {
     last_time_poll: Instant,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub struct DeviceManager {
     command_tx: Sender<DeviceCommand>,
     event_rx: Arc<Mutex<Receiver<DeviceEvent>>>,
     running: Arc<AtomicBool>,
     dispatcher_thread: Option<JoinHandle<()>>,
-    serial_thread: Option<JoinHandle<()>>,
+    transport_thread: Option<JoinHandle<()>>,
     network_thread: Option<JoinHandle<()>>,
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 impl DeviceManager {
     pub fn new() -> Self {
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        {
+            Self::with_backend(DefaultSerialBackend::default(), None)
+        }
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            Self::with_backend(
+                mobile_backend::DefaultMobileBackend::default(),
+                mobile_backend::startup_connection_event(),
+            )
+        }
+    }
+
+    fn with_backend<B: DeviceTransportBackend>(
+        backend: B,
+        startup_connection_event: Option<(DeviceConnectionStatus, String)>,
+    ) -> Self {
         let (command_tx, command_rx) = mpsc::channel();
         let (event_tx, event_rx) = mpsc::channel();
-        let (serial_tx, serial_rx) = mpsc::channel();
+        let (transport_tx, transport_rx) = mpsc::channel();
         let (network_tx, network_rx) = mpsc::channel();
 
         let running = Arc::new(AtomicBool::new(true));
         let event_rx = Arc::new(Mutex::new(event_rx));
         let shared_state = Arc::new(Mutex::new(DeviceSharedState::default()));
 
-        let serial_thread = {
+        if let Some((status, message)) = startup_connection_event {
+            let _ = event_tx.send(DeviceEvent::ConnectionStatus(status, message));
+        }
+
+        let transport_thread = {
             let running = Arc::clone(&running);
             let event_tx = event_tx.clone();
             let shared_state = Arc::clone(&shared_state);
-            thread::spawn(move || serial_thread_loop(running, serial_rx, event_tx, shared_state))
+            thread::spawn(move || {
+                run_transport_thread(backend, running, transport_rx, event_tx, shared_state)
+            })
         };
 
         let network_thread = {
@@ -141,7 +174,7 @@ impl DeviceManager {
         let dispatcher_thread = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                dispatcher_loop(command_rx, serial_tx, network_tx, running);
+                dispatcher_loop(command_rx, transport_tx, network_tx, running);
             })
         };
 
@@ -150,7 +183,7 @@ impl DeviceManager {
             event_rx,
             running,
             dispatcher_thread: Some(dispatcher_thread),
-            serial_thread: Some(serial_thread),
+            transport_thread: Some(transport_thread),
             network_thread: Some(network_thread),
         }
     }
@@ -173,7 +206,7 @@ impl DeviceManager {
         if let Some(thread) = self.dispatcher_thread.take() {
             let _ = thread.join();
         }
-        if let Some(thread) = self.serial_thread.take() {
+        if let Some(thread) = self.transport_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.network_thread.take() {
@@ -182,24 +215,22 @@ impl DeviceManager {
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 impl Drop for DeviceManager {
     fn drop(&mut self) {
         self.stop();
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn dispatcher_loop(
     command_rx: Receiver<DeviceCommand>,
-    serial_tx: Sender<SerialCommand>,
+    transport_tx: Sender<TransportCommand>,
     network_tx: Sender<NetworkCommand>,
     running: Arc<AtomicBool>,
 ) {
     while running.load(SeqCst) {
         match command_rx.recv_timeout(Duration::from_millis(100)) {
             Ok(DeviceCommand::SyncTime(tz_offset_minutes)) => {
-                let _ = serial_tx.send(SerialCommand::SyncTime(tz_offset_minutes));
+                let _ = transport_tx.send(TransportCommand::SyncTime(tz_offset_minutes));
             }
             Ok(DeviceCommand::CheckUpdate(current_version)) => {
                 let _ = network_tx.send(NetworkCommand::CheckUpdate(current_version));
@@ -209,14 +240,14 @@ fn dispatcher_loop(
             }
             Ok(DeviceCommand::Stop) => {
                 running.store(false, SeqCst);
-                let _ = serial_tx.send(SerialCommand::Stop);
+                let _ = transport_tx.send(TransportCommand::Stop);
                 let _ = network_tx.send(NetworkCommand::Stop);
                 break;
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 running.store(false, SeqCst);
-                let _ = serial_tx.send(SerialCommand::Stop);
+                let _ = transport_tx.send(TransportCommand::Stop);
                 let _ = network_tx.send(NetworkCommand::Stop);
                 break;
             }
@@ -224,38 +255,25 @@ fn dispatcher_loop(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn serial_thread_loop(
-    running: Arc<AtomicBool>,
-    serial_rx: Receiver<SerialCommand>,
-    event_tx: Sender<DeviceEvent>,
-    shared_state: Arc<Mutex<DeviceSharedState>>,
-) {
-    run_serial_thread(
-        DefaultSerialBackend::default(),
-        running,
-        serial_rx,
-        event_tx,
-        shared_state,
-    );
-}
-
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn run_serial_thread<B: SerialBackend>(
+fn run_transport_thread<B: DeviceTransportBackend>(
     mut backend: B,
     running: Arc<AtomicBool>,
-    serial_rx: Receiver<SerialCommand>,
+    transport_rx: Receiver<TransportCommand>,
     event_tx: Sender<DeviceEvent>,
     shared_state: Arc<Mutex<DeviceSharedState>>,
 ) {
-    let config = SerialConnectionConfig::default();
+    let config = DeviceConnectionConfig::default();
     let mut scan_tracker = ScanTracker::default();
     let mut backoff = RetryBackoff::new(config.initial_retry_delay, config.max_retry_delay);
-    let mut session: Option<SerialSession<B::Port>> = None;
+    let mut session: Option<DeviceSession<B::Stream>> = None;
 
     while running.load(SeqCst) {
-        match serial_rx.recv_timeout(SERIAL_LOOP_TICK) {
-            Ok(SerialCommand::SyncTime(tz_offset_minutes)) => {
+        while let Some(event) = backend.poll_event() {
+            handle_transport_event(event, &mut session, &event_tx, &shared_state);
+        }
+
+        match transport_rx.recv_timeout(SERIAL_LOOP_TICK) {
+            Ok(TransportCommand::SyncTime(tz_offset_minutes)) => {
                 if let Some(active) = session.as_mut() {
                     if let Err(err) = send_current_time(active, tz_offset_minutes) {
                         log::warn!("Failed to send SyncTime to {}: {}", active.port_name, err);
@@ -266,7 +284,7 @@ fn run_serial_thread<B: SerialBackend>(
                     let _ = event_tx.send(DeviceEvent::TimeSyncResult(false));
                 }
             }
-            Ok(SerialCommand::Stop) => break,
+            Ok(TransportCommand::Stop) => break,
             Err(RecvTimeoutError::Timeout) => {
                 let now = Instant::now();
 
@@ -277,7 +295,7 @@ fn run_serial_thread<B: SerialBackend>(
 
                 if let Some(active) = session.as_mut() {
                     let mut should_disconnect = false;
-                    if !poll_serial_session(active, &event_tx, &shared_state, now) {
+                    if !poll_device_session(active, &event_tx, &shared_state, now) {
                         should_disconnect = true;
                     } else if active.version_info.is_some()
                         && !ota_active(&shared_state)
@@ -344,7 +362,34 @@ fn run_serial_thread<B: SerialBackend>(
     disconnect_session(&mut session, &event_tx, &shared_state);
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
+fn handle_transport_event<P: DeviceTransportStream>(
+    event: DeviceTransportEvent,
+    session: &mut Option<DeviceSession<P>>,
+    event_tx: &Sender<DeviceEvent>,
+    shared_state: &Arc<Mutex<DeviceSharedState>>,
+) {
+    match event {
+        DeviceTransportEvent::ConnectionStatus(status, message) => {
+            if matches!(
+                status,
+                DeviceConnectionStatus::PermissionDenied
+                    | DeviceConnectionStatus::Unsupported
+                    | DeviceConnectionStatus::Error
+            ) {
+                disconnect_session(session, event_tx, shared_state);
+            }
+            let _ = event_tx.send(DeviceEvent::ConnectionStatus(status, message));
+        }
+        DeviceTransportEvent::Detached => {
+            disconnect_session(session, event_tx, shared_state);
+            let _ = event_tx.send(DeviceEvent::ConnectionStatus(
+                DeviceConnectionStatus::Idle,
+                String::new(),
+            ));
+        }
+    }
+}
+
 fn network_thread_loop(
     running: Arc<AtomicBool>,
     network_rx: Receiver<NetworkCommand>,
@@ -383,7 +428,6 @@ fn network_thread_loop(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn prepare_ota(event_tx: &Sender<DeviceEvent>, shared_state: &Arc<Mutex<DeviceSharedState>>) {
     let update_info = {
         let shared = shared_state.lock();
@@ -437,19 +481,17 @@ fn prepare_ota(event_tx: &Sender<DeviceEvent>, shared_state: &Arc<Mutex<DeviceSh
     let _ = event_tx.send(DeviceEvent::OtaProgress(0.7));
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn try_open_candidate<B: SerialBackend>(
+fn try_open_candidate<B: DeviceTransportBackend>(
     backend: &mut B,
-    candidate: &SerialPortCandidate,
-    config: &SerialConnectionConfig,
+    candidate: &DevicePortCandidate,
+    config: &DeviceConnectionConfig,
     now: Instant,
     _event_tx: &Sender<DeviceEvent>,
-) -> Result<SerialSession<B::Port>, serial_backend::SerialBackendError> {
+) -> Result<DeviceSession<B::Stream>, DeviceTransportError> {
     let mut stream = backend.open(&candidate.port_name, config)?;
-    write_packet(&mut stream, &commands::ask_version())
-        .map_err(serial_backend::SerialBackendError::Io)?;
+    write_packet(&mut stream, &commands::ask_version()).map_err(DeviceTransportError::Io)?;
 
-    Ok(SerialSession {
+    Ok(DeviceSession {
         port_name: candidate.port_name.clone(),
         stream,
         parser: FrameParser::new(),
@@ -459,9 +501,8 @@ fn try_open_candidate<B: SerialBackend>(
     })
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn poll_serial_session<P: SerialStream>(
-    session: &mut SerialSession<P>,
+fn poll_device_session<P: DeviceTransportStream>(
+    session: &mut DeviceSession<P>,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
     now: Instant,
@@ -475,7 +516,7 @@ fn poll_serial_session<P: SerialStream>(
             }
 
             for frame in session.parser.feed_at(&buf[..read], now) {
-                if !handle_serial_frame(session, frame, event_tx, shared_state, now) {
+                if !handle_device_frame(session, frame, event_tx, shared_state, now) {
                     return false;
                 }
             }
@@ -492,9 +533,8 @@ fn poll_serial_session<P: SerialStream>(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn handle_serial_frame<P: SerialStream>(
-    session: &mut SerialSession<P>,
+fn handle_device_frame<P: DeviceTransportStream>(
+    session: &mut DeviceSession<P>,
     frame: protocol::Frame,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
@@ -530,9 +570,8 @@ fn handle_serial_frame<P: SerialStream>(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn disconnect_session<P: SerialStream>(
-    session: &mut Option<SerialSession<P>>,
+fn disconnect_session<P: DeviceTransportStream>(
+    session: &mut Option<DeviceSession<P>>,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
 ) {
@@ -553,15 +592,13 @@ fn disconnect_session<P: SerialStream>(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn write_packet<P: SerialStream>(stream: &mut P, packet: &[u8]) -> io::Result<()> {
+fn write_packet<P: DeviceTransportStream>(stream: &mut P, packet: &[u8]) -> io::Result<()> {
     stream.write_all(packet)?;
     stream.flush()
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn send_current_time<P: SerialStream>(
-    session: &mut SerialSession<P>,
+fn send_current_time<P: DeviceTransportStream>(
+    session: &mut DeviceSession<P>,
     tz_offset_minutes: i16,
 ) -> io::Result<()> {
     let now = Utc::now() + chrono::Duration::minutes(tz_offset_minutes as i64);
@@ -577,7 +614,6 @@ fn send_current_time<P: SerialStream>(
     write_packet(&mut session.stream, &packet)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn is_timeout_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
@@ -585,9 +621,8 @@ fn is_timeout_error(err: &io::Error) -> bool {
     )
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn start_pending_ota<P: SerialStream>(
-    session: &mut SerialSession<P>,
+fn start_pending_ota<P: DeviceTransportStream>(
+    session: &mut DeviceSession<P>,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
     now: Instant,
@@ -624,9 +659,8 @@ fn start_pending_ota<P: SerialStream>(
     true
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn drive_ota_timeout<P: SerialStream>(
-    session: &mut Option<SerialSession<P>>,
+fn drive_ota_timeout<P: DeviceTransportStream>(
+    session: &mut Option<DeviceSession<P>>,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
     now: Instant,
@@ -641,9 +675,8 @@ fn drive_ota_timeout<P: SerialStream>(
     handle_ota_action(session, action, event_tx, shared_state, now)
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn handle_ota_frame_action<P: SerialStream>(
-    session: &mut SerialSession<P>,
+fn handle_ota_frame_action<P: DeviceTransportStream>(
+    session: &mut DeviceSession<P>,
     frame: &protocol::Frame,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
@@ -675,11 +708,9 @@ fn handle_ota_frame_action<P: SerialStream>(
     )
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-struct SomeSession<'a, P: SerialStream>(&'a mut SerialSession<P>);
+struct SomeSession<'a, P: DeviceTransportStream>(&'a mut DeviceSession<P>);
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-fn handle_ota_action<P: SerialStream>(
+fn handle_ota_action<P: DeviceTransportStream>(
     session: &mut impl OtaSessionAccess<P>,
     action: OtaAction,
     event_tx: &Sender<DeviceEvent>,
@@ -730,26 +761,22 @@ fn handle_ota_action<P: SerialStream>(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-trait OtaSessionAccess<P: SerialStream> {
-    fn session_mut(&mut self) -> Option<&mut SerialSession<P>>;
+trait OtaSessionAccess<P: DeviceTransportStream> {
+    fn session_mut(&mut self) -> Option<&mut DeviceSession<P>>;
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-impl<P: SerialStream> OtaSessionAccess<P> for Option<SerialSession<P>> {
-    fn session_mut(&mut self) -> Option<&mut SerialSession<P>> {
+impl<P: DeviceTransportStream> OtaSessionAccess<P> for Option<DeviceSession<P>> {
+    fn session_mut(&mut self) -> Option<&mut DeviceSession<P>> {
         self.as_mut()
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
-impl<'a, P: SerialStream> OtaSessionAccess<P> for SomeSession<'a, P> {
-    fn session_mut(&mut self) -> Option<&mut SerialSession<P>> {
+impl<'a, P: DeviceTransportStream> OtaSessionAccess<P> for SomeSession<'a, P> {
+    fn session_mut(&mut self) -> Option<&mut DeviceSession<P>> {
         Some(self.0)
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn maybe_emit_ota_progress(
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
@@ -764,7 +791,6 @@ fn maybe_emit_ota_progress(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn maybe_emit_ota_progress_force(
     progress: f64,
     event_tx: &Sender<DeviceEvent>,
@@ -793,7 +819,6 @@ fn maybe_emit_ota_progress_force(
     }
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn clear_ota_state(shared_state: &Arc<Mutex<DeviceSharedState>>) {
     let mut shared = shared_state.lock();
     shared.prepared_firmware = None;
@@ -803,7 +828,6 @@ fn clear_ota_state(shared_state: &Arc<Mutex<DeviceSharedState>>) {
     shared.ota_last_progress_at = None;
 }
 
-#[cfg(not(any(target_os = "android", target_os = "ios")))]
 fn ota_active(shared_state: &Arc<Mutex<DeviceSharedState>>) -> bool {
     let shared = shared_state.lock();
     shared.ota_manager.is_some()
@@ -811,7 +835,29 @@ fn ota_active(shared_state: &Arc<Mutex<DeviceSharedState>>) -> bool {
 
 #[cfg(all(test, not(any(target_os = "android", target_os = "ios"))))]
 mod tests {
+    use std::{
+        collections::VecDeque,
+        io,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering::SeqCst},
+            mpsc,
+        },
+        thread,
+        time::Duration,
+    };
+
     use chrono::{Datelike, TimeZone, Timelike, Utc};
+
+    use super::{
+        commands::{self, DeviceTime, VersionInfo},
+        protocol,
+        transport::{
+            DeviceConnectionConfig, DevicePortCandidate, DeviceTransportBackend,
+            DeviceTransportError, DeviceTransportStream,
+        },
+        *,
+    };
 
     fn utc_components_with_offset(
         now_utc: chrono::DateTime<Utc>,
@@ -844,5 +890,232 @@ mod tests {
             utc_components_with_offset(now_utc, -420),
             (2026, 4, 7, 20, 5, 9)
         );
+    }
+
+    enum ReadStep {
+        Data(Vec<u8>),
+        Error(io::ErrorKind),
+    }
+
+    struct ScriptedStream {
+        reads: VecDeque<ReadStep>,
+        writes: Arc<parking_lot::Mutex<Vec<Vec<u8>>>>,
+    }
+
+    impl ScriptedStream {
+        fn new(reads: Vec<ReadStep>, writes: Arc<parking_lot::Mutex<Vec<Vec<u8>>>>) -> Self {
+            Self {
+                reads: reads.into(),
+                writes,
+            }
+        }
+    }
+
+    impl DeviceTransportStream for ScriptedStream {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            match self.reads.pop_front() {
+                Some(ReadStep::Data(data)) => {
+                    let len = data.len().min(buf.len());
+                    buf[..len].copy_from_slice(&data[..len]);
+                    Ok(len)
+                }
+                Some(ReadStep::Error(kind)) => Err(io::Error::from(kind)),
+                None => Ok(0),
+            }
+        }
+
+        fn write_all(&mut self, buf: &[u8]) -> io::Result<()> {
+            self.writes.lock().push(buf.to_vec());
+            Ok(())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct ScriptedBackend {
+        stream: Option<ScriptedStream>,
+    }
+
+    impl DeviceTransportBackend for ScriptedBackend {
+        type Stream = ScriptedStream;
+
+        fn list_ports(&mut self) -> Result<Vec<DevicePortCandidate>, DeviceTransportError> {
+            if self.stream.is_none() {
+                return Ok(Vec::new());
+            }
+            Ok(vec![DevicePortCandidate {
+                port_name: "scripted".into(),
+                vendor_id: Some(0xFFFF),
+                product_id: Some(0xFFFF),
+                serial_number: None,
+            }])
+        }
+
+        fn open(
+            &mut self,
+            _port_name: &str,
+            _config: &DeviceConnectionConfig,
+        ) -> Result<Self::Stream, DeviceTransportError> {
+            self.stream
+                .take()
+                .ok_or(DeviceTransportError::Unsupported("stream already opened"))
+        }
+    }
+
+    fn version_frame() -> Vec<u8> {
+        let mut payload = vec![0xA1];
+        payload.extend_from_slice(b"V1.2.3");
+        payload.push(0);
+        payload.extend_from_slice(b"HW1");
+        payload.push(0);
+        payload.extend_from_slice(b"SN0000000001");
+        protocol::encode(commands::MSG_CMD_VERSION, &payload)
+    }
+
+    fn time_frame() -> Vec<u8> {
+        protocol::encode(commands::MSG_CMD_TIME_GET, &[26, 4, 7, 13, 14, 15])
+    }
+
+    #[test]
+    fn transport_thread_emits_version_time_and_disconnect_events() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let backend = ScriptedBackend {
+            stream: Some(ScriptedStream::new(
+                vec![
+                    ReadStep::Data(version_frame()),
+                    ReadStep::Data(time_frame()),
+                    ReadStep::Error(io::ErrorKind::BrokenPipe),
+                ],
+                Arc::clone(&writes),
+            )),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+            })
+        };
+
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DeviceEvent::Connected(VersionInfo {
+                product_id: 0xA1,
+                soft_version: "V1.2.3".into(),
+                hard_version: "HW1".into(),
+                serial_number: *b"SN0000000001",
+            })
+        );
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DeviceEvent::TimeReceived(DeviceTime {
+                year: 2026,
+                month: 4,
+                day: 7,
+                hour: 13,
+                minute: 14,
+                second: 15,
+            })
+        );
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DeviceEvent::Disconnected
+        );
+        assert_eq!(writes.lock().first(), Some(&commands::ask_version()));
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn transport_thread_reports_sync_failure_without_active_session() {
+        let backend = ScriptedBackend {
+            stream: None,
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+            })
+        };
+
+        command_tx.send(TransportCommand::SyncTime(480)).unwrap();
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DeviceEvent::TimeSyncResult(false)
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    struct EventBackend {
+        events: VecDeque<transport::DeviceTransportEvent>,
+    }
+
+    impl DeviceTransportBackend for EventBackend {
+        type Stream = ScriptedStream;
+
+        fn list_ports(&mut self) -> Result<Vec<DevicePortCandidate>, DeviceTransportError> {
+            Ok(Vec::new())
+        }
+
+        fn open(
+            &mut self,
+            _port_name: &str,
+            _config: &DeviceConnectionConfig,
+        ) -> Result<Self::Stream, DeviceTransportError> {
+            Err(DeviceTransportError::Unsupported("no stream"))
+        }
+
+        fn poll_event(&mut self) -> Option<transport::DeviceTransportEvent> {
+            self.events.pop_front()
+        }
+    }
+
+    #[test]
+    fn transport_thread_forwards_platform_connection_status_events() {
+        let backend = EventBackend {
+            events: VecDeque::from([transport::DeviceTransportEvent::ConnectionStatus(
+                DeviceConnectionStatus::RequestingPermission,
+                "Requesting USB permission".to_owned(),
+            )]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+            })
+        };
+
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DeviceEvent::ConnectionStatus(
+                DeviceConnectionStatus::RequestingPermission,
+                "Requesting USB permission".to_owned()
+            )
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
     }
 }

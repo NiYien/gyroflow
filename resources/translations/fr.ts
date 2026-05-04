@@ -510,8 +510,8 @@ En raison des limitations du système d&apos;encodage vidéo, le rendu en arriè
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1614"/>
-        <source>After the DMG opens, drag Gyroflow.app to the Applications folder.</source>
-        <translation>Une fois le DMG ouvert, faites glisser Gyroflow.app dans le dossier Applications.</translation>
+        <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
+        <translation>Une fois le DMG ouvert, faites glisser Gyroflow(NiYien).app dans le dossier Applications.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1616"/>
