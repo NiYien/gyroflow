@@ -23,6 +23,21 @@ Rectangle {
 
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
+    // Android multi-pick callback. Set by a Button.onClicked just before opening
+    // a FileDialog/FolderDialog; invoked by Connections.onUrls_opened (and the
+    // single-URI Connections.onUrl_opened for parity) with the picked URL list.
+    // Cleared after invocation. null -> default route (main viewer batch).
+    property var pendingPickerCallback: null;
+    function openMainFileDialog(): void {
+        // Wraps fileDialog.open2() so Android picks route the multi-URL batch
+        // back into videoArea.loadMultipleFiles (matching desktop "Open" UX).
+        if (Qt.platform.os === "android") {
+            window.pendingPickerCallback = function(urls) {
+                videoArea.loadMultipleFiles(urls, false);
+            };
+        }
+        fileDialog.open2();
+    }
     // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
     readonly property int defaultSmoothingIndex: 1;
     function applySimpleModeDefaults(): void {
@@ -527,7 +542,15 @@ Rectangle {
         nameFilters: Qt.platform.os == "android"? undefined : [qsTr("Video files") + " (*." + extensions.concat(extensions.map(x => x.toUpperCase())).join(" *.") + ")"];
         type: "video";
         fileMode: FileDialog.OpenFiles;
-        onAccepted: videoArea.loadMultipleFiles(selectedFiles, false);
+        onAccepted: {
+            // On Android we rely on the JNI bridge (urls_opened) to deliver the
+            // picked URIs because Qt 6.7.3's SAF parser fails on MIUI and we
+            // dispatch every result through MainActivity.onActivityResult anyway;
+            // letting onAccepted also fire on non-MIUI would double-load.
+            if (Qt.platform.os === "android") return;
+            videoArea.loadMultipleFiles(selectedFiles, false);
+        }
+        onRejected: { if (Qt.platform.os === "android") window.pendingPickerCallback = null; }
     }
 
     property string pendingLoadPreset: loadPresetOnStart;
@@ -536,7 +559,29 @@ Rectangle {
     onPendingOpenFileOrgChanged: { pendingOpenFile = pendingOpenFileOrg; onItemLoaded(); }
     Connections {
         target: filesystem;
-        function onUrl_opened(url: url): void { pendingOpenFileOrg = ""; pendingOpenFileOrg = url; }
+        function onUrl_opened(url: url): void {
+            // Single-URL path: VIEW/SEND intents OR Android single-pick. If a picker
+            // callback is pending, route the URL through it (as a 1-item list);
+            // otherwise default to opening in the main viewer (existing behavior).
+            const cb = window.pendingPickerCallback;
+            if (cb) {
+                window.pendingPickerCallback = null;
+                cb([url]);
+                return;
+            }
+            pendingOpenFileOrg = "";
+            pendingOpenFileOrg = url;
+        }
+        function onUrls_opened(urls: list<string>): void {
+            const cb = window.pendingPickerCallback;
+            window.pendingPickerCallback = null;
+            const urlList = urls.map(u => Qt.url(u));
+            if (urlList.length === 0) return;
+            if (cb) { cb(urlList); return; }
+            // No active picker callback: default to main-viewer batch load,
+            // matching desktop "Open" multi-select UX.
+            videoArea.loadMultipleFiles(urlList, false);
+        }
     }
     function onItemLoaded(): void {
         if (window.vidInfo && window.stab && window.exportSettings && window.sync && window.motionData && pendingOpenFile.toString()) {
@@ -595,7 +640,7 @@ Rectangle {
 
             ItemLoader { id: vidInfo; sourceComponent: Component {
                 Menu.VideoInformation {
-                    onSelectFileRequest: fileDialog.open2();
+                    onSelectFileRequest: window.openMainFileDialog();
                 }
             } }
             Hr { id: vidInfoHr; }
@@ -1172,7 +1217,9 @@ Rectangle {
             Rectangle {
                 id: mobileSimpleExportBar;
                 Component.onCompleted: { parent = rightPanel; }
-                // Bottom safe-area inset (avoids gesture/home-indicator strips on real mobile).
+                // Visual breathing room between the action buttons and the
+                // bottom edge of the app area (the OS already reserves the
+                // gesture / nav bar separately via the non-Fullscreen theme).
                 property real safeAreaBottom: visible ? 16 * dpiScale : 0;
                 // Total vertical space this bar occupies (height + bottom margin) for layout sizing.
                 property real totalSpace: height + safeAreaBottom;
@@ -1359,7 +1406,7 @@ Rectangle {
                         text: qsTranslate("VideoInformation", "Open file");
                         iconName: "video";
                         anchors.horizontalCenter: parent.horizontalCenter;
-                        onClicked: fileDialog.open2();
+                        onClicked: window.openMainFileDialog();
                     }
                     TableList {
                         id: simpleInfoList;

@@ -138,6 +138,7 @@ cpp! {{
 
     static QObject *globalUrlCatcherPtr = nullptr;
     static QString pendingUrl;
+    static QStringList pendingUrls;
 
     class QtEventFilter : public QObject {
     public:
@@ -172,12 +173,43 @@ pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlReceived(
         #endif
     });
 }
+#[cfg(target_os = "android")]
+#[allow(non_snake_case)]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_niyien_gyroflow_MainActivity_urlsReceived(
+    _vm: *mut c_void,
+    _: *mut c_void,
+    jstr: *mut c_void,
+) {
+    // Multi-URI dispatch from MainActivity.onActivityResult. The Java side joins
+    // all picker URIs with '\n'; here we split and forward as a QStringList so QML
+    // can route the whole batch (e.g. into the render queue) instead of dropping
+    // 2..N like the legacy single-URL path did.
+    cpp!(unsafe [jstr as "void*"] {
+        #ifdef Q_OS_ANDROID
+            QString joined = QJniObject((jstring)jstr).toString();
+            QStringList urls = joined.split('\n', Qt::SkipEmptyParts);
+            if (urls.isEmpty()) return;
+            if (globalUrlCatcherPtr) {
+                QMetaObject::invokeMethod(globalUrlCatcherPtr, "catch_urls_open", Qt::QueuedConnection, Q_ARG(QStringList, urls));
+            } else {
+                pendingUrls = urls;
+            }
+        #else
+            (void)jstr;
+        #endif
+    });
+}
 pub fn set_url_catcher(ctlptr: *mut c_void) {
     cpp!(unsafe [ctlptr as "QObject *"] {
         globalUrlCatcherPtr = ctlptr;
         if (!pendingUrl.isEmpty()) {
             QMetaObject::invokeMethod(globalUrlCatcherPtr, "catch_url_open", Qt::QueuedConnection, Q_ARG(QUrl, QUrl(pendingUrl)));
             pendingUrl.clear();
+        }
+        if (!pendingUrls.isEmpty()) {
+            QMetaObject::invokeMethod(globalUrlCatcherPtr, "catch_urls_open", Qt::QueuedConnection, Q_ARG(QStringList, pendingUrls));
+            pendingUrls.clear();
         }
     });
 }

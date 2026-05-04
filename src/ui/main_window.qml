@@ -71,7 +71,12 @@ Window {
                 height = height;
             });
         } else {
-            Qt.callLater(() => { main_window.showFullScreen(); });
+            // showMaximized (not showFullScreen / show) so the Android system
+            // reserves the status / nav bar regions while the window still
+            // takes the rest of the screen; pairs with the non-Fullscreen
+            // theme in AndroidManifest.xml. Plain show() is unreliable on
+            // Qt 6.7.3 Android (some MIUI builds leave the window invisible).
+            Qt.callLater(() => { main_window.showMaximized(); });
         }
         updateMargins.start();
     }
@@ -132,6 +137,13 @@ Window {
         id: appLoader;
         objectName: "AppLoader";
         anchors.fill: parent;
+        // Apply safe-area insets on Android so the UI never sits under the status
+        // bar or gesture-nav strip. Desktop platforms get an empty margin map and
+        // degrade to 0.
+        anchors.topMargin:    Qt.platform.os === "android" ? (main_window.safeAreaMargins.top    || 0) : 0;
+        anchors.bottomMargin: Qt.platform.os === "android" ? (main_window.safeAreaMargins.bottom || 0) : 0;
+        anchors.leftMargin:   Qt.platform.os === "android" ? (main_window.safeAreaMargins.left   || 0) : 0;
+        anchors.rightMargin:  Qt.platform.os === "android" ? (main_window.safeAreaMargins.right  || 0) : 0;
         asynchronous: true;
         opacity: appLoader.status == Loader.Ready? 1 : 0.5;
         onStatusChanged: {

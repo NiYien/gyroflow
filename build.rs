@@ -440,10 +440,11 @@ fn main() {
             res.set_icon("resources/app_icon.ico");
             res.set("FileVersion", &version_info.numeric);
             res.set("ProductVersion", &version_info.numeric);
-            res.set("ProductName", "Gyroflow");
+            res.set("ProductName", "Gyroflow(NiYien)");
+            res.set("CompanyName", "NiYien");
             res.set(
                 "FileDescription",
-                &format!("Gyroflow v{}", version_info.display),
+                &format!("Gyroflow(NiYien) v{}", version_info.display),
             );
             res.compile().unwrap();
         }

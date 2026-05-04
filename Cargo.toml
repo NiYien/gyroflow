@@ -71,8 +71,7 @@ filetime_creation = "0.2"
 
 qmetaobject = { version = "0.2.10", default-features = false, features = ["log"] }
 qttypes     = { version = "0.2.12", default-features = false, features = ["required", "qtquick", "qtquickcontrols2"]}
-qml-video-rs = { git = "https://github.com/AdrianEddy/qml-video-rs.git", rev = "7eb9292" }
-#qml-video-rs = { path = "../qml-video-rs" }
+qml-video-rs = { git = "https://github.com/NiYien/qml-video-rs", rev = "fcba282a4edffaa6be8df235704293d6b688711a" }
 
 ffmpeg-next = { version = "8.1.0", default-features = false, features = ["codec", "filter", "format", "software-resampling", "software-scaling"] }
 lazy_static = "1.5.0"
@@ -156,7 +155,8 @@ winres = "0.1.12"
 walkdir = "2.5.0"
 cc = "1.2"
 
-[[bin]]
+[lib]
+crate-type = ["cdylib"]
 name = "gyroflow"
 path = "src/gyroflow.rs"
 

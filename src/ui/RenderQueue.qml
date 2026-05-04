@@ -343,17 +343,27 @@ Item {
         nameFilters: Qt.platform.os == "android"? undefined : [qsTr("Video files") + " (*." + fileDialog.extensions.concat(fileDialog.extensions.map(x => x.toUpperCase())).join(" *.") + ")"];
         type: "video";
         fileMode: FileDialog.OpenFiles;
-        onAccepted: dt.loadFiles(selectedFiles);
+        onAccepted: {
+            // On Android the JNI bridge (urls_opened -> pendingPickerCallback)
+            // delivers the picked URIs because Qt 6.7.3's SAF parser fails on
+            // MIUI; suppress this branch to avoid duplicate dispatch on
+            // non-MIUI Android (where both paths fire).
+            if (Qt.platform.os === "android") return;
+            dt.loadFiles(selectedFiles);
+        }
+        onRejected: { if (Qt.platform.os === "android") window.pendingPickerCallback = null; }
     }
 
     QQD.FolderDialog {
         id: mobileAddFolderDialog;
         title: qsTr("Choose folder")
         onAccepted: {
+            if (Qt.platform.os === "android") return; // urls_opened handles it
             filesystem.folder_access_granted(selectedFolder);
             Qt.callLater(filesystem.save_allowed_folders);
             dt.loadFiles([selectedFolder]);
         }
+        onRejected: { if (Qt.platform.os === "android") window.pendingPickerCallback = null; }
     }
 
     Row {
@@ -690,7 +700,15 @@ Item {
                 font.pixelSize: 13 * dpiScale;
                 leftPadding: 10 * dpiScale;
                 rightPadding: 10 * dpiScale;
-                onClicked: mobileAddFilesDialog.open2();
+                onClicked: {
+                    // Route picked URIs into the render queue batch loader on Android.
+                    if (Qt.platform.os === "android") {
+                        window.pendingPickerCallback = function(urls) {
+                            dt.loadFiles(urls);
+                        };
+                    }
+                    mobileAddFilesDialog.open2();
+                }
             }
             Button {
                 text: qsTr("Add folder");
@@ -700,7 +718,67 @@ Item {
                 font.pixelSize: 13 * dpiScale;
                 leftPadding: 10 * dpiScale;
                 rightPadding: 10 * dpiScale;
-                onClicked: mobileAddFolderDialog.open();
+                onClicked: {
+                    if (Qt.platform.os === "android") {
+                        window.pendingPickerCallback = function(urls) {
+                            // FolderDialog SAF returns a tree URI (e.g.
+                            // content://.../tree/primary%3ADCIM). Do NOT pipe
+                            // it through dt.loadFiles: the no-extension
+                            // heuristic there is unreliable for tree URIs and
+                            // a misclassification feeds the URI to mdk's
+                            // video opener, which trips a JNI abort because
+                            // ContentResolver rejects tree URIs as file URIs.
+                            console.log("[AddFolder] picker returned urls.length=" + (urls ? urls.length : "null"));
+                            if (!urls || !urls.length) return;
+                            const folderUrl = urls[0];
+                            console.log("[AddFolder] folderUrl=" + folderUrl);
+                            try {
+                                filesystem.folder_access_granted(folderUrl);
+                                Qt.callLater(filesystem.save_allowed_folders);
+                                console.log("[AddFolder] folder_access_granted ok");
+                            } catch (e) {
+                                console.log("[AddFolder] folder_access_granted FAILED:", e);
+                                return;
+                            }
+                            try {
+                                render_queue.add_gyro_folder(folderUrl.toString());
+                                console.log("[AddFolder] add_gyro_folder ok");
+                            } catch (e) {
+                                console.log("[AddFolder] add_gyro_folder FAILED:", e);
+                                return;
+                            }
+                            let more = [];
+                            try {
+                                const jsonStr = render_queue.list_video_files_in_folder(
+                                    folderUrl.toString(),
+                                    JSON.stringify(fileDialog.extensions)
+                                );
+                                console.log("[AddFolder] list_video_files_in_folder json.length=" + (jsonStr ? jsonStr.length : 0));
+                                more = JSON.parse(jsonStr);
+                                console.log("[AddFolder] parsed more.length=" + more.length);
+                            } catch (e) {
+                                console.log("[AddFolder] list_video_files_in_folder FAILED:", e);
+                                return;
+                            }
+                            if (more.length === 0) {
+                                console.log("[AddFolder] no video files found in folder; nothing to enqueue");
+                                return;
+                            }
+                            console.log("[AddFolder] first video URL=" + more[0]);
+                            try {
+                                // Real video URLs from list_video_files_in_folder: safe to
+                                // hand back to dt.loadFiles which routes through
+                                // add() -> render_queue.add_file. If any are still
+                                // tree-style URIs the per-step log above will show it.
+                                dt.loadFiles(more);
+                                console.log("[AddFolder] dt.loadFiles dispatched " + more.length + " urls");
+                            } catch (e) {
+                                console.log("[AddFolder] dt.loadFiles FAILED:", e);
+                            }
+                        };
+                    }
+                    mobileAddFolderDialog.open();
+                }
             }
         }
     }
@@ -848,6 +926,21 @@ Item {
                 hoverEnabled: true;
                 onContextMenu: (isHold, x, y) => contextMenu.popup(dlg, x, y)
 
+                // Mobile single-finger long-press → context menu. The
+                // ContextMenuMouseArea's internal TapHandler can't see this
+                // event because acceptedButtons above includes LeftButton, so
+                // the outer MouseArea grabs single-touch first. We drive a
+                // manual timer from the MouseArea's own onPressed/onReleased
+                // here. Gated to mobile so desktop input keeps the existing
+                // onContextMenu (right-click) path untouched.
+                property real _lpStartX: 0;
+                property real _lpStartY: 0;
+                Timer {
+                    id: rowLongPressTimer;
+                    interval: 600;
+                    onTriggered: contextMenu.popup(dlg, rowContextArea._lpStartX, rowContextArea._lpStartY);
+                }
+
                 onPressed: (mouse) => {
                     // Pairing mode is triggered on press (not click) so it fires before
                     // any potential drag-reorder swallows the gesture.
@@ -858,6 +951,18 @@ Item {
                         root.pairingGyroFilename = "";
                         return;
                     }
+                    if (Qt.platform.os === "android" || Qt.platform.os === "ios") {
+                        rowContextArea._lpStartX = mouse.x;
+                        rowContextArea._lpStartY = mouse.y;
+                        rowLongPressTimer.restart();
+                    }
+                }
+                onReleased: rowLongPressTimer.stop();
+                onPositionChanged: (mouse) => {
+                    if (!rowLongPressTimer.running) return;
+                    const dx = mouse.x - rowContextArea._lpStartX;
+                    const dy = mouse.y - rowContextArea._lpStartY;
+                    if (dx*dx + dy*dy > 18*18) rowLongPressTimer.stop();
                 }
                 onClicked: (mouse) => {
                     // Selection on the row body mirrors the checkbox column:
@@ -1019,16 +1124,66 @@ Item {
                     acceptedModifiers: Qt.ControlModifier;
                     onTapped: root.handleSelectionClick(dlg.jobId, index, 0);
                 }
-                // Touch: single tap toggles. Long-press arms touch selection-drag mode
-                // (the sibling TouchScreen DragHandler takes over once armed).
-                TapHandler {
-                    id: touchTapHandler;
-                    acceptedDevices: PointerDevice.TouchScreen;
-                    onTapped: root.handleSelectionClick(dlg.jobId, index, 0);
-                    onLongPressed: {
-                        root.beginDragSelection(index, !dlg.isSelected);
-                        root._touchSelectActive = true;
-                        lv.interactive = false;
+                // Touch path: Qt 6.7's TapHandler.onLongPressed is cancelled by
+                // tiny finger jitter on Android (DragThreshold ~10px) and almost
+                // never fires, so we replace it with a MouseArea + manual Timer.
+                // The MouseArea also handles cross-row drag selection because it
+                // keeps the touch grab through the whole press→release sequence
+                // regardless of finger position; on mobile the sibling
+                // touchDragSelectHandler would compete for the grab so we disable
+                // it (see its enabled binding below). Desktop mouse still routes
+                // through the Mouse-restricted TapHandlers above.
+                MouseArea {
+                    id: touchSelectArea;
+                    anchors.fill: parent;
+                    enabled: Qt.platform.os === "android" || Qt.platform.os === "ios";
+                    property real _pressX: 0;
+                    property real _pressY: 0;
+                    Timer {
+                        id: armMultiSelectTimer;
+                        interval: 600;
+                        onTriggered: {
+                            root.beginDragSelection(index, !dlg.isSelected);
+                            root._touchSelectActive = true;
+                            lv.interactive = false;
+                        }
+                    }
+                    onPressed: (mouse) => {
+                        touchSelectArea._pressX = mouse.x;
+                        touchSelectArea._pressY = mouse.y;
+                        armMultiSelectTimer.restart();
+                    }
+                    onReleased: {
+                        armMultiSelectTimer.stop();
+                        if (root._touchSelectActive) {
+                            root.endDragSelection();
+                            root._touchSelectActive = false;
+                            lv.interactive = true;
+                        }
+                    }
+                    onClicked: (mouse) => {
+                        // Short tap (timer didn't fire because user released before 600ms):
+                        // toggle row selection. After arm + drag we already cleared
+                        // _touchSelectActive in onReleased above, so guard against the
+                        // post-release onClicked re-toggling.
+                        if (root._dragSelecting) return;
+                        root.handleSelectionClick(dlg.jobId, index, 0);
+                    }
+                    onPositionChanged: (mouse) => {
+                        if (root._touchSelectActive) {
+                            // Post-arm: paint selection across rows. mouse.x/y is local
+                            // to this MouseArea; map to lv content for the row hit-test
+                            // and to lv viewport for the autoscroll edge logic.
+                            const contentPt = touchSelectArea.mapToItem(lv.contentItem, mouse.x, mouse.y);
+                            const viewPt = touchSelectArea.mapToItem(lv, mouse.x, mouse.y);
+                            root._dragSelectViewY = viewPt.y;
+                            root.updateDragSelectionAtContentY(contentPt.y);
+                            return;
+                        }
+                        if (!armMultiSelectTimer.running) return;
+                        const dx = mouse.x - touchSelectArea._pressX;
+                        const dy = mouse.y - touchSelectArea._pressY;
+                        if (dx*dx + dy*dy > 18*18) armMultiSelectTimer.stop();
                     }
                 }
 
@@ -1037,7 +1192,13 @@ Item {
                 DragHandler {
                     id: touchDragSelectHandler;
                     acceptedDevices: PointerDevice.TouchScreen;
-                    enabled: root._touchSelectActive;
+                    // On mobile the sibling MouseArea (touchSelectArea) owns the
+                    // touch grab and runs the cross-row paint loop itself; this
+                    // handler is for desktop touchscreens (e.g. touch laptops)
+                    // where the mouse-restricted TapHandlers won't fire.
+                    enabled: root._touchSelectActive
+                          && Qt.platform.os !== "android"
+                          && Qt.platform.os !== "ios";
                     target: null;
                     onActiveChanged: {
                         if (!active) {
@@ -1724,6 +1885,27 @@ Item {
             let foldersWithoutAccess = [];
             let additional = prepareBatchAdditionalData(window.getAdditionalProjectData());
             if (!outFolder) {
+                // Android SAF picker hands out per-file content URIs, so the
+                // source folder is never writable. Resolve outFolder from the
+                // persisted Export setting; if absent, prompt the user once
+                // and re-enter add() so the rest of the pipeline runs uniformly.
+                if (Qt.platform.os === "android" && isSandboxed) {
+                    const fixed = window.exportSettings ? window.exportSettings.queueFixedOutputPath : "";
+                    if (fixed && filesystem.can_create_file(fixed, "check.tmp")) {
+                        add(fixed, urls);
+                        return;
+                    }
+                    window.outputFile.selectFolder("", function(folder_url) {
+                        if (window.exportSettings) {
+                            window.exportSettings.queueFixedOutputPath = folder_url;
+                            window.exportSettings.queueOutputMode = 1;
+                        }
+                        filesystem.folder_access_granted(folder_url);
+                        Qt.callLater(filesystem.save_allowed_folders);
+                        add(folder_url, urls);
+                    });
+                    return;
+                }
                 delete additional.output.output_folder;
                 delete additional.output.output_filename;
                 if (isSandboxed) {

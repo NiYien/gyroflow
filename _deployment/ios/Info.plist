@@ -4,10 +4,10 @@
 <dict>
 	<key>CFBundleAllowMixedLocalizations</key>     <true/>
 	<key>CFBundleDevelopmentRegion</key>           <string>en_US</string>
-	<key>CFBundleDisplayName</key>                 <string>Gyroflow</string>
+	<key>CFBundleDisplayName</key>                 <string>Gyroflow(NiYien)</string>
 	<key>CFBundleExecutable</key>                  <string>gyroflow</string>
-	<key>CFBundleIdentifier</key>                  <string>xyz.gyroflow</string>
-	<key>CFBundleName</key>                        <string>Gyroflow</string>
+	<key>CFBundleIdentifier</key>                  <string>com.niyien.gyroflow</string>
+	<key>CFBundleName</key>                        <string>Gyroflow(NiYien)</string>
 	<key>CFBundlePackageType</key>                 <string>APPL</string>
 	<key>CFBundleShortVersionString</key>          <string>1.6.3</string>
 	<key>CFBundleVersion</key>                     <string>1.6.3</string>

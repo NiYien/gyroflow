@@ -7,11 +7,11 @@ AppDir:
       QT_QPA_PLATFORMTHEME: gtk3
       APPDIR_LIBRARY_PATH: $APPDIR/lib:$APPDIR/lib/x86_64-linux-gnu:$APPDIR/lib/x86_64-linux-gnu/security:$APPDIR/usr/lib/llvm-7/lib:$APPDIR/lib/x86_64
   app_info:
-    id: xyz.gyroflow
-    name: Gyroflow
+    id: com.niyien.gyroflow
+    name: Gyroflow(NiYien)
     icon: gyroflow
     version: !ENV ${APP_VERSION}
-    exec: gyroflow
+    exec: gyroflow-niyien
     exec_args: $@
   apt:
     arch:

@@ -4647,6 +4647,17 @@ mod tests {
         assert_eq!(video_log_decoder_label("BRAW:gpu=no:scale=1920x1080"), "BRAW");
         assert_eq!(video_log_decoder_label("R3D:gpu=auto:scale=1920x1080"), "R3D");
     }
+
+    #[test]
+    fn qml_video_rs_playback_does_not_stop_polling_repeated_same_frame() {
+        let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+        let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
+
+        assert!(
+            lock.contains("source = \"git+https://github.com/NiYien/qml-video-rs?rev=fcba282a4edffaa6be8df235704293d6b688711a#fcba282a4edffaa6be8df235704293d6b688711a\""),
+            "qml-video-rs must stay pinned to the fork commit that keeps playback polling active"
+        );
+    }
 }
 
 #[derive(Default, QObject)]
@@ -4667,6 +4678,7 @@ pub struct Filesystem {
     display_url: qt_method!(fn(&self, url: QUrl) -> QString),
     display_folder_filename: qt_method!(fn(&self, folder: QUrl, filename: QString) -> QString),
     catch_url_open: qt_method!(fn(&self, url: QUrl)),
+    catch_urls_open: qt_method!(fn(&self, urls: QStringList)),
     remove_file: qt_method!(fn(&self, url: QUrl)),
     folder_access_granted: qt_method!(fn(&self, url: QUrl)),
     move_to_trash: qt_method!(fn(&self, url: QUrl)),
@@ -4674,6 +4686,7 @@ pub struct Filesystem {
     restore_allowed_folders: qt_method!(fn(&self)),
     get_next_file_url: qt_method!(fn(&self, current_url: QUrl, index: i32) -> QUrl),
     url_opened: qt_signal!(url: QUrl),
+    urls_opened: qt_signal!(urls: QStringList),
 }
 impl Filesystem {
     fn exists_in_folder(&self, folder: QUrl, filename: QString) -> bool {
@@ -4731,6 +4744,12 @@ impl Filesystem {
     fn catch_url_open(&self, url: QUrl) {
         util::dispatch_url_event(url.clone());
         self.url_opened(url);
+    }
+    fn catch_urls_open(&self, urls: QStringList) {
+        // Multi-URL path used by Android's SAF picker bridge for multi-select.
+        // Emits urls_opened so QML can route the whole list (e.g. to the render
+        // queue batch loader) instead of collapsing to a single file.
+        self.urls_opened(urls);
     }
     fn remove_file(&self, url: QUrl) {
         let _ = filesystem::remove_file(&util::qurl_to_encoded(url));

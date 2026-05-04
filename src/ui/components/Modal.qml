@@ -4,7 +4,7 @@
 import QtQuick
 import QtQuick.Controls as QQC
 import QtQuick.Controls.impl as QQCI
-// import QtQuick.Effects
+import QtQuick.Effects
 
 Rectangle {
     id: root;

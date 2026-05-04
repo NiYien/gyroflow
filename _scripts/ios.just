@@ -7,7 +7,7 @@ import 'common.just'
 # To list available certificates: security find-identity -v -p codesigning
 
 TeamID                        := "RR3ZC2L4DF"
-BundleIdentifier              := "xyz.gyroflow"
+BundleIdentifier              := "com.niyien.gyroflow"
 DevelopmentCertificateSHA     := "612D010FA5522A25CE1F1D5A38B84DCD2798704B"
 DevelopmentProvisioning       := ProjectDir / "_deployment/ios/Gyroflow_dev.mobileprovision"
 DevelopmentProvisioningName   := "Gyroflow dev"

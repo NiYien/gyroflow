@@ -16,8 +16,13 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.view.WindowManager;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 
 public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
@@ -62,10 +67,11 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     private volatile boolean usbReadRunning;
     private final Object usbLock = new Object();
 
-    private String lastDispatchedPickerUri;
+    private String lastDispatchedPickerJoined;
     private long lastDispatchedPickerAtMs;
 
     public static native void urlReceived(String url);
+    public static native void urlsReceived(String joinedUrls);
     public static native void nativeOnUsbAttached(int vid, int pid);
     public static native void nativeOnUsbDetached();
     public static native void nativeOnUsbPermission(boolean granted);
@@ -115,10 +121,52 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         instance = this;
+        forceShowSystemBars("onCreate");
         initUsbBridge();
         Intent intent = getIntent();
         if (intent != null && intent.getAction() != null) {
             processIntent(intent);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        // Qt's QtActivity may re-apply immersive flags during the activity
+        // lifecycle (splash → first frame, orientation change, etc.); reassert
+        // status / navigation bar visibility every time we regain focus.
+        if (hasFocus) forceShowSystemBars("onWindowFocusChanged");
+    }
+
+    private void forceShowSystemBars(String origin) {
+        // Pairs with the non-Fullscreen theme in AndroidManifest.xml. Three
+        // independent paths because Qt and the theme between them set fullscreen
+        // through any of: WindowManager flags, legacy SYSTEM_UI_FLAG_* visibility
+        // bits, and the Android 11+ WindowInsetsController. Clearing one isn't
+        // enough; we hammer all three so the status / nav bar always show.
+        try {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN
+                                 | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS);
+            View decor = getWindow().getDecorView();
+            int sysUi = decor.getSystemUiVisibility();
+            sysUi &= ~(View.SYSTEM_UI_FLAG_FULLSCREEN
+                     | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                     | View.SYSTEM_UI_FLAG_IMMERSIVE
+                     | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                     | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                     | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                     | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+            decor.setSystemUiVisibility(sysUi);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                android.view.WindowInsetsController c = getWindow().getInsetsController();
+                if (c != null) {
+                    c.show(android.view.WindowInsets.Type.statusBars()
+                         | android.view.WindowInsets.Type.navigationBars());
+                }
+            }
+            Log.i(TAG, "forceShowSystemBars from " + origin + " sysUi=0x" + Integer.toHexString(sysUi));
+        } catch (Throwable t) {
+            Log.w(TAG, "forceShowSystemBars failed", t);
         }
     }
 
@@ -133,15 +181,15 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         // Always forward to QtActivity first so Qt's own FileDialog state
         // machine completes its result-listener cleanup. Our parsing below
         // is purely additive: when Qt's parser fails (Android 16 + MIUI
-        // fileexplorer scenario), we still surface the picked URI.
+        // fileexplorer scenario), we still surface the picked URIs.
         super.onActivityResult(requestCode, resultCode, data);
 
         if (resultCode != RESULT_OK || data == null) {
             return;
         }
 
-        Uri picked = extractPickerUri(data);
-        if (picked == null) {
+        List<String> picked = extractAllPickerUris(data);
+        if (picked.isEmpty()) {
             Log.w(FILE_PICKER_TAG,
                 "onActivityResult RESULT_OK but no Uri in data/clipData"
                     + " requestCode=" + requestCode
@@ -150,23 +198,30 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
             return;
         }
 
-        String uriStr = picked.toString();
+        String joined = String.join("\n", picked);
         long now = System.currentTimeMillis();
         synchronized (this) {
-            if (uriStr.equals(lastDispatchedPickerUri)
+            if (joined.equals(lastDispatchedPickerJoined)
                     && now - lastDispatchedPickerAtMs < PICKER_DEDUPE_WINDOW_MS) {
-                Log.i(FILE_PICKER_TAG, "skip duplicate picker dispatch " + uriStr);
+                Log.i(FILE_PICKER_TAG, "skip duplicate picker dispatch count=" + picked.size());
                 return;
             }
-            lastDispatchedPickerUri = uriStr;
+            lastDispatchedPickerJoined = joined;
             lastDispatchedPickerAtMs = now;
         }
 
         Log.i(FILE_PICKER_TAG,
-            "dispatching picker uri to Rust: " + uriStr
+            "dispatching picker uris to Rust: count=" + picked.size()
+                + " first=" + picked.get(0)
                 + " requestCode=" + requestCode
                 + " manufacturer=" + Build.MANUFACTURER);
-        urlReceived(uriStr);
+        if (picked.size() == 1) {
+            // Preserve the existing single-URL bridge for single-pick / folder /
+            // legacy callers; QML's onUrl_opened still routes via pendingPickerCallback.
+            urlReceived(picked.get(0));
+        } else {
+            urlsReceived(joined);
+        }
     }
 
     @Override
@@ -466,23 +521,29 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         return (UsbDevice)intent.getParcelableExtra(UsbManager.EXTRA_DEVICE);
     }
 
-    private static Uri extractPickerUri(Intent data) {
-        // Prefer single-document URI in Intent.data (most pickers, including
-        // MIUI fileexplorer for single-select). Fall back to first ClipData
-        // item when the picker fills only the multi-select payload. v1 takes
-        // the first item only; multi-select dispatches will be added in v2.
+    private static List<String> extractAllPickerUris(Intent data) {
+        // Collect every URI a SAF picker exposes:
+        //   - Intent.data (single-pick or folder tree URI; populated on most pickers,
+        //     including MIUI fileexplorer for single-select)
+        //   - ClipData items (multi-select payload; covers picker variants that bypass
+        //     Intent.data when the user picks more than one file)
+        // LinkedHashSet de-duplicates while preserving picker-supplied order so the
+        // first item stays first for downstream "first video file" heuristics.
+        LinkedHashSet<String> set = new LinkedHashSet<>();
         Uri primary = data.getData();
         if (primary != null) {
-            return primary;
+            set.add(primary.toString());
         }
         ClipData clip = data.getClipData();
-        if (clip != null && clip.getItemCount() > 0) {
-            ClipData.Item item = clip.getItemAt(0);
-            if (item != null) {
-                return item.getUri();
+        if (clip != null) {
+            for (int i = 0; i < clip.getItemCount(); i++) {
+                ClipData.Item item = clip.getItemAt(i);
+                if (item == null) continue;
+                Uri u = item.getUri();
+                if (u != null) set.add(u.toString());
             }
         }
-        return null;
+        return new ArrayList<>(set);
     }
 
     private static boolean isNiyienDevice(UsbDevice device) {

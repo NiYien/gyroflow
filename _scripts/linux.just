@@ -357,8 +357,8 @@ deploy *param:
         fi
     fi
 
-    cp -f "$CARGO_TARGET/gyroflow"                         "$TARGET/"
-    strip "$TARGET/gyroflow"
+    cp -f "$CARGO_TARGET/gyroflow"                         "$TARGET/gyroflow-niyien"
+    strip "$TARGET/gyroflow-niyien"
 
     # cp -rf "$PROJECT_DIR/resources/camera_presets"         "$TARGET/"
     # rm -rf "$TARGET/camera_presets/.git"
