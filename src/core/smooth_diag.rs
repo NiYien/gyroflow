@@ -14,6 +14,8 @@
 //! immediately — zero allocation.
 
 use parking_lot::Mutex;
+use std::fs::File;
+use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -273,12 +275,64 @@ pub fn record_session(
     }
 }
 
-#[allow(clippy::needless_return)]
+const CSV_HEADER: &str = "frame_idx,ts_ms,\
+q_raw_w,q_raw_x,q_raw_y,q_raw_z,\
+q_smooth_w,q_smooth_x,q_smooth_y,q_smooth_z,\
+delta_pitch_deg,delta_yaw_deg,delta_roll_deg,delta_total_deg,\
+vel_pitch_deg_s,vel_yaw_deg_s,vel_roll_deg_s,\
+accel_pitch_deg_s2,accel_yaw_deg_s2,accel_roll_deg_s2,\
+jerk_pitch_deg_s3,jerk_yaw_deg_s3,jerk_roll_deg_s3,\
+fov_baseline,fov_final";
+
+/// Format an f64 with `digits` decimal places; NaN serializes as empty string (pandas-friendly).
+fn fmt_f64(v: f64, digits: usize) -> String {
+    if v.is_nan() {
+        String::new()
+    } else {
+        format!("{:.*}", digits, v)
+    }
+}
+
+/// Write all buffered frames to `<out_dir>/dump.csv`.
+fn write_csv(s: &DiagSession) -> std::io::Result<()> {
+    let path = s.out_dir.join("dump.csv");
+    let mut w = BufWriter::new(File::create(&path)?);
+    writeln!(w, "{}", CSV_HEADER)?;
+    for f in &s.frames {
+        writeln!(
+            w,
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            f.frame_idx,
+            fmt_f64(f.ts_ms, 4),
+            fmt_f64(f.q_raw_w, 8), fmt_f64(f.q_raw_x, 8), fmt_f64(f.q_raw_y, 8), fmt_f64(f.q_raw_z, 8),
+            fmt_f64(f.q_smooth_w, 8), fmt_f64(f.q_smooth_x, 8), fmt_f64(f.q_smooth_y, 8), fmt_f64(f.q_smooth_z, 8),
+            fmt_f64(f.delta_pitch_deg, 6), fmt_f64(f.delta_yaw_deg, 6), fmt_f64(f.delta_roll_deg, 6), fmt_f64(f.delta_total_deg, 6),
+            fmt_f64(f.vel_pitch_deg_s, 4), fmt_f64(f.vel_yaw_deg_s, 4), fmt_f64(f.vel_roll_deg_s, 4),
+            fmt_f64(f.accel_pitch_deg_s2, 4), fmt_f64(f.accel_yaw_deg_s2, 4), fmt_f64(f.accel_roll_deg_s2, 4),
+            fmt_f64(f.jerk_pitch_deg_s3, 4), fmt_f64(f.jerk_yaw_deg_s3, 4), fmt_f64(f.jerk_roll_deg_s3, 4),
+            fmt_f64(f.fov_baseline, 6), fmt_f64(f.fov_final, 6),
+        )?;
+    }
+    Ok(())
+}
+
 pub fn flush_and_close() {
     if !is_enabled() {
         return;
     }
-    // Tasks 5/6/7: write meta.json, embed plot.py, close session.
+    let session = match SESSION.lock().take() {
+        Some(s) => s,
+        None => return,
+    };
+    if let Err(e) = write_csv(&session) {
+        log::warn!(target: "app", "[SmoothDiag] write_csv error: {}", e);
+    }
+    log::info!(
+        target: "app",
+        "[SmoothDiag] session closed: {} frames -> {}",
+        session.frames.len(),
+        session.out_dir.display()
+    );
 }
 
 #[cfg(test)]
@@ -378,6 +432,55 @@ mod tests {
         // cleanup: drop s before re-locking SESSION (parking_lot is non-reentrant)
         drop(s);
         *SESSION.lock() = None;
+        force_enabled_for_test(false);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flush_writes_dump_csv() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("smooth_test");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        force_enabled_for_test(true);
+        *SESSION.lock() = Some(DiagSession {
+            out_dir: dir.clone(),
+            frames: vec![FrameRecord {
+                frame_idx: 0,
+                ts_ms: 1.5,
+                q_raw_w: 1.0, q_raw_x: 0.0, q_raw_y: 0.0, q_raw_z: 0.0,
+                q_smooth_w: 1.0, q_smooth_x: 0.0, q_smooth_y: 0.0, q_smooth_z: 0.0,
+                delta_pitch_deg: 0.1, delta_yaw_deg: 0.2, delta_roll_deg: 0.3, delta_total_deg: 0.37,
+                vel_pitch_deg_s: 1.0, vel_yaw_deg_s: 2.0, vel_roll_deg_s: 3.0,
+                accel_pitch_deg_s2: f64::NAN, accel_yaw_deg_s2: f64::NAN, accel_roll_deg_s2: f64::NAN,
+                jerk_pitch_deg_s3: f64::NAN, jerk_yaw_deg_s3: f64::NAN, jerk_roll_deg_s3: f64::NAN,
+                fov_baseline: 0.85, fov_final: 0.90,
+            }],
+            smoothing_meta: SmoothingMeta::default(),
+            video_meta: VideoMeta::default(),
+        });
+
+        flush_and_close();
+
+        let csv_path = dir.join("dump.csv");
+        assert!(csv_path.exists(), "dump.csv must be written");
+        let body = std::fs::read_to_string(&csv_path).unwrap();
+        let lines: Vec<&str> = body.lines().collect();
+        assert_eq!(lines.len(), 2, "header + 1 row");
+
+        let header = lines[0];
+        assert!(header.starts_with("frame_idx,ts_ms,q_raw_w"), "header begins with frame_idx,ts_ms,q_raw_w; got: {header}");
+        assert!(header.ends_with("fov_baseline,fov_final"), "header ends with fov columns");
+        assert_eq!(header.split(',').count(), 25, "25 columns expected");
+
+        let row = lines[1];
+        let cells: Vec<&str> = row.split(',').collect();
+        assert_eq!(cells.len(), 25);
+        assert_eq!(cells[0], "0");                      // frame_idx
+        assert!(cells[1].starts_with("1.5"));           // ts_ms
+        assert_eq!(cells[17], "");                      // accel_pitch is NaN -> empty (column index 17)
+        assert!(cells[24].starts_with("0.9"));          // fov_final
+
         force_enabled_for_test(false);
     }
 
