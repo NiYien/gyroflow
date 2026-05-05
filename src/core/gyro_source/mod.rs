@@ -1608,7 +1608,18 @@ impl GyroSource {
         compute_params: &crate::ComputeParams,
     ) -> (TimeQuat, (f64, f64, f64)) {
         let file_metadata = self.file_metadata.read();
-        let mut smoothed_quaternions = self.quaternions.clone();
+        let source_quaternions = self.video_query_range_quaternions_with_metadata(
+            &self.quaternions,
+            &file_metadata,
+            compute_params,
+        );
+        let source_gravity_vectors = self.video_query_range_vectors_with_metadata(
+            &file_metadata.gravity_vectors,
+            &file_metadata,
+            compute_params,
+        );
+        let source_duration_ms = compute_params.scaled_duration_ms;
+        let mut smoothed_quaternions = source_quaternions.clone();
 
         for (ts, q) in smoothed_quaternions.iter_mut() {
             use crate::KeyframeType;
@@ -1641,22 +1652,22 @@ impl GyroSource {
             // Lock horizon, then smooth
             horizon_lock.lock(
                 &mut smoothed_quaternions,
-                &self.quaternions,
-                &file_metadata.gravity_vectors,
+                &source_quaternions,
+                &source_gravity_vectors,
                 self.use_gravity_vectors,
                 self.integration_method,
                 compute_params,
             );
             smoothed_quaternions =
-                alg.smooth(&smoothed_quaternions, self.duration_ms, compute_params);
+                alg.smooth(&smoothed_quaternions, source_duration_ms, compute_params);
         } else {
             // Smooth, then lock horizon
             smoothed_quaternions =
-                alg.smooth(&smoothed_quaternions, self.duration_ms, compute_params);
+                alg.smooth(&smoothed_quaternions, source_duration_ms, compute_params);
             horizon_lock.lock(
                 &mut smoothed_quaternions,
-                &self.quaternions,
-                &file_metadata.gravity_vectors,
+                &source_quaternions,
+                &source_gravity_vectors,
                 self.use_gravity_vectors,
                 self.integration_method,
                 compute_params,
@@ -1664,14 +1675,16 @@ impl GyroSource {
         }
 
         let max_angles = crate::Smoothing::get_max_angles(
-            &self.quaternions,
+            &source_quaternions,
             &smoothed_quaternions,
             compute_params,
         );
 
-        for (sq, q) in smoothed_quaternions.iter_mut().zip(self.quaternions.iter()) {
+        for (ts, sq) in smoothed_quaternions.iter_mut() {
+            let org_quat =
+                Self::clamped_quat_at_gyro_timestamp(&source_quaternions, *ts as f64 / 1000.0);
             // rotation quaternion from smooth motion -> raw motion to counteract it
-            *sq.1 = sq.1.inverse() * q.1;
+            *sq = sq.inverse() * org_quat;
         }
         (smoothed_quaternions, max_angles)
     }
@@ -1889,12 +1902,163 @@ impl GyroSource {
         self.integrate();
     }
 
-    fn quat_at_timestamp(&self, quats: &TimeQuat, mut timestamp_ms: f64) -> Quat64 {
-        if quats.len() < 2 || self.duration_ms <= 0.0 {
-            return Quat64::identity();
+    fn video_query_range_us(
+        &self,
+        file_metadata: &FileMetadata,
+        compute_params: &crate::ComputeParams,
+    ) -> Option<(i64, i64)> {
+        if compute_params.frame_count == 0 || compute_params.scaled_fps <= 0.0 {
+            return None;
         }
 
-        timestamp_ms -= self.offset_at_video_timestamp(timestamp_ms);
+        let frame_readout_half = compute_params.frame_readout_time.abs() / 2.0;
+        let mut video_times = Vec::with_capacity(compute_params.frame_count * 2);
+
+        for frame in 0..compute_params.frame_count {
+            let timestamp_ms =
+                frame as f64 / compute_params.scaled_fps * 1000.0
+                    + file_metadata
+                        .per_frame_time_offsets
+                        .get(frame)
+                        .unwrap_or(&0.0);
+
+            video_times.push(timestamp_ms - frame_readout_half);
+            video_times.push(timestamp_ms + frame_readout_half);
+        }
+
+        let (min_video_ms, max_video_ms) =
+            video_times
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |acc, timestamp_ms| {
+                    (acc.0.min(*timestamp_ms), acc.1.max(*timestamp_ms))
+                });
+
+        for ts in self.offsets_adjusted.keys() {
+            let timestamp_ms = *ts as f64 / 1000.0;
+            if timestamp_ms >= min_video_ms && timestamp_ms <= max_video_ms {
+                video_times.push(timestamp_ms);
+            }
+        }
+
+        let (min_gyro_us, max_gyro_us) =
+            video_times
+                .iter()
+                .fold((i64::MAX, i64::MIN), |acc, timestamp_ms| {
+                    let gyro_timestamp_ms =
+                        timestamp_ms - self.offset_at_video_timestamp(*timestamp_ms);
+                    let gyro_timestamp_us = (gyro_timestamp_ms * 1000.0).round() as i64;
+                    (acc.0.min(gyro_timestamp_us), acc.1.max(gyro_timestamp_us))
+                });
+
+        Some((min_gyro_us, max_gyro_us))
+    }
+
+    fn trim_quats_to_gyro_range(quats: &TimeQuat, start_us: i64, end_us: i64) -> TimeQuat {
+        if quats.is_empty() {
+            return TimeQuat::new();
+        }
+
+        let first_ts = *quats.keys().next().unwrap();
+        let last_ts = *quats.keys().next_back().unwrap();
+        let start_us = start_us.max(first_ts).min(last_ts);
+        let end_us = end_us.max(first_ts).min(last_ts);
+        let (start_us, end_us) = if start_us <= end_us {
+            (start_us, end_us)
+        } else {
+            (end_us, start_us)
+        };
+
+        let mut ret = TimeQuat::new();
+        ret.insert(
+            start_us,
+            Self::clamped_quat_at_gyro_timestamp(quats, start_us as f64 / 1000.0),
+        );
+        ret.extend(quats.range(start_us..=end_us).map(|(&ts, &quat)| (ts, quat)));
+        ret.insert(
+            end_us,
+            Self::clamped_quat_at_gyro_timestamp(quats, end_us as f64 / 1000.0),
+        );
+        ret
+    }
+
+    fn trim_vectors_to_gyro_range(vectors: &TimeVec, start_us: i64, end_us: i64) -> TimeVec {
+        if vectors.is_empty() {
+            return TimeVec::new();
+        }
+
+        let first_ts = *vectors.keys().next().unwrap();
+        let last_ts = *vectors.keys().next_back().unwrap();
+        let start_us = start_us.max(first_ts).min(last_ts);
+        let end_us = end_us.max(first_ts).min(last_ts);
+        let (start_us, end_us) = if start_us <= end_us {
+            (start_us, end_us)
+        } else {
+            (end_us, start_us)
+        };
+
+        let mut ret = TimeVec::new();
+        if let Some(vec) =
+            super::smoothing::horizon::HorizonLock::interpolate_gravity_vector(vectors, start_us)
+        {
+            ret.insert(start_us, vec);
+        }
+        ret.extend(vectors.range(start_us..=end_us).map(|(&ts, &vec)| (ts, vec)));
+        if let Some(vec) =
+            super::smoothing::horizon::HorizonLock::interpolate_gravity_vector(vectors, end_us)
+        {
+            ret.insert(end_us, vec);
+        }
+        ret
+    }
+
+    fn video_query_range_quaternions_with_metadata(
+        &self,
+        quats: &TimeQuat,
+        file_metadata: &FileMetadata,
+        compute_params: &crate::ComputeParams,
+    ) -> TimeQuat {
+        if let Some((start_us, end_us)) =
+            self.video_query_range_us(file_metadata, compute_params)
+        {
+            Self::trim_quats_to_gyro_range(quats, start_us, end_us)
+        } else {
+            quats.clone()
+        }
+    }
+
+    #[cfg(test)]
+    fn video_query_range_quaternions(
+        &self,
+        quats: &TimeQuat,
+        compute_params: &crate::ComputeParams,
+    ) -> TimeQuat {
+        let file_metadata = self.file_metadata.read();
+        self.video_query_range_quaternions_with_metadata(quats, &file_metadata, compute_params)
+    }
+
+    fn video_query_range_vectors_with_metadata(
+        &self,
+        vectors: &Option<TimeVec>,
+        file_metadata: &FileMetadata,
+        compute_params: &crate::ComputeParams,
+    ) -> Option<TimeVec> {
+        vectors.as_ref().map(|vectors| {
+            if let Some((start_us, end_us)) =
+                self.video_query_range_us(file_metadata, compute_params)
+            {
+                Self::trim_vectors_to_gyro_range(vectors, start_us, end_us)
+            } else {
+                vectors.clone()
+            }
+        })
+    }
+
+    pub fn clamped_quat_at_gyro_timestamp(quats: &TimeQuat, timestamp_ms: f64) -> Quat64 {
+        match quats.len() {
+            0 => return Quat64::identity(),
+            1 => return *quats.values().next().unwrap(),
+            _ => {}
+        }
 
         if let Some(&first_ts) = quats.keys().next() {
             if let Some(&last_ts) = quats.keys().next_back() {
@@ -1915,6 +2079,15 @@ impl GyroSource {
             }
         }
         Quat64::identity()
+    }
+
+    fn quat_at_timestamp(&self, quats: &TimeQuat, mut timestamp_ms: f64) -> Quat64 {
+        if self.duration_ms <= 0.0 {
+            return Quat64::identity();
+        }
+
+        timestamp_ms -= self.offset_at_video_timestamp(timestamp_ms);
+        Self::clamped_quat_at_gyro_timestamp(quats, timestamp_ms)
     }
 
     pub fn org_quat_at_timestamp(&self, timestamp_ms: f64) -> Quat64 {
@@ -2326,6 +2499,148 @@ mod tests {
             compute_auto_rotation(Some(&additional_data), &[], 0.0, true),
             Some(0)
         );
+    }
+
+    #[test]
+    fn smoothing_source_quaternions_are_limited_to_video_query_range_with_offset() {
+        let mut gyro = GyroSource::new();
+        gyro.duration_ms = 12_000.0;
+        gyro.quaternions = (0..=12)
+            .map(|second| {
+                (
+                    second * 1_000_000,
+                    Quat64::from_euler_angles(0.0, second as f64 * 0.01, 0.0),
+                )
+            })
+            .collect();
+        gyro.set_offsets(BTreeMap::from([
+            (2_000_000, -2_000.0),
+            (11_000_000, -2_000.0),
+        ]));
+
+        let compute_params = crate::ComputeParams {
+            frame_count: 10,
+            scaled_fps: 1.0,
+            scaled_duration_ms: 10_000.0,
+            ..Default::default()
+        };
+        let source_quaternions =
+            gyro.video_query_range_quaternions(&gyro.quaternions, &compute_params);
+
+        assert_eq!(
+            source_quaternions.keys().copied().collect::<Vec<_>>(),
+            (2..=11).map(|second| second * 1_000_000).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn smoothing_source_quaternions_include_per_frame_offsets_readout_and_offset_breakpoints() {
+        let mut gyro = GyroSource::new();
+        gyro.duration_ms = 12_000.0;
+        gyro.quaternions = (0..=12)
+            .map(|second| {
+                (
+                    second * 1_000_000,
+                    Quat64::from_euler_angles(0.0, second as f64 * 0.01, 0.0),
+                )
+            })
+            .collect();
+        gyro.file_metadata.write().per_frame_time_offsets = vec![500.0, 500.0];
+        gyro.set_offsets(BTreeMap::from([
+            (0, 0.0),
+            (2_000_000, -1_000.0),
+            (3_000_000, -1_000.0),
+        ]));
+
+        let compute_params = crate::ComputeParams {
+            frame_count: 2,
+            scaled_fps: 1.0,
+            scaled_duration_ms: 2_000.0,
+            frame_readout_time: 200.0,
+            ..Default::default()
+        };
+        let source_quaternions =
+            gyro.video_query_range_quaternions(&gyro.quaternions, &compute_params);
+
+        assert_eq!(
+            source_quaternions.keys().copied().collect::<Vec<_>>(),
+            vec![800_000, 1_000_000, 2_000_000, 2_600_000]
+        );
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingSmoothingAlgorithm {
+        duration_ms: Arc<parking_lot::Mutex<Option<f64>>>,
+        timestamps: Arc<parking_lot::Mutex<Vec<i64>>>,
+    }
+
+    impl SmoothingAlgorithm for RecordingSmoothingAlgorithm {
+        fn get_name(&self) -> String {
+            "Recording".to_owned()
+        }
+
+        fn get_parameters_json(&self) -> serde_json::Value {
+            serde_json::json!([])
+        }
+
+        fn get_status_json(&self) -> serde_json::Value {
+            serde_json::json!([])
+        }
+
+        fn set_parameter(&mut self, _name: &str, _val: f64) {}
+
+        fn get_parameter(&self, _name: &str) -> f64 {
+            0.0
+        }
+
+        fn get_checksum(&self) -> u64 {
+            0
+        }
+
+        fn smooth(
+            &self,
+            quats: &TimeQuat,
+            duration: f64,
+            _compute_params: &crate::ComputeParams,
+        ) -> TimeQuat {
+            *self.duration_ms.lock() = Some(duration);
+            *self.timestamps.lock() = quats.keys().copied().collect();
+            quats.clone()
+        }
+    }
+
+    #[test]
+    fn recompute_smoothness_passes_only_video_query_range_to_smoothing_algorithm() {
+        let mut gyro = GyroSource::new();
+        gyro.duration_ms = 12_000.0;
+        gyro.quaternions = (0..=12)
+            .map(|second| {
+                (
+                    second * 1_000_000,
+                    Quat64::from_euler_angles(0.0, second as f64 * 0.01, 0.0),
+                )
+            })
+            .collect();
+
+        let compute_params = crate::ComputeParams {
+            frame_count: 10,
+            scaled_fps: 1.0,
+            scaled_duration_ms: 10_000.0,
+            ..Default::default()
+        };
+        let alg = RecordingSmoothingAlgorithm::default();
+
+        gyro.recompute_smoothness(
+            &alg,
+            crate::smoothing::horizon::HorizonLock::default(),
+            &compute_params,
+        );
+
+        assert_eq!(
+            alg.timestamps.lock().clone(),
+            (0..=9).map(|second| second * 1_000_000).collect::<Vec<_>>()
+        );
+        assert_eq!(*alg.duration_ms.lock(), Some(10_000.0));
     }
 
     #[test]

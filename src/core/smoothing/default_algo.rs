@@ -250,6 +250,7 @@ impl SmoothingAlgorithm for DefaultAlgo {
             compute_params.scaled_duration_ms,
             self.trim_range_only,
             &compute_params.trim_ranges,
+            compute_params,
         );
         let quats = quats.as_ref();
 
@@ -373,8 +374,7 @@ impl SmoothingAlgorithm for DefaultAlgo {
                 .unwrap_or(&self.smoothness_roll);
             let smoothness = smoothness_per_timestamp.get(ts).unwrap_or(&self.smoothness);
 
-            let frame =
-                crate::frame_at_timestamp(*ts as f64 / 1000.0, compute_params.scaled_fps) as usize;
+            let frame = compute_params.frame_at_gyro_timestamp(*ts as f64 / 1000.0);
             let mut fov_ratio = if compute_params.camera_diagonal_fovs.len() == 1 {
                 compute_params.camera_diagonal_fovs[0] / FOV_REFERENCE
             } else {

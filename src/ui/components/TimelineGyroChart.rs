@@ -469,8 +469,13 @@ impl TimelineGyroChart {
                 // Reverse the smoothed rotation to get original smoothed quaternions.
                 // This is the inverse of gyro_source.rs:recompute_smoothness
                 let mut org_smoothed_quats = gyro.smoothed_quaternions.clone();
-                for (sq, q) in org_smoothed_quats.iter_mut().zip(gyro.quaternions.iter()) {
-                    *sq.1 = (*sq.1 / q.1).inverse();
+                for (ts, sq) in org_smoothed_quats.iter_mut() {
+                    let org_quat =
+                        GyroSource::clamped_quat_at_gyro_timestamp(
+                            &gyro.quaternions,
+                            *ts as f64 / 1000.0,
+                        );
+                    *sq = (*sq / org_quat).inverse();
                 }
                 add_quats(&org_smoothed_quats, &mut self.smoothed_quats);
             }

@@ -43,6 +43,45 @@ impl Default for Algs {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    #[test]
+    fn trimmed_quats_interpolate_range_gaps_on_video_timeline_after_offset() {
+        let quats = BTreeMap::from([
+            (0, Quat64::from_euler_angles(0.0, 0.0, 0.0)),
+            (1_000_000, Quat64::from_euler_angles(1.0, 0.0, 0.0)),
+            (2_000_000, Quat64::from_euler_angles(2.0, 0.0, 0.0)),
+            (3_000_000, Quat64::from_euler_angles(3.0, 0.0, 0.0)),
+            (4_000_000, Quat64::from_euler_angles(4.0, 0.0, 0.0)),
+        ]);
+        let compute_params = ComputeParams {
+            scaled_duration_ms: 5_000.0,
+            gyro_offsets: BTreeMap::from([
+                (0, 0.0),
+                (1_000_000, 500.0),
+                (2_000_000, 1_000.0),
+                (4_000_000, 1_000.0),
+            ]),
+            ..Default::default()
+        };
+
+        let trimmed = Smoothing::get_trimmed_quats(
+            &quats,
+            5_000.0,
+            true,
+            &[(0.0, 0.1), (0.8, 1.0)],
+            &compute_params,
+        );
+        let trimmed = trimmed.as_ref();
+        let expected = quats[&1_000_000].slerp(&quats[&3_000_000], 0.6);
+
+        assert!((trimmed[&2_000_000].inverse() * expected).angle() < 1e-12);
+    }
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct Smoothing {
     #[serde(skip)]
@@ -120,49 +159,66 @@ impl Smoothing {
         duration_ms: f64,
         trim_range_only: bool,
         trim_ranges: &[(f64, f64)],
+        compute_params: &ComputeParams,
     ) -> Cow<'a, TimeQuat> {
         if trim_range_only && !trim_ranges.is_empty() {
             let mut quats_copy = quats.clone();
-            let ranges = trim_ranges
-                .iter()
-                .map(|x| {
-                    (
-                        (x.0 * duration_ms * 1000.0).round() as i64,
-                        (x.1 * duration_ms * 1000.0).round() as i64,
-                    )
-                })
-                .collect::<Vec<_>>();
+            let ranges = trim_ranges.to_vec();
             let mut prev_q = quats
-                .range(ranges.first().unwrap().0..)
-                .next()
+                .iter()
+                .find(|(ts, _)| {
+                    compute_params.video_timestamp_for_gyro_timestamp(**ts as f64 / 1000.0)
+                        >= ranges.first().unwrap().0 * duration_ms
+                })
                 .map(|(&a, &b)| (a, b));
             let mut next_q = prev_q;
-            let mut range = ranges.first().unwrap();
+            let mut range = *ranges.first().unwrap();
             let mut current_range = 0;
             for (ts, q) in quats_copy.iter_mut() {
-                while *ts > range.1 {
+                let timestamp_ms =
+                    compute_params.video_timestamp_for_gyro_timestamp(*ts as f64 / 1000.0);
+                while timestamp_ms > range.1 * duration_ms {
                     if let Some(next_range) = ranges.get(current_range + 1) {
                         current_range += 1;
-                        range = next_range;
+                        range = *next_range;
                     } else {
                         prev_q = quats
-                            .range(..ranges.last().unwrap().1)
-                            .next_back()
+                            .iter()
+                            .rev()
+                            .find(|(ts, _)| {
+                                compute_params
+                                    .video_timestamp_for_gyro_timestamp(**ts as f64 / 1000.0)
+                                    < ranges.last().unwrap().1 * duration_ms
+                            })
                             .map(|(&a, &b)| (a, b));
                         next_q = prev_q;
-                        range = &(i64::MAX, i64::MAX);
+                        range = (f64::INFINITY, f64::INFINITY);
                         break;
                     }
                     prev_q = Some((*ts, q.clone()));
-                    next_q = quats.range(range.0..).next().map(|(&a, &b)| (a, b));
+                    next_q = quats
+                        .iter()
+                        .find(|(ts, _)| {
+                            compute_params
+                                .video_timestamp_for_gyro_timestamp(**ts as f64 / 1000.0)
+                                >= range.0 * duration_ms
+                        })
+                        .map(|(&a, &b)| (a, b));
                 }
-                if !(*ts >= range.0 && *ts <= range.1) {
+                if !(timestamp_ms >= range.0 * duration_ms
+                    && timestamp_ms <= range.1 * duration_ms)
+                {
                     if let Some(prev_q) = prev_q {
                         if let Some(next_q) = next_q {
-                            let dist_to_next = if next_q.0 == prev_q.0 {
+                            let prev_timestamp_ms = compute_params
+                                .video_timestamp_for_gyro_timestamp(prev_q.0 as f64 / 1000.0);
+                            let next_timestamp_ms = compute_params
+                                .video_timestamp_for_gyro_timestamp(next_q.0 as f64 / 1000.0);
+                            let dist_to_next = if next_timestamp_ms == prev_timestamp_ms {
                                 0.0
                             } else {
-                                (*ts - prev_q.0) as f64 / (next_q.0 - prev_q.0) as f64
+                                (timestamp_ms - prev_timestamp_ms)
+                                    / (next_timestamp_ms - prev_timestamp_ms)
                             };
                             if dist_to_next.abs() == 0.0 {
                                 *q = prev_q.1;
@@ -188,12 +244,7 @@ impl Smoothing {
         let ranges = params
             .trim_ranges
             .iter()
-            .map(|x| {
-                (
-                    (x.0 * params.scaled_duration_ms * 1000.0) as i64,
-                    (x.1 * params.scaled_duration_ms * 1000.0) as i64,
-                )
-            })
+            .map(|x| (x.0 * params.scaled_duration_ms, x.1 * params.scaled_duration_ms))
             .collect::<Vec<_>>();
         let identity_quat = Quat64::identity();
 
@@ -202,10 +253,12 @@ impl Smoothing {
         let mut max_roll = 0.0;
 
         for (timestamp, quat) in smoothed_quats.iter() {
+            let video_timestamp_ms =
+                params.video_timestamp_for_gyro_timestamp(*timestamp as f64 / 1000.0);
             let within_range = ranges.is_empty()
                 || ranges
                     .iter()
-                    .any(|x| timestamp >= &x.0 && timestamp <= &x.1);
+                    .any(|x| video_timestamp_ms >= x.0 && video_timestamp_ms <= x.1);
             if within_range {
                 let dist = quat.inverse() * quats.get(timestamp).unwrap_or(&identity_quat);
                 let euler_dist = dist.euler_angles();

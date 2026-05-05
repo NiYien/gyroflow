@@ -21,6 +21,53 @@ impl Default for Plain {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn offset_quats(quats: &TimeQuat, offset_us: i64) -> TimeQuat {
+        quats
+            .iter()
+            .map(|(&ts, &quat)| (ts + offset_us, quat))
+            .collect()
+    }
+
+    #[test]
+    fn fov_limit_scalers_use_video_frame_after_gyro_offset() {
+        let alg = Plain {
+            time_constant: 0.25,
+            trim_range_only: false,
+        };
+        let quats = BTreeMap::from([
+            (0, Quat64::identity()),
+            (
+                1_000_000,
+                Quat64::from_euler_angles(0.2, -0.1, 0.4),
+            ),
+            (
+                2_000_000,
+                Quat64::from_euler_angles(0.6, -0.3, 0.8),
+            ),
+        ]);
+        let mut params = ComputeParams {
+            scaled_fps: 1.0,
+            scaled_duration_ms: 3_000.0,
+            smoothing_fov_limit_per_frame: vec![0.2, 1.0, 1.0],
+            ..Default::default()
+        };
+
+        let expected = alg.smooth(&quats, 3_000.0, &params);
+
+        params.gyro_offsets = BTreeMap::from([(2_000_000, -2_000.0)]);
+        let offset_quats = offset_quats(&quats, 2_000_000);
+        let actual = alg.smooth(&offset_quats, 3_000.0, &params);
+
+        for ((_, expected_quat), (_, actual_quat)) in expected.iter().zip(actual.iter()) {
+            assert!((expected_quat.inverse() * actual_quat).angle() < 1e-12);
+        }
+    }
+}
+
 impl SmoothingAlgorithm for Plain {
     fn get_name(&self) -> String {
         "Plain 3D".to_owned()
@@ -106,6 +153,7 @@ impl SmoothingAlgorithm for Plain {
             compute_params.scaled_duration_ms,
             self.trim_range_only,
             &compute_params.trim_ranges,
+            compute_params,
         );
         let quats = quats.as_ref();
 
@@ -145,9 +193,7 @@ impl SmoothingAlgorithm for Plain {
             .map(|x| {
                 let mut scale = 1.0;
 
-                let frame =
-                    crate::frame_at_timestamp(*x.0 as f64 / 1000.0, compute_params.scaled_fps)
-                        as usize;
+                let frame = compute_params.frame_at_gyro_timestamp(*x.0 as f64 / 1000.0);
                 if let Some(fov_limit_ratio) =
                     compute_params.smoothing_fov_limit_per_frame.get(frame)
                 {

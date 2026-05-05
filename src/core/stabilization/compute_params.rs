@@ -8,6 +8,7 @@ use crate::keyframes::KeyframeManager;
 use crate::lens_profile::LensProfile;
 use crate::stabilization_params::ReadoutDirection;
 use parking_lot::RwLock;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 #[derive(Default, Clone)]
@@ -16,6 +17,7 @@ pub struct ComputeParams {
     pub fovs: Vec<f64>,
     pub minimal_fovs: Vec<f64>,
     pub keyframes: KeyframeManager,
+    pub gyro_offsets: BTreeMap<i64, f64>,
     pub lens: LensProfile,
     pub camera_diagonal_fovs: Vec<f64>,
 
@@ -76,6 +78,8 @@ impl ComputeParams {
             .map(|x| DistortionModel::from_name(&x));
 
         let digital_lens_params = lens.digital_lens_params.clone();
+        let keyframes = mgr.keyframes.read().clone();
+        let gyro_offsets = keyframes.gyro_offsets().clone();
 
         Self {
             gyro: mgr.gyro.clone(),
@@ -125,10 +129,23 @@ impl ComputeParams {
             suppress_rotation: false,
             fov_algorithm_margin: 2.0,
 
-            keyframes: mgr.keyframes.read().clone(),
+            keyframes,
+            gyro_offsets,
 
             zooming_debug_points: false,
         }
+    }
+
+    pub fn video_timestamp_for_gyro_timestamp(&self, timestamp_ms: f64) -> f64 {
+        timestamp_ms + GyroSource::offset_at_timestamp(&self.gyro_offsets, timestamp_ms)
+    }
+
+    pub fn frame_at_gyro_timestamp(&self, timestamp_ms: f64) -> usize {
+        crate::frame_at_timestamp(
+            self.video_timestamp_for_gyro_timestamp(timestamp_ms),
+            self.scaled_fps,
+        )
+        .max(0) as usize
     }
 
     pub fn calculate_camera_fovs(&mut self) {

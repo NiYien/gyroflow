@@ -257,6 +257,9 @@ impl KeyframeManager {
     pub fn update_gyro(&mut self, gyro: &GyroSource) {
         self.gyro_offsets = gyro.get_offsets().clone();
     }
+    pub fn gyro_offsets(&self) -> &BTreeMap<i64, f64> {
+        &self.gyro_offsets
+    }
     pub fn clear(&mut self) {
         *self = Self::new();
     }

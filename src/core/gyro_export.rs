@@ -2,6 +2,7 @@
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
 use crate::filesystem;
+use crate::gyro_source::GyroSource;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
@@ -310,27 +311,47 @@ pub fn export_gyro_data(
         }
 
         let quat_smooth = match ts {
-            TimestampType::Microseconds(ts) => *gyro.smoothed_quaternions.get(&ts).unwrap(),
-            TimestampType::Milliseconds(ts) => gyro.smoothed_quat_at_timestamp(ts),
+            TimestampType::Microseconds(ts) => {
+                let in_smoothed_range = gyro
+                    .smoothed_quaternions
+                    .keys()
+                    .next()
+                    .zip(gyro.smoothed_quaternions.keys().next_back())
+                    .map(|(&first_ts, &last_ts)| ts >= first_ts && ts <= last_ts)
+                    .unwrap_or(false);
+                in_smoothed_range.then(|| {
+                    GyroSource::clamped_quat_at_gyro_timestamp(
+                        &gyro.smoothed_quaternions,
+                        ts as f64 / 1000.0,
+                    )
+                })
+            }
+            TimestampType::Milliseconds(ts) => Some(gyro.smoothed_quat_at_timestamp(ts)),
         };
 
         // smoothed_quaternions is the quaternion needed to stabilize, but in this case we want to get the stabilized camera motion
         // we need to reverse the calculation done by gyroflow to get original smoothed quaternion
-        let quat_smooth = (quat_smooth / quat_org).inverse();
-
-        let quate = quat_smooth.euler_angles();
-        let quatv = quat_smooth.as_vector();
-        let val_seulr = [quate.0 * RAD2DEG, quate.1 * RAD2DEG, quate.2 * RAD2DEG];
-        let val_squat = [quatv[3], quatv[0], quatv[1], quatv[2]];
+        let quat_smooth = quat_smooth.map(|quat_smooth| (quat_smooth / quat_org).inverse());
+        let (val_seulr, val_squat) = if let Some(quat_smooth) = quat_smooth {
+            let quate = quat_smooth.euler_angles();
+            let quatv = quat_smooth.as_vector();
+            (
+                Some([quate.0 * RAD2DEG, quate.1 * RAD2DEG, quate.2 * RAD2DEG]),
+                Some([quatv[3], quatv[0], quatv[1], quatv[2]]),
+            )
+        } else {
+            (None, None)
+        };
 
         if format == Format::Jsx && (seulr && !oeulr) {
             jsx.get_mut("orientations")
                 .unwrap()
                 .as_array_mut()
                 .unwrap()
-                .push(serde_json::to_value([val_seulr[0], -val_seulr[2], val_seulr[1]]).unwrap());
+                .push(serde_json::to_value(val_seulr.map(|x| [x[0], -x[2], x[1]])).unwrap());
         }
-        if format == Format::Usd && (seulr && !oeulr) {
+        if format == Format::Usd && (seulr && !oeulr) && quat_smooth.is_some() {
+            let quat_smooth = quat_smooth.unwrap();
             let matrix = nalgebra::Matrix4::from(quat_smooth);
             output.push_str(&format!("                {}: ( ({},{},{}, 0), ({}, {}, {}, 0), ({}, {}, {}, 0), (7.0, -7.0, 1.5, 1) ),\n",
                 frame + 1,
@@ -390,18 +411,26 @@ pub fn export_gyro_data(
                 let _ = write!(output, ",{:.3}", val_ofd);
             }
             if seulr {
-                let _ = write!(
-                    output,
-                    ",{:.3},{:.3},{:.3}",
-                    val_seulr[0], val_seulr[1], val_seulr[2]
-                );
+                if let Some(val_seulr) = val_seulr {
+                    let _ = write!(
+                        output,
+                        ",{:.3},{:.3},{:.3}",
+                        val_seulr[0], val_seulr[1], val_seulr[2]
+                    );
+                } else {
+                    let _ = write!(output, ",,,");
+                }
             }
             if squat {
-                let _ = write!(
-                    output,
-                    ",{:.6},{:.6},{:.6},{:.6}",
-                    val_squat[0], val_squat[1], val_squat[2], val_squat[3]
-                );
+                if let Some(val_squat) = val_squat {
+                    let _ = write!(
+                        output,
+                        ",{:.6},{:.6},{:.6},{:.6}",
+                        val_squat[0], val_squat[1], val_squat[2], val_squat[3]
+                    );
+                } else {
+                    let _ = write!(output, ",,,,");
+                }
             }
             if focal_length {
                 let _ = write!(output, ",{val_fl:.3}");
@@ -432,11 +461,11 @@ pub fn export_gyro_data(
             if ofd {
                 obj.insert("focus_distance", serde_json::to_value(val_ofd).unwrap());
             }
-            if seulr {
-                obj.insert("stab_euler", serde_json::to_value(val_seulr).unwrap());
+            if seulr && val_seulr.is_some() {
+                obj.insert("stab_euler", serde_json::to_value(val_seulr.unwrap()).unwrap());
             }
-            if squat {
-                obj.insert("stab_quat", serde_json::to_value(val_squat).unwrap());
+            if squat && val_squat.is_some() {
+                obj.insert("stab_quat", serde_json::to_value(val_squat.unwrap()).unwrap());
             }
             if focal_length {
                 obj.insert("focal_length", val_fl.into());
@@ -558,5 +587,57 @@ pub fn export_gyro_data(
         output
     } else {
         serde_json::to_string(&json).unwrap()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gyro_source::Quat64;
+
+    #[test]
+    fn all_samples_export_leaves_stabilized_fields_empty_outside_smoothed_range() {
+        let stab = Arc::new(crate::StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.fps = 1.0;
+            params.frame_count = 3;
+            params.duration_ms = 3_000.0;
+        }
+        {
+            let mut gyro = stab.gyro.write();
+            gyro.duration_ms = 5_000.0;
+            gyro.quaternions = (0..=4)
+                .map(|second| {
+                    (
+                        second * 1_000_000,
+                        Quat64::from_euler_angles(0.0, second as f64 * 0.1, 0.0),
+                    )
+                })
+                .collect();
+            gyro.smoothed_quaternions = (0..=2)
+                .map(|second| {
+                    (
+                        second * 1_000_000,
+                        Quat64::from_euler_angles(0.0, second as f64 * 0.05, 0.0),
+                    )
+                })
+                .collect();
+        }
+
+        let fields = serde_json::json!({
+            "export_all_samples": true,
+            "original": { "quaternion": true },
+            "stabilized": { "quaternion": true },
+            "zooming": {}
+        });
+
+        let csv = export_gyro_data("gyro.csv", &fields.to_string(), &stab);
+        let out_of_range_row = csv
+            .lines()
+            .find(|line| line.starts_with("3,3000.000"))
+            .unwrap();
+
+        assert!(out_of_range_row.ends_with(",,,,"));
     }
 }
