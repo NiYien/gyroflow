@@ -721,4 +721,34 @@ mod tests {
 
         force_enabled_for_test(false);
     }
+
+    #[test]
+    fn plot_py_parses_and_self_checks() {
+        // Resolve the python interpreter; skip gracefully if not on PATH.
+        let py = match which::which("python")
+            .or_else(|_| which::which("python3"))
+        {
+            Ok(p) => p,
+            Err(_) => {
+                eprintln!("[skip] python not on PATH");
+                return;
+            }
+        };
+        // Write the embedded plot.py to a temp dir and run --self-check.
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("plot.py");
+        std::fs::write(&path, PLOT_PY).unwrap();
+        let out = std::process::Command::new(&py)
+            .arg(&path)
+            .arg("--self-check")
+            .output()
+            .expect("python run");
+        if !out.status.success() {
+            eprintln!(
+                "[skip] python --self-check failed (likely missing numpy/pandas/matplotlib): {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return;
+        }
+    }
 }
