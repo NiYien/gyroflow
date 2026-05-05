@@ -417,21 +417,9 @@ pub fn init_logging() {
 
     qmetaobject::log::init_qt_to_rust();
 
-    qml_video_rs::video_item::MDKVideoItem::setLogHandler(|level: i32, text: &str| match level {
-        1 => {
-            ::log::error!(target: "mdk", "[MDK] {}", text.trim());
-        }
-        2 => {
-            ::log::warn!(target: "mdk", "[MDK] {}", text.trim());
-        }
-        3 => {
-            ::log::info!(target: "mdk", "[MDK] {}", text.trim());
-        }
-        4 => {
-            ::log::debug!(target: "mdk", "[MDK] {}", text.trim());
-        }
-        _ => {}
-    });
+    // Suppress MDK SDK internal logs. App-level media errors are logged at
+    // the call sites that handle them.
+    qml_video_rs::video_item::MDKVideoItem::setLogHandler(|_: i32, _: &str| {});
 }
 
 /// Invalidate Qt RHI pipeline cache and QML bytecode cache when the host application's
