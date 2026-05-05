@@ -32,6 +32,7 @@ pub mod neuflow_burn;
 pub mod stabilization_params;
 pub mod util;
 pub mod log_context;
+pub mod smooth_diag;
 
 use camera_identifier::CameraIdentifier;
 use gpu::Buffers;
