@@ -374,6 +374,17 @@ fn current_timestamp_iso() -> String {
     )
 }
 
+/// Embedded Python analyzer script; copied verbatim on flush so the user can run
+/// `python plot.py` without needing a separate distribution step.
+const PLOT_PY: &str = include_str!("smooth_diag_plot.py");
+
+/// Write the bundled `plot.py` to `<out_dir>/plot.py`.
+fn write_plot_py(s: &DiagSession) -> std::io::Result<()> {
+    let path = s.out_dir.join("plot.py");
+    std::fs::write(&path, PLOT_PY)?;
+    Ok(())
+}
+
 /// Write `<out_dir>/meta.json` with video / smoothing / zooming context.
 fn write_meta_json(s: &DiagSession) -> std::io::Result<()> {
     let path = s.out_dir.join("meta.json");
@@ -423,6 +434,9 @@ pub fn flush_and_close() {
     }
     if let Err(e) = write_meta_json(&session) {
         log::warn!(target: "app", "[SmoothDiag] write_meta_json error: {}", e);
+    }
+    if let Err(e) = write_plot_py(&session) {
+        log::warn!(target: "app", "[SmoothDiag] write_plot_py error: {}", e);
     }
     log::info!(
         target: "app",
@@ -680,6 +694,30 @@ mod tests {
         assert_eq!(v["zooming"]["max_zoom_iterations"], 5);
         // timestamp_iso must exist and be a non-empty string
         assert!(v["timestamp_iso"].as_str().map(|s| !s.is_empty()).unwrap_or(false));
+
+        force_enabled_for_test(false);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flush_writes_plot_py() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("smooth_plot");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        force_enabled_for_test(true);
+        *SESSION.lock() = Some(DiagSession {
+            out_dir: dir.clone(),
+            frames: vec![],
+            smoothing_meta: SmoothingMeta::default(),
+            video_meta: VideoMeta::default(),
+        });
+        flush_and_close();
+
+        let plot_path = dir.join("plot.py");
+        assert!(plot_path.exists());
+        let body = std::fs::read_to_string(&plot_path).unwrap();
+        assert!(body.contains("smooth_diag"), "plot.py contains smooth_diag marker");
 
         force_enabled_for_test(false);
     }
