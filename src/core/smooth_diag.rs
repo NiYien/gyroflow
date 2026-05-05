@@ -18,17 +18,35 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
+/// In tests, -1 means "use env", 0 means forced-false, 1 means forced-true.
+#[cfg(test)]
+static TEST_ENABLED_OVERRIDE: std::sync::atomic::AtomicI8 =
+    std::sync::atomic::AtomicI8::new(-1);
+
 // SESSION and DiagSession fields are read/written in Tasks 2-7; allow dead_code for skeleton.
 #[allow(dead_code)]
 static SESSION: Mutex<Option<DiagSession>> = Mutex::new(None);
 
 #[inline]
 pub fn is_enabled() -> bool {
+    #[cfg(test)]
+    {
+        let o = TEST_ENABLED_OVERRIDE.load(std::sync::atomic::Ordering::SeqCst);
+        if o >= 0 {
+            return o == 1;
+        }
+    }
     *ENABLED.get_or_init(|| {
         std::env::var("GYROFLOW_SMOOTH_DIAG")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false)
     })
+}
+
+/// Test-only helper to override the enabled flag without relying on OnceLock state.
+#[cfg(test)]
+pub(crate) fn force_enabled_for_test(on: bool) {
+    TEST_ENABLED_OVERRIDE.store(if on { 1 } else { 0 }, std::sync::atomic::Ordering::SeqCst);
 }
 
 #[allow(dead_code)]
@@ -66,12 +84,44 @@ pub(crate) struct VideoMeta {
     pub gyro_sample_rate_hz: f64,
 }
 
-#[allow(clippy::needless_return)]
 pub fn init_session() {
     if !is_enabled() {
         return;
     }
-    // Task 2: create per-session output directory and initialize SESSION.
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let sid = {
+        let snap = crate::log_context::LogContext::snapshot();
+        if snap.session_id.is_empty() {
+            "nosid".to_string()
+        } else {
+            // Sanitize session_id for use as a filesystem path segment.
+            snap.session_id
+                .chars()
+                .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+                .collect()
+        }
+    };
+    let mut dir = crate::settings::data_dir();
+    dir.push("diag");
+    dir.push(format!("smooth_{}_{}", ts, sid));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        log::warn!(target: "app", "[SmoothDiag] failed to create {}: {}", dir.display(), e);
+        return;
+    }
+    log::info!(target: "app", "[SmoothDiag] session opened at {}", dir.display());
+    let mut session_guard = SESSION.lock();
+    if session_guard.is_some() {
+        log::warn!(target: "app", "[SmoothDiag] init_session called while a session is already open; replacing it (previous data discarded)");
+    }
+    *session_guard = Some(DiagSession {
+        out_dir: dir,
+        frames: Vec::new(),
+        smoothing_meta: SmoothingMeta::default(),
+        video_meta: VideoMeta::default(),
+    });
 }
 
 #[allow(clippy::needless_return)]
@@ -111,5 +161,60 @@ mod tests {
         record_session(&[], &[], &[], &[], &SmoothingMeta::default(), &VideoMeta::default());
         flush_and_close();
         assert!(SESSION.lock().is_none());
+    }
+
+    #[test]
+    #[serial_test::serial] // env var manipulation, must serialize
+    fn init_session_creates_directory_when_enabled() {
+        // Override data_dir via the GYROFLOW_DATA_DIR env (settings.rs:17 honors it).
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Safety: tests run single-threaded thanks to serial_test.
+        unsafe {
+            std::env::set_var("GYROFLOW_DATA_DIR", tmp.path());
+            std::env::set_var("GYROFLOW_SMOOTH_DIAG", "1");
+        }
+        // Force ENABLED to true via a test-only setter (since OnceLock can't be reset).
+        force_enabled_for_test(true);
+
+        // Preflight: settings::data_dir() caches via OnceLock, so if a prior test in
+        // this binary already called it, our GYROFLOW_DATA_DIR override is silently
+        // ignored. Detect this and skip rather than emit a misleading failure.
+        let preflight = crate::settings::data_dir();
+        if !preflight.starts_with(tmp.path()) {
+            eprintln!(
+                "[skip] settings::data_dir() already cached to {}, skipping test (cannot honor GYROFLOW_DATA_DIR after first call)",
+                preflight.display()
+            );
+            *SESSION.lock() = None;
+            force_enabled_for_test(false);
+            unsafe {
+                std::env::remove_var("GYROFLOW_SMOOTH_DIAG");
+                std::env::remove_var("GYROFLOW_DATA_DIR");
+            }
+            return;
+        }
+
+        init_session();
+
+        let s = SESSION.lock();
+        let dir = s.as_ref().expect("session opened").out_dir.clone();
+        drop(s);
+        assert!(dir.exists(), "out_dir should exist: {}", dir.display());
+        assert!(dir.starts_with(tmp.path()), "out_dir under data_dir");
+        assert!(
+            dir.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("smooth_"))
+                .unwrap_or(false),
+            "dir name starts with smooth_"
+        );
+
+        // cleanup
+        *SESSION.lock() = None;
+        force_enabled_for_test(false);
+        unsafe {
+            std::env::remove_var("GYROFLOW_SMOOTH_DIAG");
+            std::env::remove_var("GYROFLOW_DATA_DIR");
+        }
     }
 }

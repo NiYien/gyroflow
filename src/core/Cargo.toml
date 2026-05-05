@@ -125,6 +125,8 @@ burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b7
 burn-store = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [dev-dependencies]
+serial_test = "3"
+tempfile = "3"
 
 [build-dependencies]
 ureq = "3.3"
