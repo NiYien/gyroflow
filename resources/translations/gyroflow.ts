@@ -34,7 +34,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1252"/>
+        <location filename="../../src/ui/App.qml" line="1559"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="174"/>
         <source>Theme</source>
         <translation type="unfinished"></translation>
@@ -45,7 +45,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1234"/>
+        <location filename="../../src/ui/App.qml" line="1541"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="215"/>
         <source>Language</source>
         <translation type="unfinished"></translation>
@@ -62,7 +62,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1273"/>
+        <location filename="../../src/ui/App.qml" line="1580"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="270"/>
         <source>Use GPU decoding</source>
         <translation type="unfinished"></translation>
@@ -98,7 +98,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1293"/>
+        <location filename="../../src/ui/App.qml" line="1600"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="374"/>
         <source>Device for video processing</source>
         <translation type="unfinished"></translation>
@@ -169,6 +169,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <source>Open data folder</source>
         <translation type="unfinished"></translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/Advanced.qml" line="484"/>
+        <source>Report a problem</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>AdvancedSection</name>
@@ -181,106 +186,108 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="404"/>
+        <location filename="../../src/ui/App.qml" line="541"/>
         <source>Choose a video file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="405"/>
+        <location filename="../../src/ui/App.qml" line="542"/>
         <source>Video files</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="517"/>
+        <location filename="../../src/ui/App.qml" line="684"/>
         <source>Output path:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="670"/>
+        <location filename="../../src/ui/App.qml" line="849"/>
         <source>Export</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="668"/>
+        <location filename="../../src/ui/App.qml" line="847"/>
         <source>Add to render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="726"/>
+        <location filename="../../src/ui/App.qml" line="905"/>
         <source>This format is not available for rendering.
 The recommended workflow is to export project file and use one of [video editor plugins] (%1).</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="770"/>
-        <location filename="../../src/ui/App.qml" line="1725"/>
+        <location filename="../../src/ui/App.qml" line="949"/>
+        <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Output file already exists, do you want to overwrite it?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="733"/>
-        <location filename="../../src/ui/App.qml" line="741"/>
-        <location filename="../../src/ui/App.qml" line="771"/>
+        <location filename="../../src/ui/App.qml" line="912"/>
         <location filename="../../src/ui/App.qml" line="920"/>
+        <location filename="../../src/ui/App.qml" line="950"/>
+        <location filename="../../src/ui/App.qml" line="1101"/>
         <source>Yes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="772"/>
-        <location filename="../../src/ui/App.qml" line="1801"/>
+        <location filename="../../src/ui/App.qml" line="951"/>
+        <location filename="../../src/ui/App.qml" line="2134"/>
         <source>Rename</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="734"/>
-        <location filename="../../src/ui/App.qml" line="742"/>
-        <location filename="../../src/ui/App.qml" line="773"/>
-        <location filename="../../src/ui/App.qml" line="925"/>
+        <location filename="../../src/ui/App.qml" line="913"/>
+        <location filename="../../src/ui/App.qml" line="921"/>
+        <location filename="../../src/ui/App.qml" line="952"/>
+        <location filename="../../src/ui/App.qml" line="1106"/>
         <source>No</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1640"/>
-        <location filename="../../src/ui/App.qml" line="1647"/>
-        <location filename="../../src/ui/App.qml" line="1656"/>
+        <location filename="../../src/ui/App.qml" line="1950"/>
+        <location filename="../../src/ui/App.qml" line="1957"/>
+        <location filename="../../src/ui/App.qml" line="1966"/>
         <source>Select file destination</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="668"/>
+        <location filename="../../src/ui/App.qml" line="847"/>
         <source>Save</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="732"/>
+        <location filename="../../src/ui/App.qml" line="911"/>
         <source>Lens profile is not loaded, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="740"/>
+        <location filename="../../src/ui/App.qml" line="919"/>
         <source>There are no sync points present, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="944"/>
+        <location filename="../../src/ui/App.qml" line="1127"/>
         <source>Render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="727"/>
-        <location filename="../../src/ui/App.qml" line="782"/>
-        <location filename="../../src/ui/App.qml" line="792"/>
-        <location filename="../../src/ui/App.qml" line="799"/>
-        <location filename="../../src/ui/App.qml" line="810"/>
-        <location filename="../../src/ui/App.qml" line="874"/>
-        <location filename="../../src/ui/App.qml" line="877"/>
-        <location filename="../../src/ui/App.qml" line="1572"/>
-        <location filename="../../src/ui/App.qml" line="1575"/>
+        <location filename="../../src/ui/App.qml" line="906"/>
+        <location filename="../../src/ui/App.qml" line="961"/>
+        <location filename="../../src/ui/App.qml" line="971"/>
+        <location filename="../../src/ui/App.qml" line="978"/>
+        <location filename="../../src/ui/App.qml" line="989"/>
+        <location filename="../../src/ui/App.qml" line="1053"/>
+        <location filename="../../src/ui/App.qml" line="1056"/>
+        <location filename="../../src/ui/App.qml" line="1882"/>
+        <location filename="../../src/ui/App.qml" line="1885"/>
+        <location filename="../../src/ui/App.qml" line="1991"/>
+        <location filename="../../src/ui/App.qml" line="1993"/>
         <source>Ok</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
+        <location filename="../../src/ui/App.qml" line="967"/>
         <source>Some AMD GPU encoders have a bug where it limits the bitrate to 20 Mbps, if the target bitrate is greater than 100 Mbps.
 
 Please check the file bitrate after rendering and if you&apos;re affected by this bug, you can either:
@@ -289,316 +296,336 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1778"/>
+        <location filename="../../src/ui/App.qml" line="2111"/>
         <source>Saving...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="871"/>
-        <location filename="../../src/ui/App.qml" line="882"/>
-        <location filename="../../src/ui/App.qml" line="1663"/>
+        <location filename="../../src/ui/App.qml" line="1050"/>
+        <location filename="../../src/ui/App.qml" line="1061"/>
+        <location filename="../../src/ui/App.qml" line="1973"/>
         <source>Preset saved to %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1468"/>
-        <location filename="../../src/ui/App.qml" line="1506"/>
-        <location filename="../../src/ui/App.qml" line="1524"/>
-        <location filename="../../src/ui/App.qml" line="1559"/>
-        <location filename="../../src/ui/App.qml" line="1618"/>
-        <location filename="../../src/ui/App.qml" line="1624"/>
+        <location filename="../../src/ui/App.qml" line="1778"/>
+        <location filename="../../src/ui/App.qml" line="1816"/>
+        <location filename="../../src/ui/App.qml" line="1834"/>
+        <location filename="../../src/ui/App.qml" line="1869"/>
+        <location filename="../../src/ui/App.qml" line="1928"/>
+        <location filename="../../src/ui/App.qml" line="1934"/>
         <source>Close</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1797"/>
+        <location filename="../../src/ui/App.qml" line="2130"/>
         <source>`.gyroflow` file already exists, what do you want to do?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1798"/>
+        <location filename="../../src/ui/App.qml" line="2131"/>
         <source>Overwrite</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1816"/>
+        <location filename="../../src/ui/App.qml" line="2149"/>
         <source>Choose a different location</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="884"/>
-        <location filename="../../src/ui/App.qml" line="1702"/>
-        <location filename="../../src/ui/App.qml" line="1821"/>
+        <location filename="../../src/ui/App.qml" line="1063"/>
+        <location filename="../../src/ui/App.qml" line="2035"/>
+        <location filename="../../src/ui/App.qml" line="2154"/>
         <source>Cancel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="110"/>
+        <location filename="../../src/ui/App.qml" line="202"/>
         <source>Version: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="549"/>
+        <location filename="../../src/ui/App.qml" line="716"/>
         <source>Auto sync</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="578"/>
+        <location filename="../../src/ui/App.qml" line="751"/>
         <source>Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="578"/>
+        <location filename="../../src/ui/App.qml" line="751"/>
         <source>Export stabilized video</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="666"/>
-        <location filename="../../src/ui/App.qml" line="764"/>
-        <location filename="../../src/ui/App.qml" line="768"/>
+        <location filename="../../src/ui/App.qml" line="845"/>
+        <location filename="../../src/ui/App.qml" line="943"/>
+        <location filename="../../src/ui/App.qml" line="947"/>
         <source>Added to queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="764"/>
+        <location filename="../../src/ui/App.qml" line="943"/>
         <source>file %1 will be overwritten</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="768"/>
+        <location filename="../../src/ui/App.qml" line="947"/>
         <source>file will be rendered to %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="781"/>
+        <location filename="../../src/ui/App.qml" line="960"/>
         <source>Gyroflow will use REDline to convert .R3D to ProRes before stabilizing in order to export from Gyroflow directly.
 If you want to work on RAW data instead, export project file (Ctrl+S) and use one of [video editor plugins] (%1).</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="798"/>
+        <location filename="../../src/ui/App.qml" line="977"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="809"/>
+        <location filename="../../src/ui/App.qml" line="988"/>
         <source>Keep this app in the foreground and don&apos;t lock the screen.
 Due to limitations of the system video encoders, rendering in the background is not supported.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="873"/>
+        <location filename="../../src/ui/App.qml" line="1052"/>
         <source>Enter the name for the preset: </source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="877"/>
+        <location filename="../../src/ui/App.qml" line="1056"/>
         <source>Name cannot be empty.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="917"/>
+        <location filename="../../src/ui/App.qml" line="1098"/>
         <source>Clear render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="919"/>
+        <location filename="../../src/ui/App.qml" line="1100"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1017"/>
+        <location filename="../../src/ui/App.qml" line="1302"/>
         <source>Batch settings (%1)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1026"/>
+        <location filename="../../src/ui/App.qml" line="1311"/>
         <source>Apply</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1034"/>
+        <location filename="../../src/ui/App.qml" line="1319"/>
         <source>Exit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1132"/>
+        <location filename="../../src/ui/App.qml" line="1433"/>
         <source>Sensor &amp;&amp; Lens</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1219"/>
+        <location filename="../../src/ui/App.qml" line="1526"/>
         <source>Settings</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1312"/>
+        <location filename="../../src/ui/App.qml" line="1619"/>
         <source>Check for updates</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1330"/>
+        <location filename="../../src/ui/App.qml" line="1270"/>
+        <location filename="../../src/ui/App.qml" line="1280"/>
+        <location filename="../../src/ui/App.qml" line="1647"/>
         <source>Full mode →</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1342"/>
+        <location filename="../../src/ui/App.qml" line="1186"/>
+        <location filename="../../src/ui/App.qml" line="1196"/>
+        <location filename="../../src/ui/App.qml" line="1206"/>
+        <location filename="../../src/ui/App.qml" line="1374"/>
         <source>← Simple mode</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1467"/>
-        <location filename="../../src/ui/App.qml" line="1605"/>
+        <location filename="../../src/ui/App.qml" line="1625"/>
+        <source>Report a problem</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1777"/>
+        <location filename="../../src/ui/App.qml" line="1915"/>
         <source>Downloading update...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1479"/>
+        <location filename="../../src/ui/App.qml" line="1789"/>
         <source>Manual test version</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1479"/>
+        <location filename="../../src/ui/App.qml" line="1789"/>
         <source>Stable update</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1489"/>
+        <location filename="../../src/ui/App.qml" line="1799"/>
         <source>Test version available: %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1490"/>
+        <location filename="../../src/ui/App.qml" line="1800"/>
         <source>Stable update available: %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1505"/>
+        <location filename="../../src/ui/App.qml" line="1815"/>
         <source>Available updates</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1523"/>
-        <location filename="../../src/ui/App.qml" line="1623"/>
+        <location filename="../../src/ui/App.qml" line="1833"/>
+        <location filename="../../src/ui/App.qml" line="1933"/>
         <source>Update failed: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1558"/>
+        <location filename="../../src/ui/App.qml" line="1868"/>
         <source>You are already on the latest version.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1604"/>
+        <location filename="../../src/ui/App.qml" line="1914"/>
         <source>Downloading update... %1%</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1612"/>
+        <location filename="../../src/ui/App.qml" line="1922"/>
         <source>Installing the update will quit Gyroflow. Make sure your project is saved before continuing.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1614"/>
+        <location filename="../../src/ui/App.qml" line="1924"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1616"/>
+        <location filename="../../src/ui/App.qml" line="1926"/>
         <source>Update is ready.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1617"/>
+        <location filename="../../src/ui/App.qml" line="1927"/>
         <source>Open DMG and quit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1617"/>
+        <location filename="../../src/ui/App.qml" line="1927"/>
         <source>Install and quit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1681"/>
+        <location filename="../../src/ui/App.qml" line="1991"/>
+        <source>Thanks! Your feedback has been submitted.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1993"/>
+        <source>Submission failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2014"/>
         <source>An error occured: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1682"/>
+        <location filename="../../src/ui/App.qml" line="2015"/>
         <source>Gyroflow file exported to %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1683"/>
+        <location filename="../../src/ui/App.qml" line="2016"/>
         <source>--REPLACE_WITH_NATIVE_NAME_OF_YOUR_LANGUAGE_IN_YOUR_LANGUAGE--</source>
         <comment>Translate this to the native name of your language</comment>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1684"/>
+        <location filename="../../src/ui/App.qml" line="2017"/>
         <source>Gyroflow will shut down the computer in 60 seconds because all tasks have been completed.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1685"/>
+        <location filename="../../src/ui/App.qml" line="2018"/>
         <source>Gyroflow will reboot the computer in 60 seconds because all tasks have been completed.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1696"/>
+        <location filename="../../src/ui/App.qml" line="2029"/>
         <source>This encoder requires an external library licensed as GPL.
 Do you agree with the [GPL license] and want to download the additional codec?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1697"/>
+        <location filename="../../src/ui/App.qml" line="2030"/>
         <source>Yes, I agree</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1712"/>
+        <location filename="../../src/ui/App.qml" line="2045"/>
         <source>Permission denied. Unable to create or write file.
 Change the output path or run the program as administrator.
 Make sure you have write permissions to the target directory and make sure target file is not used by any other application.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1713"/>
+        <location filename="../../src/ui/App.qml" line="2046"/>
         <source>NVIDIA GPU driver is too old, GPU encoding will not work for this format.
 Update your NVIDIA drivers to the newest version: %1.
 If the issue is still present after driver update, your GPU probably doesn&apos;t support GPU encoding with this format. Disable GPU encoding in this case.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1722"/>
+        <location filename="../../src/ui/App.qml" line="2055"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1728"/>
+        <location filename="../../src/ui/App.qml" line="2061"/>
         <source>GPU encoder failed to initialize and rendering is done on the CPU, which is much slower.
 If you have a modern device, latest GPU drivers and you think this shouldn&apos;t happen, report this on GitHub including gyroflow.log file.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1731"/>
+        <location filename="../../src/ui/App.qml" line="2064"/>
         <source>Your GPU doesn&apos;t support H.265/HEVC encoding, try to use H.264/AVC or disable GPU encoding in Export settings.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1734"/>
+        <location filename="../../src/ui/App.qml" line="2067"/>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1737"/>
+        <location filename="../../src/ui/App.qml" line="2070"/>
         <source>Make sure your output extension supports the selected codec. &quot;.mov&quot; should work in most cases.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1740"/>
+        <location filename="../../src/ui/App.qml" line="2073"/>
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -713,530 +740,574 @@ You can increase the sharpness limit in the Advanced section.</source>
     <name>Device</name>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="14"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="209"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="285"/>
         <source>Device</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="159"/>
-        <source>Checking for updates</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="73"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="378"/>
+        <source>Requesting device permission</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="160"/>
-        <source>Update available</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="75"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="379"/>
+        <source>Device permission denied</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="161"/>
-        <source>Updating firmware</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="77"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="380"/>
+        <source>Device connection unsupported</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="162"/>
-        <source>Firmware updated</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="163"/>
-        <source>Update failed</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="164"/>
-        <source>Firmware is up to date</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="165"/>
-        <source>Waiting for device</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="177"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="288"/>
-        <source>Current firmware: %1. Your device is already on the latest firmware.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="179"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="289"/>
-        <source>Current firmware: %1. Checking automatically after the device is connected...</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="181"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="290"/>
-        <source>Current firmware: %1. Latest firmware: %2.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="183"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="291"/>
-        <source>Current firmware: %1. Firmware update completed successfully.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="185"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="292"/>
-        <source>Current firmware: %1. Do not disconnect the device during update.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="187"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="293"/>
-        <source>Current firmware: %1. %2</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="188"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="294"/>
-        <source>Current firmware: %1. Waiting for automatic firmware check.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="210"/>
-        <source>System</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="211"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="361"/>
-        <source>Model</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="212"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="421"/>
-        <source>Device time</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="213"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="438"/>
-        <source>Timezone</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="214"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="450"/>
-        <source>Sync Time</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="215"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="450"/>
-        <source>Syncing...</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="216"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="457"/>
-        <source>Set timezone</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="217"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="372"/>
-        <source>Software</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="218"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="374"/>
-        <source>Hardware</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="219"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="491"/>
-        <source>Update Firmware</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="220"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="491"/>
-        <source>Updating...</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="221"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="523"/>
-        <source>Set device timezone</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="222"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="532"/>
-        <source>Current selection</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="223"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="604"/>
-        <source>Nearest city</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="224"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="634"/>
-        <source>Use system timezone</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="79"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="381"/>
+        <source>Device connection error</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="225"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="641"/>
-        <source>Close</source>
+        <source>Checking for updates</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="226"/>
-        <source>Honolulu</source>
+        <source>Update available</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="227"/>
-        <source>Pago Pago</source>
+        <source>Updating firmware</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="228"/>
-        <source>Taiohae</source>
+        <source>Firmware updated</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="229"/>
-        <source>Anchorage</source>
+        <source>Update failed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="230"/>
-        <source>Los Angeles</source>
+        <source>Firmware is up to date</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="231"/>
-        <source>San Francisco</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="232"/>
-        <source>Vancouver</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="233"/>
-        <source>Denver</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="234"/>
-        <source>Phoenix</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="235"/>
-        <source>Chicago</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="236"/>
-        <source>Mexico City</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="237"/>
-        <source>New York</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="238"/>
-        <source>Toronto</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="239"/>
-        <source>Caracas</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="240"/>
-        <source>Halifax</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="241"/>
-        <source>St. Johns</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="242"/>
-        <source>Sao Paulo</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="243"/>
-        <source>Buenos Aires</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="244"/>
-        <source>Fernando de Noronha</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="245"/>
-        <source>Praia</source>
+        <source>Waiting for device</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="246"/>
-        <source>Ponta Delgada</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="247"/>
-        <source>London</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="364"/>
+        <source>Current firmware: %1. Your device is already on the latest firmware.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="248"/>
-        <source>Lisbon</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="249"/>
-        <source>Berlin</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="365"/>
+        <source>Current firmware: %1. Checking automatically after the device is connected...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="250"/>
-        <source>Paris</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="251"/>
-        <source>Cairo</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="366"/>
+        <source>Current firmware: %1. Latest firmware: %2.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="252"/>
-        <source>Johannesburg</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="253"/>
-        <source>Moscow</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="367"/>
+        <source>Current firmware: %1. Firmware update completed successfully.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="254"/>
-        <source>Istanbul</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="255"/>
-        <source>Tehran</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="368"/>
+        <source>Current firmware: %1. Do not disconnect the device during update.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="256"/>
-        <source>Dubai</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="369"/>
+        <source>Current firmware: %1. %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="257"/>
-        <source>Abu Dhabi</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="258"/>
-        <source>Kabul</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="259"/>
-        <source>Karachi</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="260"/>
-        <source>Tashkent</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="261"/>
-        <source>Delhi</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="262"/>
-        <source>Mumbai</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="263"/>
-        <source>Kathmandu</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="264"/>
-        <source>Dhaka</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="265"/>
-        <source>Thimphu</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="266"/>
-        <source>Yangon</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="267"/>
-        <source>Bangkok</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="268"/>
-        <source>Jakarta</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="269"/>
-        <source>Shanghai</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="270"/>
-        <source>Beijing</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="271"/>
-        <source>Tianjin</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="272"/>
-        <source>Eucla</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="273"/>
-        <source>Tokyo</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="274"/>
-        <source>Seoul</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="275"/>
-        <source>Adelaide</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="276"/>
-        <source>Darwin</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="277"/>
-        <source>Sydney</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="278"/>
-        <source>Melbourne</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="279"/>
-        <source>Lord Howe</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="280"/>
-        <source>Noumea</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="281"/>
-        <source>Honiara</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="282"/>
-        <source>Auckland</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="283"/>
-        <source>Wellington</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="284"/>
-        <source>Chatham</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="285"/>
-        <source>Nuku&apos;alofa</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="370"/>
+        <source>Current firmware: %1. Waiting for automatic firmware check.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="286"/>
-        <source>Apia</source>
+        <source>System</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="287"/>
-        <source>Kiritimati</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="445"/>
+        <source>Model</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="288"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="505"/>
+        <source>Device time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="289"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="522"/>
+        <source>Timezone</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="290"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="534"/>
+        <source>Sync Time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="291"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="534"/>
+        <source>Syncing...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="292"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="544"/>
+        <source>Set timezone</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="293"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="456"/>
+        <source>Software</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="294"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="458"/>
+        <source>Hardware</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="295"/>
-        <source>Device is not connected</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="620"/>
+        <source>Update Firmware</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="296"/>
-        <source>Device manager is unavailable</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="620"/>
+        <source>Updating...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="297"/>
-        <source>No firmware update is available</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="652"/>
+        <source>Set device timezone</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="298"/>
-        <source>The device was disconnected</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="661"/>
+        <source>Current selection</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="299"/>
-        <source>Device time synchronized successfully</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="733"/>
+        <source>Nearest city</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="300"/>
-        <source>Failed to synchronize device time</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="763"/>
+        <source>Use system timezone</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="301"/>
-        <source>The device was disconnected during OTA transfer</source>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="770"/>
+        <source>Close</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="302"/>
+        <source>Honolulu</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="303"/>
+        <source>Pago Pago</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="304"/>
+        <source>Taiohae</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="305"/>
+        <source>Anchorage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="306"/>
+        <source>Los Angeles</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="307"/>
+        <source>San Francisco</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="308"/>
+        <source>Vancouver</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="309"/>
+        <source>Denver</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="310"/>
+        <source>Phoenix</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="311"/>
+        <source>Chicago</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="312"/>
+        <source>Mexico City</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="313"/>
+        <source>New York</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="314"/>
+        <source>Toronto</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="315"/>
+        <source>Caracas</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="316"/>
+        <source>Halifax</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="317"/>
+        <source>St. Johns</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="318"/>
+        <source>Sao Paulo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="319"/>
+        <source>Buenos Aires</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="320"/>
+        <source>Fernando de Noronha</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="321"/>
+        <source>Praia</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="322"/>
+        <source>Ponta Delgada</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="323"/>
+        <source>London</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="324"/>
+        <source>Lisbon</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="325"/>
+        <source>Berlin</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="326"/>
+        <source>Paris</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="327"/>
+        <source>Cairo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="328"/>
+        <source>Johannesburg</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="329"/>
+        <source>Moscow</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="330"/>
+        <source>Istanbul</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="331"/>
+        <source>Tehran</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="332"/>
+        <source>Dubai</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="333"/>
+        <source>Abu Dhabi</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="334"/>
+        <source>Kabul</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="335"/>
+        <source>Karachi</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="336"/>
+        <source>Tashkent</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="337"/>
+        <source>Delhi</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="338"/>
+        <source>Mumbai</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="339"/>
+        <source>Kathmandu</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="340"/>
+        <source>Dhaka</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="341"/>
+        <source>Thimphu</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="342"/>
+        <source>Yangon</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="343"/>
+        <source>Bangkok</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="344"/>
+        <source>Jakarta</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="345"/>
+        <source>Shanghai</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="346"/>
+        <source>Beijing</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="347"/>
+        <source>Tianjin</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="348"/>
+        <source>Eucla</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="349"/>
+        <source>Tokyo</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="350"/>
+        <source>Seoul</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="351"/>
+        <source>Adelaide</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="352"/>
+        <source>Darwin</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="353"/>
+        <source>Sydney</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="354"/>
+        <source>Melbourne</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="355"/>
+        <source>Lord Howe</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="356"/>
+        <source>Noumea</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="357"/>
+        <source>Honiara</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="358"/>
+        <source>Auckland</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="359"/>
+        <source>Wellington</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="360"/>
+        <source>Chatham</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="361"/>
+        <source>Nuku&apos;alofa</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="362"/>
+        <source>Apia</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="363"/>
+        <source>Kiritimati</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="371"/>
+        <source>Device is not connected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="372"/>
+        <source>Device manager is unavailable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="373"/>
+        <source>No firmware update is available</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="374"/>
+        <source>The device was disconnected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="375"/>
+        <source>Device time synchronized successfully</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="376"/>
+        <source>Failed to synchronize device time</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="377"/>
+        <source>The device was disconnected during OTA transfer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="382"/>
+        <source>iOS cannot access the NiYien A1 real-time device channel on this build</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="383"/>
+        <source>mobile device bridge is not connected</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="384"/>
+        <source>Device command channel is unavailable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="385"/>
+        <source>Device event channel is unavailable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="386"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="445"/>
         <source>NiYien A1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -1252,7 +1323,7 @@ You can increase the sharpness limit in the Advanced section.</source>
 <context>
     <name>Export</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1227"/>
+        <location filename="../../src/ui/App.qml" line="1534"/>
         <location filename="../../src/ui/menu/Export.qml" line="12"/>
         <source>Export settings</source>
         <translation type="unfinished"></translation>
@@ -1324,7 +1395,7 @@ You can increase the sharpness limit in the Advanced section.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1282"/>
+        <location filename="../../src/ui/App.qml" line="1589"/>
         <location filename="../../src/ui/menu/Export.qml" line="531"/>
         <source>Use GPU encoding</source>
         <translation type="unfinished"></translation>
@@ -1513,6 +1584,59 @@ You can increase the sharpness limit in the Advanced section.</source>
     <message>
         <location filename="../../src/ui/menu/Export.qml" line="690"/>
         <source>Device for rendering</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>FeedbackDialog</name>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="55"/>
+        <source>Stage: %1 (%2%)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="84"/>
+        <source>Report a problem (after crash)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="85"/>
+        <source>Report a problem</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="93"/>
+        <source>Last session crashed; the crash log is attached automatically. Description and email are optional.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="94"/>
+        <source>Logs and project metadata will be uploaded to Niyien for analysis. Description and email are optional. No video files are uploaded.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="112"/>
+        <source>What happened? (optional)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="121"/>
+        <source>Email (optional, for follow-up)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="145"/>
+        <source>Cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="150"/>
+        <source>Submit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="155"/>
+        <source>Packaging…</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1876,112 +2000,112 @@ Do you want to submit your profile?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="203"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="207"/>
         <source>Open file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="208"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="212"/>
         <source>Create new</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="234"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="238"/>
         <source>Rate this profile: [Good] | [Bad]</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="236"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="240"/>
         <source>Thank you for rating this profile.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="266"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="270"/>
         <source>Lens profile aspect ratio doesn&apos;t match the file aspect ratio. The result will not look correct.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="267"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="271"/>
         <source>Lens profile dimensions don&apos;t match the file dimensions. The result may not look correct.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="297"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="301"/>
         <source>Focal length (mm)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="307"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="311"/>
         <source>Enter focal length for manual lenses or lenses without electronic contacts</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="317"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="321"/>
         <source>Advanced</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="322"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="326"/>
         <source>Lens is under water</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="324"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="328"/>
         <source>Enable if you&apos;re filming under water. This will adjust the refraction coefficient.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="345"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="349"/>
         <source>Enable keyframing</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="358"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="362"/>
         <source>Add keyframe</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="428"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="432"/>
         <source>Export STMap</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="434"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="438"/>
         <source>This file contains per-frame lens metadata. Do you want to export an STMap sequence or a single frame?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="435"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="439"/>
         <source>Single frame</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="436"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="440"/>
         <source>STMap sequence</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="450"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="454"/>
         <source>Exporting %1...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="387"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="391"/>
         <source>Pixel focal length</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="233"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="237"/>
         <source>This lens profile is unofficial, we can&apos;t guarantee its correctness. Use at your own risk.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="397"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="401"/>
         <source>Focal center</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="407"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="411"/>
         <source>Distortion coefficients</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2068,7 +2192,7 @@ Do you want to submit your profile?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1150"/>
+        <location filename="../../src/ui/App.qml" line="1451"/>
         <location filename="../../src/ui/menu/MotionData.qml" line="176"/>
         <source>Open file</source>
         <translation type="unfinished"></translation>
@@ -2362,7 +2486,7 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="125"/>
+        <location filename="../../src/ui/App.qml" line="217"/>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="127"/>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="155"/>
         <source>Update</source>
@@ -2428,42 +2552,42 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>Popup</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="699"/>
+        <location filename="../../src/ui/App.qml" line="878"/>
         <source>Export</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="699"/>
+        <location filename="../../src/ui/App.qml" line="878"/>
         <source>Save</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="699"/>
+        <location filename="../../src/ui/App.qml" line="878"/>
         <source>Add to render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="700"/>
+        <location filename="../../src/ui/App.qml" line="879"/>
         <source>Create settings preset</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="701"/>
+        <location filename="../../src/ui/App.qml" line="880"/>
         <source>Apply selected settings to all items in the render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="702"/>
+        <location filename="../../src/ui/App.qml" line="881"/>
         <source>Export project file (including gyro data)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="703"/>
+        <location filename="../../src/ui/App.qml" line="882"/>
         <source>Export project file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="705"/>
+        <location filename="../../src/ui/App.qml" line="884"/>
         <source>Save project file</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2526,43 +2650,43 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="270"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="278"/>
         <source>No smoothing</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="271"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="279"/>
         <source>Default</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="272"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="280"/>
         <source>Plain 3D</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="273"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="281"/>
         <source>Fixed camera</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="242"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="630"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1209"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1588"/>
         <source>No zooming</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="242"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="630"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1209"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1588"/>
         <source>Dynamic zooming</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="242"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="630"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1209"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1588"/>
         <source>Static zoom</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2582,37 +2706,37 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1659"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2059"/>
         <source>Do nothing</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1660"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2060"/>
         <source>Shut down the computer</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1661"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2061"/>
         <source>Restart the computer</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1662"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2062"/>
         <source>Sleep</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1663"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2063"/>
         <source>Hibernate</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1664"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2064"/>
         <source>Logout</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1665"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2065"/>
         <source>Close Gyroflow</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2648,393 +2772,418 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="454"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="588"/>
         <source>Pause</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="215"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="320"/>
         <source>Render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1380"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1759"/>
         <source>Selected: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1388"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1767"/>
         <source>Select all</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1394"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1773"/>
         <source>Deselect</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1400"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1779"/>
         <source>Done</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1667"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2067"/>
         <source>When rendering is finished: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="319"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1308"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1687"/>
         <source> @ %1fps</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="160"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="261"/>
         <source>No calibration pair found for %1 video(s). Please pair manually.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="330"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="464"/>
         <source>Elapsed: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="348"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
         <source>Remaining: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="374"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1534"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="508"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="540"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1934"/>
         <source>Ok</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="390"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="524"/>
         <source>Rendering %1...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="390"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="524"/>
         <source>Converting to %1 %2...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="408"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="542"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="401"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1346"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="535"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1725"/>
         <source>Open rendered file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="258"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="342"/>
+        <source>Choose files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="343"/>
+        <source>Video files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="359"/>
+        <source>Choose folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="392"/>
         <source>0s</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="404"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1352"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="538"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1731"/>
         <source>Open file location</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="423"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1057"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1079"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="557"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1436"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1458"/>
         <source>Render using CPU</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="430"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="499"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="564"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="633"/>
         <source>Cancel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="566"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="452"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="586"/>
         <source>Start exporting</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="587"/>
         <source>Resume</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="700"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="696"/>
+        <source>Add files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="714"/>
+        <source>Add folder</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="992"/>
         <source>Render now</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1002"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="728"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1020"/>
         <source>Reset status</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="728"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1020"/>
         <source>Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="745"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1037"/>
         <source>Pair with Gyro</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1033"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1412"/>
         <source>Missing required components.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1045"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1424"/>
         <source>Applying pixel format: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1065"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1444"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1068"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1447"/>
         <source>Waiting for pixel format selection…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1092"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1792"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1471"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2192"/>
         <source>Yes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1093"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1472"/>
         <source>Rename</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1094"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1799"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1473"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2199"/>
         <source>No</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1185"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1564"/>
         <source>ETA %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1186"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1565"/>
         <source>Synchronizing: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1187"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1566"/>
         <source>Rendering: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1610"/>
         <source>Mode</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1610"/>
         <source>Local</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1610"/>
         <source>Global</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1236"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1615"/>
         <source>Lens</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1241"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1620"/>
         <source>Focal</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1246"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
         <source>Anamorphic</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1261"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1640"/>
         <source>Manual</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1264"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1643"/>
         <source>Calibration</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1269"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1648"/>
         <source>Skipped - no gyro data</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1270"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1649"/>
         <source>Skipped - calibration pair</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1427"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1438"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1806"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1817"/>
         <source>Matching...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1427"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1806"/>
         <source>Auto match</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1451"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1830"/>
         <source>Clear</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1468"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1847"/>
         <source>Drop video files or gyroscope data here</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1533"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1933"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1689"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2089"/>
         <source>Queue settings</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1745"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2145"/>
         <source>Number of parallel renders</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1756"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2156"/>
         <source>Default overwrite action</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1757"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2157"/>
         <source>Ask</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1759"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2159"/>
         <source>Overwrite file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1760"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2160"/>
         <source>Rename file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1761"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2161"/>
         <source>Skip file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1780"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
         <source>Export mode</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1781"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2181"/>
         <source>Stabilized video</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1782"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2182"/>
         <source>Project file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1783"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2183"/>
         <source>Project file (including gyro data)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1784"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2184"/>
         <source>Project file (including processed gyro data)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1785"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2185"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1789"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2189"/>
         <source>Show queue when adding an item</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1790"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2190"/>
         <source>Clear render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1791"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2191"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1089"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1094"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1468"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1473"/>
         <source>Output file already exists.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="493"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="627"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1312"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1691"/>
         <source>Synchronizing...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1313"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1692"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1356"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1735"/>
         <source>Remove</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1189"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1568"/>
         <source>Save to: %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3347,23 +3496,23 @@ Click Ok and select the destination folder.</source>
 <context>
     <name>SimpleStabilization</name>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="149"/>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="175"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="183"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
         <source>%</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="196"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="233"/>
         <source>°</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="268"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="311"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="300"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="343"/>
         <source>ms</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3389,364 +3538,364 @@ Click Ok and select the destination folder.</source>
 <context>
     <name>Stabilization</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1206"/>
+        <location filename="../../src/ui/App.qml" line="1511"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>
         <source>Stabilization</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="275"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="283"/>
         <source>Pitch smoothness</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="276"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="284"/>
         <source>Yaw smoothness</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="277"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="285"/>
         <source>Roll smoothness</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="140"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="278"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1196"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="174"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1575"/>
         <source>Smoothness</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="287"/>
         <source>Per axis</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="280"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="288"/>
         <source>Max smoothness</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="281"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="289"/>
         <source>Max smoothness at high velocity</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="282"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="290"/>
         <source>Second smoothing pass</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="283"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="291"/>
         <source>Only within trim range</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="284"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="292"/>
         <source>Yaw angle correction</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="285"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="447"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="293"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="455"/>
         <source>Pitch angle correction</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="421"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="223"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="294"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="429"/>
         <source>Roll angle correction</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="287"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="295"/>
         <source>Yaw angle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="288"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="296"/>
         <source>Pitch angle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="289"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="297"/>
         <source>Roll angle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="438"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="446"/>
         <source>Lock pitch angle</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="491"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="499"/>
         <source>Automatic lock</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="500"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="508"/>
         <source>Turn threshold</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="501"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="509"/>
         <source>When roll rate exceeds this threshold, horizon tilts proportionally to roll rate (°/s → °)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="510"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="518"/>
         <source>°/s</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="523"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="531"/>
         <source>Turn smoothness</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="524"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="532"/>
         <source>Smoothing time constant for turn detection (ms)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="544"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="552"/>
         <source>Turn multiplier</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="545"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="553"/>
         <source>Multiplier for dynamic tilt: tilt = multiplier * roll_rate (°/s → °)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="564"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="572"/>
         <source>Limit tilt acceleration</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="570"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="578"/>
         <source>Tilt acceleration limit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="571"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="579"/>
         <source>Limits how fast the tilt can accelerate or decelerate (°/s²). Prevents jerky horizon movements.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="579"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="587"/>
         <source>°/s²</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="707"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="724"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="725"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="742"/>
         <source>FOV is greater than 1.0, you may see black borders</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="730"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="747"/>
         <source>FOV</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="846"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="863"/>
         <source>Link with zooming limit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="919"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="936"/>
         <source>Additional 3D rotation</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="923"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="940"/>
         <source>Pitch</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="928"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="945"/>
         <source>Yaw</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="933"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="950"/>
         <source>Roll</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="940"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="957"/>
         <source>Additional 3D translation</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="955"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="972"/>
         <source>Z</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="163"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="397"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1200"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="200"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1579"/>
         <source>Lock horizon</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="168"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="402"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="205"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="410"/>
         <source>Lock amount</source>
         <comment>Horizon locking amount</comment>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="207"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1204"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="244"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1583"/>
         <source>Auto rotate</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="410"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="892"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="418"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="909"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="926"/>
         <source>%</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="429"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="456"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="437"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="464"/>
         <source>°</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="464"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="472"/>
         <source>Use gravity vectors</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="473"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="481"/>
         <source>Integration method</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="484"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="492"/>
         <source>IMU integration method for keeping track of the horizon and adjust built-in quaternions</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="596"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="604"/>
         <source>If the horizon is not locked well, try a different integration method in the &quot;Motion data&quot; section.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="617"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="625"/>
         <source>Max rotation: Pitch: %1, Yaw: %2, Roll: %3</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="622"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="630"/>
         <source>Max zoom: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="646"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="657"/>
         <source>Zoom limit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="649"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="660"/>
         <source>Zoom limit is calculated approximately.
 If you need more accuracy, increase the number of iterations in &quot;Advanced&quot; below.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="666"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="677"/>
         <source>Zooming speed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="676"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="687"/>
         <source>s</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="661"/>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="685"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="296"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="696"/>
         <source>Lens correction</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="853"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="870"/>
         <source>When keyframing zooming speed, it is recommended to use the Envelope follower method. Gaussian filter might lead to black borders in view.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="858"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="875"/>
         <source>Zooming method</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="878"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="895"/>
         <source>Zooming center offset</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="883"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="945"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="900"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="962"/>
         <source>X</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="900"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="950"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="917"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="967"/>
         <source>Y</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="963"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="980"/>
         <source>Zoom limit iterations</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="964"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="981"/>
         <source>More iterations = more accurate limit, but also slower to calculate.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="284"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="745"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="327"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
         <source>Rolling shutter correction</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="292"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="752"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="335"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="769"/>
         <source>Frame readout time</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="531"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="759"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="539"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="776"/>
         <source>ms</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="774"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="791"/>
         <source>Video speed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="820"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="837"/>
         <source>Link with smoothing</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="833"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="850"/>
         <source>Link with zooming speed</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3807,7 +3956,7 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1141"/>
+        <location filename="../../src/ui/App.qml" line="1442"/>
         <location filename="../../src/ui/menu/Synchronization.qml" line="170"/>
         <source>Auto sync</source>
         <translation type="unfinished"></translation>
@@ -4196,18 +4345,28 @@ Make sure you have proper rolling shutter value set before syncing.</source>
 <context>
     <name>Tabs</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="994"/>
+        <location filename="../../src/ui/App.qml" line="1178"/>
         <source>Inputs</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="994"/>
+        <location filename="../../src/ui/App.qml" line="1178"/>
         <source>Parameters</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="994"/>
+        <location filename="../../src/ui/App.qml" line="1178"/>
         <source>Export</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1262"/>
+        <source>Video &amp;&amp; Gyro</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1262"/>
+        <source>Stabilize &amp;&amp; Settings</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -4619,7 +4778,7 @@ Are you sure you want to continue?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="810"/>
+        <location filename="../../src/ui/VideoArea.qml" line="811"/>
         <source>Failed to load the selected file, it may be unsupported or invalid.</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4632,7 +4791,7 @@ Are you sure you want to continue?</source>
         <location filename="../../src/ui/VideoArea.qml" line="297"/>
         <location filename="../../src/ui/VideoArea.qml" line="443"/>
         <location filename="../../src/ui/VideoArea.qml" line="566"/>
-        <location filename="../../src/ui/VideoArea.qml" line="810"/>
+        <location filename="../../src/ui/VideoArea.qml" line="811"/>
         <source>Ok</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4683,17 +4842,17 @@ Your render queue and current file is saved automatically.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1328"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1329"/>
         <source>Lens profile is not loaded, the results will not look correct. Please load a lens profile for your camera.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="905"/>
+        <location filename="../../src/ui/VideoArea.qml" line="906"/>
         <source>Loading %1...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="905"/>
+        <location filename="../../src/ui/VideoArea.qml" line="906"/>
         <source>Drop video file here</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4771,77 +4930,77 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="905"/>
+        <location filename="../../src/ui/VideoArea.qml" line="906"/>
         <source>Click here to open a video file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1065"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1066"/>
         <source>Turn Speed (Roll):</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1096"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1097"/>
         <source>Trim start</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1099"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1100"/>
         <source>Previous frame</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1116"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1117"/>
         <source>Pause</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1116"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1117"/>
         <source>Play</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1122"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1123"/>
         <source>Next frame</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1137"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1138"/>
         <source>Trim end</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1138"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1139"/>
         <source>Show timeline menu</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1177"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1178"/>
         <source>Toggle stabilization overview</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1188"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1189"/>
         <source>Toggle stabilization</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1194"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1195"/>
         <source>Mute</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1194"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1195"/>
         <source>Unmute</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1212"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1213"/>
         <source>Volume</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1242"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1243"/>
         <source>Playback speed</source>
         <translation type="unfinished"></translation>
     </message>
@@ -4849,7 +5008,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 <context>
     <name>VideoInformation</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1101"/>
+        <location filename="../../src/ui/App.qml" line="1400"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="11"/>
         <source>Video information</source>
         <translation type="unfinished"></translation>
@@ -4860,7 +5019,7 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1107"/>
+        <location filename="../../src/ui/App.qml" line="1406"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="212"/>
         <source>Open file</source>
         <translation type="unfinished"></translation>
@@ -4869,17 +5028,17 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 <context>
     <name>main_window</name>
     <message>
-        <location filename="../../src/ui/main_window.qml" line="95"/>
+        <location filename="../../src/ui/main_window.qml" line="100"/>
         <source>Are you sure you want to exit?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/main_window.qml" line="96"/>
+        <location filename="../../src/ui/main_window.qml" line="101"/>
         <source>Yes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/main_window.qml" line="97"/>
+        <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation type="unfinished"></translation>
     </message>

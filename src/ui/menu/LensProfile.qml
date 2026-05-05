@@ -132,8 +132,15 @@ MenuItem {
                     root.profileOriginalJson = json_str;
                     root.profileChecksum = checksum;
 
-                    if (obj.output_dimension && obj.output_dimension.w > 0 && (window.exportSettings.outWidth != obj.output_dimension.w || window.exportSettings.outHeight != obj.output_dimension.h)) {
-                        Qt.callLater(window.exportSettings.lensProfileLoaded, obj.output_dimension.w, obj.output_dimension.h);
+                    const hasOutputDimension = obj.output_dimension && obj.output_dimension.w > 0 && obj.output_dimension.h > 0;
+                    if (window.exportSettings) {
+                        if (hasOutputDimension && (window.exportSettings.lensProfileOutputSizeActive ||
+                                window.exportSettings.outWidth != obj.output_dimension.w ||
+                                window.exportSettings.outHeight != obj.output_dimension.h)) {
+                            Qt.callLater(window.exportSettings.lensProfileOutputDimensionLoaded, obj.output_dimension.w, obj.output_dimension.h);
+                        } else if (!hasOutputDimension) {
+                            Qt.callLater(window.exportSettings.lensProfileOutputDimensionCleared);
+                        }
                     }
                     if (+obj.frame_readout_time && Math.abs(+obj.frame_readout_time) > 0) {
                         window.stab.setFrameReadoutTime(obj.frame_readout_time, obj.frame_readout_direction);

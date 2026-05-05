@@ -3888,6 +3888,40 @@ impl RenderQueue {
                         &sync_params,
                     );
 
+                    // [sync_diag_entry] Dump stab state right before sync starts, so
+                    // batch_match-resident path (first render) and reset_job-rebuilt path
+                    // (reset+render) each emit one line. Diff the two to find which field
+                    // changes camera_matrix that PoseEstimator sees.
+                    {
+                        let lens_ref = stab.lens.read();
+                        let p_ref = stab.params.read();
+                        let gyro_ref = stab.gyro.read();
+                        let md_ref = gyro_ref.file_metadata.read();
+                        let first_lp = md_ref.lens_params.iter().next().map(|(ts, v)| {
+                            (*ts, v.pixel_focal_length, v.focal_length)
+                        });
+                        ::log::info!(
+                            "[sync_diag_entry] file={} | params.size={:?} fro={:.3} | lens.calib={:?} orig={:?} out={:?} | lens.cm={:?} dist_n={} group_ov={} h_str={:.3} v_str={:.3} crop={:?} asym={} | md.lp_n={} md.first_lp={:?} md.fro={:?} md.upfl={:?}",
+                            filesystem::get_filename(&url),
+                            p_ref.size,
+                            p_ref.frame_readout_time,
+                            lens_ref.calib_dimension,
+                            lens_ref.orig_dimension,
+                            lens_ref.output_dimension,
+                            lens_ref.fisheye_params.camera_matrix,
+                            lens_ref.fisheye_params.distortion_coeffs.len(),
+                            lens_ref.lens_group_override,
+                            lens_ref.input_horizontal_stretch,
+                            lens_ref.input_vertical_stretch,
+                            lens_ref.crop,
+                            lens_ref.asymmetrical,
+                            md_ref.lens_params.len(),
+                            first_lp,
+                            md_ref.frame_readout_time,
+                            md_ref.unit_pixel_focal_length,
+                        );
+                    }
+
                     if let Ok(mut sync) = AutosyncProcess::from_manager(
                         &stab,
                         &timestamps_fract,

@@ -29,7 +29,14 @@ Item {
     }
 
     function ensureVisible(): void {
+        // Some placements (e.g. LensGroupConfig wrapped in an ItemLoader in
+        // App.qml) add an extra hop in the parent chain, so this 4-level walk
+        // doesn't reach a Flickable. Bail out instead of throwing — Qt 6.7.3's
+        // V4 JIT miscompiles the error path of void-returning JS functions and
+        // crashes in QV4::warnAboutCoercionToVoid → toQStringNoThrow when an
+        // exception escapes a delayed (Qt.callLater) callback.
         const flick = parent.parent.parent.parent;
+        if (!flick || typeof flick.contentY !== "number") return;
         if (canEnsureVisible && (opened || !root.showBtn) && anim.enabled && (parent.y + height > flick.height)) {
             flick.contentY = parent.y;
         }

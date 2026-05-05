@@ -313,11 +313,18 @@ MenuItem {
             // Returns JSON {"w":W,"h":H} when anamorphic pushes an output dimension so we
             // can propagate it to Export settings' output width/height NumberFields too.
             const outJson = controller.apply_lens_group_to_main(selectedLensIndex) + ""
-            if (outJson.length > 0 && window.exportSettings && window.exportSettings.lensProfileLoaded) {
+            if (outJson.length > 0 && window.exportSettings) {
                 try {
                     const dim = JSON.parse(outJson)
                     if (dim && dim.w > 0 && dim.h > 0) {
-                        Qt.callLater(window.exportSettings.lensProfileLoaded, dim.w, dim.h)
+                        const isOriginalSize = dim.w == window.exportSettings.originalWidth && dim.h == window.exportSettings.originalHeight
+                        if (isOriginalSize) {
+                            Qt.callLater(window.exportSettings.lensProfileOutputDimensionCleared)
+                        } else if (window.exportSettings.lensProfileOutputSizeActive ||
+                                   window.exportSettings.outWidth != dim.w ||
+                                   window.exportSettings.outHeight != dim.h) {
+                            Qt.callLater(window.exportSettings.lensProfileOutputDimensionLoaded, dim.w, dim.h)
+                        }
                     }
                 } catch (e) {
                     console.warn("apply_lens_group_to_main parse error:", e, outJson)

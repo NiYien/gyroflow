@@ -123,6 +123,9 @@ MenuItem {
     property string outCodecOptions: "";
     property real originalWidth: outWidth;
     property real originalHeight: outHeight;
+    property bool lensProfileOutputSizeActive: false;
+    property real lensProfileOutputWidth: 0;
+    property real lensProfileOutputHeight: 0;
 
     property bool canExport: !resolutionWarning.visible && !resolutionWarning2.visible;
 
@@ -196,6 +199,9 @@ MenuItem {
         disableUpdate = false;
     }
     function videoInfoLoaded(w: real, h: real, br: real): void {
+        lensProfileOutputSizeActive = false;
+        lensProfileOutputWidth = 0;
+        lensProfileOutputHeight = 0;
         setDefaultSize(w, h);
         root.originalWidth = w;
         root.originalHeight = h;
@@ -218,6 +224,26 @@ MenuItem {
     function lensProfileLoaded(w: real, h: real): void {
         setDefaultSize(w, h);
         Qt.callLater(notifySizeChanged);
+    }
+    function lensProfileOutputDimensionLoaded(w: real, h: real): void {
+        lensProfileOutputSizeActive = true;
+        lensProfileOutputWidth = w;
+        lensProfileOutputHeight = h;
+        lensProfileLoaded(w, h);
+    }
+    function lensProfileOutputDimensionCleared(): void {
+        if (!lensProfileOutputSizeActive) return;
+        const shouldRestore = originalWidth > 0 && originalHeight > 0 &&
+                              outWidth == lensProfileOutputWidth && outHeight == lensProfileOutputHeight &&
+                              (outWidth != originalWidth || outHeight != originalHeight);
+        lensProfileOutputSizeActive = false;
+        lensProfileOutputWidth = 0;
+        lensProfileOutputHeight = 0;
+        if (shouldRestore) {
+            lensProfileLoaded(originalWidth, originalHeight);
+        } else {
+            Qt.callLater(notifySizeChanged);
+        }
     }
     function loadGyroflow(obj: var): void {
         const output = obj.output || { };
