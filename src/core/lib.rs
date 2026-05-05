@@ -1054,6 +1054,89 @@ impl StabilizationManager {
                 }
             }
         }
+
+        // Smoothing diagnostics dump (gated by GYROFLOW_SMOOTH_DIAG=1).
+        // Snapshot per-frame q_raw / q_smooth / fov pairs and forward to the
+        // diag module after dropping all read locks so heavy quaternion math
+        // does not block writers.
+        if crate::smooth_diag::is_enabled() {
+            let gyro = self.gyro.read();
+            let stab_params = self.params.read();
+            let smoothing = self.smoothing.read();
+
+            let frame_count = stab_params.frame_count;
+            let fps = stab_params.get_scaled_fps();
+
+            let mut ts_ms = Vec::with_capacity(frame_count);
+            let mut q_raw_v = Vec::with_capacity(frame_count);
+            let mut q_smooth_v = Vec::with_capacity(frame_count);
+            let mut fovs_pairs = Vec::with_capacity(frame_count);
+
+            // Use interpolated lookup helpers that handle gyro-vs-video time offset
+            // and interpolate between adjacent gyro samples — exact key match on the
+            // raw BTreeMap would almost always miss (gyro at ~200 Hz vs video frame ts).
+            //
+            // IMPORTANT: gyro.smoothed_quaternions stores the correction rotation
+            // q_smooth.inverse() * q_raw (see gyro_source/mod.rs:1683-1688), NOT the
+            // absolute smoothed pose. Reconstruct the absolute q_smooth so that the
+            // dump's delta = q_raw.inverse() * q_smooth_abs reflects the actual
+            // virtual-camera deviation rather than q_raw's own absolute angle.
+            for i in 0..frame_count {
+                let ts_video_ms = i as f64 * 1000.0 / fps;
+                let qr = gyro.org_quat_at_timestamp(ts_video_ms);
+                let correction = gyro.smoothed_quat_at_timestamp(ts_video_ms);
+                let qs = qr * correction.inverse();
+                ts_ms.push(ts_video_ms);
+                q_raw_v.push((qr.w, qr.i, qr.j, qr.k));
+                q_smooth_v.push((qs.w, qs.i, qs.j, qs.k));
+                let fov_final = stab_params.fovs.get(i).copied().unwrap_or(1.0);
+                let fov_baseline = stab_params.minimal_fovs.get(i).copied().unwrap_or(fov_final);
+                fovs_pairs.push((fov_baseline, fov_final));
+            }
+
+            let smoothing_meta = crate::smooth_diag::SmoothingMeta {
+                method: smoothing.current().get_name(),
+                method_id: smoothing.current_id(),
+                params_json: smoothing.current().get_parameters_json(),
+                adaptive_zoom_window: stab_params.adaptive_zoom_window,
+                zoom_method: match stab_params.adaptive_zoom_method {
+                    0 => "GaussianFilter".into(),
+                    1 => "EnvelopeFollower".into(),
+                    n => format!("Unknown({n})"),
+                },
+                max_zoom_pct: stab_params.max_zoom.unwrap_or(0.0),
+                max_zoom_iterations: stab_params.max_zoom_iterations,
+            };
+
+            let url = self.input_file.read().url.clone();
+            let path_basename = std::path::Path::new(&url)
+                .file_name()
+                .and_then(|n| n.to_str().map(String::from))
+                .unwrap_or_default();
+
+            let video_meta = crate::smooth_diag::VideoMeta {
+                path_basename,
+                duration_ms: stab_params.get_scaled_duration_ms(),
+                frame_count,
+                fps,
+                width: stab_params.size.0,
+                height: stab_params.size.1,
+                gyro_sample_rate_hz: 0.0, // optional — reader can derive from quaternions count
+            };
+
+            drop(gyro);
+            drop(stab_params);
+            drop(smoothing);
+
+            crate::smooth_diag::record_session(
+                &ts_ms,
+                &q_raw_v,
+                &q_smooth_v,
+                &fovs_pairs,
+                &smoothing_meta,
+                &video_meta,
+            );
+        }
     }
 
     pub fn recompute_smoothness(&self) {
@@ -1079,9 +1162,11 @@ impl StabilizationManager {
     }
 
     pub fn recompute_blocking(&self) {
+        crate::smooth_diag::init_session();
         self.recompute_smoothness();
         self.recompute_adaptive_zoom();
         self.recompute_undistortion();
+        crate::smooth_diag::flush_and_close();
     }
 
     pub fn invalidate_ongoing_computations(&self) {

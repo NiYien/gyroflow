@@ -134,6 +134,10 @@ impl Smoothing {
         self.current_id = id.min(self.algs.0.len() - 1);
     }
 
+    pub fn current_id(&self) -> usize {
+        self.current_id
+    }
+
     pub fn current(&self) -> &Box<dyn SmoothingAlgorithm> {
         &self.algs.0[self.current_id]
     }
