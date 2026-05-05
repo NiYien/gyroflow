@@ -316,6 +316,100 @@ fn write_csv(s: &DiagSession) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Return the current time as an RFC 3339 / ISO 8601 string.
+/// Uses the `time` crate for the local UTC offset (already a dep with
+/// `local-offset` feature); formats manually since the `formatting` feature
+/// is not enabled in this crate's Cargo.toml.
+/// Falls back to a plain UTC string if the offset cannot be determined.
+fn current_timestamp_iso() -> String {
+    // Derive seconds since Unix epoch via std (always available).
+    let unix_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Try to read the local UTC offset via the `time` crate so the timestamp
+    // is expressed in local time rather than UTC.
+    let offset_secs: i32 = time::OffsetDateTime::now_local()
+        .map(|dt| dt.offset().whole_seconds())
+        .unwrap_or(0);
+
+    // Apply offset to get local wall-clock seconds.
+    let local_secs = unix_secs + offset_secs as i64;
+
+    // Decompose into calendar fields (proleptic Gregorian).
+    // Days since 1970-01-01.
+    let days = local_secs.div_euclid(86400) as i32;
+    let secs_of_day = local_secs.rem_euclid(86400) as u32;
+
+    let hour = secs_of_day / 3600;
+    let minute = (secs_of_day % 3600) / 60;
+    let second = secs_of_day % 60;
+
+    // Algorithm from https://howardhinnant.github.io/date_algorithms.html
+    // (civil_from_days) — public domain.
+    let z = days + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = (z - era * 146097) as u32;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe as i32 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+
+    // Format the UTC offset part (+HH:MM or Z for UTC).
+    let offset_part = if offset_secs == 0 {
+        "Z".to_string()
+    } else {
+        let sign = if offset_secs >= 0 { '+' } else { '-' };
+        let abs = offset_secs.unsigned_abs();
+        format!("{}{:02}:{:02}", sign, abs / 3600, (abs % 3600) / 60)
+    };
+
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}{}",
+        y, m, d, hour, minute, second, offset_part
+    )
+}
+
+/// Write `<out_dir>/meta.json` with video / smoothing / zooming context.
+fn write_meta_json(s: &DiagSession) -> std::io::Result<()> {
+    let path = s.out_dir.join("meta.json");
+    let ts_iso = current_timestamp_iso();
+    let sid = crate::log_context::LogContext::snapshot().session_id;
+    let v = serde_json::json!({
+        "session_id": sid,
+        "timestamp_iso": ts_iso,
+        "video": {
+            "path": s.video_meta.path_basename,
+            "duration_ms": s.video_meta.duration_ms,
+            "frame_count": s.video_meta.frame_count,
+            "fps": s.video_meta.fps,
+            "width": s.video_meta.width,
+            "height": s.video_meta.height,
+        },
+        "gyro_source": {
+            "sample_rate_hz": s.video_meta.gyro_sample_rate_hz,
+        },
+        "smoothing": {
+            "method": s.smoothing_meta.method,
+            "method_id": s.smoothing_meta.method_id,
+            "params": s.smoothing_meta.params_json,
+        },
+        "zooming": {
+            "adaptive_zoom_window": s.smoothing_meta.adaptive_zoom_window,
+            "method": s.smoothing_meta.zoom_method,
+            "max_zoom": s.smoothing_meta.max_zoom_pct,
+            "max_zoom_iterations": s.smoothing_meta.max_zoom_iterations,
+        },
+    });
+    let body = serde_json::to_string_pretty(&v)?;
+    std::fs::write(&path, body)?;
+    Ok(())
+}
+
 pub fn flush_and_close() {
     if !is_enabled() {
         return;
@@ -326,6 +420,9 @@ pub fn flush_and_close() {
     };
     if let Err(e) = write_csv(&session) {
         log::warn!(target: "app", "[SmoothDiag] write_csv error: {}", e);
+    }
+    if let Err(e) = write_meta_json(&session) {
+        log::warn!(target: "app", "[SmoothDiag] write_meta_json error: {}", e);
     }
     log::info!(
         target: "app",
@@ -537,5 +634,53 @@ mod tests {
             std::env::remove_var("GYROFLOW_SMOOTH_DIAG");
             std::env::remove_var("GYROFLOW_DATA_DIR");
         }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn flush_writes_meta_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("smooth_meta");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        force_enabled_for_test(true);
+        *SESSION.lock() = Some(DiagSession {
+            out_dir: dir.clone(),
+            frames: vec![],
+            smoothing_meta: SmoothingMeta {
+                method: "Default".into(),
+                method_id: 1,
+                params_json: serde_json::json!([{"name": "smoothness", "value": 0.5}]),
+                adaptive_zoom_window: 4.0,
+                zoom_method: "EnvelopeFollower".into(),
+                max_zoom_pct: 130.0,
+                max_zoom_iterations: 5,
+            },
+            video_meta: VideoMeta {
+                path_basename: "test.mp4".into(),
+                duration_ms: 60000.0,
+                frame_count: 1800,
+                fps: 30.0,
+                width: 3840,
+                height: 2160,
+                gyro_sample_rate_hz: 200.0,
+            },
+        });
+        flush_and_close();
+
+        let meta_path = dir.join("meta.json");
+        assert!(meta_path.exists());
+        let body = std::fs::read_to_string(&meta_path).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["video"]["path"], "test.mp4");
+        assert_eq!(v["video"]["fps"], 30.0);
+        assert_eq!(v["smoothing"]["method"], "Default");
+        assert_eq!(v["smoothing"]["method_id"], 1);
+        assert_eq!(v["zooming"]["max_zoom"], 130.0);
+        assert_eq!(v["zooming"]["max_zoom_iterations"], 5);
+        // timestamp_iso must exist and be a non-empty string
+        assert!(v["timestamp_iso"].as_str().map(|s| !s.is_empty()).unwrap_or(false));
+
+        force_enabled_for_test(false);
     }
 }
