@@ -66,6 +66,12 @@ Item {
         videoLoader.cancelable = cancelable;
     }
 
+    function progressText(): string {
+        if (!root.text) return "";
+        const pct = "<b>" + (Math.min(root.progress, 1.0) * 100).toFixed(2) + "%</b>";
+        return root.text.indexOf("%1") >= 0 ? root.text.arg(pct) : root.text;
+    }
+
     signal cancel();
     signal hide();
 
@@ -87,7 +93,7 @@ Item {
         width: parent.width;
         BasicText {
             id: t;
-            text: root.text? root.text.arg("<b>" + (Math.min(root.progress, 1.0) * 100).toFixed(2) + "%</b>") + (root.totalFrames > 0? ` <font size="2">(${root.currentFrame}/${root.totalFrames}${root.additional}${time.fpsText})</font>` : "") + root.additionalLine : "";
+            text: root.progressText() + (root.text && root.totalFrames > 0? ` <font size="2">(${root.currentFrame}/${root.totalFrames}${root.additional}${time.fpsText})</font>` : "") + (root.text? root.additionalLine : "");
             visible: text.length > 0;
             width: parent.width;
             font.pixelSize: 14 * dpiScale;

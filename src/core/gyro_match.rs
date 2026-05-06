@@ -155,6 +155,7 @@ struct OffsetResult {
     offset: i64,
     delay: i64,
     calibration_video_indices: Vec<usize>,
+    #[allow(dead_code)]
     calibration_gyro_indices: Vec<usize>,
 }
 

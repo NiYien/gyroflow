@@ -384,7 +384,7 @@ impl AutosyncProcess {
         }
         let t_final = std::time::Instant::now();
         log::info!(
-            "[NeuFlow timing] finished_feeding_frames: calling final process_detected_frames"
+            "[autosync timing] finished_feeding_frames: calling final process_detected_frames"
         );
         self.estimator.process_detected_frames(
             self.org_fps,
@@ -394,7 +394,7 @@ impl AutosyncProcess {
             None,
         );
         log::info!(
-            "[NeuFlow timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",
+            "[autosync timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",
             t_final.elapsed().as_secs_f64() * 1000.0
         );
         let t_recalc = std::time::Instant::now();
@@ -405,14 +405,14 @@ impl AutosyncProcess {
             self.estimator.recalculate_gyro_data(self.org_fps, true);
         }
         log::info!(
-            "[NeuFlow timing] finished_feeding_frames: recalculate_gyro_data done in {:.1}ms",
+            "[autosync timing] finished_feeding_frames: recalculate_gyro_data done in {:.1}ms",
             t_recalc.elapsed().as_secs_f64() * 1000.0
         );
         let t_cache = std::time::Instant::now();
         self.estimator
             .cache_optical_flow(if offset_method == 1 { 2 } else { 1 });
         log::info!(
-            "[NeuFlow timing] finished_feeding_frames: cache_optical_flow done in {:.1}ms",
+            "[autosync timing] finished_feeding_frames: cache_optical_flow done in {:.1}ms",
             t_cache.elapsed().as_secs_f64() * 1000.0
         );
         self.estimator.cleanup();
@@ -552,7 +552,7 @@ impl AutosyncProcess {
         }
         drop(_g_find);
         log::info!(
-            "[NeuFlow timing] finished_feeding_frames: find_offsets total done in {:.1}ms",
+            "[autosync timing] finished_feeding_frames: find_offsets total done in {:.1}ms",
             t_find.elapsed().as_secs_f64() * 1000.0
         );
         crate::synchronization::sync_perf::dump_and_reset();

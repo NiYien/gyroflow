@@ -285,9 +285,12 @@ MenuItem {
         if (squeezeRatioField.value !== currentSqueezeRatio())
             squeezeRatioField.value = currentSqueezeRatio()
         if (lensCorrectionSlider) {
+            // Fallback 0 covers the migration case where settings.json has
+            // anamorphic_enabled=true but lens_correction_amount==null from
+            // an older session that defaulted to 100%.
             const correctionVal = config.lens_correction_amount !== null && config.lens_correction_amount !== undefined
                 ? +config.lens_correction_amount
-                : 100
+                : 0
             if (lensCorrectionSlider.value !== correctionVal)
                 lensCorrectionSlider.value = correctionVal
         }
@@ -559,12 +562,19 @@ MenuItem {
                                 config.preset_id = null
                                 config.squeeze_direction = "horizontal"
                                 config.squeeze_ratio = null
-                                // Reset the lens-correction override so the next anamorphic
-                                // enable starts fresh at the 100% default instead of
-                                // inheriting the previous session's slider value.
+                                // Clear the lens-correction override on disable so the next
+                                // anamorphic enable starts fresh at the 0% default instead
+                                // of inheriting the previous session's slider value.
                                 config.lens_correction_amount = null
-                            } else if (!config.squeeze_direction) {
-                                config.squeeze_direction = "horizontal"
+                            } else {
+                                if (!config.squeeze_direction)
+                                    config.squeeze_direction = "horizontal"
+                                // First-time enable defaults to 0% — keeps the original
+                                // anamorphic look untouched. User edits during the enabled
+                                // session are preserved until the toggle is turned off.
+                                if (config.lens_correction_amount === null
+                                    || config.lens_correction_amount === undefined)
+                                    config.lens_correction_amount = 0
                             }
                         })
                     }

@@ -204,6 +204,7 @@ struct Pan123CreateData {
     #[serde(default)]
     reuse:        bool,
     #[serde(rename = "fileID", default)]
+    #[allow(dead_code)]
     file_id:      i64,
 }
 

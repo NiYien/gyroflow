@@ -131,12 +131,14 @@ pub struct InputFile {
 pub struct SyncData {
     pub rank: Vec<f32>,
     pub ratio: f64,
+    pub rank_window_center_offset_ms: f64,
 }
 impl Default for SyncData {
     fn default() -> Self {
         Self {
             rank: vec![],
             ratio: 0.016,
+            rank_window_center_offset_ms: 0.0,
         }
     }
 }
@@ -3562,11 +3564,13 @@ impl StabilizationManager {
         };
 
         if let Some(mut optsync) = synchronization::optimsync::OptimSync::new(&self.gyro.read()) {
-            let (points, rank, ratio) = optsync.run(target_sync_points, trim_ranges);
+            let (points, rank, ratio, rank_window_center_offset_ms) =
+                optsync.run(target_sync_points, trim_ranges);
             {
                 let mut sync_data = self.sync_data.write();
                 sync_data.rank = rank;
                 sync_data.ratio = ratio;
+                sync_data.rank_window_center_offset_ms = rank_window_center_offset_ms;
             }
             points
                 .iter()

@@ -83,6 +83,16 @@ impl GyroflowLogger {
         }
         false
     }
+
+    fn is_suppressed_noise_warning(target: &str, level: Level, body: &str) -> bool {
+        level == Level::Warn
+            && Self::matches_noise_target(target)
+            && (target == "mp4parse"
+                || target.starts_with("mp4parse::")
+                || target.starts_with("mp4parse.")
+                || target.starts_with("mp4parse_"))
+            && body.contains("InvalidData(HdlrPredefinedNonzero)")
+    }
 }
 
 impl Log for GyroflowLogger {
@@ -96,6 +106,10 @@ impl Log for GyroflowLogger {
         }
         let target = record.target();
         let lvl = record.level();
+        let body = record.args().to_string();
+        if Self::is_suppressed_noise_warning(target, lvl, &body) {
+            return;
+        }
         // Noise filter: third-party crates limited to Warn+.
         if Self::matches_noise_target(target) && lvl > Level::Warn {
             return;
@@ -202,6 +216,41 @@ fn rotate(dir: &Path) -> std::io::Result<()> {
 fn short_session_id() -> String {
     let id = uuid::Uuid::new_v4().simple().to_string();
     id[..8].to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logger_suppresses_only_known_mp4parse_hdlr_predefined_noise() {
+        assert!(GyroflowLogger::is_suppressed_noise_warning(
+            "mp4parse",
+            Level::Warn,
+            "InvalidData(HdlrPredefinedNonzero)",
+        ));
+        assert!(GyroflowLogger::is_suppressed_noise_warning(
+            "mp4parse::read",
+            Level::Warn,
+            "metadata parse returned InvalidData(HdlrPredefinedNonzero)",
+        ));
+
+        assert!(!GyroflowLogger::is_suppressed_noise_warning(
+            "mp4parse",
+            Level::Warn,
+            "InvalidData(UnexpectedEof)",
+        ));
+        assert!(!GyroflowLogger::is_suppressed_noise_warning(
+            "gyroflow",
+            Level::Warn,
+            "InvalidData(HdlrPredefinedNonzero)",
+        ));
+        assert!(!GyroflowLogger::is_suppressed_noise_warning(
+            "mp4parse",
+            Level::Error,
+            "InvalidData(HdlrPredefinedNonzero)",
+        ));
+    }
 }
 
 /// Initialize the logging system. Idempotent (no-op on second call).

@@ -301,7 +301,7 @@ mod tests {
         assert!(!bytes.is_empty());
         assert_eq!(sha.len(), 64);
         // verify roundtrip
-        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let names: Vec<_> = zr.file_names().map(|s| s.to_string()).collect();
         assert!(names.contains(&"logs/current-session.log".to_string()));
         assert!(names.contains(&"manifest.json".to_string()));
@@ -328,7 +328,7 @@ mod tests {
             include_crashes:        false,
         };
         let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
-        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let names: Vec<_> = zr.file_names().map(|s| s.to_string()).collect();
         assert_eq!(names, vec!["manifest.json"]);
     }
@@ -366,7 +366,7 @@ mod tests {
         let (bytes, sha) = pack(&inputs, &PackageOptions::default(),
             "test summary", "user@example.com", &dummy_meta()).unwrap();
         assert_eq!(sha.len(), 64);
-        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         let names: Vec<_> = zr.file_names().map(|s| s.to_string()).collect();
         for expected in [
             "logs/current-session.log",

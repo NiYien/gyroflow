@@ -48,6 +48,7 @@ struct CalibrationItem {
     pub is_forced: bool,
 }
 
+#[allow(non_snake_case)]
 #[derive(Default, QObject)]
 pub struct Controller {
     base: qt_base_class!(trait QObject),
@@ -84,6 +85,7 @@ pub struct Controller {
     lens_group_status_changed: qt_signal!(),
     get_lens_group_status: qt_method!(fn(&self) -> QString),
     refresh_lens_group_status: qt_method!(fn(&self)),
+    #[allow(dead_code)]
     lens_group_manual_edit: qt_property!(bool; READ get_lens_group_manual_edit WRITE set_lens_group_manual_edit NOTIFY lens_group_manual_edit_changed),
     lens_group_manual_edit_changed: qt_signal!(),
     get_lens_presets: qt_method!(fn(&self) -> QString),
@@ -414,11 +416,17 @@ pub struct Controller {
     processing_info_changed: qt_signal!(),
 
     // Feedback system (Phase 4)
+    #[allow(non_snake_case)]
     estimateFeedbackSize: qt_method!(fn(&self, options_json: QString) -> i64),
+    #[allow(non_snake_case)]
     submitFeedback: qt_method!(fn(&mut self, description: QString, email: QString, options_json: QString)),
+    #[allow(non_snake_case)]
     scanCrashCheckpoints: qt_method!(fn(&mut self)),
+    #[allow(non_snake_case)]
     feedbackProgress: qt_signal!(stage: QString, pct: i32),
+    #[allow(non_snake_case)]
     feedbackCompleted: qt_signal!(success: bool, id: QString, error: QString),
+    #[allow(non_snake_case)]
     crashCheckpointFound: qt_signal!(count: i32),
 
     cancel_flag: Arc<AtomicBool>,
@@ -4575,12 +4583,14 @@ impl Controller {
         }
     }
 
+    #[allow(non_snake_case)]
     fn estimateFeedbackSize(&self, options_json: QString) -> i64 {
         let inputs = self.build_feedback_inputs();
         let opts = Self::build_feedback_options(&options_json.to_string());
         crate::feedback::packager::estimate_size(&inputs, &opts) as i64
     }
 
+    #[allow(non_snake_case)]
     fn submitFeedback(&mut self, description: QString, email: QString, options_json: QString) {
         let inputs = self.build_feedback_inputs();
         let opts = Self::build_feedback_options(&options_json.to_string());
@@ -4620,6 +4630,7 @@ impl Controller {
         }).ok();
     }
 
+    #[allow(non_snake_case)]
     fn scanCrashCheckpoints(&mut self) {
         let count = crate::feedback::crash_pickup::scan().len() as i32;
         if count > 0 {

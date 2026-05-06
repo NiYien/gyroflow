@@ -34,7 +34,7 @@
         <translation>배경색</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1559"/>
+        <location filename="../../src/ui/App.qml" line="1558"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="174"/>
         <source>Theme</source>
         <translation>테마</translation>
@@ -45,7 +45,7 @@
         <translation>UI 배율</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1541"/>
+        <location filename="../../src/ui/App.qml" line="1540"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="215"/>
         <source>Language</source>
         <translation>언어</translation>
@@ -62,7 +62,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>FOV &gt; 1인 경우, FOV = 1인 직사각형을 미리 보기 영상 위에 표시합니다. 시각적인 표시이며, 렌더링 출력에 영향을 미치지 않습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1580"/>
+        <location filename="../../src/ui/App.qml" line="1579"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="270"/>
         <source>Use GPU decoding</source>
         <translation>GPU 디코딩 사용</translation>
@@ -98,7 +98,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>미리 보기 처리 방식</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1600"/>
+        <location filename="../../src/ui/App.qml" line="1599"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="374"/>
         <source>Device for video processing</source>
         <translation>영상 처리에 사용할 장치</translation>
@@ -201,94 +201,94 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>출력 경로:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="849"/>
+        <location filename="../../src/ui/App.qml" line="848"/>
         <source>Export</source>
         <translation>내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="847"/>
+        <location filename="../../src/ui/App.qml" line="846"/>
         <source>Add to render queue</source>
         <translation>렌더링 대기열에 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="905"/>
+        <location filename="../../src/ui/App.qml" line="904"/>
         <source>This format is not available for rendering.
 The recommended workflow is to export project file and use one of [video editor plugins] (%1).</source>
         <translation>이 형식으로 렌더링할 수 없습니다.
 권장되는 작업 방법은 프로젝트 파일을 내보내어 [영상 편집 소프트웨어 플러그인] 중 하나를 사용하는 것입니다 (%1).</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="949"/>
-        <location filename="../../src/ui/App.qml" line="2058"/>
+        <location filename="../../src/ui/App.qml" line="948"/>
+        <location filename="../../src/ui/App.qml" line="2057"/>
         <source>Output file already exists, do you want to overwrite it?</source>
         <translation>동일한 이름의 파일이 있습니다. 덮어쓸까요?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="912"/>
-        <location filename="../../src/ui/App.qml" line="920"/>
-        <location filename="../../src/ui/App.qml" line="950"/>
-        <location filename="../../src/ui/App.qml" line="1101"/>
+        <location filename="../../src/ui/App.qml" line="911"/>
+        <location filename="../../src/ui/App.qml" line="919"/>
+        <location filename="../../src/ui/App.qml" line="949"/>
+        <location filename="../../src/ui/App.qml" line="1100"/>
         <source>Yes</source>
         <translation>예</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="951"/>
-        <location filename="../../src/ui/App.qml" line="2134"/>
+        <location filename="../../src/ui/App.qml" line="950"/>
+        <location filename="../../src/ui/App.qml" line="2133"/>
         <source>Rename</source>
         <translation>이름 바꾸기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="913"/>
-        <location filename="../../src/ui/App.qml" line="921"/>
-        <location filename="../../src/ui/App.qml" line="952"/>
-        <location filename="../../src/ui/App.qml" line="1106"/>
+        <location filename="../../src/ui/App.qml" line="912"/>
+        <location filename="../../src/ui/App.qml" line="920"/>
+        <location filename="../../src/ui/App.qml" line="951"/>
+        <location filename="../../src/ui/App.qml" line="1105"/>
         <source>No</source>
         <translation>아니요</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1950"/>
-        <location filename="../../src/ui/App.qml" line="1957"/>
-        <location filename="../../src/ui/App.qml" line="1966"/>
+        <location filename="../../src/ui/App.qml" line="1949"/>
+        <location filename="../../src/ui/App.qml" line="1956"/>
+        <location filename="../../src/ui/App.qml" line="1965"/>
         <source>Select file destination</source>
         <translation>파일을 저장할 위치 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="847"/>
+        <location filename="../../src/ui/App.qml" line="846"/>
         <source>Save</source>
         <translation>저장</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="911"/>
+        <location filename="../../src/ui/App.qml" line="910"/>
         <source>Lens profile is not loaded, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation>렌즈 프로필이 로드되지 않아 결과가 올바르지 않을 수 있습니다. 파일을 렌더링하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="919"/>
+        <location filename="../../src/ui/App.qml" line="918"/>
         <source>There are no sync points present, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation>동기 지점이 없어 결과가 올바르지 않을 수 있습니다. 파일을 렌더링하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1127"/>
+        <location filename="../../src/ui/App.qml" line="1126"/>
         <source>Render queue</source>
         <translation>렌더링 대기열</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="906"/>
-        <location filename="../../src/ui/App.qml" line="961"/>
-        <location filename="../../src/ui/App.qml" line="971"/>
-        <location filename="../../src/ui/App.qml" line="978"/>
-        <location filename="../../src/ui/App.qml" line="989"/>
-        <location filename="../../src/ui/App.qml" line="1053"/>
-        <location filename="../../src/ui/App.qml" line="1056"/>
-        <location filename="../../src/ui/App.qml" line="1882"/>
-        <location filename="../../src/ui/App.qml" line="1885"/>
-        <location filename="../../src/ui/App.qml" line="1991"/>
-        <location filename="../../src/ui/App.qml" line="1993"/>
+        <location filename="../../src/ui/App.qml" line="905"/>
+        <location filename="../../src/ui/App.qml" line="960"/>
+        <location filename="../../src/ui/App.qml" line="970"/>
+        <location filename="../../src/ui/App.qml" line="977"/>
+        <location filename="../../src/ui/App.qml" line="988"/>
+        <location filename="../../src/ui/App.qml" line="1052"/>
+        <location filename="../../src/ui/App.qml" line="1055"/>
+        <location filename="../../src/ui/App.qml" line="1881"/>
+        <location filename="../../src/ui/App.qml" line="1884"/>
+        <location filename="../../src/ui/App.qml" line="1990"/>
+        <location filename="../../src/ui/App.qml" line="1992"/>
         <source>Ok</source>
         <translation>확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="967"/>
+        <location filename="../../src/ui/App.qml" line="966"/>
         <source>Some AMD GPU encoders have a bug where it limits the bitrate to 20 Mbps, if the target bitrate is greater than 100 Mbps.
 
 Please check the file bitrate after rendering and if you&apos;re affected by this bug, you can either:
@@ -301,46 +301,46 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
 - &apos;사용자 지정 인코더 옵션&apos; 항목을 다음으로 설정하기: `-rc cqp -qp_i 28 -qp_p 28`</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2111"/>
+        <location filename="../../src/ui/App.qml" line="2110"/>
         <source>Saving...</source>
         <translation>저장 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1050"/>
-        <location filename="../../src/ui/App.qml" line="1061"/>
-        <location filename="../../src/ui/App.qml" line="1973"/>
+        <location filename="../../src/ui/App.qml" line="1049"/>
+        <location filename="../../src/ui/App.qml" line="1060"/>
+        <location filename="../../src/ui/App.qml" line="1972"/>
         <source>Preset saved to %1</source>
         <translation>프리셋이 %1에 저장됨</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1778"/>
-        <location filename="../../src/ui/App.qml" line="1816"/>
-        <location filename="../../src/ui/App.qml" line="1834"/>
-        <location filename="../../src/ui/App.qml" line="1869"/>
-        <location filename="../../src/ui/App.qml" line="1928"/>
-        <location filename="../../src/ui/App.qml" line="1934"/>
+        <location filename="../../src/ui/App.qml" line="1777"/>
+        <location filename="../../src/ui/App.qml" line="1815"/>
+        <location filename="../../src/ui/App.qml" line="1833"/>
+        <location filename="../../src/ui/App.qml" line="1868"/>
+        <location filename="../../src/ui/App.qml" line="1927"/>
+        <location filename="../../src/ui/App.qml" line="1933"/>
         <source>Close</source>
         <translation>닫기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2130"/>
+        <location filename="../../src/ui/App.qml" line="2129"/>
         <source>`.gyroflow` file already exists, what do you want to do?</source>
         <translation>이미 `.gyroflow` 파일이 있습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2131"/>
+        <location filename="../../src/ui/App.qml" line="2130"/>
         <source>Overwrite</source>
         <translation>덮어쓰기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2149"/>
+        <location filename="../../src/ui/App.qml" line="2148"/>
         <source>Choose a different location</source>
         <translation>다른 위치 선택하기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1063"/>
-        <location filename="../../src/ui/App.qml" line="2035"/>
-        <location filename="../../src/ui/App.qml" line="2154"/>
+        <location filename="../../src/ui/App.qml" line="1062"/>
+        <location filename="../../src/ui/App.qml" line="2034"/>
+        <location filename="../../src/ui/App.qml" line="2153"/>
         <source>Cancel</source>
         <translation>취소</translation>
     </message>
@@ -355,245 +355,245 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>자동 동기화</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="751"/>
+        <location filename="../../src/ui/App.qml" line="750"/>
         <source>Stop</source>
         <translation>중지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="751"/>
+        <location filename="../../src/ui/App.qml" line="750"/>
         <source>Export stabilized video</source>
         <translation>안정화된 영상 내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="845"/>
-        <location filename="../../src/ui/App.qml" line="943"/>
-        <location filename="../../src/ui/App.qml" line="947"/>
+        <location filename="../../src/ui/App.qml" line="844"/>
+        <location filename="../../src/ui/App.qml" line="942"/>
+        <location filename="../../src/ui/App.qml" line="946"/>
         <source>Added to queue</source>
         <translation>대기열에 추가됨</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="943"/>
+        <location filename="../../src/ui/App.qml" line="942"/>
         <source>file %1 will be overwritten</source>
         <translation>파일 %1을(를) 덮어씌웁니다</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="947"/>
+        <location filename="../../src/ui/App.qml" line="946"/>
         <source>file will be rendered to %1</source>
         <translation>파일이 %1(으)로 렌더링됩니다</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="960"/>
+        <location filename="../../src/ui/App.qml" line="959"/>
         <source>Gyroflow will use REDline to convert .R3D to ProRes before stabilizing in order to export from Gyroflow directly.
 If you want to work on RAW data instead, export project file (Ctrl+S) and use one of [video editor plugins] (%1).</source>
         <translation>Gyroflow는 안정화 전에 .R3D를 ProRes로 변환하기 위해 REDline을 사용하여 Gyroflow에서 직접 내보낼 수 있게 합니다.
 RAW 데이터로 직접 작업하려면 프로젝트 파일을 내보내고 (Ctrl+S) [비디오 편집기 플러그인] (%1) 중 하나를 사용하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="977"/>
+        <location filename="../../src/ui/App.qml" line="976"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>파일 접근 권한 제한으로 인해, 파일을 저장할 위치를 직접 선택해야 합니다.
 확인을 클릭하고 파일을 저장할 위치를 선택하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="988"/>
+        <location filename="../../src/ui/App.qml" line="987"/>
         <source>Keep this app in the foreground and don&apos;t lock the screen.
 Due to limitations of the system video encoders, rendering in the background is not supported.</source>
         <translation>이 앱을 포그라운드에 유지하고 기기를 잠그지 마세요.
 시스템 비디오 인코더의 한계로, 백그라운드 렌더링을 지원하지 않습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1052"/>
+        <location filename="../../src/ui/App.qml" line="1051"/>
         <source>Enter the name for the preset: </source>
         <translation>프리셋 이름 입력: </translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1056"/>
+        <location filename="../../src/ui/App.qml" line="1055"/>
         <source>Name cannot be empty.</source>
         <translation>이름은 비워둘 수 없습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1098"/>
+        <location filename="../../src/ui/App.qml" line="1097"/>
         <source>Clear render queue</source>
         <translation>렌더링 대기열 비우기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1100"/>
+        <location filename="../../src/ui/App.qml" line="1099"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>렌더링 대기열의 모든 항목을 제거하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1302"/>
+        <location filename="../../src/ui/App.qml" line="1301"/>
         <source>Batch settings (%1)</source>
         <translation>일괄 설정 (%1)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1311"/>
+        <location filename="../../src/ui/App.qml" line="1310"/>
         <source>Apply</source>
         <translation>적용</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1319"/>
+        <location filename="../../src/ui/App.qml" line="1318"/>
         <source>Exit</source>
         <translation>종료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1433"/>
+        <location filename="../../src/ui/App.qml" line="1432"/>
         <source>Sensor &amp;&amp; Lens</source>
         <translation>센서 및 렌즈</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1526"/>
+        <location filename="../../src/ui/App.qml" line="1525"/>
         <source>Settings</source>
         <translation>설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1619"/>
+        <location filename="../../src/ui/App.qml" line="1618"/>
         <source>Check for updates</source>
         <translation>업데이트 확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1270"/>
-        <location filename="../../src/ui/App.qml" line="1280"/>
-        <location filename="../../src/ui/App.qml" line="1647"/>
+        <location filename="../../src/ui/App.qml" line="1269"/>
+        <location filename="../../src/ui/App.qml" line="1279"/>
+        <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Full mode →</source>
         <translation>전체 모드 →</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1186"/>
-        <location filename="../../src/ui/App.qml" line="1196"/>
-        <location filename="../../src/ui/App.qml" line="1206"/>
-        <location filename="../../src/ui/App.qml" line="1374"/>
+        <location filename="../../src/ui/App.qml" line="1185"/>
+        <location filename="../../src/ui/App.qml" line="1195"/>
+        <location filename="../../src/ui/App.qml" line="1205"/>
+        <location filename="../../src/ui/App.qml" line="1373"/>
         <source>← Simple mode</source>
         <translation>← 간편 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1625"/>
+        <location filename="../../src/ui/App.qml" line="1624"/>
         <source>Report a problem</source>
         <translation>문제 보고</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1777"/>
-        <location filename="../../src/ui/App.qml" line="1915"/>
+        <location filename="../../src/ui/App.qml" line="1776"/>
+        <location filename="../../src/ui/App.qml" line="1914"/>
         <source>Downloading update...</source>
         <translation>업데이트 다운로드 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1789"/>
+        <location filename="../../src/ui/App.qml" line="1788"/>
         <source>Manual test version</source>
         <translation>수동 테스트 버전</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1789"/>
+        <location filename="../../src/ui/App.qml" line="1788"/>
         <source>Stable update</source>
         <translation>안정 업데이트</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1799"/>
+        <location filename="../../src/ui/App.qml" line="1798"/>
         <source>Test version available: %1.</source>
         <translation>테스트 버전 사용 가능: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1800"/>
+        <location filename="../../src/ui/App.qml" line="1799"/>
         <source>Stable update available: %1.</source>
         <translation>안정 업데이트 사용 가능: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1815"/>
+        <location filename="../../src/ui/App.qml" line="1814"/>
         <source>Available updates</source>
         <translation>사용 가능한 업데이트</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1833"/>
-        <location filename="../../src/ui/App.qml" line="1933"/>
+        <location filename="../../src/ui/App.qml" line="1832"/>
+        <location filename="../../src/ui/App.qml" line="1932"/>
         <source>Update failed: %1</source>
         <translation>업데이트 실패: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1868"/>
+        <location filename="../../src/ui/App.qml" line="1867"/>
         <source>You are already on the latest version.</source>
         <translation>이미 최신 버전입니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1914"/>
+        <location filename="../../src/ui/App.qml" line="1913"/>
         <source>Downloading update... %1%</source>
         <translation>업데이트 다운로드 중... %1%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1922"/>
+        <location filename="../../src/ui/App.qml" line="1921"/>
         <source>Installing the update will quit Gyroflow. Make sure your project is saved before continuing.</source>
         <translation>업데이트를 설치하면 Gyroflow가 종료됩니다. 계속하기 전에 프로젝트가 저장되었는지 확인하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1924"/>
+        <location filename="../../src/ui/App.qml" line="1923"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>DMG가 열리면 Gyroflow(NiYien).app을 Applications 폴더로 드래그하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1926"/>
+        <location filename="../../src/ui/App.qml" line="1925"/>
         <source>Update is ready.</source>
         <translation>업데이트가 준비되었습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1927"/>
+        <location filename="../../src/ui/App.qml" line="1926"/>
         <source>Open DMG and quit</source>
         <translation>DMG 열고 종료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1927"/>
+        <location filename="../../src/ui/App.qml" line="1926"/>
         <source>Install and quit</source>
         <translation>설치하고 종료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1991"/>
+        <location filename="../../src/ui/App.qml" line="1990"/>
         <source>Thanks! Your feedback has been submitted.</source>
         <translation>감사합니다! 피드백이 제출되었습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1993"/>
+        <location filename="../../src/ui/App.qml" line="1992"/>
         <source>Submission failed: %1</source>
         <translation>제출 실패: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2014"/>
+        <location filename="../../src/ui/App.qml" line="2013"/>
         <source>An error occured: %1</source>
         <translation>오류가 발생했습니다: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2015"/>
+        <location filename="../../src/ui/App.qml" line="2014"/>
         <source>Gyroflow file exported to %1.</source>
         <translation>Gyroflow 파일을 %1 위치로 내보냈습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2016"/>
+        <location filename="../../src/ui/App.qml" line="2015"/>
         <source>--REPLACE_WITH_NATIVE_NAME_OF_YOUR_LANGUAGE_IN_YOUR_LANGUAGE--</source>
         <comment>Translate this to the native name of your language</comment>
         <translation>한국어</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2017"/>
+        <location filename="../../src/ui/App.qml" line="2016"/>
         <source>Gyroflow will shut down the computer in 60 seconds because all tasks have been completed.</source>
         <translation>Gyroflow의 모든 작업이 완료되어 60초 뒤에 컴퓨터를 종료합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2018"/>
+        <location filename="../../src/ui/App.qml" line="2017"/>
         <source>Gyroflow will reboot the computer in 60 seconds because all tasks have been completed.</source>
         <translation>Gyroflow의 모든 작업이 완료되어 60초 뒤에 컴퓨터를 다시 시작합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2029"/>
+        <location filename="../../src/ui/App.qml" line="2028"/>
         <source>This encoder requires an external library licensed as GPL.
 Do you agree with the [GPL license] and want to download the additional codec?</source>
         <translation>이 인코더는 GPL 라이선스를 따르는 외부 라이브러리가 필요합니다.
 [GPL 라이선스]에 동의하며, 추가 코덱을 다운로드하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2030"/>
+        <location filename="../../src/ui/App.qml" line="2029"/>
         <source>Yes, I agree</source>
         <translation>예, 동의합니다</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2045"/>
+        <location filename="../../src/ui/App.qml" line="2044"/>
         <source>Permission denied. Unable to create or write file.
 Change the output path or run the program as administrator.
 Make sure you have write permissions to the target directory and make sure target file is not used by any other application.</source>
@@ -602,7 +602,7 @@ Make sure you have write permissions to the target directory and make sure targe
 대상 디렉터리에 쓰기 권한이 있는지, 다른 프로그램이 대상 파일을 사용 중인지 확인하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2046"/>
+        <location filename="../../src/ui/App.qml" line="2045"/>
         <source>NVIDIA GPU driver is too old, GPU encoding will not work for this format.
 Update your NVIDIA drivers to the newest version: %1.
 If the issue is still present after driver update, your GPU probably doesn&apos;t support GPU encoding with this format. Disable GPU encoding in this case.</source>
@@ -611,36 +611,36 @@ NVIDIA 드라이버를 최신 버전으로 업데이트하세요: %1.
 드라이버 업데이트 이후에도 문제가 지속된다면, 설치된 GPU가 이 형식으로의 GPU 인코딩을 지원하지 않는 것일 수 있습니다. 이 경우 GPU 인코딩을 비활성화하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2055"/>
+        <location filename="../../src/ui/App.qml" line="2054"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation>GPU 가속 인코더가 이 픽셀 형식을 지원하지 않습니다 (%1).
 지원되는 다른 픽셀 형식으로 변환하시겠습니까, 아니면 그대로 CPU에서 렌더링하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2061"/>
+        <location filename="../../src/ui/App.qml" line="2060"/>
         <source>GPU encoder failed to initialize and rendering is done on the CPU, which is much slower.
 If you have a modern device, latest GPU drivers and you think this shouldn&apos;t happen, report this on GitHub including gyroflow.log file.</source>
         <translation>GPU 인코더 초기화에 실패하여 더 느린 CPU에서 렌더링합니다.
 최신 시스템과 드라이버에서도 문제가 발생한다면, gyroflow.log 파일과 함께 GitHub에 보고해주세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2064"/>
+        <location filename="../../src/ui/App.qml" line="2063"/>
         <source>Your GPU doesn&apos;t support H.265/HEVC encoding, try to use H.264/AVC or disable GPU encoding in Export settings.</source>
         <translation>설치된 GPU가 H.265/HEVC 인코딩을 지원하지 않습니다. H.264/AVC를 사용하거나 내보내기 설정에서 GPU 인코딩을 비활성화하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2067"/>
+        <location filename="../../src/ui/App.qml" line="2066"/>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation>GPU 디코더가 이 파일의 디코딩에 실패했습니다. &quot;고급&quot;에서 GPU 디코딩을 비활성화 후 다시 시도해 주세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2070"/>
+        <location filename="../../src/ui/App.qml" line="2069"/>
         <source>Make sure your output extension supports the selected codec. &quot;.mov&quot; should work in most cases.</source>
         <translation>출력할 확장자가 선택한 코덱을 지원하는지 확인하세요. &quot;.mov&quot;는 대부분의 경우 지원합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2073"/>
+        <location filename="../../src/ui/App.qml" line="2072"/>
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>음성 인코더가 입력 데이터를 처리할 수 없습니다. 내보내기 설정의 &apos;음성 내보내기&apos; 옵션을 해제해 보세요.</translation>
     </message>
@@ -1345,266 +1345,266 @@ You can increase the sharpness limit in the Advanced section.</source>
 <context>
     <name>Export</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1534"/>
+        <location filename="../../src/ui/App.qml" line="1533"/>
         <location filename="../../src/ui/menu/Export.qml" line="12"/>
         <source>Export settings</source>
         <translation>내보내기 설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="325"/>
+        <location filename="../../src/ui/menu/Export.qml" line="351"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="114"/>
         <source>Output size</source>
         <translation>출력 해상도</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="331"/>
+        <location filename="../../src/ui/menu/Export.qml" line="357"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="122"/>
         <source>Width</source>
         <translation>너비</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="349"/>
+        <location filename="../../src/ui/menu/Export.qml" line="375"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="171"/>
         <source>Height</source>
         <translation>높이</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="381"/>
+        <location filename="../../src/ui/menu/Export.qml" line="407"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="159"/>
         <source>Lock aspect ratio</source>
         <translation>종횡비 고정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="393"/>
+        <location filename="../../src/ui/menu/Export.qml" line="419"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="198"/>
         <source>Output size preset</source>
         <translation>출력 해상도 프리셋</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="422"/>
+        <location filename="../../src/ui/menu/Export.qml" line="448"/>
         <source>Proportional</source>
         <translation>종횡비 유지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="428"/>
+        <location filename="../../src/ui/menu/Export.qml" line="454"/>
         <source>Based on &quot;Max zoom&quot;</source>
         <translation>&quot;최대 줌&quot; 기준</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="500"/>
+        <location filename="../../src/ui/menu/Export.qml" line="526"/>
         <source>This resolution is not supported by the selected codec.</source>
         <translation>이 해상도는 선택한 코덱에서 지원되지 않습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="501"/>
+        <location filename="../../src/ui/menu/Export.qml" line="527"/>
         <source>Maximum supported resolution is %1.</source>
         <translation>최대 지원 해상도는 %1 입니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="507"/>
+        <location filename="../../src/ui/menu/Export.qml" line="533"/>
         <source>Resolution must be divisible by 2.</source>
         <translation>해상도는 짝수여야 합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="512"/>
+        <location filename="../../src/ui/menu/Export.qml" line="538"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="212"/>
         <source>Bitrate</source>
         <translation>비트레이트</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="519"/>
+        <location filename="../../src/ui/menu/Export.qml" line="545"/>
         <source>Mbps</source>
         <translation>Mbps</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1589"/>
-        <location filename="../../src/ui/menu/Export.qml" line="531"/>
+        <location filename="../../src/ui/App.qml" line="1588"/>
+        <location filename="../../src/ui/menu/Export.qml" line="557"/>
         <source>Use GPU encoding</source>
         <translation>GPU 인코딩 사용</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="540"/>
+        <location filename="../../src/ui/menu/Export.qml" line="566"/>
         <source>GPU encoders typically generate output of lower quality than software encoders, but are significantly faster.</source>
         <translation>GPU 인코더는 일반적으로 소프트웨어 인코더보다 품질이 낮지만 훨씬 빠릅니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="541"/>
+        <location filename="../../src/ui/menu/Export.qml" line="567"/>
         <source>They require a higher bitrate to make output with the same perceptual quality, or they make output with a lower perceptual quality at the same bitrate.</source>
         <translation>동일한 화질을 체감하려면 더 높은 비트레이트가 필요합니다. 비트레이트가 동일하면 체감 화질이 열화됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="542"/>
+        <location filename="../../src/ui/menu/Export.qml" line="568"/>
         <source>Uncheck this option for maximum possible quality.</source>
         <translation>가능한 최상의 품질을 얻으려면 이 옵션을 해제합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="544"/>
+        <location filename="../../src/ui/menu/Export.qml" line="570"/>
         <source>GPU acceleration is not available for the pixel format of this video.</source>
         <translation>이 영상의 픽셀 형식은 GPU 가속을 지원하지 않습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="548"/>
+        <location filename="../../src/ui/menu/Export.qml" line="574"/>
         <source>Export audio</source>
         <translation>음성 내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="552"/>
+        <location filename="../../src/ui/menu/Export.qml" line="578"/>
         <source>Audio export not available when changing video speed.</source>
         <translation>영상 속도를 조절한 경우 음성 내보내기를 지원하지 않습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="559"/>
+        <location filename="../../src/ui/menu/Export.qml" line="585"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="19"/>
         <source>Render queue output path</source>
         <translation>렌더 대기열 출력 경로</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="562"/>
+        <location filename="../../src/ui/menu/Export.qml" line="588"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="23"/>
         <source>Same as source file</source>
         <translation>원본 파일과 동일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="562"/>
+        <location filename="../../src/ui/menu/Export.qml" line="588"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="23"/>
         <source>Fixed path</source>
         <translation>고정 경로</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="575"/>
+        <location filename="../../src/ui/menu/Export.qml" line="601"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="40"/>
         <source>Select output folder...</source>
         <translation>출력 폴더 선택...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="583"/>
+        <location filename="../../src/ui/menu/Export.qml" line="609"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="47"/>
         <source>Browse</source>
         <translation>찾아보기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="591"/>
+        <location filename="../../src/ui/menu/Export.qml" line="617"/>
         <source>Custom encoder options</source>
         <translation>사용자 지정 인코더 옵션</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="614"/>
+        <location filename="../../src/ui/menu/Export.qml" line="640"/>
         <source>Show available options</source>
         <translation>사용 가능한 옵션 보이기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="660"/>
+        <location filename="../../src/ui/menu/Export.qml" line="686"/>
         <source>Export trim ranges as separate videos</source>
         <translation>잘라내기 범위를 각각의 비디오로 내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="679"/>
+        <location filename="../../src/ui/menu/Export.qml" line="705"/>
         <source>Interpolation method</source>
         <translation>보간 방식</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="743"/>
+        <location filename="../../src/ui/menu/Export.qml" line="769"/>
         <source>Preserve export settings</source>
         <translation>내보내기 설정 유지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="745"/>
+        <location filename="../../src/ui/menu/Export.qml" line="771"/>
         <source>Save output size and bitrate in settings and use it for all files.</source>
         <translation>설정에 출력 해상도와 비트레이트를 저장하고, 모든 파일에 대해 적용합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="756"/>
+        <location filename="../../src/ui/menu/Export.qml" line="782"/>
         <source>Preserve export path</source>
         <translation>내보내기 경로 유지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="758"/>
+        <location filename="../../src/ui/menu/Export.qml" line="784"/>
         <source>Save output path in settings and use it for all files.</source>
         <translation>설정에 출력 경로를 저장하고, 모든 파일에 대해 적용합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="769"/>
+        <location filename="../../src/ui/menu/Export.qml" line="795"/>
         <source>Use experimental Vulkan encoder (HEVC only)</source>
         <translation>실험적 Vulkan 인코더 사용 (HEVC만 해당)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="778"/>
+        <location filename="../../src/ui/menu/Export.qml" line="804"/>
         <source>Use experimental D3D12 encoder (HEVC and AVC)</source>
         <translation>실험적 D3D12 인코더 사용 (HEVC 및 AVC)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="468"/>
-        <location filename="../../src/ui/menu/Export.qml" line="617"/>
+        <location filename="../../src/ui/menu/Export.qml" line="494"/>
+        <location filename="../../src/ui/menu/Export.qml" line="643"/>
         <source>Ok</source>
         <translation>확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="403"/>
+        <location filename="../../src/ui/menu/Export.qml" line="429"/>
         <source>Edit sizes</source>
         <translation>해상도 편집</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="407"/>
+        <location filename="../../src/ui/menu/Export.qml" line="433"/>
         <source>Original</source>
         <translation>원본</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="460"/>
+        <location filename="../../src/ui/menu/Export.qml" line="486"/>
         <source>You can edit the output size presets here:</source>
         <translation>여기서 출력 해상도 프리셋을 편집할 수 있습니다:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="461"/>
+        <location filename="../../src/ui/menu/Export.qml" line="487"/>
         <source>Save</source>
         <translation>저장</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="468"/>
+        <location filename="../../src/ui/menu/Export.qml" line="494"/>
         <source>Invalid JSON format!</source>
         <translation>유효하지 않은 JSON 형식!</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="471"/>
+        <location filename="../../src/ui/menu/Export.qml" line="497"/>
         <source>Cancel</source>
         <translation>취소</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="624"/>
+        <location filename="../../src/ui/menu/Export.qml" line="650"/>
         <source>Metadata comment</source>
         <translation>메타데이터 코멘트</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="632"/>
+        <location filename="../../src/ui/menu/Export.qml" line="658"/>
         <source>Keyframe distance</source>
         <translation>키프레임 간격</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="641"/>
+        <location filename="../../src/ui/menu/Export.qml" line="667"/>
         <source>s</source>
         <translation>초</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="646"/>
+        <location filename="../../src/ui/menu/Export.qml" line="672"/>
         <source>Preserve other tracks</source>
         <translation>여타 기존 트랙 유지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="648"/>
+        <location filename="../../src/ui/menu/Export.qml" line="674"/>
         <source>This disables trim range and you need to use the .mov output file extension</source>
         <translation>이 옵션을 선택하면 잘라내기 범위가 비활성화되며 .mov 확장자를 사용해야 합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="653"/>
+        <location filename="../../src/ui/menu/Export.qml" line="679"/>
         <source>Use black frames outside trim range and keep original file duration</source>
         <translation>잘라내기 범위 밖은 검게 처리하고 원본 파일 길이 유지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="667"/>
+        <location filename="../../src/ui/menu/Export.qml" line="693"/>
         <source>Audio codec</source>
         <translation>음성 코덱</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="690"/>
+        <location filename="../../src/ui/menu/Export.qml" line="716"/>
         <source>Device for rendering</source>
         <translation>렌더링에 사용할 장치</translation>
     </message>
@@ -1909,8 +1909,8 @@ Do you want to submit your profile?</source>
         <translation>렌즈 그룹</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="573"/>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="646"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="590"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="663"/>
         <source>Mixed</source>
         <translation>혼합</translation>
     </message>
@@ -1925,77 +1925,77 @@ Do you want to submit your profile?</source>
         <translation>수동 설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="442"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="452"/>
         <source>Manually set lens focal length or anamorphic info.</source>
         <translation>초점 거리 또는 아나모픽 정보를 수동으로 설정합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="455"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="465"/>
         <source>Manual edit</source>
         <translation>수동 편집</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="456"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="466"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>켜져 있으면 영상에 초점 거리 텔레메트리가 없거나 아나모픽이 활성화된 경우, 각 렌즈 그룹이 수동으로 입력된 초점 거리 / 아나모픽으로 폴백합니다. 적용되려면 초점 거리가 5mm를 초과해야 합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="499"/>
         <source>Changes only affect the selected video.</source>
         <translation>변경 사항은 선택한 영상에만 적용됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="490"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="500"/>
         <source>Changes only affect the %1 selected videos.</source>
         <translation>변경 사항은 선택한 %1개 영상에만 적용됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="495"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="505"/>
         <source>Lens group</source>
         <translation>렌즈 그룹</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="516"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="526"/>
         <source>Focal length</source>
         <translation>초점 거리</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="527"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="537"/>
         <source>mm</source>
         <translation>mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="544"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="554"/>
         <source>Anamorphic lens</source>
         <translation>아나모픽 렌즈</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="578"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="595"/>
         <source>Preset</source>
         <translation>프리셋</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="614"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="631"/>
         <source>Horizontal</source>
         <translation>가로</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="624"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="641"/>
         <source>Vertical</source>
         <translation>세로</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="634"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="651"/>
         <source>Squeeze ratio</source>
         <translation>스퀴즈 비율</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="671"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="688"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="689"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="706"/>
         <source>Apply globally</source>
         <translation>전역 적용</translation>
     </message>
@@ -2023,112 +2023,112 @@ Do you want to submit your profile?</source>
         <translation>예</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="207"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="210"/>
         <source>Open file</source>
         <translation>파일 열기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="212"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="215"/>
         <source>Create new</source>
         <translation>새 항목</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="238"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="241"/>
         <source>Rate this profile: [Good] | [Bad]</source>
         <translation>이 프로필 평가: [Good] | [Bad]</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="240"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="243"/>
         <source>Thank you for rating this profile.</source>
         <translation>평가해 주셔서 감사합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="270"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="273"/>
         <source>Lens profile aspect ratio doesn&apos;t match the file aspect ratio. The result will not look correct.</source>
         <translation>렌즈 프로필의 종횡비가 파일과 일치하지 않습니다. 결과가 올바르지 않을 수 있습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="271"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="274"/>
         <source>Lens profile dimensions don&apos;t match the file dimensions. The result may not look correct.</source>
         <translation>렌즈 프로필의 해상도가 파일과 일치하지 않습니다. 결과가 올바르지 않을 수 있습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="301"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="304"/>
         <source>Focal length (mm)</source>
         <translation>초점 거리 (mm)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="311"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="314"/>
         <source>Enter focal length for manual lenses or lenses without electronic contacts</source>
         <translation>수동 렌즈 또는 전자 접점이 없는 렌즈의 초점 거리를 입력하세요</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="321"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="324"/>
         <source>Advanced</source>
         <translation>고급</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="326"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="329"/>
         <source>Lens is under water</source>
         <translation>렌즈가 물 속에 있음</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="328"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="331"/>
         <source>Enable if you&apos;re filming under water. This will adjust the refraction coefficient.</source>
         <translation>수중 촬영 시 활성화합니다. 굴절 계수를 조정됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="349"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="352"/>
         <source>Enable keyframing</source>
         <translation>키프레임 활성화</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="362"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="365"/>
         <source>Add keyframe</source>
         <translation>키프레임 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="432"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="435"/>
         <source>Export STMap</source>
         <translation>STMap 내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="438"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="441"/>
         <source>This file contains per-frame lens metadata. Do you want to export an STMap sequence or a single frame?</source>
         <translation>이 파일에는 프레임 별 렌즈 메타데이터가 포함되어 있습니다. STMap 시퀀스 또는 단일 프레임 중 어떤 것을 내보낼까요?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="439"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="442"/>
         <source>Single frame</source>
         <translation>단일 프레임</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="440"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="443"/>
         <source>STMap sequence</source>
         <translation>STMap 시퀀스</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="454"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="457"/>
         <source>Exporting %1...</source>
         <translation>%1 내보내는 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="391"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="394"/>
         <source>Pixel focal length</source>
         <translation>픽셀 초점 거리</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="237"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="240"/>
         <source>This lens profile is unofficial, we can&apos;t guarantee its correctness. Use at your own risk.</source>
         <translation>이 렌즈 프로필은 비공식적이며 정확도가 떨어질 수 있습니다. 자신의 책임하에 사용하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="401"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="404"/>
         <source>Focal center</source>
         <translation>초점 중앙</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="411"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="414"/>
         <source>Distortion coefficients</source>
         <translation>왜곡 계수</translation>
     </message>
@@ -2149,22 +2149,22 @@ Do you want to submit your profile?</source>
 <context>
     <name>LoaderOverlay</name>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="104"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="110"/>
         <source> @ %1fps</source>
         <translation> @ %1fps</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="105"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="111"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>경과: %1. 남은 시간: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="119"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="125"/>
         <source>Cancel</source>
         <translation>취소</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="139"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="145"/>
         <source>Hide</source>
         <translation>숨기기</translation>
     </message>
@@ -2215,7 +2215,7 @@ Do you want to submit your profile?</source>
         <translation>확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1451"/>
+        <location filename="../../src/ui/App.qml" line="1450"/>
         <location filename="../../src/ui/menu/MotionData.qml" line="176"/>
         <source>Open file</source>
         <translation>파일 열기</translation>
@@ -2579,42 +2579,42 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>Popup</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="878"/>
+        <location filename="../../src/ui/App.qml" line="877"/>
         <source>Export</source>
         <translation>내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="878"/>
+        <location filename="../../src/ui/App.qml" line="877"/>
         <source>Save</source>
         <translation>저장</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="878"/>
+        <location filename="../../src/ui/App.qml" line="877"/>
         <source>Add to render queue</source>
         <translation>렌더링 대기열에 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="879"/>
+        <location filename="../../src/ui/App.qml" line="878"/>
         <source>Create settings preset</source>
         <translation>설정 프리셋 만들기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="880"/>
+        <location filename="../../src/ui/App.qml" line="879"/>
         <source>Apply selected settings to all items in the render queue</source>
         <translation>렌더링 대기열의 모든 항목에 선택된 설정 적용하기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="881"/>
+        <location filename="../../src/ui/App.qml" line="880"/>
         <source>Export project file (including gyro data)</source>
         <translation>프로젝트 파일 내보내기 (자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="882"/>
+        <location filename="../../src/ui/App.qml" line="881"/>
         <source>Export project file</source>
         <translation>프로젝트 파일 내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="884"/>
+        <location filename="../../src/ui/App.qml" line="883"/>
         <source>Save project file</source>
         <translation>프로젝트 파일 저장</translation>
     </message>
@@ -2699,21 +2699,21 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1588"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
         <source>No zooming</source>
         <translation>줌 없음</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1588"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
         <source>Dynamic zooming</source>
         <translation>동적 줌</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1588"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
         <source>Static zoom</source>
         <translation>줌 값 고정</translation>
     </message>
@@ -2733,37 +2733,37 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>시각적 특징 검출</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2059"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2104"/>
         <source>Do nothing</source>
         <translation>아무것도 하지 않음</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2060"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2105"/>
         <source>Shut down the computer</source>
         <translation>시스템 종료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2061"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2106"/>
         <source>Restart the computer</source>
         <translation>시스템 다시 시작</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2062"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2107"/>
         <source>Sleep</source>
         <translation>절전 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2063"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2108"/>
         <source>Hibernate</source>
         <translation>최대 절전 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2064"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2109"/>
         <source>Logout</source>
         <translation>로그아웃</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2065"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2110"/>
         <source>Close Gyroflow</source>
         <translation>Gyroflow 종료</translation>
     </message>
@@ -2799,192 +2799,219 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="588"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="622"/>
         <source>Pause</source>
         <translation>일시 중단</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="320"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="349"/>
         <source>Render queue</source>
         <translation>렌더링 대기열</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1759"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1803"/>
         <source>Selected: %1</source>
         <translation>선택됨: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1767"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1811"/>
         <source>Select all</source>
         <translation>모두 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1773"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1817"/>
         <source>Deselect</source>
         <translation>선택 해제</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1779"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1823"/>
         <source>Done</source>
         <translation>완료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2067"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2112"/>
         <source>When rendering is finished: %1</source>
         <translation>렌더링 완료 시: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1687"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1731"/>
         <source> @ %1fps</source>
         <translation> @ %1fps</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="261"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="263"/>
         <source>No calibration pair found for %1 video(s). Please pair manually.</source>
         <translation>%1개 비디오의 캘리브레이션 페어를 찾을 수 없습니다. 수동으로 페어링하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="464"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="493"/>
         <source>Elapsed: %1</source>
         <translation>경과: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="511"/>
         <source>Remaining: %1</source>
         <translation>남은 시간: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="508"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="540"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1934"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="297"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="542"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="574"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1978"/>
         <source>Ok</source>
         <translation>확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="524"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="558"/>
         <source>Rendering %1...</source>
         <translation>%1 렌더링 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="524"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="558"/>
         <source>Converting to %1 %2...</source>
         <translation>%1 %2 (으)로 변환 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="542"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="576"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation>렌더링 완료. 파일이 %1에 저장되었습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="535"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1725"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="569"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1769"/>
         <source>Open rendered file</source>
         <translation>렌더링된 파일 열기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="342"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="287"/>
+        <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
+        <translation>일부 동영상을 안정적으로 동기화하지 못했습니다. 자동으로 복구를 시도하시겠습니까?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="288"/>
+        <source>Repair</source>
+        <translation>복구</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
+        <source>Skip</source>
+        <translation>건너뛰기</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
+        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
+        <translation>일괄 동기화에서 안정적인 결과를 얻지 못했습니다. 자이로 분할 또는 일괄 매칭을 확인 후 다시 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="296"/>
+        <source>Some videos are still not reliably synchronized after repair.</source>
+        <translation>복구 후에도 일부 동영상이 안정적으로 동기화되지 않았습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="371"/>
         <source>Choose files</source>
         <translation>파일 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="343"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="372"/>
         <source>Video files</source>
         <translation>영상 파일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="359"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="388"/>
         <source>Choose folder</source>
         <translation>폴더 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="392"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="421"/>
         <source>0s</source>
         <translation>0초</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="538"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1731"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="572"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1775"/>
         <source>Open file location</source>
         <translation>파일 위치 열기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="557"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1436"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1458"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="591"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1473"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1495"/>
         <source>Render using CPU</source>
         <translation>CPU 렌더링 사용</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="564"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="633"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="598"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="667"/>
         <source>Cancel</source>
         <translation>취소</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="566"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="600"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation>GPU 가속 인코더가 이 픽셀 형식을 지원하지 않습니다 (%1).
 지원되는 다른 픽셀 형식으로 변환하시겠습니까, 아니면 그대로 CPU에서 렌더링하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="586"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="620"/>
         <source>Start exporting</source>
         <translation>내보내기 시작</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="587"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="621"/>
         <source>Resume</source>
         <translation>재개</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="696"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="730"/>
         <source>Add files</source>
         <translation>파일 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="714"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="748"/>
         <source>Add folder</source>
         <translation>폴더 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="992"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1029"/>
         <source>Render now</source>
         <translation>바로 렌더링하기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1002"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1039"/>
         <source>Edit</source>
         <translation>편집</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1020"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1057"/>
         <source>Reset status</source>
         <translation>상태 재설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1020"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1057"/>
         <source>Stop</source>
         <translation>중지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1037"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1074"/>
         <source>Pair with Gyro</source>
         <translation>자이로 데이터 페어링</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1412"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1449"/>
         <source>Missing required components.</source>
         <translation>필요한 구성 요소 누락.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1424"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1461"/>
         <source>Applying pixel format: %1</source>
         <translation>픽셀 형식 적용 중: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1444"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1481"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
@@ -2993,228 +3020,238 @@ This choice applies to all remaining jobs in this batch.</source>
 이 선택은 이 배치의 남은 모든 작업에 적용됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1447"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1484"/>
         <source>Waiting for pixel format selection…</source>
         <translation>픽셀 형식 선택 대기 중…</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1471"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2192"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1508"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2237"/>
         <source>Yes</source>
         <translation>예</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1472"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1509"/>
         <source>Rename</source>
         <translation>이름 바꾸기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1473"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2199"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1510"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2244"/>
         <source>No</source>
         <translation>아니요</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1564"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1601"/>
         <source>ETA %1</source>
         <translation>남은 시간 %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1565"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1602"/>
         <source>Synchronizing: %1</source>
         <translation>동기화 중: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1566"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1603"/>
         <source>Rendering: %1</source>
         <translation>렌더링 중: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1610"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
         <source>Mode</source>
         <translation>모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1610"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
         <source>Local</source>
         <translation>로컬</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1610"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
         <source>Global</source>
         <translation>전역</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1615"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1652"/>
         <source>Lens</source>
         <translation>렌즈</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1620"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1657"/>
         <source>Focal</source>
         <translation>초점</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1662"/>
         <source>Anamorphic</source>
         <translation>아나모픽</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1640"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1677"/>
         <source>Manual</source>
         <translation>수동</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1643"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1680"/>
         <source>Calibration</source>
         <translation>캘리브레이션</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1648"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1684"/>
+        <source>Sync confirmed</source>
+        <translation>동기화 확인됨</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1684"/>
+        <source>Sync not confirmed</source>
+        <translation>동기화 미확인</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1692"/>
         <source>Skipped - no gyro data</source>
         <translation>건너뜀 - 자이로 데이터 없음</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1649"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1693"/>
         <source>Skipped - calibration pair</source>
         <translation>건너뜀 - 캘리브레이션 페어</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1806"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1817"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1850"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1861"/>
         <source>Matching...</source>
         <translation>매칭 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1806"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1850"/>
         <source>Auto match</source>
         <translation>자동 매칭</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1830"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1874"/>
         <source>Clear</source>
         <translation>지우기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1847"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1891"/>
         <source>Drop video files or gyroscope data here</source>
         <translation>비디오 파일 또는 자이로스코프 데이터를 여기에 놓으세요</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1933"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1977"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>파일 접근 권한 제한으로 인해, 파일을 저장할 위치를 직접 선택해야 합니다.
 확인을 클릭하고 파일을 저장할 위치를 선택하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2089"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2134"/>
         <source>Queue settings</source>
         <translation>대기열 설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2145"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2190"/>
         <source>Number of parallel renders</source>
         <translation>병렬 렌더링 수</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2156"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2201"/>
         <source>Default overwrite action</source>
         <translation>기본 덮어쓰기 동작</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2157"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2202"/>
         <source>Ask</source>
         <translation>묻기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2159"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
         <source>Overwrite file</source>
         <translation>파일 덮어쓰기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2160"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2205"/>
         <source>Rename file</source>
         <translation>파일 이름 바꾸기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2161"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2206"/>
         <source>Skip file</source>
         <translation>파일 건너뛰기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2225"/>
         <source>Export mode</source>
         <translation>내보내기 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2181"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2226"/>
         <source>Stabilized video</source>
         <translation>안정화된 영상 파일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2182"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2227"/>
         <source>Project file</source>
         <translation>프로젝트 파일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2183"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2228"/>
         <source>Project file (including gyro data)</source>
         <translation>프로젝트 파일 (자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2184"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2229"/>
         <source>Project file (including processed gyro data)</source>
         <translation>프로젝트 파일 (처리된 자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2185"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2230"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation>안정화된 영상 + 프로젝트 파일(자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2189"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2234"/>
         <source>Show queue when adding an item</source>
         <translation>항목 추가 시 대기열 보이기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2190"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2235"/>
         <source>Clear render queue</source>
         <translation>렌더링 대기열 비우기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2191"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2236"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>렌더링 대기열의 모든 항목을 제거하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1468"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1473"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1505"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1510"/>
         <source>Output file already exists.</source>
         <translation>동일한 이름의 파일이 있습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="627"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="661"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation>페어링: %1 — 비디오를 클릭하여 페어링</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1691"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1735"/>
         <source>Synchronizing...</source>
         <translation>동기화 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1692"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1736"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>경과: %1. 남은 시간: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1735"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1779"/>
         <source>Remove</source>
         <translation>제거</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1568"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1605"/>
         <source>Save to: %1</source>
         <translation>저장 위치: %1</translation>
     </message>
@@ -3569,7 +3606,7 @@ Click Ok and select the destination folder.</source>
 <context>
     <name>Stabilization</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1511"/>
+        <location filename="../../src/ui/App.qml" line="1510"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>
         <source>Stabilization</source>
         <translation>안정화</translation>
@@ -3592,7 +3629,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="174"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1575"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1612"/>
         <source>Smoothness</source>
         <translation>평활도</translation>
     </message>
@@ -3772,7 +3809,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="200"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1579"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1616"/>
         <source>Lock horizon</source>
         <translation>수평 잠금</translation>
     </message>
@@ -3785,7 +3822,7 @@ Click Ok and select the destination folder.</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="244"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1583"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1620"/>
         <source>Auto rotate</source>
         <translation>자동 회전</translation>
     </message>
@@ -3855,7 +3892,7 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="661"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="678"/>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="296"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="696"/>
         <source>Lens correction</source>
@@ -3988,7 +4025,7 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <translation>동기화</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1442"/>
+        <location filename="../../src/ui/App.qml" line="1441"/>
         <location filename="../../src/ui/menu/Synchronization.qml" line="170"/>
         <source>Auto sync</source>
         <translation>자동 동기화</translation>
@@ -4382,27 +4419,27 @@ Make sure you have proper rolling shutter value set before syncing.</source>
 <context>
     <name>Tabs</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1178"/>
+        <location filename="../../src/ui/App.qml" line="1177"/>
         <source>Inputs</source>
         <translation>입력</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1178"/>
+        <location filename="../../src/ui/App.qml" line="1177"/>
         <source>Parameters</source>
         <translation>매개 변수</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1178"/>
+        <location filename="../../src/ui/App.qml" line="1177"/>
         <source>Export</source>
         <translation>내보내기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1262"/>
+        <location filename="../../src/ui/App.qml" line="1261"/>
         <source>Video &amp;&amp; Gyro</source>
         <translation>비디오 &amp;&amp; 자이로</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1262"/>
+        <location filename="../../src/ui/App.qml" line="1261"/>
         <source>Stabilize &amp;&amp; Settings</source>
         <translation>안정화 &amp;&amp; 설정</translation>
     </message>
@@ -4764,34 +4801,6 @@ Are you sure you want to continue?</source>
     </message>
 </context>
 <context>
-    <name>Util</name>
-    <message>
-        <location filename="../../src/ui/Util.js" line="10"/>
-        <source>d</source>
-        <translation>일</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/Util.js" line="11"/>
-        <source>h</source>
-        <translation>시</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/Util.js" line="12"/>
-        <source>m</source>
-        <translation>분</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/Util.js" line="13"/>
-        <source>s</source>
-        <translation>초</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/Util.js" line="15"/>
-        <source>&amp;lt; 1s</source>
-        <translation>&amp;lt; 1초</translation>
-    </message>
-</context>
-<context>
     <name>VideoArea</name>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="515"/>
@@ -5056,7 +5065,7 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
 <context>
     <name>VideoInformation</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1400"/>
+        <location filename="../../src/ui/App.qml" line="1399"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="11"/>
         <source>Video information</source>
         <translation>영상 정보</translation>
@@ -5067,7 +5076,7 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
         <translation>프로젝트 파일, 영상 시퀀스 또는 이미지 시퀀스를 감지하려면 여기를 클릭하여 입력 파일이 있는 디렉터리를 선택하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1406"/>
+        <location filename="../../src/ui/App.qml" line="1405"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="212"/>
         <source>Open file</source>
         <translation>파일 열기</translation>

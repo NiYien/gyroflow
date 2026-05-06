@@ -5,10 +5,14 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const CROSS_VIDEO_SUPPORT_MS: f64 = 1500.0;
+pub const MIN_BATCH_SYNC_POINT_RANK: f32 = 30.0;
+pub const MIN_BATCH_SYNC_POINT_CONFIDENCE: f64 = 0.15;
 
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct BatchSyncPointDiagnostic {
     pub invalid_numeric: bool,
+    pub low_rank: bool,
+    pub low_confidence: bool,
     pub outside_video_subset: bool,
     pub insufficient_cross_video_support: bool,
 }
@@ -20,6 +24,7 @@ pub struct BatchSyncPointCandidate {
     pub offset_ms: f64,
     pub cost: f64,
     pub confidence: f64,
+    pub rank: f32,
     pub repair_round: u8,
     pub diagnostic: BatchSyncPointDiagnostic,
 }
@@ -33,6 +38,7 @@ impl BatchSyncPointCandidate {
             offset_ms: self.offset_ms,
             cost: self.cost,
             confidence: self.confidence,
+            rank: self.rank,
             repair_round: self.repair_round,
             diagnostic: self.diagnostic,
         }
@@ -47,6 +53,7 @@ pub struct BatchSyncPoint {
     pub offset_ms: f64,
     pub cost: f64,
     pub confidence: f64,
+    pub rank: f32,
     pub repair_round: u8,
     pub diagnostic: BatchSyncPointDiagnostic,
 }
@@ -234,12 +241,20 @@ fn confirm_batch_sync_points_internal(
     for (job_id, points) in &grouped {
         let mut valid = Vec::new();
         for point in points {
-            if is_point_numeric_valid(point) {
-                valid.push(point.clone());
-            } else {
+            if !is_point_numeric_valid(point) {
                 let mut discarded = point.clone();
                 discarded.diagnostic.invalid_numeric = true;
                 discarded_by_job.entry(*job_id).or_default().push(discarded);
+            } else if point.rank < MIN_BATCH_SYNC_POINT_RANK {
+                let mut discarded = point.clone();
+                discarded.diagnostic.low_rank = true;
+                discarded_by_job.entry(*job_id).or_default().push(discarded);
+            } else if point.confidence < MIN_BATCH_SYNC_POINT_CONFIDENCE {
+                let mut discarded = point.clone();
+                discarded.diagnostic.low_confidence = true;
+                discarded_by_job.entry(*job_id).or_default().push(discarded);
+            } else {
+                valid.push(point.clone());
             }
         }
 
@@ -262,8 +277,16 @@ fn confirm_batch_sync_points_internal(
         .into_iter()
         .filter(|band| band.job_ids.len() >= 2)
         .max_by(|a, b| a.rank_cmp(b));
+    let eligible_job_count = subset_by_job.len();
+    let confirmation_job_count = if job_count <= 1 {
+        job_count
+    } else {
+        eligible_job_count
+    };
+    let required_band_job_count = required_batch_support_jobs(confirmation_job_count);
     let best_band_points = best_band
         .as_ref()
+        .filter(|band| band.job_ids.len() >= required_band_job_count)
         .map(|band| band.point_ids.iter().copied().collect::<HashSet<_>>())
         .unwrap_or_default();
 
@@ -273,15 +296,10 @@ fn confirm_batch_sync_points_internal(
         let mut discarded_points = discarded_by_job.remove(&job_id).unwrap_or_default();
 
         for point in subset_by_job.remove(&job_id).unwrap_or_default() {
-            let support_count = support_by_point_id
-                .get(&point.id)
-                .copied()
-                .unwrap_or_default();
             let confirmed = match job_count {
                 0 => false,
                 1 => true,
-                2 => support_count >= 1,
-                _ => support_count >= 2 || best_band_points.contains(&point.id),
+                _ => best_band_points.contains(&point.id),
             };
 
             if confirmed {
@@ -342,11 +360,21 @@ fn batch_status_for_counts(green_count: usize, total: usize) -> BatchSyncBatchSt
     }
 }
 
+fn required_batch_support_jobs(job_count: usize) -> usize {
+    match job_count {
+        0 => usize::MAX,
+        1 => 1,
+        2 => 2,
+        _ => (job_count / 2 + 1).max(2),
+    }
+}
+
 fn is_point_numeric_valid(point: &BatchSyncPoint) -> bool {
     point.timestamp_ms.is_finite()
         && point.offset_ms.is_finite()
         && point.cost.is_finite()
         && point.confidence.is_finite()
+        && point.rank.is_finite()
 }
 
 fn cross_video_support_counts(points: &[BatchSyncPoint]) -> HashMap<usize, usize> {
@@ -450,6 +478,7 @@ mod tests {
             offset_ms,
             cost: 1.0,
             confidence,
+            rank: 100.0,
             repair_round: 0,
             diagnostic: BatchSyncPointDiagnostic::default(),
         }
@@ -475,6 +504,36 @@ mod tests {
         assert_eq!(job.color, BatchSyncVideoColor::Green);
         assert_eq!(job.confirmed_points.len(), 1);
         assert_eq!(job.confirmed_points[0].confidence, 0.2);
+    }
+
+    #[test]
+    fn very_low_confidence_point_is_discarded_even_when_cross_video_supported() {
+        let result = confirm_batch_sync_points(vec![
+            point(1, 1000.0, 1000.0, 0.1),
+            point(2, 1000.0, 1100.0, 0.8),
+        ]);
+
+        let job = result.video_state(1).unwrap();
+        assert_eq!(job.color, BatchSyncVideoColor::Yellow);
+        assert_eq!(job.confirmed_points.len(), 0);
+        assert_eq!(job.discarded_points.len(), 1);
+        assert!(job.discarded_points[0].diagnostic.low_confidence);
+    }
+
+    #[test]
+    fn low_rank_point_is_discarded_even_when_cross_video_supported() {
+        let mut low_rank = point(1, 1000.0, 1000.0, 0.8);
+        low_rank.rank = 29.0;
+        let result = confirm_batch_sync_points(vec![
+            low_rank,
+            point(2, 1000.0, 1100.0, 0.8),
+        ]);
+
+        let job = result.video_state(1).unwrap();
+        assert_eq!(job.color, BatchSyncVideoColor::Yellow);
+        assert_eq!(job.confirmed_points.len(), 0);
+        assert_eq!(job.discarded_points.len(), 1);
+        assert!(job.discarded_points[0].diagnostic.low_rank);
     }
 
     #[test]
@@ -540,6 +599,96 @@ mod tests {
         assert_eq!(result.video_state(1).unwrap().color, BatchSyncVideoColor::Green);
         assert_eq!(result.video_state(2).unwrap().color, BatchSyncVideoColor::Green);
         assert_eq!(result.video_state(3).unwrap().color, BatchSyncVideoColor::Yellow);
+    }
+
+    #[test]
+    fn competing_actual_wrong_offset_bands_are_not_confirmed() {
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(554879608, 742.4085, -449.8757, 0.513),
+                point(554879608, 742.4085, -445.0717, 0.534),
+                point(1463787749, 2002.0000, -524.1478, 0.195),
+                point(1463787749, 6006.0000, -1142.4167, 0.427),
+                point(1010741224, 1251.2500, -168.0857, 0.065),
+                point(1010741224, 3753.7500, 1762.9096, 0.615),
+                point(1230166270, 1192.8585, 2026.7586, 0.135),
+                point(1230166270, 3311.6420, -5080.2338, 0.141),
+                point(1505624329, 1126.1250, -138.2116, 0.171),
+                point(1505624329, 2877.8750, -2030.2008, 0.155),
+                point(819180043, 1251.2500, 781.1733, 0.371),
+                point(819180043, 3753.7500, -5298.5838, 0.123),
+                point(739264048, 1751.7500, -5391.0749, 0.104),
+                point(739264048, 5255.2500, -5309.8970, 0.121),
+                point(992777890, 2877.8750, 2228.7062, 0.184),
+                point(992777890, 8633.6250, -4589.1796, 0.279),
+            ],
+            [
+                1834466556,
+                554879608,
+                1463787749,
+                1010741224,
+                1230166270,
+                1505624329,
+                819180043,
+                739264048,
+                992777890,
+            ],
+        );
+
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
+        assert!(result.videos.iter().all(|video| video.color == BatchSyncVideoColor::Yellow));
+    }
+
+    #[test]
+    fn four_video_batch_requires_more_than_two_video_band() {
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, 1000.0, 0.9),
+                point(2, 1000.0, 1100.0, 0.9),
+                point(3, 1000.0, 5000.0, 0.9),
+                point(4, 1000.0, 8000.0, 0.9),
+            ],
+            [1, 2, 3, 4],
+        );
+
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
+        assert!(result.videos.iter().all(|video| video.color == BatchSyncVideoColor::Yellow));
+    }
+
+    #[test]
+    fn missing_expected_jobs_do_not_raise_support_threshold_for_eligible_band() {
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(2033394524, 742.4085, -1939.2348, 1.0),
+                point(826836314, 875.8750, -1939.8776, 0.160),
+                point(45336309, 1976.9750, -1949.0341, 0.106),
+                point(1217710009, 875.8750, -1939.8527, 1.0),
+                point(845094404, 4546.2085, -1936.8685, 1.0),
+                point(845094404, 10335.3250, -1936.6979, 1.0),
+            ],
+            [
+                1011020730,
+                2033394524,
+                845094404,
+                45336309,
+                1172432475,
+                1260352080,
+                1217710009,
+                20336725,
+                2072533678,
+                826836314,
+            ],
+        );
+
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::Mixed);
+        for job_id in [2033394524, 826836314, 1217710009, 845094404] {
+            assert_eq!(result.video_state(job_id).unwrap().color, BatchSyncVideoColor::Green);
+        }
+        assert_eq!(result.video_state(845094404).unwrap().confirmed_points.len(), 2);
+        assert_eq!(result.video_state(45336309).unwrap().color, BatchSyncVideoColor::Yellow);
+        assert!(result.video_state(45336309).unwrap().discarded_points[0]
+            .diagnostic
+            .low_confidence);
     }
 
     #[test]

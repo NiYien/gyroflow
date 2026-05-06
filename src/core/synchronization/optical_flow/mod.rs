@@ -55,9 +55,11 @@ impl OpticalFlowMethod {
         method: u32,
         timestamp_us: i64,
         img: Arc<image::GrayImage>,
+        #[cfg_attr(not(any(feature = "neuflow-ort", feature = "neuflow-burn")), allow(unused_variables))]
         frame_data: Option<Arc<Vec<u8>>>,
         width: u32,
         height: u32,
+        #[cfg_attr(not(any(feature = "neuflow-ort", feature = "neuflow-burn")), allow(unused_variables))]
         stride: usize,
     ) -> Self {
         match method {

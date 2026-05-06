@@ -100,7 +100,7 @@ macro_rules! dbg_call {
             dbg_str.push_str(" -> ");
             dbg_str.push_str(&format!("{:?}", $ret));
         )*
-        log::debug!("{}", dbg_str);
+        log::trace!("{}", dbg_str);
     }};
 }
 macro_rules! result {

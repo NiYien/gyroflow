@@ -57,10 +57,10 @@ Item {
     property bool _queueLayoutPending: false
     // [T14] Global matchExecuted flag: whether matching has run.
     property bool matchExecuted: false
-    // [T21] debug: trace matchExecuted changes.
-    onMatchExecutedChanged: console.log("[QML T21] matchExecuted changed to:", matchExecuted);
     // [T19] Match version counter. Incrementing it forces delegate bindings to re-evaluate.
     property int matchVersion: 0
+    property int syncStatusVersion: 0
+    property string lastBatchSyncPromptKind: "none"
     // ── Batch selection ──
     // CheckBox column is always visible on every row. Tap a checkbox (mouse or touch)
     // to toggle selection; drag across checkboxes with mouse button held to add a range.
@@ -232,8 +232,8 @@ Item {
             root.hasGyroFiles = render_queue.has_gyro_files();
             // [T14] Reset matchExecuted when gyro files are cleared.
             if (!root.hasGyroFiles) root.matchExecuted = false;
-            // [queue-lifecycle T2] Always keep jobs sorted by creation time.
-            render_queue.sort_jobs_by_created_at();
+            // Gyro file changes don't reorder the video queue — only video
+            // batch loads (sort_jobs_by_filename) and match (sort_jobs_by_created_at) do.
             root.requestQueueLayout();
         }
         function onMatch_results_changed(): void {
@@ -267,7 +267,33 @@ Item {
             loader.active = false;
             root.matchVersion++;
             root.requestQueueLayout();
-            console.log("[QML T22] match_apply_finished: loader closed");
+        }
+        function onBatch_sync_status_changed(): void {
+            root.syncStatusVersion++;
+            root.requestQueueLayout();
+            const kind = render_queue.get_batch_sync_prompt_kind();
+            if (kind === "none") {
+                root.lastBatchSyncPromptKind = "none";
+                return;
+            }
+            if (kind === root.lastBatchSyncPromptKind) {
+                return;
+            }
+            root.lastBatchSyncPromptKind = kind;
+            if (kind === "repair") {
+                messageBox(Modal.Question, qsTr("Some videos could not be reliably synchronized. Try to repair them automatically?"), [
+                    { text: qsTr("Repair"), accent: true, clicked: () => render_queue.confirm_batch_sync_repair() },
+                    { text: qsTr("Skip"), clicked: () => render_queue.skip_batch_sync_repair() }
+                ]);
+            } else if (kind === "all_yellow") {
+                messageBox(Modal.Warning, qsTr("Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again."), [
+                    { text: qsTr("Ok") }
+                ]);
+            } else if (kind === "finished_with_yellow") {
+                messageBox(Modal.Warning, qsTr("Some videos are still not reliably synchronized after repair."), [
+                    { text: qsTr("Ok") }
+                ]);
+            }
         }
         function onProcessing_done(job_id, by_preset): void {
             root.matchVersion++;
@@ -494,6 +520,11 @@ Item {
             function onAdded(job_id: real): void {
                 delete loader.pendingJobs[job_id];
                 loader.updateStatus();
+                // Sort the queue by filename whenever a job actually lands
+                // in the model (q.push happens here, not at add_file return).
+                // dt.add and r3dSeqLoader can't sort synchronously because
+                // add_file is async — the queue is still empty at that point.
+                render_queue.sort_jobs_by_filename();
                 if (r3dSeqLoader.waiting) {
                     r3dSeqLoader.waiting = false;
                     r3dSeqLoader.loadNext();
@@ -861,6 +892,9 @@ Item {
             property string skipReason: skip_reason;
             property string errorString: error_string;
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
+            property var syncStatus: { root.syncStatusVersion; try { return JSON.parse(render_queue.get_batch_sync_status_json(job_id)); } catch(e) { return { color: "none" }; } }
+            property string syncColor: syncStatus.color || "none"
+            property bool hasSyncStatus: syncColor === "green" || syncColor === "yellow"
 
             // T5: Match status for this delegate.
             // [T19] matchVersion forces re-evaluation when match results change.
@@ -875,7 +909,7 @@ Item {
             property bool isMatched: root.matchExecuted
             property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
             property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
-            property color statusAccentColor: isSkipped ? root.skippedStatusColor : isFinished ? root.finishedStatusColor : isError ? root.errorStatusColor : isQuestion ? styleAccentColor : "transparent"
+            property color statusAccentColor: isSkipped ? root.skippedStatusColor : hasSyncStatus ? (syncColor === "green" ? root.finishedStatusColor : root.manualStatusColor) : isFinished ? root.finishedStatusColor : isError ? root.errorStatusColor : isQuestion ? styleAccentColor : "transparent"
             // [T15] Adjacent same-gyro state is computed in Rust to avoid QML binding timing issues.
             // [T22] Read sameGyro state from a cache built after matching.
             property bool sameGyroAsPrev: { root.matchVersion; return root.matchExecuted && render_queue.get_cached_same_gyro_prev(job_id); }
@@ -1292,8 +1326,6 @@ Item {
                     anchors.horizontalCenter: parent.horizontalCenter;
                     visible: root.hasGyroFiles && dlg.displayGyroIndex >= 0
                              && (dlg.isMatched ? (dlg.matchGyroIndex >= 0 && !dlg.sameGyroAsPrev) : true);
-                    // [T22] debug: 追踪时间文字可见性变化
-                    onVisibleChanged: if (visible && dlg.isMatched) console.log("[QML T22] gyroTimeText VISIBLE job_id=" + job_id + " matchGyroIdx=" + dlg.matchGyroIndex + " sameAsPrev=" + dlg.sameGyroAsPrev + " file=" + input_filename);
                     text: root.formatGyroTime(dlg.displayGyroIndex);
                     color: root.gyroTimeTextColor;
                     font.pixelSize: 11 * dpiScale;
@@ -1336,7 +1368,6 @@ Item {
                 id: separatorCol;
                 property bool shouldShow: root.hasGyroFiles && !dlg.isMatched && dlg.unmatchedGyroIndex >= 0;
                 visible: shouldShow;
-                onShouldShowChanged: if (shouldShow) console.log("[QML T21] separatorCol visible for job_id=" + job_id + " isMatched=" + dlg.isMatched + " matchExecuted=" + root.matchExecuted + " unmatchedGyroIndex=" + dlg.unmatchedGyroIndex);
                 width: visible ? 12 * dpiScale : 0;
                 anchors.left: gyroArea.right;
                 anchors.top: parent.top;
@@ -1377,7 +1408,7 @@ Item {
                 radius: 5 * dpiScale;
                 opacity: shown? 0.8 : 0;
                 Ease on opacity { }
-                property bool shown: isFinished || isError || isQuestion || isSkipped;
+                property bool shown: isFinished || isError || isQuestion || isSkipped || dlg.hasSyncStatus;
                 visible: opacity > 0;
                 border.color: dlg.statusAccentColor;
                 border.width: 1;
@@ -1641,6 +1672,13 @@ Item {
                             : dlg.matchState === "Matched"
                                 ? "✓ " + dlg.gyroFilename + (dlg.matchStatus.detected_source ? " (" + dlg.matchStatus.detected_source + ")" : "")
                                 : qsTr("Calibration") + " · " + dlg.gyroFilename;
+                    }
+                    BasicText {
+                        visible: dlg.hasSyncStatus;
+                        text: dlg.syncColor === "green" ? qsTr("Sync confirmed") : qsTr("Sync not confirmed");
+                        color: dlg.syncColor === "green" ? root.finishedStatusColor : root.manualStatusColor;
+                        font.pixelSize: basicTextSize;
+                        font.bold: true;
                     }
                     // [queue-render-skip] Show skip reason.
                     BasicText {
@@ -1975,8 +2013,9 @@ Item {
             if (r3dUrls.length > 0) {
                 r3dSeqLoader.startSequential(r3dUrls, additional);
             }
-            // [queue-lifecycle T2] 添加文件后按创建时间自动排序
-            render_queue.sort_jobs_by_created_at();
+            // Filename sorting happens in onAdded (per-job, after q.push).
+            // add_file returns synchronously but the actual model insertion is
+            // queued, so sorting here would always be a no-op.
         }
         onLoadFiles: (urls) => {
             if (!urls.length) return;
@@ -2226,7 +2265,7 @@ Item {
         }
         function loadNext(): void {
             if (queue.length === 0) {
-                render_queue.sort_jobs_by_created_at();
+                // Filename sort happens in onAdded for each R3D added.
                 return;
             }
             waiting = true;

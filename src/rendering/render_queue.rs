@@ -39,6 +39,7 @@ pub struct RenderQueueItem {
     pub error_string: QString,
     pub processing_progress: f64,
     pub skip_reason: QString,
+    pub sync_status: QString,
 
     frame_times: std::collections::VecDeque<(u64, u64)>,
 
@@ -58,10 +59,31 @@ struct QueueEtaSample {
     render_ms: f64,
 }
 
-#[derive(Default, Clone, Copy, Debug)]
+#[derive(Default, Clone, Debug)]
 struct QueueAutosyncStats {
     frames: usize,
     completed: bool,
+    points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
+    attempted_timestamps_ms: Vec<f64>,
+}
+
+#[derive(Default, Clone, Copy, Debug, Eq, PartialEq)]
+enum BatchSyncPromptKind {
+    #[default]
+    None,
+    Repair,
+    AllYellow,
+    FinishedWithYellow,
+}
+impl std::fmt::Display for BatchSyncPromptKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::None => "none",
+            Self::Repair => "repair",
+            Self::AllYellow => "all_yellow",
+            Self::FinishedWithYellow => "finished_with_yellow",
+        })
+    }
 }
 
 #[derive(Default, Clone, Copy, Debug)]
@@ -809,6 +831,17 @@ pub struct RenderQueue {
     manual_pairs: Vec<core::gyro_match::ManualCalibrationPair>,
     // [T22] 缓存每个 job 的 sameGyroAsPrev/Next，match 完成后一次性计算
     same_gyro_cache: HashMap<u32, (bool, bool)>, // job_id -> (sameAsPrev, sameAsNext)
+    batch_sync_job_ids: HashSet<u32>,
+    expected_batch_sync_job_ids: HashSet<u32>,
+    completed_batch_sync_job_ids: HashSet<u32>,
+    batch_sync_points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
+    batch_sync_confirmed_points:
+        HashMap<u32, Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>>,
+    batch_sync_attempted_timestamps_ms: HashMap<u32, Vec<f64>>,
+    batch_sync_repair_round: u8,
+    batch_sync_repair_prompt_pending: bool,
+    batch_sync_prompt_kind: BatchSyncPromptKind,
+    batch_sync_user_confirmed_repair: bool,
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
@@ -832,6 +865,9 @@ pub struct RenderQueue {
     batch_motion_ready: qt_method!(fn(&self) -> bool),
     batch_match_gyro: qt_method!(fn(&mut self)),
     apply_match_results: qt_method!(fn(&mut self)),
+    start_batch_autosync: qt_method!(fn(&mut self)),
+    confirm_batch_sync_repair: qt_method!(fn(&mut self)),
+    skip_batch_sync_repair: qt_method!(fn(&mut self)),
     reapply_batch_auto_rotate: qt_method!(fn(&mut self, job_ids_json: String)),
     reapply_lens_group_config: qt_method!(fn(&mut self)),
     reapply_selected_lens_group_config: qt_method!(fn(&mut self, job_ids_json: String)),
@@ -845,12 +881,15 @@ pub struct RenderQueue {
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
+    get_batch_sync_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
+    get_batch_sync_prompt_kind: qt_method!(fn(&self) -> QString),
     get_assigned_gyro_job_ids_json: qt_method!(fn(&self) -> QString),
     get_adjacent_gyro_index: qt_method!(fn(&self, job_id: u32, offset: i32) -> i32),
     enter_pairing_mode: qt_method!(fn(&mut self, gyro_index: usize)),
     exit_pairing_mode: qt_method!(fn(&mut self)),
     is_in_pairing_mode: qt_method!(fn(&self) -> bool),
     sort_jobs_by_created_at: qt_method!(fn(&mut self)),
+    sort_jobs_by_filename: qt_method!(fn(&mut self)),
     restore_original_order: qt_method!(fn(&mut self)),
     has_match_results: qt_method!(fn(&self) -> bool),
     is_same_gyro_as_prev: qt_method!(fn(&self, job_id: u32) -> bool),
@@ -865,6 +904,7 @@ pub struct RenderQueue {
 
     pub gyro_files_changed: qt_signal!(),
     pub match_results_changed: qt_signal!(),
+    pub batch_sync_status_changed: qt_signal!(),
     // [T22] 匹配+数据加载全部完成时触发（区别于 match_results_changed 可能在算法完成时就触发）
     pub match_apply_finished: qt_signal!(),
     pub pairing_mode_changed: qt_signal!(),
@@ -1184,6 +1224,498 @@ impl RenderQueue {
         });
     }
 
+    fn clear_all_batch_sync_state(&mut self) {
+        self.batch_sync_job_ids.clear();
+        self.expected_batch_sync_job_ids.clear();
+        self.completed_batch_sync_job_ids.clear();
+        self.batch_sync_points.clear();
+        self.batch_sync_confirmed_points.clear();
+        self.batch_sync_attempted_timestamps_ms.clear();
+        self.batch_sync_repair_round = 0;
+        self.batch_sync_repair_prompt_pending = false;
+        self.batch_sync_prompt_kind = BatchSyncPromptKind::None;
+        self.batch_sync_user_confirmed_repair = false;
+        let job_ids = self.jobs.keys().copied().collect::<Vec<_>>();
+        for job_id in job_ids {
+            update_model!(self, job_id, itm {
+                itm.sync_status = QString::default();
+            });
+        }
+        self.batch_sync_status_changed();
+    }
+
+    fn register_batch_sync_jobs<I>(&mut self, job_ids: I)
+    where
+        I: IntoIterator<Item = u32>,
+    {
+        self.clear_all_batch_sync_state();
+        self.batch_sync_job_ids = job_ids
+            .into_iter()
+            .filter(|job_id| self.jobs.contains_key(job_id))
+            .collect();
+        self.expected_batch_sync_job_ids = self.batch_sync_job_ids.clone();
+        self.batch_sync_prompt_kind = BatchSyncPromptKind::None;
+        for job_id in self.batch_sync_job_ids.clone() {
+            update_model!(self, job_id, itm {
+                itm.sync_status = QString::from(serde_json::json!({
+                    "color": "pending",
+                    "confirmed_points": 0,
+                    "discarded_points": 0,
+                    "repair_round": self.batch_sync_repair_round,
+                    "message": "",
+                }).to_string());
+            });
+        }
+        self.batch_sync_status_changed();
+    }
+
+    pub fn start_batch_autosync(&mut self) {
+        let sync_only_finished_job_ids = {
+            let Ok(queue) = self.queue.try_borrow() else {
+                return;
+            };
+            queue
+                .iter()
+                .filter(|item| item.status == JobStatus::Finished && item.total_frames > 0)
+                .filter_map(|item| {
+                    self.jobs
+                        .get(&item.job_id)
+                        .and_then(|job| (job.last_finished_export_project == Some(2)).then_some(item.job_id))
+                })
+                .collect::<Vec<_>>()
+        };
+        for job_id in sync_only_finished_job_ids {
+            self.reset_job(job_id);
+        }
+
+        let job_ids = {
+            let Ok(queue) = self.queue.try_borrow() else {
+                return;
+            };
+            queue
+                .iter()
+                .filter(|item| item.status == JobStatus::Queued && item.total_frames > 0)
+                .filter_map(|item| {
+                    let job = self.jobs.get(&item.job_id)?;
+                    let stab = job.stab.as_ref()?;
+                    (!stab.gyro.read().file_metadata.read().is_komodo).then_some(item.job_id)
+                })
+                .collect::<Vec<_>>()
+        };
+        if job_ids.is_empty() {
+            return;
+        }
+        self.register_batch_sync_jobs(job_ids);
+        self.export_project = 2;
+        self.start();
+    }
+
+    fn record_batch_sync_result(
+        &mut self,
+        job_id: u32,
+        mut points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
+        attempted_timestamps_ms: Vec<f64>,
+    ) {
+        if !self.expected_batch_sync_job_ids.contains(&job_id) {
+            return;
+        }
+        self.batch_sync_attempted_timestamps_ms
+            .entry(job_id)
+            .or_default()
+            .extend(
+                attempted_timestamps_ms
+                    .into_iter()
+                    .filter(|timestamp| timestamp.is_finite()),
+            );
+        for point in &mut points {
+            point.job_id = job_id;
+            point.repair_round = self.batch_sync_repair_round;
+        }
+        self.batch_sync_points.retain(|point| {
+            point.job_id != job_id || point.repair_round != self.batch_sync_repair_round
+        });
+        self.batch_sync_points.extend(points);
+        self.completed_batch_sync_job_ids.insert(job_id);
+        if self
+            .expected_batch_sync_job_ids
+            .iter()
+            .all(|id| self.completed_batch_sync_job_ids.contains(id))
+        {
+            self.update_batch_sync_confirmation_from_points();
+        }
+    }
+
+    #[cfg(test)]
+    fn record_batch_sync_points(
+        &mut self,
+        job_id: u32,
+        points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
+    ) {
+        self.record_batch_sync_result(job_id, points, Vec::new());
+    }
+
+    fn batch_sync_confirmation_points(
+        &self,
+    ) -> Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate> {
+        let mut points = self
+            .batch_sync_confirmed_points
+            .iter()
+            .filter(|(job_id, _)| !self.expected_batch_sync_job_ids.contains(job_id))
+            .flat_map(|(_, points)| points.iter().cloned())
+            .collect::<Vec<_>>();
+        points.extend(
+            self.batch_sync_points
+                .iter()
+                .filter(|point| {
+                    self.expected_batch_sync_job_ids.contains(&point.job_id)
+                        && point.repair_round == self.batch_sync_repair_round
+                })
+                .cloned(),
+        );
+        points
+    }
+
+    fn batch_sync_candidates_from_confirmed_points(
+        points: &[gyroflow_core::synchronization::sync_repair::BatchSyncPoint],
+    ) -> Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate> {
+        points
+            .iter()
+            .map(|point| gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+                job_id: point.job_id,
+                timestamp_ms: point.timestamp_ms,
+                offset_ms: point.offset_ms,
+                cost: point.cost,
+                confidence: point.confidence,
+                rank: point.rank,
+                repair_round: point.repair_round,
+                diagnostic: point.diagnostic.clone(),
+            })
+            .collect()
+    }
+
+    fn update_batch_sync_confirmation_from_points(&mut self) {
+        use gyroflow_core::synchronization::sync_repair::{
+            BatchSyncBatchStatus, BatchSyncVideoColor, confirm_batch_sync_points_for_jobs,
+        };
+
+        let result = confirm_batch_sync_points_for_jobs(
+            self.batch_sync_confirmation_points(),
+            self.batch_sync_job_ids.iter().copied(),
+        );
+
+        for video in &result.videos {
+            let job_id = video.job_id;
+            let repair_round = if video.repair_round == 0
+                && self.expected_batch_sync_job_ids.contains(&job_id)
+            {
+                self.batch_sync_repair_round
+            } else {
+                video.repair_round
+            };
+            let color = match video.color {
+                BatchSyncVideoColor::Green => "green",
+                BatchSyncVideoColor::Yellow => "yellow",
+            };
+            let message = match (result.batch_status, video.color) {
+                (BatchSyncBatchStatus::AllYellow, _) => {
+                    "No reliable batch sync result. Check gyro split or batch matching."
+                }
+                (_, BatchSyncVideoColor::Yellow) => "Sync is not confirmed.",
+                (_, BatchSyncVideoColor::Green) => "Sync confirmed.",
+            };
+            update_model!(self, job_id, itm {
+                itm.sync_status = QString::from(serde_json::json!({
+                    "color": color,
+                    "confirmed_points": video.confirmed_points.len(),
+                    "discarded_points": video.discarded_points.len(),
+                    "repair_round": repair_round,
+                    "message": message,
+                }).to_string());
+            });
+
+            for point in &video.confirmed_points {
+                ::log::debug!(
+                    "[batch_sync] confirmed job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} repair_round={}",
+                    job_id,
+                    point.timestamp_ms,
+                    point.offset_ms,
+                    point.confidence,
+                    point.rank,
+                    point.repair_round
+                );
+            }
+            for point in &video.discarded_points {
+                let diagnostic = &point.diagnostic;
+                ::log::debug!(
+                    "[batch_sync] discarded job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} repair_round={} invalid_numeric={} low_rank={} low_confidence={} outside_video_subset={} insufficient_cross_video_support={}",
+                    job_id,
+                    point.timestamp_ms,
+                    point.offset_ms,
+                    point.confidence,
+                    point.rank,
+                    point.repair_round,
+                    diagnostic.invalid_numeric,
+                    diagnostic.low_rank,
+                    diagnostic.low_confidence,
+                    diagnostic.outside_video_subset,
+                    diagnostic.insufficient_cross_video_support
+                );
+            }
+
+            if video.color == BatchSyncVideoColor::Green {
+                self.batch_sync_confirmed_points.insert(
+                    video.job_id,
+                    Self::batch_sync_candidates_from_confirmed_points(&video.confirmed_points),
+                );
+                if let Some(job) = self.jobs.get_mut(&video.job_id) {
+                    if let Some(stab) = job.stab.clone() {
+                        Self::apply_batch_sync_points_to_stab(&stab, &video.confirmed_points);
+                        if job.last_finished_export_project == Some(2) {
+                            job.project_data = Self::get_gyroflow_data_internal_with_type(
+                                &stab,
+                                &job.additional_data,
+                                &job.render_options,
+                                core::GyroflowProjectType::WithGyroData,
+                                false,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        self.batch_sync_repair_prompt_pending = false;
+        self.batch_sync_prompt_kind = match result.batch_status {
+            BatchSyncBatchStatus::Empty | BatchSyncBatchStatus::AllGreen => BatchSyncPromptKind::None,
+            BatchSyncBatchStatus::AllYellow => BatchSyncPromptKind::AllYellow,
+            BatchSyncBatchStatus::Mixed => {
+                if self.batch_sync_user_confirmed_repair {
+                    if self.batch_sync_repair_round >= 2 {
+                        BatchSyncPromptKind::FinishedWithYellow
+                    } else {
+                        if self.queue_yellow_batch_sync_repair_jobs(&result.videos) {
+                            BatchSyncPromptKind::None
+                        } else {
+                            BatchSyncPromptKind::FinishedWithYellow
+                        }
+                    }
+                } else {
+                    self.batch_sync_repair_prompt_pending = true;
+                    BatchSyncPromptKind::Repair
+                }
+            }
+        };
+        self.batch_sync_status_changed();
+    }
+
+    fn apply_batch_sync_points_to_stab(
+        stab: &StabilizationManager,
+        points: &[gyroflow_core::synchronization::sync_repair::BatchSyncPoint],
+    ) {
+        let mut gyro = stab.gyro.write();
+        gyro.prevent_recompute = true;
+        gyro.clear_offsets();
+        for point in points {
+            let new_ts = ((point.timestamp_ms - point.offset_ms) * 1000.0) as i64;
+            gyro.set_offset(new_ts, point.offset_ms);
+        }
+        gyro.integration_method = 2;
+        gyro.prevent_recompute = false;
+        gyro.adjust_offsets();
+        stab.keyframes.write().update_gyro(&gyro);
+    }
+
+    fn batch_sync_rank_at_timestamp_ms(
+        stab: &StabilizationManager,
+        timestamp_ms: f64,
+        initial_offset_ms: f64,
+    ) -> f32 {
+        if !timestamp_ms.is_finite() || !initial_offset_ms.is_finite() {
+            return 0.0;
+        }
+        let sync_data = stab.sync_data.read();
+        if sync_data.rank.is_empty() || !sync_data.ratio.is_finite() || sync_data.ratio <= 0.0 {
+            return gyroflow_core::synchronization::sync_repair::MIN_BATCH_SYNC_POINT_RANK;
+        }
+        let rank_timestamp_ms =
+            timestamp_ms - initial_offset_ms - sync_data.rank_window_center_offset_ms;
+        let idx = (rank_timestamp_ms / 1000.0 / sync_data.ratio).round() as isize;
+        if idx < 0 {
+            return 0.0;
+        }
+        sync_data
+            .rank
+            .get(idx as usize)
+            .copied()
+            .unwrap_or_default()
+    }
+
+    fn batch_sync_rank_for_candidate_ms(
+        stab: &StabilizationManager,
+        result_timestamp_ms: f64,
+        requested_timestamp_ms: Option<f64>,
+        initial_offset_ms: f64,
+    ) -> f32 {
+        Self::batch_sync_rank_at_timestamp_ms(
+            stab,
+            requested_timestamp_ms.unwrap_or(result_timestamp_ms),
+            initial_offset_ms,
+        )
+    }
+
+    pub fn get_batch_sync_status_json(&self, job_id: u32) -> QString {
+        self.queue
+            .try_borrow()
+            .ok()
+            .and_then(|queue| {
+                self.jobs.get(&job_id).and_then(|job| {
+                    (job.queue_index < queue.row_count() as usize)
+                        .then(|| queue[job.queue_index].sync_status.clone())
+                })
+            })
+            .filter(|status| !status.is_empty())
+            .unwrap_or_else(|| {
+                QString::from(serde_json::json!({
+                    "color": "none",
+                    "confirmed_points": 0,
+                    "discarded_points": 0,
+                    "repair_round": 0,
+                    "message": "",
+                }).to_string())
+            })
+    }
+
+    pub fn get_batch_sync_prompt_kind(&self) -> QString {
+        QString::from(self.batch_sync_prompt_kind.to_string())
+    }
+
+    pub fn confirm_batch_sync_repair(&mut self) {
+        if !self.batch_sync_repair_prompt_pending || self.batch_sync_repair_round >= 2 {
+            return;
+        }
+        self.batch_sync_user_confirmed_repair = true;
+        self.batch_sync_repair_prompt_pending = false;
+        self.batch_sync_prompt_kind = BatchSyncPromptKind::None;
+        let yellow_jobs = self
+            .current_yellow_batch_sync_job_ids()
+            .into_iter()
+            .filter(|job_id| self.prepare_batch_sync_repair_job(*job_id))
+            .collect::<Vec<_>>();
+        if yellow_jobs.is_empty() {
+            self.batch_sync_prompt_kind = BatchSyncPromptKind::FinishedWithYellow;
+            self.batch_sync_status_changed();
+            return;
+        }
+        self.batch_sync_repair_round += 1;
+        self.expected_batch_sync_job_ids = yellow_jobs.into_iter().collect();
+        self.completed_batch_sync_job_ids.clear();
+        self.start();
+        self.batch_sync_status_changed();
+    }
+
+    pub fn skip_batch_sync_repair(&mut self) {
+        self.batch_sync_repair_prompt_pending = false;
+        self.batch_sync_prompt_kind = BatchSyncPromptKind::None;
+        self.batch_sync_status_changed();
+    }
+
+    fn queue_yellow_batch_sync_repair_jobs(
+        &mut self,
+        videos: &[gyroflow_core::synchronization::sync_repair::BatchSyncVideoState],
+    ) -> bool {
+        if self.batch_sync_repair_round >= 2 {
+            return false;
+        }
+        let yellow_jobs = videos
+            .iter()
+            .filter(|video| {
+                video.color
+                    == gyroflow_core::synchronization::sync_repair::BatchSyncVideoColor::Yellow
+            })
+            .filter_map(|video| self.prepare_batch_sync_repair_job(video.job_id).then_some(video.job_id))
+            .collect::<Vec<_>>();
+        if yellow_jobs.is_empty() {
+            return false;
+        }
+        self.batch_sync_repair_round += 1;
+        self.expected_batch_sync_job_ids = yellow_jobs.into_iter().collect();
+        self.completed_batch_sync_job_ids.clear();
+        self.start();
+        true
+    }
+
+    fn current_yellow_batch_sync_job_ids(&self) -> Vec<u32> {
+        self.queue
+            .try_borrow()
+            .map(|queue| {
+                queue
+                    .iter()
+                    .filter_map(|item| {
+                        let status = item.sync_status.to_string();
+                        let Ok(value) = serde_json::from_str::<serde_json::Value>(&status) else {
+                            return None;
+                        };
+                        (value.get("color").and_then(|v| v.as_str()) == Some("yellow"))
+                            .then_some(item.job_id)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn prepare_batch_sync_repair_job(&mut self, job_id: u32) -> bool {
+        let Some(job) = self.jobs.get(&job_id) else {
+            return false;
+        };
+        let Some(stab) = job.stab.clone() else {
+            return false;
+        };
+        let duration_ms = stab.params.read().duration_ms;
+        let failed_points = self
+            .batch_sync_points
+            .iter()
+            .filter(|point| point.job_id == job_id)
+            .map(|point| point.timestamp_ms)
+            .chain(
+                self.batch_sync_attempted_timestamps_ms
+                    .get(&job_id)
+                    .into_iter()
+                    .flat_map(|points| points.iter().copied()),
+            )
+            .collect::<Vec<_>>();
+        let preferred_timestamps_ms = preferred_batch_sync_repair_timestamps_ms(&stab);
+        let Some(next_ts_ms) = choose_batch_sync_repair_timestamp_ms(
+            duration_ms,
+            &failed_points,
+            &preferred_timestamps_ms,
+        )
+        else {
+            return false;
+        };
+        self.batch_sync_attempted_timestamps_ms
+            .entry(job_id)
+            .or_default()
+            .push(next_ts_ms);
+        {
+            let mut lens = stab.lens.write();
+            let mut sync_settings = lens.sync_settings.clone().unwrap_or_else(|| serde_json::json!({}));
+            let sync_obj = sync_settings.as_object_mut();
+            if let Some(sync_obj) = sync_obj {
+                sync_obj.insert("custom_sync_pattern".into(), serde_json::json!([format!("{next_ts_ms}ms")]));
+                sync_obj.insert("auto_sync_points".into(), serde_json::json!(false));
+                sync_obj.insert("do_autosync".into(), serde_json::json!(true));
+            }
+            lens.sync_settings = Some(sync_settings);
+        }
+        update_model!(self, job_id, itm {
+            itm.status = JobStatus::Queued;
+            itm.current_frame = 0;
+            itm.processing_progress = 0.0;
+            itm.error_string = QString::default();
+        });
+        true
+    }
+
     pub fn add(&mut self, additional_data: String, thumbnail_url: QString) -> u32 {
         let job_id = if self.editing_job_id > 0 {
             self.editing_job_id
@@ -1282,6 +1814,7 @@ impl RenderQueue {
                 itm.start_timestamp_frame = 0;
                 itm.end_timestamp = 0;
                 itm.error_string = QString::default();
+                itm.sync_status = QString::default();
                 itm.status = JobStatus::Queued;
                 itm.frame_times.clear();
             });
@@ -1308,6 +1841,7 @@ impl RenderQueue {
                 processing_progress: 0.0,
                 error_string: QString::default(),
                 skip_reason: QString::default(),
+                sync_status: QString::default(),
                 frame_times: Default::default(),
                 status: JobStatus::Queued,
             });
@@ -1398,6 +1932,12 @@ impl RenderQueue {
             self.queue_changed();
         }
         self.jobs.remove(&job_id);
+        self.batch_sync_job_ids.remove(&job_id);
+        self.expected_batch_sync_job_ids.remove(&job_id);
+        self.completed_batch_sync_job_ids.remove(&job_id);
+        self.batch_sync_confirmed_points.remove(&job_id);
+        self.batch_sync_attempted_timestamps_ms.remove(&job_id);
+        self.batch_sync_points.retain(|point| point.job_id != job_id);
         self.update_queue_indices();
 
         if self.status.to_string() == "active" {
@@ -1417,6 +1957,9 @@ impl RenderQueue {
         }
         for job_id in to_delete {
             self.remove(job_id);
+        }
+        if self.queue.borrow().row_count() == 0 {
+            self.clear_all_batch_sync_state();
         }
     }
     fn update_queue_indices(&mut self) {
@@ -1751,6 +2294,7 @@ impl RenderQueue {
         update_model!(self, job_id, itm {
             itm.error_string = QString::default();
             itm.skip_reason = QString::default();
+            itm.sync_status = QString::default();
             itm.processing_progress = 0.0;
             itm.current_frame = 0;
             itm.start_timestamp = 0;
@@ -2401,6 +2945,8 @@ impl RenderQueue {
 
                     let is_queue_active = this.status == "active".into();
                     if finished {
+                        let keep_stab_for_batch_sync = finished_export_project == 2
+                            && this.batch_sync_job_ids.contains(&job_id);
                         // Update project_data with sync offsets before releasing stab
                         if let Some(job) = this.jobs.get_mut(&job_id) {
                             if let Some(ref stab) = job.stab {
@@ -2415,8 +2961,10 @@ impl RenderQueue {
                             job.last_finished_export_project = Some(finished_export_project);
                         }
                         // Release StabilizationManager to reclaim GPU memory
-                        if let Some(job) = this.jobs.get_mut(&job_id) {
-                            job.stab = None;
+                        if !keep_stab_for_batch_sync {
+                            if let Some(job) = this.jobs.get_mut(&job_id) {
+                                job.stab = None;
+                            }
                         }
                         if this.get_pending_count() > 0 && is_queue_active {
                             // Start the next one
@@ -2595,6 +3143,27 @@ impl RenderQueue {
             }
 
             let sync_cancel_flag = cancel_flag.clone();
+            let defer_batch_sync_confirmation =
+                self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2;
+            let batch_sync_done = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, (job_id, render_epoch, points, attempted_timestamps_ms): (
+                    u32,
+                    u64,
+                    Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
+                    Vec<f64>,
+                )| {
+                    let current_epoch = this
+                        .jobs
+                        .get(&job_id)
+                        .map(|j| j.render_epoch.load(SeqCst))
+                        .unwrap_or(0);
+                    if current_epoch != render_epoch {
+                        return;
+                    }
+                    this.record_batch_sync_result(job_id, points, attempted_timestamps_ms);
+                },
+            );
             core::run_threaded(move || {
                 let sync_start = std::time::Instant::now();
                 let sync_stats = Self::do_autosync(
@@ -2604,6 +3173,8 @@ impl RenderQueue {
                     err2,
                     proc_height,
                     sync_cancel_flag,
+                    job_id,
+                    defer_batch_sync_confirmation,
                 );
                 if sync_stats.completed && sync_stats.frames > 0 {
                     let mut sample = eta_sample.lock();
@@ -2611,6 +3182,15 @@ impl RenderQueue {
                     sample.sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
                 }
                 stab.recompute_blocking();
+
+                if defer_batch_sync_confirmation {
+                    let points = sync_stats.points;
+                    let attempted_timestamps_ms = sync_stats.attempted_timestamps_ms;
+                    Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
+                    batch_sync_done((job_id, capture_epoch, points, attempted_timestamps_ms));
+                    progress((1.0, 1, 1, true, false));
+                    return;
+                }
 
                 if let Some((opt, path, fields)) = export_metadata {
                     let result = || -> Result<(), core::GyroflowCoreError> {
@@ -3773,6 +4353,8 @@ impl RenderQueue {
         err: F2,
         proc_height: i32,
         cancel_flag: Arc<AtomicBool>,
+        job_id: u32,
+        collect_batch_points: bool,
     ) -> QueueAutosyncStats {
         // C3: Komodo trusts its own internal IMU; auto-sync against external IMU
         // is unnecessary and would compute a meaningless offset. Skip entirely.
@@ -3826,6 +4408,8 @@ impl RenderQueue {
             // --------------------------------- Autosync ---------------------------------
             let mut sync_frames = 0usize;
             let sync_failed = Arc::new(AtomicBool::new(false));
+            let collected_points = Arc::new(ParkingMutex::new(Vec::new()));
+            let mut attempted_timestamps_ms = Vec::new();
             processing_cb(0.01);
             use crate::rendering::VideoProcessor;
             use gyroflow_core::synchronization;
@@ -3841,25 +4425,30 @@ impl RenderQueue {
                         sync_params.initial_offset * 1000.0,
                     );
 
-                    if timestamps_fract.is_empty() || !sync_params.auto_sync_points {
-                        let chunks = 1.0 / sync_params.max_sync_points as f64;
-                        let start = chunks / 2.0;
-                        timestamps_fract = (0..sync_params.max_sync_points)
-                            .map(|i| start + (i as f64 * chunks))
-                            .collect();
-
-                        if !sync_params.custom_sync_pattern.is_null() {
-                            let v = Self::resolve_syncpoint_pattern(
-                                &sync_params.custom_sync_pattern,
-                                duration_ms,
-                                fps,
-                            );
-                            timestamps_fract = v
-                                .into_iter()
-                                .filter(|v| *v <= duration_ms)
-                                .map(|v| v / duration_ms)
-                                .collect();
-                        }
+                    timestamps_fract = autosync_timestamps_fract_for_batch(
+                        timestamps_fract,
+                        sync_params.max_sync_points,
+                        sync_params.auto_sync_points,
+                        &sync_params.custom_sync_pattern,
+                        duration_ms,
+                        fps,
+                        collect_batch_points,
+                    );
+                    attempted_timestamps_ms = timestamps_fract
+                        .iter()
+                        .map(|timestamp_fract| timestamp_fract * duration_ms)
+                        .filter(|timestamp| timestamp.is_finite())
+                        .collect();
+                    if timestamps_fract.is_empty() {
+                        ::log::info!(
+                            "[batch_sync] no rank-qualified sync points for '{}'",
+                            filesystem::get_filename(&url)
+                        );
+                        processing_cb(1.0);
+                        return QueueAutosyncStats {
+                            attempted_timestamps_ms,
+                            ..Default::default()
+                        };
                     }
 
                     #[cfg(not(any(target_os = "ios", target_os = "android")))]
@@ -3887,6 +4476,7 @@ impl RenderQueue {
                         &timestamps_fract,
                         &sync_params,
                     );
+                    let sync_initial_offset_ms = sync_params.initial_offset;
 
                     // [sync_diag_entry] Dump stab state right before sync starts, so
                     // batch_match-resident path (first render) and reset_job-rebuilt path
@@ -3900,7 +4490,7 @@ impl RenderQueue {
                         let first_lp = md_ref.lens_params.iter().next().map(|(ts, v)| {
                             (*ts, v.pixel_focal_length, v.focal_length)
                         });
-                        ::log::info!(
+                        ::log::debug!(
                             "[sync_diag_entry] file={} | params.size={:?} fro={:.3} | lens.calib={:?} orig={:?} out={:?} | lens.cm={:?} dist_n={} group_ov={} h_str={:.3} v_str={:.3} crop={:?} asym={} | md.lp_n={} md.first_lp={:?} md.fro={:?} md.upfl={:?}",
                             filesystem::get_filename(&url),
                             p_ref.size,
@@ -3937,11 +4527,14 @@ impl RenderQueue {
                             processing_cb2(percent);
                         });
                         let stab2 = stab.clone();
+                        let collected_points2 = collected_points.clone();
+                        let requested_timestamps_ms = attempted_timestamps_ms.clone();
                         sync.on_finished(move |arg| {
                             if let Either::Left(offsets) = arg {
+                                let mut candidates = Vec::with_capacity(offsets.len());
                                 let mut gyro = stab2.gyro.write();
                                 gyro.prevent_recompute = true;
-                                for x in offsets {
+                                for (point_idx, x) in offsets.into_iter().enumerate() {
                                     ::log::info!(
                                         "Setting offset at {:.4}: {:.4} (cost {:.4}, conf {:.3})",
                                         x.0,
@@ -3951,6 +4544,43 @@ impl RenderQueue {
                                     );
                                     let new_ts = ((x.0 - x.1) * 1000.0) as i64;
                                     let confidence = x.3;
+                                    let requested_timestamp_ms =
+                                        requested_timestamps_ms.get(point_idx).copied();
+                                    let rank = Self::batch_sync_rank_for_candidate_ms(
+                                        &stab2,
+                                        x.0,
+                                        requested_timestamp_ms,
+                                        sync_initial_offset_ms,
+                                    );
+                                    let rank_source_timestamp_ms =
+                                        requested_timestamp_ms.unwrap_or(x.0);
+                                    ::log::debug!(
+                                        "[batch_sync] candidate job={} ts={:.4} requested_ts={:.4} rank_ts={:.4} rank_lookup_ts={:.4} offset={:.4} cost={:.4} conf={:.3} rank={:.1}",
+                                        job_id,
+                                        x.0,
+                                        rank_source_timestamp_ms,
+                                        rank_source_timestamp_ms - sync_initial_offset_ms,
+                                        rank_source_timestamp_ms
+                                            - sync_initial_offset_ms
+                                            - stab2.sync_data.read().rank_window_center_offset_ms,
+                                        x.1,
+                                        x.2,
+                                        confidence,
+                                        rank
+                                    );
+                                    candidates.push(gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+                                        job_id,
+                                        timestamp_ms: x.0,
+                                        offset_ms: x.1,
+                                        cost: x.2,
+                                        confidence,
+                                        rank,
+                                        repair_round: 0,
+                                        diagnostic: Default::default(),
+                                    });
+                                    if collect_batch_points {
+                                        continue;
+                                    }
                                     if confidence < 0.4 {
                                         // Drop low-confidence sync points unconditionally
                                         // (NCC fusion's weak_signal pearson_peak can pick
@@ -3968,6 +4598,7 @@ impl RenderQueue {
                                     gyro.remove_offsets_near(new_ts, 100.0);
                                     gyro.set_offset(new_ts, x.1);
                                 }
+                                *collected_points2.lock() = candidates;
                                 // Switch from Complementary to VQF after sync completes
                                 gyro.integration_method = 2; // VQF
                                 gyro.prevent_recompute = false;
@@ -4027,6 +4658,7 @@ impl RenderQueue {
                                 let err2 = err.clone();
                                 let sync2 = sync.clone();
                                 let sync_failed2 = sync_failed.clone();
+                                let frame_error_filename = filesystem::get_filename(&url);
                                 proc.on_frame(
                                     move |timestamp_us,
                                           input_frame,
@@ -4092,10 +4724,18 @@ impl RenderQueue {
                                                 }
                                                 Err(e) => {
                                                     sync_failed2.store(true, SeqCst);
-                                                    err2((
-                                                        "An error occured: %1".to_string(),
-                                                        e.to_string(),
-                                                    ));
+                                                    if collect_batch_points {
+                                                        ::log::warn!(
+                                                            "[batch_sync] frame conversion failed for '{}': {}",
+                                                            frame_error_filename,
+                                                            e
+                                                        );
+                                                    } else {
+                                                        err2((
+                                                            "An error occured: %1".to_string(),
+                                                            e.to_string(),
+                                                        ));
+                                                    }
                                                 }
                                             }
                                             frame_no += 1;
@@ -4108,7 +4748,15 @@ impl RenderQueue {
                                     proc.start_decoder_only(sync.get_ranges(), cancel_flag.clone())
                                 {
                                     sync_failed.store(true, SeqCst);
-                                    err(("An error occured: %1".to_string(), e.to_string()));
+                                    if collect_batch_points {
+                                        ::log::warn!(
+                                            "[batch_sync] decoder failed for '{}': {}",
+                                            filesystem::get_filename(&url),
+                                            e
+                                        );
+                                    } else {
+                                        err(("An error occured: %1".to_string(), e.to_string()));
+                                    }
                                 }
 
                                 sync.finished_feeding_frames();
@@ -4116,7 +4764,15 @@ impl RenderQueue {
                             }
                             Err(error) => {
                                 sync_failed.store(true, SeqCst);
-                                err(("An error occured: %1".to_string(), error.to_string()));
+                                if collect_batch_points {
+                                    ::log::warn!(
+                                        "[batch_sync] video processor failed for '{}': {}",
+                                        filesystem::get_filename(&url),
+                                        error
+                                    );
+                                } else {
+                                    err(("An error occured: %1".to_string(), error.to_string()));
+                                }
                             }
                         };
                     } else {
@@ -4128,7 +4784,9 @@ impl RenderQueue {
                             filesystem::get_filename(&url)
                         );
                         sync_failed.store(true, SeqCst);
-                        err(("An error occured: %1".to_string(), detail));
+                        if !collect_batch_points {
+                            err(("An error occured: %1".to_string(), detail));
+                        }
                     }
 
                     stab.recompute_blocking();
@@ -4139,6 +4797,8 @@ impl RenderQueue {
             // ----------------------------------------------------------------------------
             return QueueAutosyncStats {
                 frames: sync_frames,
+                points: collected_points.lock().clone(),
+                attempted_timestamps_ms,
                 completed: sync_frames > 0
                     && !sync_failed.load(SeqCst)
                     && !cancel_flag.load(SeqCst),
@@ -4372,7 +5032,10 @@ impl RenderQueue {
                 }
                 out
             } else {
-                Vec::new()
+                resolve_duration_to_ms(x, fps)
+                    .filter(|v| v.is_finite() && *v >= 0.0 && *v < duration)
+                    .into_iter()
+                    .collect()
             }
         }
 
@@ -5440,7 +6103,7 @@ impl RenderQueue {
                 },
                 None => continue,
             };
-            ::log::info!(
+            ::log::debug!(
                 "[batch_match_diag] apply_item job_id={} video='{}' gyro_files_idx={} gyro_file='{}' status={:?} global_offset_ms={:?} init_offset_ms={:?} raw_range_ms={:?} normalized_range_ms={:?} auto_rotate={} original_rotation={:.1} base_output={:?}",
                 job_id,
                 render_options.input_filename,
@@ -5689,7 +6352,7 @@ impl RenderQueue {
                     build_parse_requests(&parse_info.requested_ranges, &existing_entries);
                 let existing_ranges: Vec<_> =
                     existing_entries.iter().map(|entry| entry.range_ms).collect();
-                ::log::info!(
+                ::log::debug!(
                     "[batch_match_diag] parse_plan gyro_files_idx={} gyro_file='{}' requested_ranges={:?} existing_cache_ranges={:?} parse_requests={:?}",
                     gyro_files_idx,
                     filesystem::get_filename(&parse_info.path),
@@ -5908,7 +6571,7 @@ impl RenderQueue {
                     );
                     let md =
                         clone_metadata_for_job(cache_entry.metadata.as_ref(), adjusted_range_ms);
-                    ::log::info!(
+                    ::log::debug!(
                         "[batch_match_diag] auto_rotate_slice job_id={} video='{}' gyro_files_idx={} requested_range={:?} cache_range={:?} adjusted_range={:?} cache_bounds={:?} cloned_bounds={:?} init_offset_ms={:?}",
                         item.job_id,
                         item.render_options.input_filename,
@@ -5979,7 +6642,7 @@ impl RenderQueue {
                             md.detected_source.as_deref().unwrap_or("").to_string();
                         let imu_count = md.raw_imu.len();
                         let quat_count = md.quaternions.len();
-                        ::log::info!(
+                        ::log::debug!(
                             "[batch_match_diag] apply_slice job_id={} worker_idx={} video='{}' gyro_files_idx={} gyro_file='{}' requested_range={:?} cache_range={:?} adjusted_range={:?} cache_bounds={:?} cloned_bounds={:?} imu_count={} quat_count={} init_offset_ms={:?}",
                             item.job_id,
                             idx,
@@ -6346,7 +7009,8 @@ impl RenderQueue {
                     "calc_initial_fast": false,
                     "pose_method": 0,
                     "of_method": default_of_method,
-                    "offset_method": 2
+                    "offset_method": 2,
+                    "auto_sync_points": true
                 }));
                 drop(lens);
                 ::log::info!(
@@ -6509,6 +7173,63 @@ impl RenderQueue {
         let sorted_ids: Vec<_> = items.iter().map(|(id, _)| *id).collect();
         ::log::info!(
             "[queue-lifecycle T16] sort_jobs_by_created_at: before={:?}, after={:?}",
+            before_ids,
+            sorted_ids
+        );
+        self.reorder_queue_by_job_ids(&sorted_ids);
+        self.queue_changed();
+    }
+
+    // Natural-sort jobs by their input filename. Mirrors the QML padStart(8,'0')
+    // approach so "clip_002" < "clip_010". Used on video-batch load; gyro file
+    // changes don't trigger this. Match still re-sorts by created_at.
+    fn sort_jobs_by_filename(&mut self) {
+        fn natural_key(name: &str) -> String {
+            let mut out = String::with_capacity(name.len() + 16);
+            let mut digits = String::new();
+            for ch in name.chars() {
+                if ch.is_ascii_digit() {
+                    digits.push(ch);
+                } else {
+                    if !digits.is_empty() {
+                        for _ in digits.len()..8 { out.push('0'); }
+                        out.push_str(&digits);
+                        digits.clear();
+                    }
+                    out.push(ch.to_ascii_lowercase());
+                }
+            }
+            if !digits.is_empty() {
+                for _ in digits.len()..8 { out.push('0'); }
+                out.push_str(&digits);
+            }
+            out
+        }
+
+        let mut items: Vec<(u32, String)> = {
+            if let Ok(queue) = self.queue.try_borrow() {
+                (0..queue.row_count())
+                    .map(|i| {
+                        let job_id = queue[i as usize].job_id;
+                        let filename = self
+                            .jobs
+                            .get(&job_id)
+                            .map(|j| j.render_options.input_filename.clone())
+                            .unwrap_or_default();
+                        (job_id, natural_key(&filename))
+                    })
+                    .collect()
+            } else {
+                return;
+            }
+        };
+
+        let before_ids: Vec<_> = items.iter().map(|(id, _)| *id).collect();
+        // Stable sort: same-key jobs keep insertion order.
+        items.sort_by(|a, b| a.1.cmp(&b.1));
+        let sorted_ids: Vec<_> = items.iter().map(|(id, _)| *id).collect();
+        ::log::info!(
+            "[queue-lifecycle] sort_jobs_by_filename: before={:?}, after={:?}",
             before_ids,
             sorted_ids
         );
@@ -6878,6 +7599,123 @@ fn batch_match_sync_overrides(init_offset_ms: Option<f64>) -> (f64, f64) {
     let init_offset_s = init_offset_ms.unwrap_or(0.0) / 1000.0;
     let search_size_s = 5.0_f64.max(init_offset_s.abs() * 1.5);
     (init_offset_s, search_size_s)
+}
+
+fn preferred_batch_sync_repair_timestamps_ms(stab: &StabilizationManager) -> Vec<f64> {
+    let (duration_ms, max_sync_points, initial_offset_ms) = {
+        let sync_settings = stab.lens.read().sync_settings.clone().unwrap_or_default();
+        let sync_params = serde_json::from_value::<gyroflow_core::synchronization::SyncParams>(
+            sync_settings,
+        )
+        .unwrap_or_default();
+        (
+            stab.params.read().duration_ms,
+            sync_params.max_sync_points.max(1),
+            sync_params.initial_offset * 1000.0,
+        )
+    };
+
+    let preferred = stab.get_optimal_sync_points(max_sync_points.max(5), initial_offset_ms)
+        .into_iter()
+        .map(|fract| fract * duration_ms)
+        .filter(|timestamp| timestamp.is_finite())
+        .collect::<Vec<_>>();
+    if !preferred.is_empty() {
+        return preferred;
+    }
+    rank_qualified_sync_timestamps_ms(
+        stab,
+        duration_ms,
+        max_sync_points.max(5),
+        initial_offset_ms,
+    )
+}
+
+fn rank_qualified_sync_timestamps_ms(
+    stab: &StabilizationManager,
+    duration_ms: f64,
+    max_points: usize,
+    initial_offset_ms: f64,
+) -> Vec<f64> {
+    if max_points == 0 || !duration_ms.is_finite() || duration_ms <= 0.0 {
+        return Vec::new();
+    }
+    let sync_data = stab.sync_data.read();
+    if sync_data.rank.is_empty() || !sync_data.ratio.is_finite() || sync_data.ratio <= 0.0 {
+        return Vec::new();
+    }
+    let mut ranked = sync_data
+        .rank
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, rank)| {
+            if *rank < gyroflow_core::synchronization::sync_repair::MIN_BATCH_SYNC_POINT_RANK {
+                return None;
+            }
+            let timestamp_ms = idx as f64 * sync_data.ratio * 1000.0
+                + sync_data.rank_window_center_offset_ms
+                + initial_offset_ms;
+            (timestamp_ms.is_finite() && timestamp_ms >= 0.0 && timestamp_ms <= duration_ms)
+                .then_some((timestamp_ms, *rank))
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.total_cmp(&b.0)));
+    ranked.truncate(max_points);
+    ranked.into_iter().map(|(timestamp_ms, _)| timestamp_ms).collect()
+}
+
+fn choose_batch_sync_repair_timestamp_ms(
+    duration_ms: f64,
+    failed_points: &[f64],
+    preferred_timestamps_ms: &[f64],
+) -> Option<f64> {
+    if !duration_ms.is_finite() || duration_ms < 1000.0 {
+        return None;
+    }
+    preferred_timestamps_ms
+        .into_iter()
+        .copied()
+        .filter(|candidate| candidate.is_finite() && *candidate >= 0.0 && *candidate <= duration_ms)
+        .find(|candidate| {
+            failed_points
+                .iter()
+                .all(|failed| (*candidate - *failed).abs() > 30_000.0)
+        })
+}
+
+fn autosync_timestamps_fract_for_batch(
+    mut optimal_timestamps_fract: Vec<f64>,
+    max_sync_points: usize,
+    auto_sync_points: bool,
+    custom_sync_pattern: &serde_json::Value,
+    duration_ms: f64,
+    fps: f64,
+    collect_batch_points: bool,
+) -> Vec<f64> {
+    if optimal_timestamps_fract.is_empty() && collect_batch_points && auto_sync_points && custom_sync_pattern.is_null() {
+        return Vec::new();
+    }
+    if optimal_timestamps_fract.is_empty() || !auto_sync_points {
+        let chunks = 1.0 / max_sync_points as f64;
+        let start = chunks / 2.0;
+        optimal_timestamps_fract = (0..max_sync_points)
+            .map(|i| start + (i as f64 * chunks))
+            .collect();
+
+        if !custom_sync_pattern.is_null() {
+            let v = RenderQueue::resolve_syncpoint_pattern(
+                custom_sync_pattern,
+                duration_ms,
+                fps,
+            );
+            optimal_timestamps_fract = v
+                .into_iter()
+                .filter(|v| *v <= duration_ms)
+                .map(|v| v / duration_ms)
+                .collect();
+        }
+    }
+    optimal_timestamps_fract
 }
 
 fn sync_readout_params_from_lens(stab: &StabilizationManager) {
@@ -7691,6 +8529,503 @@ mod tests {
             },
         );
         queue
+    }
+
+    fn add_eta_job(queue: &mut RenderQueue, job_id: u32, queue_index: usize) {
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.frame_count = 100;
+            params.duration_ms = 10_000.0;
+            params.fps = 10.0;
+        }
+        stab.input_file.write().url = format!("file:///eta-test-{job_id}.mp4");
+        stab.lens.write().sync_settings = Some(serde_json::json!({
+            "do_autosync": true,
+            "max_sync_points": 2,
+            "search_size": 5.0,
+            "time_per_syncpoint": 1.0,
+            "every_nth_frame": 1,
+            "initial_offset": 0.0,
+            "pose_method": 0,
+            "of_method": 2,
+            "offset_method": 2
+        }));
+
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id,
+            total_frames: 100,
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        queue.jobs.insert(
+            job_id,
+            Job {
+                queue_index,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                last_finished_export_project: None,
+                stab: Some(stab),
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+    }
+
+    fn sync_candidate(
+        job_id: u32,
+        timestamp_ms: f64,
+        offset_ms: f64,
+        confidence: f64,
+    ) -> gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+        gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+            job_id,
+            timestamp_ms,
+            offset_ms,
+            cost: 1.0,
+            confidence,
+            rank: 100.0,
+            repair_round: 0,
+            diagnostic: Default::default(),
+        }
+    }
+
+    fn sync_candidate_with_rank(
+        job_id: u32,
+        timestamp_ms: f64,
+        offset_ms: f64,
+        confidence: f64,
+        rank: f32,
+    ) -> gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+        gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+            rank,
+            ..sync_candidate(job_id, timestamp_ms, offset_ms, confidence)
+        }
+    }
+
+    fn seed_batch_sync_repair_rank(queue: &RenderQueue, job_id: u32, duration_ms: f64) {
+        let stab = queue.jobs[&job_id].stab.as_ref().unwrap();
+        stab.params.write().duration_ms = duration_ms;
+        let mut sync_data = stab.sync_data.write();
+        sync_data.ratio = 30.0;
+        let count = (duration_ms / 30_000.0).ceil() as usize + 1;
+        sync_data.rank = vec![100.0; count.max(1)];
+    }
+
+    fn batch_status(queue: &RenderQueue, job_id: u32) -> serde_json::Value {
+        serde_json::from_str(&queue.get_batch_sync_status_json(job_id).to_string()).unwrap()
+    }
+
+    #[test]
+    fn render_queue_batch_sync_confirms_supported_low_confidence_points() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.2)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.8)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+
+        assert_eq!(batch_status(&queue, 1)["color"], "green");
+        assert_eq!(batch_status(&queue, 2)["color"], "green");
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+        assert_eq!(
+            queue.jobs[&1]
+                .stab
+                .as_ref()
+                .unwrap()
+                .gyro
+                .read()
+                .get_offsets()
+                .values()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![1000.0]
+        );
+        assert!(
+            queue.jobs[&3]
+                .stab
+                .as_ref()
+                .unwrap()
+                .gyro
+                .read()
+                .get_offsets()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn render_queue_batch_sync_rejects_low_rank_and_very_low_confidence_points() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+
+        queue.record_batch_sync_points(1, vec![sync_candidate_with_rank(1, 1000.0, 1000.0, 0.8, 29.0)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.1)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 1050.0, 0.9)]);
+
+        assert_eq!(batch_status(&queue, 1)["color"], "yellow");
+        assert_eq!(batch_status(&queue, 2)["color"], "yellow");
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "all_yellow");
+    }
+
+    #[test]
+    fn batch_autosync_does_not_fallback_to_uniform_points_when_optimal_points_are_empty() {
+        let timestamps = autosync_timestamps_fract_for_batch(
+            Vec::new(),
+            2,
+            true,
+            &serde_json::Value::Null,
+            10_000.0,
+            30.0,
+            true,
+        );
+
+        assert!(timestamps.is_empty());
+    }
+
+    #[test]
+    fn non_batch_autosync_keeps_uniform_fallback_when_optimal_points_are_empty() {
+        let timestamps = autosync_timestamps_fract_for_batch(
+            Vec::new(),
+            2,
+            true,
+            &serde_json::Value::Null,
+            10_000.0,
+            30.0,
+            false,
+        );
+
+        assert_eq!(timestamps, vec![0.25, 0.75]);
+    }
+
+    #[test]
+    fn batch_autosync_keeps_explicit_custom_sync_pattern() {
+        let timestamps = autosync_timestamps_fract_for_batch(
+            Vec::new(),
+            2,
+            false,
+            &serde_json::json!(["2500ms"]),
+            10_000.0,
+            30.0,
+            true,
+        );
+
+        assert_eq!(timestamps, vec![0.25]);
+    }
+
+    #[test]
+    fn batch_match_sync_override_enables_auto_sync_points() {
+        let source = include_str!("render_queue.rs");
+
+        assert!(
+            source.contains("\"auto_sync_points\": true"),
+            "batch match sync override must keep OptimSync point selection enabled"
+        );
+    }
+
+    #[test]
+    fn batch_sync_repair_does_not_fallback_when_no_preferred_timestamp_is_available() {
+        let next = choose_batch_sync_repair_timestamp_ms(
+            120_000.0,
+            &[],
+            &[],
+        );
+
+        assert_eq!(next, None);
+    }
+
+    #[test]
+    fn batch_sync_rank_lookup_uses_sync_data_at_timestamp() {
+        let stab = StabilizationManager::default();
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 0.5;
+            sync_data.rank = vec![10.0, 20.0, 35.0, 90.0];
+        }
+
+        assert_eq!(RenderQueue::batch_sync_rank_at_timestamp_ms(&stab, 1000.0, 0.0), 35.0);
+        assert_eq!(RenderQueue::batch_sync_rank_at_timestamp_ms(&stab, 4000.0, 0.0), 0.0);
+    }
+
+    #[test]
+    fn batch_sync_rank_lookup_maps_video_timestamp_back_to_rank_time() {
+        let stab = StabilizationManager::default();
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0;
+            sync_data.rank = vec![0.0, 90.0, 0.0, 0.0];
+        }
+
+        assert_eq!(RenderQueue::batch_sync_rank_at_timestamp_ms(&stab, 250.0, -750.0), 90.0);
+    }
+
+    #[test]
+    fn batch_sync_rank_lookup_uses_rank_window_center_offset() {
+        let stab = StabilizationManager::default();
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0;
+            sync_data.rank_window_center_offset_ms = 500.0;
+            sync_data.rank = vec![0.0, 90.0, 0.0, 0.0];
+        }
+
+        assert_eq!(RenderQueue::batch_sync_rank_at_timestamp_ms(&stab, 1500.0, 0.0), 90.0);
+    }
+
+    #[test]
+    fn batch_sync_candidate_rank_uses_requested_sync_timestamp() {
+        let stab = StabilizationManager::default();
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0;
+            sync_data.rank_window_center_offset_ms = 500.0;
+            sync_data.rank = vec![0.0, 90.0, 0.0, 0.0];
+        }
+
+        assert_eq!(
+            RenderQueue::batch_sync_rank_for_candidate_ms(&stab, 2500.0, Some(1500.0), 0.0),
+            90.0
+        );
+    }
+
+    #[test]
+    fn rank_qualified_repair_timestamps_apply_initial_offset() {
+        let stab = StabilizationManager::default();
+        {
+            let mut params = stab.params.write();
+            params.duration_ms = 10_000.0;
+        }
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0;
+            sync_data.rank = vec![0.0, 100.0];
+        }
+
+        assert_eq!(
+            rank_qualified_sync_timestamps_ms(&stab, 10_000.0, 5, 250.0),
+            vec![1250.0]
+        );
+    }
+
+    #[test]
+    fn render_queue_batch_sync_reports_all_yellow_without_repair_prompt() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        queue.register_batch_sync_jobs([1, 2]);
+
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 0.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 5000.0, 0.9)]);
+
+        assert_eq!(batch_status(&queue, 1)["color"], "yellow");
+        assert_eq!(batch_status(&queue, 2)["color"], "yellow");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "all_yellow");
+        assert!(!queue.batch_sync_repair_prompt_pending);
+    }
+
+    #[test]
+    fn render_queue_skip_batch_sync_repair_clears_prompt_without_finished_warning() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "repair");
+
+        queue.skip_batch_sync_repair();
+
+        assert!(!queue.batch_sync_repair_prompt_pending);
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+    }
+
+    #[test]
+    fn render_queue_start_batch_autosync_requeues_finished_sync_only_jobs() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        let job_id = 1;
+        update_model!(queue, job_id, itm {
+            itm.status = JobStatus::Finished;
+            itm.current_frame = itm.total_frames;
+        });
+        queue.jobs.get_mut(&1).unwrap().last_finished_export_project = Some(2);
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.start_batch_autosync();
+
+        assert!(queue.batch_sync_job_ids.contains(&1));
+        assert_eq!(queue.queue.borrow()[0].get_status(), &JobStatus::Queued);
+        assert_eq!(batch_status(&queue, 1)["color"], "pending");
+    }
+
+    #[test]
+    fn render_queue_repair_avoids_attempted_ranges_when_no_points_returned() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        seed_batch_sync_repair_rank(&queue, 3, 180_000.0);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.confirm_batch_sync_repair();
+        let first_repair_pattern = queue.jobs[&3]
+            .stab
+            .as_ref()
+            .unwrap()
+            .lens
+            .read()
+            .sync_settings
+            .clone()
+            .unwrap()["custom_sync_pattern"][0]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let first_repair_ts_ms = first_repair_pattern.trim_end_matches("ms").parse::<f64>().unwrap();
+        queue.record_batch_sync_result(3, Vec::new(), vec![first_repair_ts_ms]);
+
+        let sync_settings = queue.jobs[&3]
+            .stab
+            .as_ref()
+            .unwrap()
+            .lens
+            .read()
+            .sync_settings
+            .clone()
+            .unwrap();
+        let repair_ts_ms = sync_settings["custom_sync_pattern"][0]
+            .as_str()
+            .unwrap()
+            .trim_end_matches("ms")
+            .parse::<f64>()
+            .unwrap();
+        assert!(
+            (repair_ts_ms - first_repair_ts_ms).abs() > 30_000.0,
+            "repair reused a previous no-point attempt at {repair_ts_ms}"
+        );
+    }
+
+    #[test]
+    fn render_queue_repair_requeues_only_yellow_jobs_for_two_rounds() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        seed_batch_sync_repair_rank(&queue, 3, 120_000.0);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.confirm_batch_sync_repair();
+
+        assert_eq!(queue.batch_sync_repair_round, 1);
+        assert!(!queue.expected_batch_sync_job_ids.contains(&1));
+        assert!(!queue.expected_batch_sync_job_ids.contains(&2));
+        assert!(queue.expected_batch_sync_job_ids.contains(&3));
+        assert_eq!(queue.queue.borrow()[2].get_status(), &JobStatus::Queued);
+        assert_eq!(batch_status(&queue, 1)["color"], "green");
+    }
+
+    #[test]
+    fn render_queue_repair_confirms_yellow_against_original_green_jobs() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        seed_batch_sync_repair_rank(&queue, 3, 120_000.0);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.confirm_batch_sync_repair();
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 60_000.0, 1050.0, 0.9)]);
+
+        assert_eq!(batch_status(&queue, 3)["color"], "green");
+        assert_eq!(batch_status(&queue, 3)["repair_round"], 1);
+        assert!(queue.expected_batch_sync_job_ids.contains(&3));
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
+    }
+
+    #[test]
+    fn render_queue_repair_stops_with_yellow_when_next_range_is_missing() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        queue.jobs[&3]
+            .stab
+            .as_ref()
+            .unwrap()
+            .params
+            .write()
+            .duration_ms = 60_000.0;
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.confirm_batch_sync_repair();
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 30_000.0, 5000.0, 0.9)]);
+
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "finished_with_yellow");
+    }
+
+    #[test]
+    fn render_queue_repair_uses_confirmed_green_snapshots_as_later_references() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        add_eta_job(&mut queue, 4, 3);
+        for job_id in [3, 4] {
+            seed_batch_sync_repair_rank(&queue, job_id, 180_000.0);
+        }
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.99)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 8000.0, 0.9)]);
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.confirm_batch_sync_repair();
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 60_000.0, 1050.0, 0.7)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 60_000.0, 9000.0, 0.9)]);
+        assert_eq!(batch_status(&queue, 3)["color"], "green");
+        assert_eq!(batch_status(&queue, 4)["color"], "yellow");
+
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 120_000.0, 1040.0, 0.9)]);
+
+        assert_eq!(batch_status(&queue, 3)["color"], "green");
+        assert_eq!(batch_status(&queue, 4)["color"], "green");
+        assert_eq!(queue.batch_sync_prompt_kind.to_string(), "none");
     }
 
     fn add_motion_to_job(queue: &mut RenderQueue, job_id: u32, use_quats: bool) {
@@ -9171,13 +10506,91 @@ mod tests {
             .find("if (!simpleAutoSyncBtn._queueMotionReady) return;")
             .expect("auto sync click branch hard-checks batch motion readiness");
         let start_idx = click_branch
-            .find("render_queue.start();")
-            .expect("auto sync branch starts the queue");
+            .find("render_queue.start_batch_autosync();")
+            .expect("auto sync branch starts the batch autosync state machine");
         assert!(
             ready_idx < start_idx,
             "simple-mode batch auto sync must check motion readiness before starting"
         );
-        assert!(branch.contains("render_queue.export_project = 2;"));
+        assert!(!branch.contains("render_queue.export_project = 2;"));
+        assert!(!branch.contains("render_queue.start();"));
+    }
+
+    #[test]
+    fn render_queue_qml_displays_batch_sync_status_and_prompt() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        assert!(
+            qml.contains("function onBatch_sync_status_changed()"),
+            "render queue must react to batch sync status changes"
+        );
+        assert!(
+            qml.contains("render_queue.get_batch_sync_status_json(job_id)"),
+            "render queue delegates must read per-job sync status"
+        );
+        assert!(
+            qml.contains("dlg.hasSyncStatus"),
+            "render queue delegates must include sync status in row styling"
+        );
+        assert!(
+            qml.contains("lastBatchSyncPromptKind"),
+            "batch sync prompts must be idempotent across repeated status signals"
+        );
+        assert!(qml.contains("render_queue.confirm_batch_sync_repair()"));
+        assert!(qml.contains("render_queue.skip_batch_sync_repair()"));
+    }
+
+    #[test]
+    fn batch_sync_high_frequency_diagnostics_are_not_default_info_logs() {
+        let source = include_str!("render_queue.rs");
+        for marker in [
+            concat!("[batch", "_sync] candidate"),
+            concat!("[batch", "_sync] confirmed job"),
+            concat!("[batch", "_sync] discarded job"),
+            concat!("[sync", "_diag_entry]"),
+            concat!("[batch", "_match_diag] apply_item"),
+            concat!("[batch", "_match_diag] parse_plan"),
+            concat!("[batch", "_match_diag] auto_rotate_slice"),
+            concat!("[batch", "_match_diag] apply_slice"),
+        ] {
+            let idx = source
+                .find(marker)
+                .unwrap_or_else(|| panic!("missing diagnostic marker {marker}"));
+            let prefix_start = idx.saturating_sub(220);
+            let prefix = &source[prefix_start..idx];
+            assert!(
+                !prefix.contains("::log::info!("),
+                "high-frequency diagnostic marker {marker} must not use info logging"
+            );
+        }
+
+        let qml = include_str!("../ui/RenderQueue.qml");
+        assert!(
+            !qml.contains(&format!("[QML {}]", "T21")),
+            "temporary QML T21 console log should be removed"
+        );
+        assert!(
+            !qml.contains(&format!("[QML {}]", "T22")),
+            "temporary QML T22 console log should be removed"
+        );
+    }
+
+    #[test]
+    fn loader_overlay_formats_progress_only_for_placeholder_text() {
+        let qml = include_str!("../ui/components/LoaderOverlay.qml");
+
+        assert!(
+            qml.contains("function progressText()"),
+            "loader overlay should centralize progress text formatting"
+        );
+        assert!(
+            qml.contains("indexOf(\"%1\")"),
+            "loader overlay must check for %1 before calling arg()"
+        );
+        assert!(
+            !qml.contains("root.text.arg(\"<b>\""),
+            "loader overlay must not call arg() unconditionally"
+        );
     }
 
     #[test]

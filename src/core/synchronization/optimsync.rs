@@ -70,7 +70,7 @@ impl OptimSync {
         &mut self,
         target_sync_points: usize,
         trim_ranges_s: Vec<(f64, f64)>,
-    ) -> (Vec<f64>, Vec<f32>, f64) {
+    ) -> (Vec<f64>, Vec<f32>, f64, f64) {
         let gyro_c32: Vec<Vec<Complex<f32>>> = self
             .gyro
             .iter()
@@ -81,6 +81,7 @@ impl OptimSync {
         let nms_radius = ((self.sample_rate / 16.0 / 2.0) * 8.0) as usize; // sync points no closer than 8 seconds
 
         let fft_size = self.sample_rate.round() as usize;
+        let rank_window_center_offset_ms = fft_size as f64 / 2.0 / self.sample_rate * 1000.0;
         let scale = (1.0 / fft_size as f32).sqrt() / fft_size as f32 * 256.0;
         let mut planner = FftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(fft_size);
@@ -149,12 +150,12 @@ impl OptimSync {
             })
             .collect();
 
-        let rank_clone = rank.clone();
-
         let ratio = step_size_samples as f64 / self.sample_rate;
         for i in 0..rank.len() {
             let time = i as f64 * ratio;
-            if rank[i] < 50.0 || !trim_ranges_s.iter().any(|x| time >= x.0 && time <= x.1) {
+            if rank[i] < super::sync_repair::MIN_BATCH_SYNC_POINT_RANK
+                || !trim_ranges_s.iter().any(|x| time >= x.0 && time <= x.1)
+            {
                 rank[i] = 0.0;
             }
         }
@@ -200,10 +201,9 @@ impl OptimSync {
                     } else {
                         let absolute_idx = start + relative_idx;
                         Some(
-                            (absolute_idx as f64 * step_size_samples as f64
-                                + fft_size as f64 / 2.0)
-                                / self.sample_rate
-                                * 1000.0,
+                            absolute_idx as f64 * step_size_samples as f64 / self.sample_rate
+                                * 1000.0
+                                + rank_window_center_offset_ms,
                         )
                     }
                 })
@@ -228,7 +228,7 @@ impl OptimSync {
         //     fig.set_size_inches(10, 5)
         //     plt.show()
         // }
-        (selected_sync_points, rank_clone, ratio)
+        (selected_sync_points, rank, ratio, rank_window_center_offset_ms)
     }
 }
 

@@ -40,10 +40,10 @@ pub struct DefaultAlgo {
 impl Default for DefaultAlgo {
     fn default() -> Self {
         Self {
-            smoothness: 0.5,
-            smoothness_pitch: 0.5,
-            smoothness_yaw: 0.5,
-            smoothness_roll: 0.5,
+            smoothness: 0.15,
+            smoothness_pitch: 0.15,
+            smoothness_yaw: 0.15,
+            smoothness_roll: 0.15,
             per_axis: false,
             second_pass: true,
             trim_range_only: true,

@@ -437,7 +437,7 @@ impl FindOffsetsRssync<'_> {
             .get(range_idx)
             .cloned()
             .unwrap_or_default();
-        let mut curve: Vec<(f64, f64)> = raw
+        let curve: Vec<(f64, f64)> = raw
             .iter()
             .map(|(cost, delay_s)| {
                 let external_offset_ms = -delay_s * 1000.0 - frt_offset_ms;
@@ -763,11 +763,11 @@ impl FindOffsetsRssync<'_> {
             }
             let seg_t0 = std::time::Instant::now();
             let mut tik_ns: u64 = 0;
-            let mut cost_scan_ns: u64 = 0;
-            let mut ncc_fft_ns: u64 = 0;
+            let cost_scan_ns: u64;
+            let ncc_fft_ns: u64;
             let mut pearson_scan_ns: u64 = 0;
-            let mut output_pre_sync_ns: u64 = 0;
-            let (mid_ms, cost_final_ext_ms, cost_final_value, _conf) = offsets[i];
+            let output_pre_sync_ns: u64;
+            let (mid_ms, cost_final_ext_ms, _cost_final_value, _conf) = offsets[i];
             let mid_us = (mid_ms * 1000.0) as i64;
 
             let (from_us, to_us) = match ranges.iter().find(|(f, t)| mid_us >= *f && mid_us <= *t) {
@@ -1020,7 +1020,7 @@ impl FindOffsetsRssync<'_> {
             } else {
                 self.sync_params.search_size
             };
-            let sigma_ncc_ms = if fwhm_ms.is_finite() && fwhm_ms > 0.0 && peak_h > 0.0 {
+            let _sigma_ncc_ms = if fwhm_ms.is_finite() && fwhm_ms > 0.0 && peak_h > 0.0 {
                 ((fwhm_ms / 2.355) / peak_h.sqrt()).max(0.5)
             } else {
                 999.0

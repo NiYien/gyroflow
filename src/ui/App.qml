@@ -734,8 +734,7 @@ Rectangle {
                         onClicked: {
                             if (simpleAutoSyncBtn._queueMode) {
                                 if (!simpleAutoSyncBtn._queueMotionReady) return;
-                                render_queue.export_project = 2;
-                                render_queue.start();
+                                render_queue.start_batch_autosync();
                                 return;
                             }
                             if (window.sync) window.sync.runAutosync();

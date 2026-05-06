@@ -232,7 +232,7 @@ impl LensCalibrator {
 
                         for (_pos, mut pt) in corners.iter::<Point2f>()? {
                             if let Some(digital) = &digital_lens {
-                                if let Some(mut pt2) =
+                                if let Some(pt2) =
                                     digital.undistort_point((pt.x, pt.y), &kernel_params)
                                 {
                                     // TODO
@@ -311,8 +311,8 @@ impl LensCalibrator {
         };
 
         let image_points = self.image_points.read().clone();
-        let mut width = self.width as i32;
-        if let Some(digital) = self
+        let width = self.width as i32;
+        if let Some(_digital) = self
             .digital_lens
             .as_ref()
             .map(|x| DistortionModel::from_name(&x))

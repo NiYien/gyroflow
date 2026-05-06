@@ -146,7 +146,7 @@ impl Default for StabilizationParams {
 
             video_rotation: 0.0,
 
-            max_zoom: Some(130.0),
+            max_zoom: Some(150.0),
             max_zoom_iterations: 5,
 
             lens_correction_amount: 1.0,

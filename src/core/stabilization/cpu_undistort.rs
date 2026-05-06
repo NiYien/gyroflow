@@ -143,8 +143,8 @@ impl Stabilization {
     pub fn undistort_image_cpu_spirv<T: PixelType>(
         buffers: &mut Buffers,
         params: &KernelParams,
-        distortion_model: &DistortionModel,
-        digital_lens: Option<&DistortionModel>,
+        _distortion_model: &DistortionModel,
+        _digital_lens: Option<&DistortionModel>,
         matrices: &[[f32; 14]],
         drawing: &[u8],
     ) -> bool {
