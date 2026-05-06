@@ -3572,11 +3572,26 @@ impl StabilizationManager {
                 sync_data.ratio = ratio;
                 sync_data.rank_window_center_offset_ms = rank_window_center_offset_ms;
             }
-            points
+            // Diagnostics: pair each OptimSync ts with its (ts + initial_offset)/dur_ms
+            // fraction so the [0, 1] filter's drops are traceable.
+            let pre: Vec<(f64, f64)> = points
                 .iter()
-                .map(|x| (x + initial_offset) / dur_ms)
-                .filter(|&v| v >= 0.0 && v <= 1.0)
-                .collect()
+                .map(|x| (*x, (x + initial_offset) / dur_ms))
+                .collect();
+            let kept: Vec<f64> = pre
+                .iter()
+                .filter(|(_, v)| *v >= 0.0 && *v <= 1.0)
+                .map(|(_, v)| *v)
+                .collect();
+            log::info!(
+                "[get_optimal] dur_ms={:.1} initial_offset_ms={:.1} | optimsync_returned={} kept_after_fract_filter={} | (ts_ms, fract): {:?}",
+                dur_ms,
+                initial_offset,
+                points.len(),
+                kept.len(),
+                pre
+            );
+            kept
         } else {
             Vec::new()
         }

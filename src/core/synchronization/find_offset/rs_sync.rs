@@ -201,6 +201,85 @@ pub struct FindOffsetsRssync<'a> {
     presync_curves: Vec<Vec<(f64, f64)>>,
 }
 
+/// Confidence path classification — emitted to `[ncc-fuse]` log line for
+/// post-hoc traceability. Spec: `openspec/specs/find-offset-confidence/`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ConfPath {
+    Consensus,
+    WarnFloor,
+    PeriodicAmbiguity,
+    Normal,
+    LegacyCeiling,
+}
+
+impl ConfPath {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            ConfPath::Consensus => "consensus",
+            ConfPath::WarnFloor => "warn_floor",
+            ConfPath::PeriodicAmbiguity => "periodic_ambiguity",
+            ConfPath::Normal => "normal",
+            ConfPath::LegacyCeiling => "legacy_ceiling",
+        }
+    }
+}
+
+/// Compute final confidence scalar and path classification for a single sync
+/// segment after v2 fusion.
+///
+/// Semantics (see `openspec/specs/find-offset-confidence/`): NCC `quality_warn`
+/// is a confidence FLOOR (lower bound), not a CEILING (upper bound). When the
+/// multi-estimator consensus signal `cluster_frac × max_pearson_r` is strong,
+/// it lifts confidence above the NCC-derived warn_floor. The
+/// `periodic_ambiguity` warning is the only quality_warn that retains ceiling
+/// behavior — `r2 > 0.95` indicates true geometric ambiguity (cost surface has
+/// two near-equal-height peaks), and consensus may all step into the wrong one.
+///
+/// Free function so unit tests can exercise it without constructing the full
+/// fusion pipeline.
+pub(super) fn decide_confidence(
+    cluster_frac: f64,
+    max_pearson_r: f64,
+    best_r_refined: f64,
+    peak_h: f64,
+    quality_warn: Option<&str>,
+    refine_ok: bool,
+    legacy_ceiling: bool,
+) -> (f64, ConfPath) {
+    let warn_floor = peak_h.min(0.2).max(0.05);
+
+    // Legacy escape hatch: full rollback to pre-floor ceiling behavior.
+    if legacy_ceiling && (quality_warn.is_some() || !refine_ok) {
+        return (warn_floor, ConfPath::LegacyCeiling);
+    }
+
+    // Geometric-ambiguity exception: keep ceiling so consensus can't all
+    // step into the same wrong cost-surface peak.
+    if quality_warn == Some("periodic_ambiguity") {
+        return (warn_floor, ConfPath::PeriodicAmbiguity);
+    }
+
+    if quality_warn.is_some() || !refine_ok {
+        let consensus_conf = if cluster_frac.is_finite() && max_pearson_r.is_finite() {
+            (cluster_frac * max_pearson_r).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        if consensus_conf > warn_floor {
+            return (consensus_conf.clamp(0.05, 1.0), ConfPath::Consensus);
+        }
+        return (warn_floor, ConfPath::WarnFloor);
+    }
+
+    // Normal path (unchanged): cluster_frac × best_r_refined + unanimous bonus.
+    // Note: this branch's "救场" role for long-focal/weak-signal segments is
+    // now also covered by the floor path above; the unanimous_bonus here only
+    // applies when NCC quality is acceptable in the first place.
+    let base = cluster_frac * best_r_refined;
+    let unanimous_bonus = if cluster_frac >= 0.95 { 0.15 } else { 0.0 };
+    ((base + unanimous_bonus).clamp(0.05, 1.0), ConfPath::Normal)
+}
+
 impl FindOffsetsRssync<'_> {
     pub fn new<'a, F: Fn(f64) + Sync + 'a>(
         ranges: &'a [(i64, i64)],
@@ -721,6 +800,11 @@ impl FindOffsetsRssync<'_> {
         // trigger the original callback, causing the outer progress bar to jump back.
         // full_sync has already reached 100%; set noop here to keep it stable.
         self.sync.on_progress(|_| true);
+        // Env: GYROFLOW_SYNC_CONF_OLD_CEILING=1 reverts to pre-floor ceiling
+        // behavior in `decide_confidence`. Read once per fusion run.
+        let legacy_ceiling = std::env::var("GYROFLOW_SYNC_CONF_OLD_CEILING")
+            .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false);
         const MIN_PEAK_HEIGHT: f64 = 0.20;
         const MAX_FWHM_MS: f64 = 500.0;
         const SECOND_PEAK_THRESH: f64 = 0.95;
@@ -1366,23 +1450,32 @@ impl FindOffsetsRssync<'_> {
             };
             output_pre_sync_ns = output_pre_sync_t0.elapsed().as_nanos() as u64;
 
-            // Confidence: cluster_fraction × max_pearson_in_cluster, with
-            // quality_warn / refine_failed clamped to low confidence for UI filter.
-            // 4-candidate unanimous bonus: when all 4 candidates (rs_argmin,
-            // rs_best_offs, ncc_peak, pearson_peak) cluster within 30ms, the
-            // output is highly trustworthy even if best_r is moderate (e.g.
-            // long-focal weak-signal segments where r naturally caps ~0.35).
-            // Lift conf above 0.4 filter threshold to avoid mis-dropping.
+            // Confidence: floor-not-ceiling — multi-estimator consensus
+            // (`cluster_frac × max_pearson_r`) is the primary signal; NCC's
+            // quality_warn only sets a lower bound (`peak_h.clamp(0.05, 0.2)`),
+            // not an upper bound. `periodic_ambiguity` is the only quality_warn
+            // that retains ceiling behavior (true geometric ambiguity).
+            // See `openspec/specs/find-offset-confidence/` for the full contract.
             let cluster_frac = cluster_frac_pre;
-            let confidence = if quality_warn.is_some() || !refine_ok {
-                peak_h.min(0.2).max(0.05)
-            } else {
-                // Use Pearson r at the refined output (most direct signal-quality
-                // measure), weighted by cluster agreement fraction.
-                let base = cluster_frac * best_r_refined;
-                let unanimous_bonus = if cluster_frac >= 0.95 { 0.15 } else { 0.0 };
-                (base + unanimous_bonus).clamp(0.05, 1.0)
-            };
+            let max_pearson_r = [
+                r_at_rs_argmin,
+                r_at_rs_best,
+                r_at_ncc_peak,
+                pearson_peak_r,
+                best_r_refined,
+            ]
+            .into_iter()
+            .filter(|r| r.is_finite() && *r >= 0.0)
+            .fold(0.0_f64, f64::max);
+            let (confidence, conf_path) = decide_confidence(
+                cluster_frac,
+                max_pearson_r,
+                best_r_refined,
+                peak_h,
+                quality_warn,
+                refine_ok,
+                legacy_ceiling,
+            );
 
             let path_str_owned = if use_rs_shortcut {
                 format!("v2_consensus[{}]|rs_shortcut", cluster_signals)
@@ -1392,7 +1485,7 @@ impl FindOffsetsRssync<'_> {
             offsets[i] = (mid_ms, output_ms, output_cost, confidence);
 
             log::info!(
-                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], cfrac={:.2}, conf={:.3})",
+                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], cfrac={:.2}, max_r={:.3}, conf={:.3}, conf_path={})",
                 i,
                 path_str_owned,
                 coarse_ms,
@@ -1409,7 +1502,9 @@ impl FindOffsetsRssync<'_> {
                 w_ncc,
                 w_pearson_peak,
                 cluster_frac,
-                confidence
+                max_pearson_r,
+                confidence,
+                conf_path.as_str()
             );
 
             let total_seg_ms = seg_t0.elapsed().as_secs_f64() * 1000.0;

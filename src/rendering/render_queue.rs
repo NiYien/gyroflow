@@ -1423,6 +1423,16 @@ impl RenderQueue {
                 (_, BatchSyncVideoColor::Yellow) => "Sync is not confirmed.",
                 (_, BatchSyncVideoColor::Green) => "Sync confirmed.",
             };
+            ::log::debug!(
+                "[batch_sync_status_write] job={} color={} confirmed_points={} discarded_points={} repair_round={} expected={} cache_has={}",
+                job_id,
+                color,
+                video.confirmed_points.len(),
+                video.discarded_points.len(),
+                repair_round,
+                self.expected_batch_sync_job_ids.contains(&job_id),
+                self.batch_sync_confirmed_points.contains_key(&job_id)
+            );
             update_model!(self, job_id, itm {
                 itm.sync_status = QString::from(serde_json::json!({
                     "color": color,
@@ -1431,7 +1441,34 @@ impl RenderQueue {
                     "repair_round": repair_round,
                     "message": message,
                 }).to_string());
+                // Atomically transition to Finished alongside sync_status so QML's
+                // hasSyncStatus binding sees "yellow"/"green" before isFinished
+                // becomes true. progress_cb defers this tuple in batch sync mode
+                // to avoid the green-border race with pending sync_status.
+                if itm.total_frames == 0 {
+                    itm.total_frames = 1;
+                }
+                itm.current_frame = itm.total_frames;
+                itm.status = JobStatus::Finished;
             });
+            // Per-video signal emit to bump QML syncStatusVersion immediately.
+            // Avoids a ListView binding race where the trailing single emit at
+            // loop-end occasionally leaves one dlg's syncStatus binding stale.
+            self.batch_sync_status_changed();
+            ::log::debug!(
+                "[batch_sync_status_write] job={} update_model done, post-write sync_status read-back len={}",
+                job_id,
+                self.queue
+                    .try_borrow()
+                    .ok()
+                    .and_then(|q| {
+                        self.jobs.get(&job_id).and_then(|j| {
+                            (j.queue_index < q.row_count() as usize)
+                                .then(|| q[j.queue_index].sync_status.to_string().len())
+                        })
+                    })
+                    .unwrap_or(0)
+            );
 
             for point in &video.confirmed_points {
                 ::log::debug!(
@@ -2911,9 +2948,23 @@ impl RenderQueue {
 
                     let mut start_time = 0;
 
+                    // For batch sync (export_project=2) on the finished tick, keep
+                    // current_frame=0 / leave total_frames untouched so QML's
+                    // isFinished (current_frame >= total_frames && total_frames > 0)
+                    // stays false until confirm writes sync_status. That prevents the
+                    // transient "isFinished+pending → green border" race.
+                    // CRITICAL: status MUST still flip to Finished so the queue
+                    // scheduler advances — get_active_render_count counts Rendering
+                    // rows and would otherwise stay at parallel_renders, blocking
+                    // start() from launching the next sync worker (the "batch sync
+                    // stalls after N parallel jobs" bug).
+                    let defer_progress_to_confirm =
+                        finished_export_project == 2 && finished;
                     update_model!(this, job_id, itm {
-                        itm.current_frame = current_frame as u64;
-                        itm.total_frames = total_frames as u64;
+                        if !defer_progress_to_confirm {
+                            itm.current_frame = current_frame as u64;
+                            itm.total_frames = total_frames as u64;
+                        }
                         if itm.start_timestamp == 0 {
                             itm.start_timestamp = Self::current_timestamp();
                         }
@@ -7692,9 +7743,12 @@ fn autosync_timestamps_fract_for_batch(
     fps: f64,
     collect_batch_points: bool,
 ) -> Vec<f64> {
-    if optimal_timestamps_fract.is_empty() && collect_batch_points && auto_sync_points && custom_sync_pattern.is_null() {
-        return Vec::new();
-    }
+    // Batch path stays symmetric with the single-video QML doSync(): when
+    // OptimSync returns nothing usable (post-filter empty), fall through to
+    // the uniform fallback below instead of early-returning. The single-video
+    // path's `if (!sync_points || !experimentalAutoSyncPoints.checked)` always
+    // routes empty results into uniform splitting; the batch path now matches.
+    let _ = collect_batch_points;
     if optimal_timestamps_fract.is_empty() || !auto_sync_points {
         let chunks = 1.0 / max_sync_points as f64;
         let start = chunks / 2.0;
@@ -8667,13 +8721,17 @@ mod tests {
 
     #[test]
     fn render_queue_batch_sync_rejects_low_rank_and_very_low_confidence_points() {
+        // G change: rank threshold lowered from 30 → 12. job 1 (rank=10)
+        // now triggers low_rank discard; job 2 (conf=0.1) triggers
+        // low_confidence discard; job 3 should pass but with no peer support
+        // (only 1 valid point in the band) ends up yellow.
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
         queue.register_batch_sync_jobs([1, 2, 3]);
 
-        queue.record_batch_sync_points(1, vec![sync_candidate_with_rank(1, 1000.0, 1000.0, 0.8, 29.0)]);
+        queue.record_batch_sync_points(1, vec![sync_candidate_with_rank(1, 1000.0, 1000.0, 0.8, 10.0)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.1)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 1050.0, 0.9)]);
 
@@ -8684,7 +8742,9 @@ mod tests {
     }
 
     #[test]
-    fn batch_autosync_does_not_fallback_to_uniform_points_when_optimal_points_are_empty() {
+    fn batch_autosync_falls_back_to_uniform_points_when_optimal_points_are_empty() {
+        // Symmetry with single-video QML doSync(): empty OptimSync output
+        // routes into the uniform fallback rather than early-returning empty.
         let timestamps = autosync_timestamps_fract_for_batch(
             Vec::new(),
             2,
@@ -8695,7 +8755,7 @@ mod tests {
             true,
         );
 
-        assert!(timestamps.is_empty());
+        assert_eq!(timestamps, vec![0.25, 0.75]);
     }
 
     #[test]

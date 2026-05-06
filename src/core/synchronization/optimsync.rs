@@ -138,7 +138,13 @@ impl OptimSync {
         let mf_max = mf.iter().cloned().fold(0.0_f32, f32::max);
         let low_motion = mf_max < 50.0;
 
-        let mut rank: Vec<_> = izip!(&lf, &mf, &hf)
+        // Raw frequency-band energy per window. Preserved untouched so
+        // `sync_data.rank` keeps the real signal magnitude even at positions
+        // that the selection pipeline below considers "not worth picking".
+        // Downstream consumers (sync_repair / candidate rank lookup in
+        // render_queue) can then read the actual energy instead of the
+        // post-zeroing 0 sentinel.
+        let rank_raw: Vec<f32> = izip!(&lf, &mf, &hf)
             .map(|(lf, mf, hf)| {
                 if low_motion {
                     // Low-motion video: combine LF+MF as signal source
@@ -150,19 +156,32 @@ impl OptimSync {
             })
             .collect();
 
+        // Working copy used only for selection (NMS + per-segment max).
+        // Threshold/trim/endclip zero this copy so the selection routine
+        // below skips low-energy or out-of-trim windows.
+        let mut rank: Vec<f32> = rank_raw.clone();
+
+        // Diagnostics: snapshot rank distribution before any zeroing pass.
+        let rank_initial_max = rank.iter().cloned().fold(0.0_f32, f32::max);
+        let rank_initial_nonzero = rank.iter().filter(|&&x| x > 0.0).count();
+
         let ratio = step_size_samples as f64 / self.sample_rate;
         for i in 0..rank.len() {
-            let time = i as f64 * ratio;
+            // Window center time, aligned with output ts and downstream fract filter.
+            let time = i as f64 * ratio + rank_window_center_offset_ms / 1000.0;
             if rank[i] < super::sync_repair::MIN_BATCH_SYNC_POINT_RANK
                 || !trim_ranges_s.iter().any(|x| time >= x.0 && time <= x.1)
             {
                 rank[i] = 0.0;
             }
         }
+        // Diagnostics: count surviving ranks after threshold + trim filter.
+        let rank_after_threshold_trim_nonzero = rank.iter().filter(|&&x| x > 0.0).count();
         // If the time exceeds 8 seconds, clear the data for the first 2 seconds and last 2 seconds,
         // as most of the distortion occurs from button presses.
         let total_duration = rank.len() as f64 * ratio;
-        if total_duration > 12.0 {
+        let endclip_applied = total_duration > 12.0;
+        if endclip_applied {
             for i in 0..rank.len() {
                 let time = i as f64 * ratio;
                 if time < 2.0 || time >= (total_duration - 2.0) {
@@ -170,6 +189,8 @@ impl OptimSync {
                 }
             }
         }
+        // Diagnostics: count surviving ranks after head/tail clip pass.
+        let rank_after_endclip_nonzero = rank.iter().filter(|&&x| x > 0.0).count();
 
         let mut rank_nms = rank.clone();
         for i in 0..rank.len() {
@@ -210,6 +231,34 @@ impl OptimSync {
             })
             .collect();
 
+        // Diagnostics: emit one summary line per OptimSync run so the batch sync
+        // path's "no rank-qualified" cases (selected.is_empty()) are traceable
+        // back to which zeroing stage swept the rank array clean.
+        let rank_nms_max = rank_nms.iter().cloned().fold(0.0_f32, f32::max);
+        let rank_nms_nonzero = rank_nms.iter().filter(|&&x| x > 0.0).count();
+        log::info!(
+            "[optimsync] dur={:.2}s sr={:.1} samples={} mf_max={:.2} low_motion={} target_pts={} \
+             trim_ranges={} endclip_applied={} | rank: init_max={:.2} init_nz={}/{} -> \
+             after_threshold30+trim={} -> after_endclip={} -> nms_nz={} (nms_max={:.2}) | selected={}/{}",
+            total_duration,
+            self.sample_rate,
+            rank.len(),
+            mf_max,
+            low_motion,
+            target_sync_points,
+            trim_ranges_s.len(),
+            endclip_applied,
+            rank_initial_max,
+            rank_initial_nonzero,
+            rank.len(),
+            rank_after_threshold_trim_nonzero,
+            rank_after_endclip_nonzero,
+            rank_nms_nonzero,
+            rank_nms_max,
+            selected_sync_points.len(),
+            target_sync_points,
+        );
+
         // use inline_python::python;
         // python! {
         //     import matplotlib.pyplot as plt
@@ -228,7 +277,10 @@ impl OptimSync {
         //     fig.set_size_inches(10, 5)
         //     plt.show()
         // }
-        (selected_sync_points, rank, ratio, rank_window_center_offset_ms)
+        // Return rank_raw (untouched frequency-band energy) so downstream
+        // sync_data.rank reflects real signal magnitude, not the post-zeroing
+        // sentinel used during selection.
+        (selected_sync_points, rank_raw, ratio, rank_window_center_offset_ms)
     }
 }
 

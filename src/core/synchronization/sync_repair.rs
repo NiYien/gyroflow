@@ -5,7 +5,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 const CROSS_VIDEO_SUPPORT_MS: f64 = 1500.0;
-pub const MIN_BATCH_SYNC_POINT_RANK: f32 = 30.0;
+pub const MIN_BATCH_SYNC_POINT_RANK: f32 = 12.0;
 pub const MIN_BATCH_SYNC_POINT_CONFIDENCE: f64 = 0.15;
 
 #[derive(Default, Debug, Clone, PartialEq)]
@@ -522,8 +522,10 @@ mod tests {
 
     #[test]
     fn low_rank_point_is_discarded_even_when_cross_video_supported() {
+        // Threshold lowered from 30 → 12 (G change). rank=10 still triggers
+        // low_rank discard; rank=15 (used in the kept-test below) passes.
         let mut low_rank = point(1, 1000.0, 1000.0, 0.8);
-        low_rank.rank = 29.0;
+        low_rank.rank = 10.0;
         let result = confirm_batch_sync_points(vec![
             low_rank,
             point(2, 1000.0, 1100.0, 0.8),
@@ -534,6 +536,23 @@ mod tests {
         assert_eq!(job.confirmed_points.len(), 0);
         assert_eq!(job.discarded_points.len(), 1);
         assert!(job.discarded_points[0].diagnostic.low_rank);
+    }
+
+    #[test]
+    fn rank_above_new_threshold_passes_low_rank_filter() {
+        // Real-world case from this session: P1004734 fallback rank=22.6
+        // (between old 30 and new 12 threshold). Must survive the rank gate.
+        let mut mid_rank = point(1, 1000.0, 1000.0, 0.8);
+        mid_rank.rank = 22.6;
+        let result = confirm_batch_sync_points(vec![
+            mid_rank,
+            point(2, 1000.0, 1100.0, 0.8),
+        ]);
+
+        let job = result.video_state(1).unwrap();
+        assert_eq!(job.color, BatchSyncVideoColor::Green);
+        assert_eq!(job.confirmed_points.len(), 1);
+        assert_eq!(job.confirmed_points[0].rank, 22.6);
     }
 
     #[test]

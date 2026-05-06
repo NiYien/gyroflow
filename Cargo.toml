@@ -155,6 +155,10 @@ winres = "0.1.12"
 walkdir = "2.5.0"
 cc = "1.2"
 
+# [[bin]]
+# name = "gyroflow"
+# path = "src/gyroflow.rs"
+
 [lib]
 crate-type = ["cdylib"]
 name = "gyroflow"

@@ -48,7 +48,7 @@ impl Default for DefaultAlgo {
             second_pass: true,
             trim_range_only: true,
             max_smoothness: 1.0,
-            alpha_0_1s: 0.1,
+            alpha_0_1s: 0.12,
         }
     }
 }

@@ -58,3 +58,4 @@ distribution/log_center/log_center.config.json
 /distribution/log_center/__pycache__
 /distribution/log_center/backend/__pycache__
 /distribution/log_center/tests/__pycache__
+/_runlogs
