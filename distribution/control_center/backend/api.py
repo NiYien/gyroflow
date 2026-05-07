@@ -2613,6 +2613,25 @@ class Api:
             parsed["hidden_plugins"] = []
         return parsed
 
+    # Plugin / lens / sdk fields that an app-only publish must inherit from
+    # the existing auto entry so a new policy entry doesn't silently blank
+    # them out in the manifest. publish flows that DO touch these resources
+    # (scope contains "plugin"/"lens"/"sdk") will overwrite the inherited
+    # values via _finalize_publish_to_manifest after pan123 success.
+    _RESOURCE_INHERIT_KEYS = (
+        "plugins_source_mode",
+        "plugins_source_ref",
+        "plugins_source_tag",
+        "plugin_tag",
+        "plugins_release_tag",
+        "global_plugins_base",
+        "lens_tag",
+        "lens_release_tag",
+        "lens_version",
+        "lens_sha256",
+        "global_sdk_base",
+    )
+
     @staticmethod
     def _upsert_version_entry(versions: list[dict], version: str, tag: str,
                                changelog: str, recommended: bool, channels: list[str],
@@ -2631,6 +2650,16 @@ class Api:
         manifest API how to build global-region URLs. Without these,
         artifact-mode synthetic tags (run-<id>) leak into the
         release-mode GitHub URL builder and produce a 404.
+
+        New entries inherit plugin/lens/sdk fields from the current auto
+        entry (or, failing that, the most recent existing entry that
+        carries them). Without this inheritance, an app-only publish
+        ships a new entry with no plugin info, causing the docs manifest
+        Global branch to fall back to GitHub release-latest while leaving
+        plugins_source_ref/tag empty — which the gyroflow client sees as
+        a permanent "plugin update available" false-positive (because
+        nle_plugins.rs::source_changed compares fallback vs install base
+        URLs that can never match).
         """
         entry = {
             "version": version,
@@ -2661,6 +2690,24 @@ class Api:
                         merged.pop("app_urls", None)
                 versions[i] = merged
                 return
+        donor = next(
+            (v for v in versions if "auto" in (v.get("channels") or [])),
+            None,
+        )
+        if donor is None:
+            donor = next(
+                (
+                    v for v in versions
+                    if any(v.get(k) for k in Api._RESOURCE_INHERIT_KEYS)
+                ),
+                None,
+            )
+        if donor is not None:
+            for key in Api._RESOURCE_INHERIT_KEYS:
+                value = donor.get(key)
+                if value in (None, ""):
+                    continue
+                entry.setdefault(key, value)
         versions.append(entry)
 
     @staticmethod

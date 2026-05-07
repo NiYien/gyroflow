@@ -368,5 +368,112 @@ class HiddenManagementApiTests(unittest.TestCase):
         self.assertEqual(api.deploy_hook_calls, 0)
 
 
+class UpsertVersionEntryInheritanceTests(unittest.TestCase):
+    """Regression: app-only publish must not blank out plugin manifest fields.
+
+    See api.py::_upsert_version_entry docstring — when a new version is
+    appended (i.e. the publish carries no plugin scope), the entry must
+    inherit plugin/lens/sdk fields from the existing auto entry, otherwise
+    the docs manifest Global branch falls back to release-latest base while
+    leaving plugins_source_ref/tag empty, which the gyroflow client treats
+    as a permanent "plugin update available" false positive.
+    """
+
+    @staticmethod
+    def _auto_entry_with_plugin_info() -> dict:
+        return {
+            "version": "1.6.3-ni.28",
+            "tag": "run-25441462957",
+            "channels": ["auto", "manual"],
+            "changelog": "previous build",
+            "recommended": True,
+            "plugins_source_mode": "artifact",
+            "plugins_source_ref": "actions-run-25441462957",
+            "plugins_source_tag": "GyroflowNiyien-Adobe-windows, GyroflowNiyien-OpenFX-windows",
+            "plugin_tag": "plugin-0549a827ac4f",
+            "global_plugins_base": "https://nightly.link/NiYien/gyroflow-plugins/actions/runs/25441462957/",
+            "lens_release_tag": "data-v20260501.1",
+            "lens_tag": "lens-f0061df6d394",
+            "lens_version": 7,
+            "lens_sha256": "23246da574a05429e76bcc01f4760ad601757214988084055f675079e77a8f8d",
+        }
+
+    def test_app_only_append_inherits_plugin_fields_from_auto_entry(self):
+        versions = [self._auto_entry_with_plugin_info()]
+        Api._upsert_version_entry(
+            versions,
+            version="1.6.3-ni.29",
+            tag="run-25475562063",
+            changelog="change version display",
+            recommended=True,
+            channels=["auto", "manual"],
+            run_id=25475562063,
+            app_source_mode="artifact",
+            app_urls={"windows": {"installer_url": "https://nightly.link/.../setup.zip"}},
+        )
+        new_entry = next(v for v in versions if v["version"] == "1.6.3-ni.29")
+        # Inherited plugin / lens fields preserve manifest plugin source identity.
+        self.assertEqual(new_entry["plugins_source_mode"], "artifact")
+        self.assertEqual(new_entry["plugins_source_ref"], "actions-run-25441462957")
+        self.assertIn("GyroflowNiyien-Adobe-windows", new_entry["plugins_source_tag"])
+        self.assertEqual(new_entry["plugin_tag"], "plugin-0549a827ac4f")
+        self.assertEqual(
+            new_entry["global_plugins_base"],
+            "https://nightly.link/NiYien/gyroflow-plugins/actions/runs/25441462957/",
+        )
+        self.assertEqual(new_entry["lens_release_tag"], "data-v20260501.1")
+        self.assertEqual(new_entry["lens_version"], 7)
+        # App-specific fields written by the publish itself.
+        self.assertEqual(new_entry["tag"], "run-25475562063")
+        self.assertEqual(new_entry["run_id"], 25475562063)
+        self.assertEqual(new_entry["app_source_mode"], "artifact")
+
+    def test_append_falls_back_to_any_donor_when_no_auto_entry(self):
+        donor = self._auto_entry_with_plugin_info()
+        donor["channels"] = ["manual"]  # no auto entry exists
+        versions = [donor]
+        Api._upsert_version_entry(
+            versions,
+            version="1.6.3-ni.29",
+            tag="run-25475562063",
+            changelog="cl",
+            recommended=False,
+            channels=["manual"],
+        )
+        new_entry = next(v for v in versions if v["version"] == "1.6.3-ni.29")
+        # Falls back to the only entry that carries plugin info.
+        self.assertEqual(new_entry["plugins_source_ref"], "actions-run-25441462957")
+        self.assertEqual(new_entry["plugin_tag"], "plugin-0549a827ac4f")
+
+    def test_append_with_no_donor_leaves_plugin_fields_unset(self):
+        # First-ever publish: nothing to inherit, entry should be plain.
+        versions: list[dict] = []
+        Api._upsert_version_entry(
+            versions, version="1.0.0", tag="v1.0.0", changelog="initial",
+            recommended=True, channels=["auto", "manual"],
+        )
+        self.assertEqual(len(versions), 1)
+        for k in Api._RESOURCE_INHERIT_KEYS:
+            self.assertNotIn(k, versions[0])
+
+    def test_merge_branch_still_preserves_existing_plugin_fields(self):
+        # Republishing an existing version must not regress the merge path:
+        # unknown / plugin fields on the existing entry survive.
+        versions = [self._auto_entry_with_plugin_info()]
+        Api._upsert_version_entry(
+            versions,
+            version="1.6.3-ni.28",  # same as existing
+            tag="run-25441462957",
+            changelog="updated changelog",
+            recommended=False,
+            channels=["manual"],
+        )
+        merged = next(v for v in versions if v["version"] == "1.6.3-ni.28")
+        self.assertEqual(merged["plugins_source_ref"], "actions-run-25441462957")
+        self.assertEqual(merged["plugin_tag"], "plugin-0549a827ac4f")
+        self.assertEqual(merged["changelog"], "updated changelog")
+        self.assertEqual(merged["channels"], ["manual"])
+
+
 if __name__ == "__main__":
     unittest.main()
