@@ -19,7 +19,7 @@ def _record(id_: str, *, region: str = "global", ts: str = "2026-05-02T12:00:00Z
         "id": id_,
         "region": region,
         "ts": ts,
-        "app_version": "1.6.3-niyien.1",
+        "app_version": "1.6.3",
         "os": "Windows 11",
         "gpu": "NVIDIA",
         "summary": "test",

@@ -57,7 +57,7 @@ fn padded_run_number(run_number: u64) -> String {
 fn niyien_version_info(base_version: &str, build_time: Option<&str>) -> NiyienVersionInfo {
     if let Some(tag_version) = current_tag_version() {
         return NiyienVersionInfo {
-            display: format!("{tag_version}(ni)"),
+            display: tag_version.clone(),
             canonical: tag_version.clone(),
             numeric: format!("{}.0", numeric_core_version(&tag_version)),
         };
@@ -444,7 +444,7 @@ fn main() {
             res.set("CompanyName", "NiYien");
             res.set(
                 "FileDescription",
-                &format!("Gyroflow(NiYien) v{}", version_info.display),
+                &format!("Gyroflow(NiYien) {}", version_info.display),
             );
             res.compile().unwrap();
         }

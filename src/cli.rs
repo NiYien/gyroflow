@@ -138,7 +138,7 @@ pub fn run(open_file: &mut String, open_preset: &mut String) -> bool {
         let opts: Opts = argh::from_env();
 
         if opts.version {
-            println!("Gyroflow v{}", crate::util::get_version());
+            println!("Gyroflow {}", crate::util::get_version());
             return true;
         }
 
