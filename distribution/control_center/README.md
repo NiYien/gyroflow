@@ -34,7 +34,7 @@ distribution/control_center/
 ├── control_center_setup_guide_zh.md Chinese setup walkthrough
 ├── README.md                        This file
 ├── frontend/
-│   ├── index.html                   Dashboard + Publish/Resources/Stats/Settings views
+│   ├── index.html                   Dashboard + Publish/Hidden/Stats/Settings views
 │   ├── app.js                       JS ↔ Python bridge + view logic
 │   └── style.css                    Custom styles on top of Tailwind CDN
 ├── backend/
@@ -48,6 +48,26 @@ distribution/control_center/
 └── _legacy/
     └── control_center_legacy_tkinter.py   Old Tkinter UI kept for rollback
 ```
+
+## Hidden Management tab
+
+`隐藏管理` is a top-level sidebar entry alongside `发布中心`. It shows the
+full `policy.versions[]` history (App rows) plus a derived list of distinct
+plugin identities (Plugin rows), and lets the operator multi-select rows
+to hide / unhide in one atomic submission.
+
+Backing data:
+- App hides remove the matching entry from `policy.versions[]` (sort order
+  preserved). The current `auto_version` row is disabled — switch auto in
+  `发布中心` first if you want to retire it.
+- Plugin hides append a key to `policy.hidden_plugins[]` (a top-level
+  blacklist on the policy object). Entries' `plugin_tag` fields stay
+  untouched, so the hide is fully reversible by un-checking the row.
+  The docs repo manifest API (`api/_control-plane.js`) consults
+  `hidden_plugins[]` per-entry and falls back to defaults when matched.
+
+The legacy `发布动作 = hide_version` dropdown in `发布中心` mode 3 is kept
+for single-entry quick hides.
 
 ## Legacy Tkinter version
 

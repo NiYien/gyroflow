@@ -1,5 +1,9 @@
+import json
 import unittest
 from pathlib import Path
+
+from distribution.control_center.backend import api as api_module
+from distribution.control_center.backend.api import Api
 
 
 FRONTEND_ROOT = Path(__file__).resolve().parents[1] / "frontend"
@@ -41,6 +45,327 @@ class ReleaseCenterUiTests(unittest.TestCase):
         self.assertNotIn('placeholder="GyroflowNiyien-frei0r-windows 等 CSV"', html)
         self.assertIn("list_plugin_action_builds", app_js)
         self.assertIn("selectPluginArtifactItem", app_js)
+
+
+# ---- Hidden Management tab (release-hidden-management capability) ----
+
+class FakeHiddenVercel:
+    """Vercel double for HiddenManagement tests.
+
+    Stores `policy_dict` as the source of truth so tests can seed and
+    assert against a structured value; serializes to JSON only at the
+    Vercel boundary like the real client. Tracks all upsert calls so
+    tests can assert atomicity (exactly one upsert per submission).
+    """
+
+    def __init__(self, policy_dict: dict):
+        self._policy = dict(policy_dict)
+        self.upserts: list[dict] = []
+        self.list_env_records_calls = 0
+        self.get_env_value_calls = 0
+
+    def list_env_records(self) -> dict:
+        self.list_env_records_calls += 1
+        return {"NIYIEN_RELEASE_POLICY_JSON": {"id": "policy-env"}}
+
+    def get_env_value(self, env_id: str) -> str:
+        self.get_env_value_calls += 1
+        if env_id != "policy-env":
+            raise RuntimeError("unexpected env id")
+        return json.dumps(self._policy, ensure_ascii=False)
+
+    def list_envs_decrypted(self) -> dict:
+        return {"NIYIEN_RELEASE_POLICY_JSON": json.dumps(self._policy, ensure_ascii=False)}
+
+    def upsert_envs(self, mapping: dict) -> dict:
+        self.upserts.append(dict(mapping))
+        if "NIYIEN_RELEASE_POLICY_JSON" in mapping:
+            self._policy = json.loads(mapping["NIYIEN_RELEASE_POLICY_JSON"])
+        return {"ok": True}
+
+    def upsert_env(self, name: str, value: str) -> dict:
+        return self.upsert_envs({name: value})
+
+    @property
+    def current_policy(self) -> dict:
+        return dict(self._policy)
+
+
+class FakeHiddenGithub:
+    def list_releases(self) -> list:
+        return []
+
+
+class HiddenManagementApi(Api):
+    """Api subclass wired to FakeHiddenVercel/FakeHiddenGithub plus a
+    counted deploy hook so tests can assert exactly-one dispatch.
+    """
+
+    def __init__(self, policy_dict: dict):
+        self.vercel = FakeHiddenVercel(policy_dict)
+        self.github = FakeHiddenGithub()
+        self.deploy_hook_calls = 0
+
+    def _vercel(self, cfg=None):
+        return self.vercel
+
+    def _github(self, cfg=None):
+        return self.github
+
+    def _trigger_deploy_hook(self, cfg):
+        self.deploy_hook_calls += 1
+        return f"deploy hook stub #{self.deploy_hook_calls}"
+
+
+class HiddenManagementHelperTests(unittest.TestCase):
+    def test_canonical_plugin_key_release(self):
+        key = Api._canonical_plugin_key({"plugin_tag": "v1.6.3"})
+        self.assertEqual(key, {"kind": "release", "ref": "v1.6.3"})
+
+    def test_canonical_plugin_key_release_explicit_mode(self):
+        key = Api._canonical_plugin_key({
+            "plugins_source_mode": "release",
+            "plugin_tag": "v1.6.1",
+        })
+        self.assertEqual(key, {"kind": "release", "ref": "v1.6.1"})
+
+    def test_canonical_plugin_key_artifact(self):
+        key = Api._canonical_plugin_key({
+            "plugins_source_mode": "artifact",
+            "plugins_source_ref": "actions-run-1234",
+        })
+        self.assertEqual(key, {"kind": "artifact", "run_id": 1234})
+
+    def test_canonical_plugin_key_none(self):
+        self.assertIsNone(Api._canonical_plugin_key({}))
+        self.assertIsNone(Api._canonical_plugin_key({"plugin_tag": ""}))
+        self.assertIsNone(Api._canonical_plugin_key({
+            "plugins_source_mode": "artifact",
+            "plugins_source_ref": "garbage",
+        }))
+
+    def test_plugin_keys_match(self):
+        a = {"kind": "release", "ref": "v1"}
+        self.assertTrue(Api._plugin_keys_match(a, {"kind": "release", "ref": "v1"}))
+        self.assertFalse(Api._plugin_keys_match(a, {"kind": "release", "ref": "v2"}))
+        self.assertFalse(Api._plugin_keys_match(a, {"kind": "artifact", "run_id": 1}))
+        self.assertTrue(Api._plugin_keys_match(
+            {"kind": "artifact", "run_id": 7},
+            {"kind": "artifact", "run_id": 7},
+        ))
+        # Stringified run_id still matches integer.
+        self.assertTrue(Api._plugin_keys_match(
+            {"kind": "artifact", "run_id": "7"},
+            {"kind": "artifact", "run_id": 7},
+        ))
+
+    def test_derive_plugin_inventory_dedupes(self):
+        versions = [
+            {"version": "1.6.3", "plugin_tag": "v1.6.3"},
+            {"version": "1.6.2", "plugin_tag": "v1.6.2"},
+            {"version": "1.6.2-beta", "plugin_tag": "v1.6.2"},  # same plugin
+            {
+                "version": "1.5.0",
+                "plugins_source_mode": "artifact",
+                "plugins_source_ref": "actions-run-99",
+            },
+            {"version": "1.4.0"},  # no plugin, skipped
+        ]
+        inv = Api._derive_plugin_inventory(versions)
+        self.assertEqual(len(inv), 3)
+        # First plugin is v1.6.3 used by 1.6.3 only.
+        self.assertEqual(inv[0]["key"], {"kind": "release", "ref": "v1.6.3"})
+        self.assertEqual(inv[0]["used_by_app_versions"], ["1.6.3"])
+        # Second plugin is v1.6.2 used by both 1.6.2 and 1.6.2-beta.
+        self.assertEqual(inv[1]["key"], {"kind": "release", "ref": "v1.6.2"})
+        self.assertEqual(inv[1]["used_by_app_versions"], ["1.6.2", "1.6.2-beta"])
+        # Third is artifact run 99.
+        self.assertEqual(inv[2]["key"], {"kind": "artifact", "run_id": 99})
+
+
+class HiddenManagementApiTests(unittest.TestCase):
+    def setUp(self):
+        self._orig_load_config = api_module.config_module.load_config
+        api_module.config_module.load_config = lambda: {
+            "github_owner": "NiYien",
+            "github_repo": "gyroflow",
+            "network_proxy": "",
+        }
+
+    def tearDown(self):
+        api_module.config_module.load_config = self._orig_load_config
+
+    @staticmethod
+    def _seed_policy() -> dict:
+        return {
+            "auto_version": "1.6.3-0.ni.5",
+            "versions": [
+                {
+                    "version": "1.6.3-0.ni.5",
+                    "tag": "v1.6.3-niyien.1",
+                    "channels": ["auto", "manual"],
+                    "recommended": True,
+                    "changelog": "首次 code/data 分仓发版",
+                    "plugin_tag": "v1.6.3",
+                },
+                {
+                    "version": "1.6.2-0.ni.4",
+                    "tag": "v1.6.2-niyien.1",
+                    "channels": ["manual"],
+                    "recommended": False,
+                    "changelog": "稳定性改进",
+                    "plugin_tag": "v1.6.2",
+                },
+                {
+                    "version": "1.6.1-0.ni.3",
+                    "tag": "v1.6.1-niyien.1",
+                    "channels": ["manual"],
+                    "recommended": False,
+                    "changelog": "lens preset 更新",
+                    "plugin_tag": "v1.6.1",
+                },
+            ],
+            "hidden_plugins": [
+                {"kind": "release", "ref": "v1.6.1"},
+            ],
+        }
+
+    def test_list_hidden_view_data_basic(self):
+        api = HiddenManagementApi(self._seed_policy())
+        result = api.list_hidden_view_data()
+        self.assertTrue(result["ok"], msg=result)
+        self.assertEqual(result["auto_version"], "1.6.3-0.ni.5")
+        self.assertEqual(len(result["app_versions"]), 3)
+        # Spot-check first row carries all surfaced fields.
+        first = result["app_versions"][0]
+        self.assertEqual(first["version"], "1.6.3-0.ni.5")
+        self.assertEqual(first["tag"], "v1.6.3-niyien.1")
+        self.assertEqual(first["channels"], ["auto", "manual"])
+        self.assertEqual(first["plugin_tag"], "v1.6.3")
+        self.assertEqual(first["plugin_run_id"], 0)
+        self.assertEqual(first["published_at"], "")  # no GH releases stub
+        # Derived plugins: 3 distinct, v1.6.1 marked hidden.
+        self.assertEqual(len(result["derived_plugins"]), 3)
+        v161 = next(p for p in result["derived_plugins"] if p.get("ref") == "v1.6.1")
+        self.assertTrue(v161["hidden"])
+        self.assertEqual(v161["used_by_app_versions"], ["1.6.1-0.ni.3"])
+        # No orphans: blacklist entry has a matching version row.
+        self.assertEqual(result["extra_hidden_plugins"], [])
+
+    def test_list_hidden_view_data_orphan_plugin(self):
+        policy = self._seed_policy()
+        policy["hidden_plugins"].append({"kind": "release", "ref": "v0.9.0"})
+        policy["hidden_plugins"].append({"kind": "artifact", "run_id": 9999})
+        api = HiddenManagementApi(policy)
+        result = api.list_hidden_view_data()
+        self.assertTrue(result["ok"], msg=result)
+        # Two orphans surface in extra_hidden_plugins.
+        self.assertEqual(len(result["extra_hidden_plugins"]), 2)
+        kinds = sorted(e["kind"] for e in result["extra_hidden_plugins"])
+        self.assertEqual(kinds, ["artifact", "release"])
+        rel = next(e for e in result["extra_hidden_plugins"] if e["kind"] == "release")
+        self.assertEqual(rel["ref"], "v0.9.0")
+        self.assertTrue(rel["hidden"])
+        art = next(e for e in result["extra_hidden_plugins"] if e["kind"] == "artifact")
+        self.assertEqual(art["run_id"], 9999)
+        self.assertTrue(art["hidden"])
+
+    def test_apply_hidden_changes_rejects_auto_version(self):
+        api = HiddenManagementApi(self._seed_policy())
+        result = api.apply_hidden_changes({
+            "app_versions_to_hide": ["1.6.3-0.ni.5"],
+            "plugin_keys_to_hide": [],
+            "plugin_keys_to_unhide": [],
+        })
+        self.assertFalse(result["ok"], msg=result)
+        self.assertIn("auto_version", result["error"])
+        # No side effects.
+        self.assertEqual(api.vercel.upserts, [])
+        self.assertEqual(api.deploy_hook_calls, 0)
+
+    def test_apply_hidden_changes_batch_atomic(self):
+        # Seed an extra entry so we can hide 2 app + 2 plugin keys at once.
+        policy = self._seed_policy()
+        policy["versions"].append({
+            "version": "1.5.9-0.ni.2",
+            "tag": "v1.5.9-niyien.1",
+            "channels": ["manual"],
+            "recommended": False,
+            "changelog": "older",
+            "plugins_source_mode": "artifact",
+            "plugins_source_ref": "actions-run-1234",
+        })
+        api = HiddenManagementApi(policy)
+        result = api.apply_hidden_changes({
+            "app_versions_to_hide": ["1.6.2-0.ni.4", "1.5.9-0.ni.2"],
+            "plugin_keys_to_hide": [
+                {"kind": "release", "ref": "v1.6.2"},
+                {"kind": "artifact", "run_id": 1234},
+            ],
+            "plugin_keys_to_unhide": [],
+        })
+        self.assertTrue(result["ok"], msg=result)
+        # Atomicity: exactly one Vercel upsert + one deploy hook dispatch.
+        self.assertEqual(len(api.vercel.upserts), 1)
+        self.assertEqual(api.deploy_hook_calls, 1)
+        self.assertIn("NIYIEN_RELEASE_POLICY_JSON", api.vercel.upserts[0])
+        # Final policy: 2 entries removed, 2 plugin keys appended to blacklist.
+        final = api.vercel.current_policy
+        version_ids = sorted(v["version"] for v in final["versions"])
+        self.assertEqual(version_ids, ["1.6.1-0.ni.3", "1.6.3-0.ni.5"])
+        # hidden_plugins: original v1.6.1 plus the two new keys.
+        self.assertEqual(len(final["hidden_plugins"]), 3)
+        kinds_refs = sorted(
+            (h["kind"], h.get("ref") or h.get("run_id"))
+            for h in final["hidden_plugins"]
+        )
+        self.assertEqual(
+            kinds_refs,
+            sorted([
+                ("release", "v1.6.1"),
+                ("release", "v1.6.2"),
+                ("artifact", 1234),
+            ]),
+        )
+
+    def test_apply_hidden_changes_preserves_entry_plugin_tag(self):
+        api = HiddenManagementApi(self._seed_policy())
+        result = api.apply_hidden_changes({
+            "app_versions_to_hide": [],
+            "plugin_keys_to_hide": [{"kind": "release", "ref": "v1.6.1"}],
+            "plugin_keys_to_unhide": [],
+        })
+        # v1.6.1 is already in the seed blacklist; this is a no-op for the
+        # blacklist (deduped), but it MUST still leave entry.plugin_tag intact.
+        self.assertTrue(result["ok"], msg=result)
+        final = api.vercel.current_policy
+        v161_entry = next(v for v in final["versions"] if v["version"] == "1.6.1-0.ni.3")
+        self.assertEqual(v161_entry["plugin_tag"], "v1.6.1")
+        # And the blacklist did not duplicate.
+        self.assertEqual(len(final["hidden_plugins"]), 1)
+
+    def test_apply_hidden_changes_unhide_removes_blacklist_entry(self):
+        api = HiddenManagementApi(self._seed_policy())
+        result = api.apply_hidden_changes({
+            "app_versions_to_hide": [],
+            "plugin_keys_to_hide": [],
+            "plugin_keys_to_unhide": [{"kind": "release", "ref": "v1.6.1"}],
+        })
+        self.assertTrue(result["ok"], msg=result)
+        final = api.vercel.current_policy
+        self.assertEqual(final["hidden_plugins"], [])
+
+    def test_apply_hidden_changes_rejects_malformed_plugin_key(self):
+        api = HiddenManagementApi(self._seed_policy())
+        result = api.apply_hidden_changes({
+            "app_versions_to_hide": [],
+            "plugin_keys_to_hide": [{"kind": "weird", "ref": "x"}],
+            "plugin_keys_to_unhide": [],
+        })
+        self.assertFalse(result["ok"], msg=result)
+        self.assertIn("kind", result["error"])
+        self.assertEqual(api.vercel.upserts, [])
+        self.assertEqual(api.deploy_hook_calls, 0)
 
 
 if __name__ == "__main__":

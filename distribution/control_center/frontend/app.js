@@ -547,6 +547,9 @@ function showView(target) {
     if (!resourcesState.loaded) loadResourcesState();
     initResourcesExtrasOnce();
   }
+  if (target === 'hidden') {
+    loadHiddenView();
+  }
 }
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
@@ -2004,6 +2007,305 @@ document.getElementById('manifest-fetch-btn')?.addEventListener('click', async (
   } catch (e) {
     status.textContent = '调用失败';
     result.textContent = String(e);
+  }
+});
+
+// ---- Hidden Management view (release-hidden-management capability) ----
+//
+// State model:
+// - data: latest snapshot from list_hidden_view_data() (re-fetched on refresh / submit)
+// - appSel: Set<string> — version IDs the operator wants to hide this submission
+// - pluginToHide:   Set<string> — plugin keys (encoded) added to blacklist this submission
+// - pluginToUnhide: Set<string> — plugin keys (encoded) removed from blacklist this submission
+//
+// Plugin keys are encoded as "release:<ref>" or "artifact:<run_id>" so they
+// fit in a Set; they're decoded back to {kind, ref|run_id} objects on submit.
+const hiddenState = {
+  data: null,
+  appSel: new Set(),
+  pluginToHide: new Set(),
+  pluginToUnhide: new Set(),
+  loading: false,
+};
+
+function encodePluginKey(p) {
+  if (!p || typeof p !== 'object') return '';
+  if (p.kind === 'release') return `release:${p.ref || ''}`;
+  if (p.kind === 'artifact') return `artifact:${p.run_id || 0}`;
+  return '';
+}
+
+function decodePluginKey(key) {
+  const idx = key.indexOf(':');
+  if (idx < 0) return null;
+  const kind = key.slice(0, idx);
+  const rest = key.slice(idx + 1);
+  if (kind === 'release') return { kind: 'release', ref: rest };
+  if (kind === 'artifact') return { kind: 'artifact', run_id: parseInt(rest, 10) || 0 };
+  return null;
+}
+
+function fmtChannels(channels) {
+  if (!Array.isArray(channels) || !channels.length) return '';
+  return channels.join(',');
+}
+
+function fmtPublishedDate(iso) {
+  if (!iso) return '';
+  // iso e.g. "2026-04-21T08:30:00Z" — strip to date.
+  const m = String(iso).match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : '';
+}
+
+async function loadHiddenView() {
+  if (hiddenState.loading) return;
+  hiddenState.loading = true;
+  const appList = document.getElementById('hidden-app-list');
+  const pluginList = document.getElementById('hidden-plugin-list');
+  const orphanWrap = document.getElementById('hidden-plugin-orphan-wrap');
+  const result = document.getElementById('apply-hidden-result');
+  appList.innerHTML = '<div class="p-3 text-xs text-slate-500">加载中...</div>';
+  pluginList.innerHTML = '<div class="p-3 text-xs text-slate-500">加载中...</div>';
+  orphanWrap.classList.add('hidden');
+  result.textContent = '';
+  try {
+    const r = await pywebview.api.list_hidden_view_data();
+    if (!r.ok) {
+      appList.innerHTML = `<div class="p-3 text-xs text-red-600">加载失败: ${escapeHtml(r.error || '')}</div>`;
+      pluginList.innerHTML = '';
+      return;
+    }
+    hiddenState.data = r;
+    // Reset selections on every load — operator starts fresh; pre-checked
+    // plugin rows reflect server-side `hidden:true` state, not selection.
+    hiddenState.appSel.clear();
+    hiddenState.pluginToHide.clear();
+    hiddenState.pluginToUnhide.clear();
+    renderHiddenAppList();
+    renderHiddenPluginList();
+    refreshHiddenSubmitButton();
+  } catch (e) {
+    appList.innerHTML = `<div class="p-3 text-xs text-red-600">调用失败: ${escapeHtml(String(e))}</div>`;
+    pluginList.innerHTML = '';
+  } finally {
+    hiddenState.loading = false;
+  }
+}
+
+function renderHiddenAppList() {
+  const list = document.getElementById('hidden-app-list');
+  const data = hiddenState.data;
+  if (!data || !data.app_versions || !data.app_versions.length) {
+    list.innerHTML = '<div class="p-3 text-xs text-slate-500">policy.versions[] 为空</div>';
+    return;
+  }
+  const auto = data.auto_version || '';
+  list.innerHTML = data.app_versions.map(v => {
+    const isAuto = v.version === auto;
+    const checked = hiddenState.appSel.has(v.version);
+    const channels = fmtChannels(v.channels);
+    const date = fmtPublishedDate(v.published_at);
+    const changelog = (v.changelog || '').split('\n')[0];
+    const pluginInfo = v.plugin_run_id > 0
+      ? `plugin run #${v.plugin_run_id}`
+      : (v.plugin_tag ? `plugin ${v.plugin_tag}` : '(无 plugin)');
+    return `
+      <label class="flex items-start gap-3 px-3 py-2 border-b border-slate-100 hover:bg-slate-50 ${isAuto ? 'opacity-70' : ''}">
+        <input type="checkbox" data-hidden-app="${escapeHtml(v.version)}"
+               class="mt-1 h-4 w-4 rounded border-slate-300"
+               ${isAuto ? 'disabled title="当前主推版本不可隐藏"' : ''}
+               ${checked ? 'checked' : ''}>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-mono">
+            ${escapeHtml(v.version)}
+            ${v.tag ? `<span class="text-slate-400 ml-1">·</span> <span class="text-slate-600">${escapeHtml(v.tag)}</span>` : ''}
+            ${isAuto ? '<span class="ml-2 text-red-600 text-xs">[当前主推]</span>' : ''}
+            ${channels ? `<span class="ml-2 text-xs text-slate-500">${escapeHtml(channels)}</span>` : ''}
+          </div>
+          <div class="text-xs text-slate-500 truncate">
+            ${date ? `<span class="text-slate-600">${escapeHtml(date)}</span> · ` : ''}
+            <span>${escapeHtml(pluginInfo)}</span>
+            ${changelog ? ` · <span class="text-slate-500">${escapeHtml(changelog)}</span>` : ''}
+          </div>
+        </div>
+      </label>`;
+  }).join('');
+  list.querySelectorAll('input[data-hidden-app]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const v = cb.dataset.hiddenApp;
+      if (cb.checked) hiddenState.appSel.add(v);
+      else hiddenState.appSel.delete(v);
+      refreshHiddenSubmitButton();
+    });
+  });
+}
+
+function renderHiddenPluginList() {
+  const list = document.getElementById('hidden-plugin-list');
+  const orphanWrap = document.getElementById('hidden-plugin-orphan-wrap');
+  const orphanList = document.getElementById('hidden-plugin-orphan-list');
+  const data = hiddenState.data;
+  const derived = (data && data.derived_plugins) || [];
+  const orphans = (data && data.extra_hidden_plugins) || [];
+
+  const renderRow = (p, opts = {}) => {
+    const key = encodePluginKey(p);
+    if (!key) return '';
+    // Determine effective checked state:
+    // - If currently hidden: checked unless operator put in unhide set
+    // - If not currently hidden: unchecked unless operator put in hide set
+    let checked = false;
+    if (p.hidden) {
+      checked = !hiddenState.pluginToUnhide.has(key);
+    } else {
+      checked = hiddenState.pluginToHide.has(key);
+    }
+    const label = p.kind === 'release'
+      ? `release ${p.ref || '(空)'}`
+      : (p.kind === 'artifact' ? `artifact run #${p.run_id}` : '未知');
+    const usedBy = (p.used_by_app_versions || []).join(', ');
+    const usedByText = usedBy ? `用于 app: ${usedBy}` : (opts.orphan ? '(无 app entry 引用 — 孤儿条目)' : '(未在 versions[] 中使用)');
+    const hiddenBadge = p.hidden ? '<span class="ml-2 text-amber-700 text-xs">[已隐藏]</span>' : '';
+    return `
+      <label class="flex items-start gap-3 px-3 py-2 border-b ${opts.orphan ? 'border-amber-200' : 'border-slate-100'} hover:bg-slate-50">
+        <input type="checkbox" data-hidden-plugin="${escapeHtml(key)}" data-was-hidden="${p.hidden ? '1' : '0'}"
+               class="mt-1 h-4 w-4 rounded border-slate-300"
+               ${checked ? 'checked' : ''}>
+        <div class="flex-1 min-w-0">
+          <div class="text-sm font-mono">${escapeHtml(label)}${hiddenBadge}</div>
+          <div class="text-xs text-slate-500 truncate">${escapeHtml(usedByText)}</div>
+        </div>
+      </label>`;
+  };
+
+  if (!derived.length) {
+    list.innerHTML = '<div class="p-3 text-xs text-slate-500">policy.versions[] 中无可派生的 plugin</div>';
+  } else {
+    list.innerHTML = derived.map(p => renderRow(p)).join('');
+  }
+
+  if (orphans.length) {
+    orphanWrap.classList.remove('hidden');
+    orphanList.innerHTML = orphans.map(p => renderRow(p, { orphan: true })).join('');
+  } else {
+    orphanWrap.classList.add('hidden');
+    orphanList.innerHTML = '';
+  }
+
+  // Single delegated handler for both regular + orphan rows.
+  document.querySelectorAll('input[data-hidden-plugin]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.hiddenPlugin;
+      const wasHidden = cb.dataset.wasHidden === '1';
+      if (wasHidden) {
+        // Toggling a pre-hidden row: checked = stay hidden (no-op),
+        // unchecked = queue unhide.
+        if (cb.checked) hiddenState.pluginToUnhide.delete(key);
+        else hiddenState.pluginToUnhide.add(key);
+      } else {
+        // Toggling a non-hidden row: checked = queue hide,
+        // unchecked = no-op.
+        if (cb.checked) hiddenState.pluginToHide.add(key);
+        else hiddenState.pluginToHide.delete(key);
+      }
+      refreshHiddenSubmitButton();
+    });
+  });
+}
+
+function refreshHiddenSubmitButton() {
+  const btn = document.getElementById('apply-hidden-btn');
+  const total = hiddenState.appSel.size + hiddenState.pluginToHide.size + hiddenState.pluginToUnhide.size;
+  btn.disabled = total === 0;
+  const parts = [];
+  if (hiddenState.appSel.size) parts.push(`隐藏 ${hiddenState.appSel.size} 个 app`);
+  if (hiddenState.pluginToHide.size) parts.push(`隐藏 ${hiddenState.pluginToHide.size} 个 plugin`);
+  if (hiddenState.pluginToUnhide.size) parts.push(`恢复 ${hiddenState.pluginToUnhide.size} 个 plugin`);
+  btn.textContent = total === 0 ? '提交' : `提交 (${parts.join(' · ')})`;
+}
+
+// Bulk select / invert / refresh wiring.
+document.getElementById('hidden-app-select-all')?.addEventListener('click', () => {
+  // Excludes disabled (auto_version) checkboxes per spec.
+  document.querySelectorAll('#hidden-app-list input[data-hidden-app]:not([disabled])').forEach(cb => {
+    cb.checked = true;
+    hiddenState.appSel.add(cb.dataset.hiddenApp);
+  });
+  refreshHiddenSubmitButton();
+});
+
+document.getElementById('hidden-app-invert')?.addEventListener('click', () => {
+  document.querySelectorAll('#hidden-app-list input[data-hidden-app]:not([disabled])').forEach(cb => {
+    cb.checked = !cb.checked;
+    if (cb.checked) hiddenState.appSel.add(cb.dataset.hiddenApp);
+    else hiddenState.appSel.delete(cb.dataset.hiddenApp);
+  });
+  refreshHiddenSubmitButton();
+});
+
+document.getElementById('hidden-app-refresh')?.addEventListener('click', () => loadHiddenView());
+
+document.getElementById('hidden-plugin-select-all')?.addEventListener('click', () => {
+  document.querySelectorAll('input[data-hidden-plugin]').forEach(cb => {
+    if (cb.checked) return;
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change'));
+  });
+});
+
+document.getElementById('hidden-plugin-invert')?.addEventListener('click', () => {
+  document.querySelectorAll('input[data-hidden-plugin]').forEach(cb => {
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event('change'));
+  });
+});
+
+document.getElementById('hidden-plugin-refresh')?.addEventListener('click', () => loadHiddenView());
+
+document.getElementById('cancel-hidden-btn')?.addEventListener('click', () => {
+  // Re-render restores pre-checked state for hidden plugins and clears
+  // operator selections for app rows. Equivalent to a refresh without
+  // re-fetching from the server.
+  hiddenState.appSel.clear();
+  hiddenState.pluginToHide.clear();
+  hiddenState.pluginToUnhide.clear();
+  if (hiddenState.data) {
+    renderHiddenAppList();
+    renderHiddenPluginList();
+  }
+  refreshHiddenSubmitButton();
+  document.getElementById('apply-hidden-result').textContent = '';
+});
+
+document.getElementById('apply-hidden-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('apply-hidden-btn');
+  const result = document.getElementById('apply-hidden-result');
+  const payload = {
+    app_versions_to_hide: Array.from(hiddenState.appSel),
+    plugin_keys_to_hide: Array.from(hiddenState.pluginToHide).map(decodePluginKey).filter(Boolean),
+    plugin_keys_to_unhide: Array.from(hiddenState.pluginToUnhide).map(decodePluginKey).filter(Boolean),
+  };
+  btn.disabled = true;
+  result.textContent = '提交中...';
+  result.className = 'text-sm text-slate-600 flex-1';
+  try {
+    const r = await pywebview.api.apply_hidden_changes(payload);
+    if (r.ok) {
+      result.textContent = r.summary || '已提交';
+      result.className = 'text-sm text-emerald-700 flex-1';
+      // Re-fetch to reflect server state (e.g. promoted entries, dispatch result).
+      await loadHiddenView();
+      result.textContent = (r.summary || '已提交') + ' · 列表已刷新';
+      result.className = 'text-sm text-emerald-700 flex-1';
+    } else {
+      result.textContent = `失败: ${r.error || '(未知错误)'}`;
+      result.className = 'text-sm text-red-600 flex-1';
+      btn.disabled = false;
+    }
+  } catch (e) {
+    result.textContent = `调用失败: ${String(e)}`;
+    result.className = 'text-sm text-red-600 flex-1';
+    btn.disabled = false;
   }
 });
 

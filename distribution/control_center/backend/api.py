@@ -2550,6 +2550,11 @@ class Api:
             parsed["versions"] = []
         if "auto_version" not in parsed:
             parsed["auto_version"] = ""
+        # hidden_plugins: optional plugin blacklist used by docs manifest API
+        # to fall back per-entry when a plugin identity matches a row here.
+        # Defaults to empty list so older policy values stay forward-compatible.
+        if not isinstance(parsed.get("hidden_plugins"), list):
+            parsed["hidden_plugins"] = []
         return parsed
 
     @staticmethod
@@ -2601,6 +2606,84 @@ class Api:
                 versions[i] = merged
                 return
         versions.append(entry)
+
+    @staticmethod
+    def _canonical_plugin_key(entry: dict) -> dict | None:
+        """Return a canonical {kind, ref|run_id} key for the plugin bound to
+        a policy.versions[i] entry, or None if the entry has no plugin info.
+
+        Release-mode entries map to {"kind": "release", "ref": <plugin_tag>}.
+        Artifact-mode entries map to {"kind": "artifact", "run_id": <int>}
+        — the run_id is parsed from `plugins_source_ref` (shape
+        "actions-run-<id>", written by api.py:1832). Entries with neither
+        a plugin_tag nor a parseable artifact ref return None.
+        """
+        if not isinstance(entry, dict):
+            return None
+        mode = str(entry.get("plugins_source_mode", "")).strip().lower()
+        if mode == "artifact":
+            ref = str(entry.get("plugins_source_ref", "")).strip()
+            prefix = "actions-run-"
+            if ref.startswith(prefix):
+                try:
+                    return {"kind": "artifact", "run_id": int(ref[len(prefix):])}
+                except ValueError:
+                    return None
+            return None
+        # Default to release mode whenever a plugin_tag is present.
+        tag = str(entry.get("plugin_tag", "")).strip()
+        if tag:
+            return {"kind": "release", "ref": tag}
+        return None
+
+    @staticmethod
+    def _plugin_keys_match(a: dict, b: dict) -> bool:
+        """Equality on canonical plugin keys (kind + ref|run_id).
+
+        Release tags compare case-sensitive; artifact run_ids compare as
+        integers so callers passing a stringified run_id still match.
+        """
+        if not isinstance(a, dict) or not isinstance(b, dict):
+            return False
+        kind = a.get("kind")
+        if kind != b.get("kind"):
+            return False
+        if kind == "release":
+            return str(a.get("ref", "")) == str(b.get("ref", ""))
+        if kind == "artifact":
+            try:
+                return int(a.get("run_id", 0)) == int(b.get("run_id", 0))
+            except (TypeError, ValueError):
+                return False
+        return False
+
+    @staticmethod
+    def _derive_plugin_inventory(versions: list[dict]) -> list[dict]:
+        """Walk policy.versions[] and return distinct plugin identities.
+
+        Each output row: {"key": <canonical_plugin_key>, "used_by_app_versions": [...]}
+        Order follows first appearance in `versions`. Entries whose key
+        is None (no plugin info or unparseable artifact ref) are skipped.
+        """
+        seen: list[dict] = []
+        for v in versions:
+            key = Api._canonical_plugin_key(v)
+            if key is None:
+                continue
+            version_id = str(v.get("version", "")).strip()
+            existing = None
+            for row in seen:
+                if Api._plugin_keys_match(row["key"], key):
+                    existing = row
+                    break
+            if existing is None:
+                seen.append({
+                    "key": key,
+                    "used_by_app_versions": [version_id] if version_id else [],
+                })
+            elif version_id and version_id not in existing["used_by_app_versions"]:
+                existing["used_by_app_versions"].append(version_id)
+        return seen
 
     @staticmethod
     def _apply_hide_resource_scope(policy: dict, hidden_entry: dict | None,
@@ -3388,6 +3471,255 @@ class Api:
             return result
         except Exception as e:
             return _error(e, "execute_app_action")
+
+    # ---- Hidden Management tab (release-hidden-management capability) ----
+
+    def list_hidden_view_data(self) -> dict:
+        """Aggregate the data the Hidden Management tab needs.
+
+        Returns:
+            ok: bool
+            app_versions[i]: {version, tag, channels, recommended, changelog,
+                              plugin_tag, plugin_run_id, published_at}
+            derived_plugins[i]: {kind, ref|run_id, used_by_app_versions, hidden}
+            extra_hidden_plugins[i]: blacklist entries with no matching version
+            auto_version: current main-pushed version (UI disables its checkbox)
+
+        `published_at` is best-effort from GitHub releases — empty string when
+        the GitHub call fails or the entry's tag is missing or unmatched.
+        """
+        try:
+            cfg = config_module.load_config()
+            vercel = self._vercel(cfg)
+            env_records = vercel.list_env_records()
+            policy = self._load_current_policy(cfg, vercel, env_records)
+            versions = policy.get("versions", []) or []
+            hidden_plugins = policy.get("hidden_plugins", []) or []
+            auto_version = str(policy.get("auto_version", "") or "").strip()
+
+            # Best-effort published_at lookup. Failure leaves all values empty;
+            # the UI does not depend on this data being present.
+            tag_to_published: dict[str, str] = {}
+            try:
+                gh = self._github(cfg)
+                for r in gh.list_releases():
+                    t = str(r.get("tag_name", "")).strip()
+                    if t:
+                        tag_to_published[t] = str(r.get("published_at", "") or "")
+            except Exception:
+                tag_to_published = {}
+
+            app_versions: list[dict] = []
+            for v in versions:
+                version = str(v.get("version", "")).strip()
+                if not version:
+                    continue
+                tag = str(v.get("tag", "")).strip()
+                plugin_tag = str(v.get("plugin_tag", "")).strip()
+                # Surface the artifact-mode run_id for UI without exposing
+                # the encoded `actions-run-<id>` form.
+                plugin_run_id = 0
+                mode = str(v.get("plugins_source_mode", "")).strip().lower()
+                if mode == "artifact":
+                    ref = str(v.get("plugins_source_ref", "")).strip()
+                    prefix = "actions-run-"
+                    if ref.startswith(prefix):
+                        try:
+                            plugin_run_id = int(ref[len(prefix):])
+                        except ValueError:
+                            plugin_run_id = 0
+                app_versions.append({
+                    "version": version,
+                    "tag": tag,
+                    "channels": list(v.get("channels", []) or []),
+                    "recommended": bool(v.get("recommended", False)),
+                    "changelog": str(v.get("changelog", "") or ""),
+                    "plugin_tag": plugin_tag,
+                    "plugin_run_id": plugin_run_id,
+                    "published_at": tag_to_published.get(tag, "") if tag else "",
+                })
+
+            inventory = self._derive_plugin_inventory(versions)
+            derived_plugins: list[dict] = []
+            for row in inventory:
+                key = row["key"]
+                hidden = any(
+                    self._plugin_keys_match(key, h)
+                    for h in hidden_plugins
+                    if isinstance(h, dict)
+                )
+                entry_out: dict = {
+                    "kind": str(key.get("kind", "")),
+                    "used_by_app_versions": list(row.get("used_by_app_versions", [])),
+                    "hidden": hidden,
+                }
+                if key.get("kind") == "release":
+                    entry_out["ref"] = str(key.get("ref", ""))
+                elif key.get("kind") == "artifact":
+                    entry_out["run_id"] = int(key.get("run_id", 0) or 0)
+                derived_plugins.append(entry_out)
+
+            # Orphan blacklist entries: in policy.hidden_plugins[] but no
+            # corresponding entry in inventory. Surface so operators can
+            # unhide them even when no app version still references them.
+            extra_hidden_plugins: list[dict] = []
+            for h in hidden_plugins:
+                if not isinstance(h, dict):
+                    continue
+                if any(self._plugin_keys_match(h, row["key"]) for row in inventory):
+                    continue
+                entry_out = {
+                    "kind": str(h.get("kind", "")),
+                    "used_by_app_versions": [],
+                    "hidden": True,
+                }
+                if h.get("kind") == "release":
+                    entry_out["ref"] = str(h.get("ref", ""))
+                elif h.get("kind") == "artifact":
+                    try:
+                        entry_out["run_id"] = int(h.get("run_id", 0) or 0)
+                    except (TypeError, ValueError):
+                        entry_out["run_id"] = 0
+                extra_hidden_plugins.append(entry_out)
+
+            return {
+                "ok": True,
+                "app_versions": app_versions,
+                "derived_plugins": derived_plugins,
+                "extra_hidden_plugins": extra_hidden_plugins,
+                "auto_version": auto_version,
+            }
+        except Exception as e:
+            return _error(e, "list_hidden_view_data")
+
+    def apply_hidden_changes(self, payload: dict) -> dict:
+        """Atomic batch hide/unhide for the Hidden Management tab.
+
+        Payload:
+            app_versions_to_hide:   list[str]   — version IDs to remove from policy.versions[]
+            plugin_keys_to_hide:    list[dict]  — canonical plugin keys to add to hidden_plugins[]
+            plugin_keys_to_unhide:  list[dict]  — canonical plugin keys to drop from hidden_plugins[]
+
+        Pre-flight rejects (no side effects on Vercel):
+            - Any app version equals current auto_version
+            - Any plugin key has wrong shape (kind not in release/artifact, or missing ref/run_id)
+
+        On commit: single Vercel env upsert + single manifest deploy hook.
+        Plugin entry's plugin_tag fields in policy.versions[] stay untouched —
+        manifest API consults policy.hidden_plugins[] separately to decide
+        per-entry plugin fallback.
+        """
+        import json as _json
+        try:
+            if not isinstance(payload, dict):
+                return {"ok": False, "error": "payload must be an object"}
+
+            app_to_hide_raw = payload.get("app_versions_to_hide") or []
+            plugin_hide_raw = payload.get("plugin_keys_to_hide") or []
+            plugin_unhide_raw = payload.get("plugin_keys_to_unhide") or []
+
+            if not isinstance(app_to_hide_raw, list) \
+               or not isinstance(plugin_hide_raw, list) \
+               or not isinstance(plugin_unhide_raw, list):
+                return {
+                    "ok": False,
+                    "error": "app_versions_to_hide / plugin_keys_to_hide / plugin_keys_to_unhide must be arrays",
+                }
+
+            app_to_hide = [str(v).strip() for v in app_to_hide_raw if str(v).strip()]
+
+            def _validate_plugin_keys(items: list, label: str) -> list[dict]:
+                out: list[dict] = []
+                for item in items:
+                    if not isinstance(item, dict):
+                        raise ValueError(f"{label}: 条目必须是 object")
+                    kind = str(item.get("kind", "")).strip().lower()
+                    if kind == "release":
+                        ref = str(item.get("ref", "")).strip()
+                        if not ref:
+                            raise ValueError(f"{label}: release 条目缺少 ref")
+                        out.append({"kind": "release", "ref": ref})
+                    elif kind == "artifact":
+                        try:
+                            run_id = int(item.get("run_id", 0))
+                        except (TypeError, ValueError):
+                            raise ValueError(f"{label}: artifact 条目 run_id 不是整数")
+                        if run_id <= 0:
+                            raise ValueError(f"{label}: artifact 条目 run_id 必须 > 0")
+                        out.append({"kind": "artifact", "run_id": run_id})
+                    else:
+                        raise ValueError(f"{label}: 未知 kind '{kind}'")
+                return out
+
+            try:
+                plugin_hide = _validate_plugin_keys(plugin_hide_raw, "plugin_keys_to_hide")
+                plugin_unhide = _validate_plugin_keys(plugin_unhide_raw, "plugin_keys_to_unhide")
+            except ValueError as ve:
+                return {"ok": False, "error": str(ve)}
+
+            cfg = config_module.load_config()
+            vercel = self._vercel(cfg)
+            env_records = vercel.list_env_records()
+            policy = self._load_current_policy(cfg, vercel, env_records)
+            versions = list(policy.get("versions", []) or [])
+            hidden_plugins = list(policy.get("hidden_plugins", []) or [])
+            auto_version = str(policy.get("auto_version", "") or "").strip()
+
+            # Pre-flight: protect the current main-pushed version.
+            if auto_version and auto_version in app_to_hide:
+                return {
+                    "ok": False,
+                    "error": f"无法隐藏当前 auto_version ({auto_version})。请先在「发布」tab 切换 auto，再来隐藏。",
+                }
+
+            # Compute new versions[] (remove hides). Preserve sort order via
+            # the same key used by execute_app_action's hide_version branch.
+            if app_to_hide:
+                hide_set = set(app_to_hide)
+                versions = [
+                    v for v in versions
+                    if str(v.get("version", "")).strip() not in hide_set
+                ]
+            versions.sort(key=lambda x: x.get("version", ""), reverse=True)
+            policy["versions"] = versions
+
+            # Compute new hidden_plugins[]: (existing - unhide) + hide,
+            # deduplicated using canonical key match.
+            new_hidden: list[dict] = []
+            for h in hidden_plugins:
+                if not isinstance(h, dict):
+                    continue
+                if any(self._plugin_keys_match(h, u) for u in plugin_unhide):
+                    continue
+                new_hidden.append(h)
+            for k in plugin_hide:
+                if not any(self._plugin_keys_match(k, existing) for existing in new_hidden):
+                    new_hidden.append(k)
+            policy["hidden_plugins"] = new_hidden
+
+            # Single Vercel env upsert + single manifest deploy hook.
+            # Reuses the same finalize path as execute_app_action's
+            # hide_version branch — keeps the dispatch behavior identical.
+            policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
+            hook_note = self._finalize_publish_to_manifest(cfg, policy_json)
+
+            return {
+                "ok": True,
+                "app_hidden_count": len(app_to_hide),
+                "plugin_hidden_count": len(plugin_hide),
+                "plugin_unhidden_count": len(plugin_unhide),
+                "versions_count": len(versions),
+                "hidden_plugins_count": len(new_hidden),
+                "deploy_hook": hook_note,
+                "summary": (
+                    f"已隐藏 {len(app_to_hide)} 个 app · "
+                    f"已隐藏 {len(plugin_hide)} 个 plugin · "
+                    f"已恢复 {len(plugin_unhide)} 个 plugin · "
+                    f"{hook_note}"
+                ),
+            }
+        except Exception as e:
+            return _error(e, "apply_hidden_changes")
 
     # ---- Telemetry ----
 
