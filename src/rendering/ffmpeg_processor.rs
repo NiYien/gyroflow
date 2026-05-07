@@ -150,7 +150,7 @@ impl From<ffmpeg_next::Error> for FFmpegError {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct VideoInfo {
     pub duration_ms: f64,
     pub frame_count: usize,
@@ -160,6 +160,27 @@ pub struct VideoInfo {
     pub bitrate: f64, // in Mbps
     pub rotation: i32,
     pub created_at: Option<i64>,
+    pub codec_id: codec::Id,
+    pub pix_fmt: ffmpeg_next::format::Pixel,
+    pub profile: i32,
+}
+
+impl Default for VideoInfo {
+    fn default() -> Self {
+        Self {
+            duration_ms: 0.0,
+            frame_count: 0,
+            fps: 0.0,
+            width: 0,
+            height: 0,
+            bitrate: 0.0,
+            rotation: 0,
+            created_at: None,
+            codec_id: codec::Id::None,
+            pix_fmt: ffmpeg_next::format::Pixel::None,
+            profile: -99, // FF_PROFILE_UNKNOWN
+        }
+    }
 }
 
 impl<'a> FfmpegProcessor<'a> {
@@ -902,6 +923,21 @@ impl<'a> FfmpegProcessor<'a> {
                     theta as i32
                 };
 
+                // Read codec signature directly from stream parameters via FFI
+                // so the values reflect the source stream rather than any decoder
+                // post-init state. AVCodecParameters fields: codec_id (AVCodecID),
+                // format (AVPixelFormat as c_int), profile (c_int).
+                let (codec_id, pix_fmt, profile) = unsafe {
+                    let params_ptr = stream.parameters().as_ptr();
+                    let codec_id = codec::Id::from((*params_ptr).codec_id);
+                    let format_raw: i32 = (*params_ptr).format;
+                    let pix_fmt = ffmpeg_next::format::Pixel::from(
+                        std::mem::transmute::<i32, ffi::AVPixelFormat>(format_raw),
+                    );
+                    let profile: i32 = (*params_ptr).profile;
+                    (codec_id, pix_fmt, profile)
+                };
+
                 return Ok(VideoInfo {
                     duration_ms: stream.duration() as f64 * f64::from(stream.time_base()) * 1000.0,
                     frame_count: frames,
@@ -911,6 +947,9 @@ impl<'a> FfmpegProcessor<'a> {
                     bitrate: bitrate as f64 / 1024.0 / 1024.0,
                     rotation,
                     created_at,
+                    codec_id,
+                    pix_fmt,
+                    profile,
                 });
             }
         }

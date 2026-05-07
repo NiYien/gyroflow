@@ -47,6 +47,7 @@ Item {
     readonly property color skippedStatusColor: lightTheme ? "#5b6470" : "#888888"
     readonly property color finishedStatusColor: lightTheme ? "#2a8a4c" : "#70e574"
     readonly property color errorStatusColor: lightTheme ? "#d16b6b" : "#ed7676"
+    readonly property color pendingSyncStatusColor: lightTheme ? "#5b6470" : "#9aa3ad"
     readonly property color queueOutlineColor: lightTheme ? "#1f111111" : "#70ffffff"
     readonly property real matchedGyroOpacity: lightTheme ? 0.28 : 0.30
     readonly property real unmatchedGyroOpacity: lightTheme ? 0.18 : 0.15
@@ -886,7 +887,6 @@ Item {
             property bool isError: error_string.length > 0 && !isQuestion && !isInfo;
             property bool isInfo: error_string == "uses_cpu";
             property bool isQuestion: error_string.startsWith("convert_format:") || error_string.startsWith("file_exists:");
-            property bool isInProgress: (!isFinished && !isError && !isSkipped && !isQuestion && total_frames > 0) && (current_frame > 0 || isProcessing);
             property bool isProcessing: processing_progress > 0.0 && processing_progress < 1.0;
             property bool isSkipped: skip_reason.length > 0;
             property string skipReason: skip_reason;
@@ -894,7 +894,20 @@ Item {
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
             property var syncStatus: { root.syncStatusVersion; try { return JSON.parse(render_queue.get_batch_sync_status_json(job_id)); } catch(e) { return { color: "none" }; } }
             property string syncColor: syncStatus.color || "none"
-            property bool hasSyncStatus: syncColor === "green" || syncColor === "yellow"
+            property bool syncDonePending: syncColor === "done_pending"
+            property bool hasSyncStatus: syncColor === "green" || syncColor === "yellow" || syncDonePending
+            property bool isInProgress: (!isFinished && !isError && !isSkipped && !isQuestion && total_frames > 0) && (current_frame > 0 || isProcessing || syncDonePending);
+            property bool canStopProgress: isInProgress && !syncDonePending
+            property bool canResetStatus: isError || isFinished || isQuestion || isSkipped
+            function isDonePendingJob(id) {
+                root.syncStatusVersion;
+                try {
+                    const status = JSON.parse(render_queue.get_batch_sync_status_json(id));
+                    return (status.color || "none") === "done_pending";
+                } catch(e) {
+                    return false;
+                }
+            }
 
             // T5: Match status for this delegate.
             // [T19] matchVersion forces re-evaluation when match results change.
@@ -909,7 +922,12 @@ Item {
             property bool isMatched: root.matchExecuted
             property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
             property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
-            property color statusAccentColor: isSkipped ? root.skippedStatusColor : hasSyncStatus ? (syncColor === "green" ? root.finishedStatusColor : root.manualStatusColor) : isFinished ? root.finishedStatusColor : isError ? root.errorStatusColor : isQuestion ? styleAccentColor : "transparent"
+            property color statusAccentColor: isSkipped ? root.skippedStatusColor
+                : hasSyncStatus ? (syncColor === "green" ? root.finishedStatusColor : (syncDonePending ? root.pendingSyncStatusColor : root.manualStatusColor))
+                : isFinished ? root.finishedStatusColor
+                : isError ? root.errorStatusColor
+                : isQuestion ? styleAccentColor
+                : "transparent"
             // [T15] Adjacent same-gyro state is computed in Rust to avoid QML binding timing issues.
             // [T22] Read sameGyro state from a cache built after matching.
             property bool sameGyroAsPrev: { root.matchVersion; return root.matchExecuted && render_queue.get_cached_same_gyro_prev(job_id); }
@@ -1048,16 +1066,17 @@ Item {
                         root.shown = false;
                     }
                 }
-                // [queue-lifecycle T3] 移除了 "Move up" / "Move down" 手动排序选项
+                // [queue-lifecycle T3] Manual "Move up" / "Move down" actions were removed.
                 Action {
-                    iconName: isInProgress? "close" : "spinner";
-                    text: isInProgress? qsTr("Stop") : qsTr("Reset status");
-                    enabled: isError || isFinished || isQuestion || isInProgress || isSkipped;
+                    iconName: canStopProgress? "close" : "spinner";
+                    text: canStopProgress? qsTr("Stop") : qsTr("Reset status");
+                    enabled: canResetStatus || canStopProgress;
                     // [batch-reset] If the right-clicked row is part of a multi-selection, reset every selected job
                     onTriggered: {
                         if (root.selectedCount > 1 && root.selectedJobs[job_id]) {
                             const ids = Object.keys(root.selectedJobs).map(Number);
                             for (const id of ids) {
+                                if (dlg.isDonePendingJob(id)) continue;
                                 render_queue.reset_job(id);
                             }
                         } else {
@@ -1593,7 +1612,8 @@ Item {
                         font.pixelSize: basicTextSize;
                         property string remainingText: statusBg.shown? "---" : time.remaining;
                         property string eta: remainingText != "---"? (", " + qsTr("ETA %1").arg(remainingText)) : "";
-                        text: isProcessing? qsTr("Synchronizing: %1").arg(`<b>${(processing_progress*100).toFixed(2)}%</b>`)
+                        text: syncDonePending ? qsTr("Sync complete: %1").arg("<b>100.00%</b>")
+                            : isProcessing? qsTr("Synchronizing: %1").arg(`<b>${(processing_progress*100).toFixed(2)}%</b>`)
                                           : qsTr("Rendering: %1").arg(`<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText}${eta})</small>`);
                     }
                     BasicText { text: qsTr("Save to: %1").arg("<b>" + display_output_path + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
@@ -1675,8 +1695,12 @@ Item {
                     }
                     BasicText {
                         visible: dlg.hasSyncStatus;
-                        text: dlg.syncColor === "green" ? qsTr("Sync confirmed") : qsTr("Sync not confirmed");
-                        color: dlg.syncColor === "green" ? root.finishedStatusColor : root.manualStatusColor;
+                        text: dlg.syncColor === "green" ? qsTr("Sync confirmed")
+                            : dlg.syncDonePending ? qsTr("Sync complete, waiting for batch confirmation")
+                            : qsTr("Sync not confirmed");
+                        color: dlg.syncColor === "green" ? root.finishedStatusColor
+                            : dlg.syncDonePending ? root.pendingSyncStatusColor
+                            : root.manualStatusColor;
                         font.pixelSize: basicTextSize;
                         font.bold: true;
                     }
@@ -1709,13 +1733,14 @@ Item {
                         anchors.horizontalCenter: parent.horizontalCenter;
                         horizontalAlignment: Text.AlignHCenter;
                         textFormat: Text.RichText;
-                        text: isProcessing? `<b>${(processing_progress*100).toFixed(2)}%</b>` :
+                        text: syncDonePending ? "<b>100.00%</b>" :
+                                            isProcessing? `<b>${(processing_progress*100).toFixed(2)}%</b>` :
                                             `<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText})</small>`;
                     }
                     QQC.ProgressBar {
                         id: ipb;
                         width: 200 * dpiScale;
-                        value: isProcessing? processing_progress : current_frame / total_frames;
+                        value: syncDonePending ? 1.0 : isProcessing? processing_progress : current_frame / total_frames;
                     }
                     BasicText {
                         id: time;
@@ -1726,7 +1751,8 @@ Item {
                         leftPadding: 0;
                         anchors.horizontalCenter: parent.horizontalCenter;
                         horizontalAlignment: Text.AlignHCenter;
-                        text: isProcessing? qsTr("Synchronizing...")
+                        text: syncDonePending ? qsTr("Waiting for batch confirmation")
+                                          : isProcessing? qsTr("Synchronizing...")
                                           : qsTr("Elapsed: %1. Remaining: %2").arg("<b>" + elapsed + "</b>").arg("<b>" + (statusBg.shown? "---" : remaining) + "</b>");
                     }
                 }

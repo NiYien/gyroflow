@@ -7,6 +7,7 @@ pub mod ffmpeg_hw;
 pub mod ffmpeg_processor;
 mod ffmpeg_video;
 mod ffmpeg_video_converter;
+pub mod gpu_codec_blocklist;
 pub mod mdk_processor;
 pub mod render_queue;
 pub mod video_processor;

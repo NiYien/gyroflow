@@ -1264,6 +1264,8 @@ impl RenderQueue {
                     "repair_round": self.batch_sync_repair_round,
                     "message": "",
                 }).to_string());
+                itm.processing_progress = 0.0;
+                itm.current_frame = 0;
             });
         }
         self.batch_sync_status_changed();
@@ -1305,6 +1307,9 @@ impl RenderQueue {
         if job_ids.is_empty() {
             return;
         }
+        // Reset the GPU-decode codec blocklist at every batch entry so a fresh
+        // batch can re-attempt GPU even after a previous batch recorded failures.
+        crate::rendering::gpu_codec_blocklist::clear();
         self.register_batch_sync_jobs(job_ids);
         self.export_project = 2;
         self.start();
@@ -1319,6 +1324,17 @@ impl RenderQueue {
         if !self.expected_batch_sync_job_ids.contains(&job_id) {
             return;
         }
+        update_model!(self, job_id, itm {
+            itm.sync_status = QString::from(serde_json::json!({
+                "color": "done_pending",
+                "confirmed_points": 0,
+                "discarded_points": 0,
+                "repair_round": self.batch_sync_repair_round,
+                "message": "Sync completed. Waiting for batch confirmation.",
+            }).to_string());
+            itm.processing_progress = 1.0;
+        });
+        self.batch_sync_status_changed();
         self.batch_sync_attempted_timestamps_ms
             .entry(job_id)
             .or_default()
@@ -1448,6 +1464,7 @@ impl RenderQueue {
                 if itm.total_frames == 0 {
                     itm.total_frames = 1;
                 }
+                itm.processing_progress = 1.0;
                 itm.current_frame = itm.total_frames;
                 itm.status = JobStatus::Finished;
             });
@@ -4665,167 +4682,218 @@ impl RenderQueue {
 
                         let gpu_decoding = stab.gpu_decoding.load(SeqCst);
 
-                        let mut frame_no = 0;
-                        let mut abs_frame_no = 0;
                         let sync = Arc::new(sync);
 
-                        let mut decoder_options = ffmpeg_next::Dictionary::new();
-                        if proc_height > 0 {
-                            decoder_options.set(
-                                "scale",
-                                &format!("{}x{}", (proc_height * 16) / 9, proc_height),
-                            );
-                        }
+                        // Probe codec signature for GPU blocklist consultation.
+                        // Skip when GPU is already disabled (no need to pay probe
+                        // cost) or when the input is an image sequence (no codec
+                        // to talk about).
+                        let codec_sig = if gpu_decoding && input_file.image_sequence_fps <= 0.0 {
+                            match VideoProcessor::get_video_info(&url) {
+                                Ok(info) => Some(crate::rendering::gpu_codec_blocklist::CodecSignature::from(&info)),
+                                Err(e) => {
+                                    ::log::debug!(
+                                        "[batch_sync] codec signature probe failed for '{}': {e:?} (proceeding without blocklist consultation)",
+                                        filesystem::get_filename(&url)
+                                    );
+                                    None
+                                }
+                            }
+                        } else {
+                            None
+                        };
 
-                        if input_file.image_sequence_fps > 0.0 {
-                            let fps = if input_file.image_sequence_fps.fract() > 0.1 {
-                                ffmpeg_next::Rational::new((fps * 1001.0).round() as i32, 1001)
-                            } else {
-                                ffmpeg_next::Rational::new(fps.round() as i32, 1)
-                            };
-                            decoder_options.set(
-                                "framerate",
-                                &format!("{}/{}", fps.numerator(), fps.denominator()),
-                            );
-                        }
-                        if input_file.image_sequence_start > 0 {
-                            decoder_options.set(
-                                "start_number",
-                                &format!("{}", input_file.image_sequence_start),
-                            );
-                        }
-                        if cfg!(target_os = "android") {
-                            decoder_options.set("ndk_codec", "1");
-                        }
-                        ::log::debug!("Decoder options: {:?}", decoder_options);
+                        let try_run = |use_gpu: bool, ranges: Vec<(f64, f64)>| -> Result<(), rendering::FFmpegError> {
+                            let mut frame_no = 0;
+                            let mut abs_frame_no = 0;
 
-                        match VideoProcessor::from_file(
-                            &url,
-                            gpu_decoding,
-                            0,
-                            Some(decoder_options),
-                        ) {
-                            Ok(mut proc) => {
-                                let err2 = err.clone();
-                                let sync2 = sync.clone();
-                                let sync_failed2 = sync_failed.clone();
-                                let frame_error_filename = filesystem::get_filename(&url);
-                                proc.on_frame(
-                                    move |timestamp_us,
-                                          input_frame,
-                                          _output_frame,
-                                          converter,
-                                          _rate_control| {
-                                        if abs_frame_no % every_nth_frame == 0 {
-                                            // NeuFlow (of_method=3 or 4) needs NV12 for color data;
-                                            // other methods use GRAY8.
-                                            let pix_fmt = if of_method == 3 || of_method == 4 {
-                                                ffmpeg_next::format::Pixel::NV12
-                                            } else {
-                                                ffmpeg_next::format::Pixel::GRAY8
-                                            };
-                                            match converter.scale(input_frame, pix_fmt, sw, sh) {
-                                                Ok(small_frame) => {
-                                                    let (width, height, stride, pixels) =
-                                                        if of_method == 3 || of_method == 4 {
-                                                            // NV12: pass all planes (Y + UV)
-                                                            let total_len = small_frame.stride(0)
+                            let mut decoder_options = ffmpeg_next::Dictionary::new();
+                            if proc_height > 0 {
+                                decoder_options.set(
+                                    "scale",
+                                    &format!("{}x{}", (proc_height * 16) / 9, proc_height),
+                                );
+                            }
+
+                            if input_file.image_sequence_fps > 0.0 {
+                                let fps = if input_file.image_sequence_fps.fract() > 0.1 {
+                                    ffmpeg_next::Rational::new((fps * 1001.0).round() as i32, 1001)
+                                } else {
+                                    ffmpeg_next::Rational::new(fps.round() as i32, 1)
+                                };
+                                decoder_options.set(
+                                    "framerate",
+                                    &format!("{}/{}", fps.numerator(), fps.denominator()),
+                                );
+                            }
+                            if input_file.image_sequence_start > 0 {
+                                decoder_options.set(
+                                    "start_number",
+                                    &format!("{}", input_file.image_sequence_start),
+                                );
+                            }
+                            if cfg!(target_os = "android") {
+                                decoder_options.set("ndk_codec", "1");
+                            }
+                            ::log::debug!("Decoder options: {:?}", decoder_options);
+
+                            let mut proc = VideoProcessor::from_file(
+                                &url,
+                                use_gpu,
+                                0,
+                                Some(decoder_options),
+                            )?;
+
+                            let err2 = err.clone();
+                            let sync2 = sync.clone();
+                            let sync_failed2 = sync_failed.clone();
+                            let frame_error_filename = filesystem::get_filename(&url);
+                            proc.on_frame(
+                                move |timestamp_us,
+                                      input_frame,
+                                      _output_frame,
+                                      converter,
+                                      _rate_control| {
+                                    if abs_frame_no % every_nth_frame == 0 {
+                                        // NeuFlow (of_method=3 or 4) needs NV12 for color data;
+                                        // other methods use GRAY8.
+                                        let pix_fmt = if of_method == 3 || of_method == 4 {
+                                            ffmpeg_next::format::Pixel::NV12
+                                        } else {
+                                            ffmpeg_next::format::Pixel::GRAY8
+                                        };
+                                        match converter.scale(input_frame, pix_fmt, sw, sh) {
+                                            Ok(small_frame) => {
+                                                let (width, height, stride, pixels) =
+                                                    if of_method == 3 || of_method == 4 {
+                                                        // NV12: pass all planes (Y + UV)
+                                                        let total_len = small_frame.stride(0)
+                                                            * small_frame.plane_height(0)
+                                                                as usize
+                                                            + small_frame.stride(1)
+                                                                * small_frame.plane_height(1)
+                                                                    as usize;
+                                                        let mut all_data =
+                                                            Vec::with_capacity(total_len);
+                                                        all_data.extend_from_slice(
+                                                            &small_frame.data(0)[..small_frame
+                                                                .stride(0)
                                                                 * small_frame.plane_height(0)
-                                                                    as usize
-                                                                + small_frame.stride(1)
-                                                                    * small_frame.plane_height(1)
-                                                                        as usize;
-                                                            let mut all_data =
-                                                                Vec::with_capacity(total_len);
-                                                            all_data.extend_from_slice(
-                                                                &small_frame.data(0)[..small_frame
-                                                                    .stride(0)
-                                                                    * small_frame.plane_height(0)
-                                                                        as usize],
-                                                            );
-                                                            all_data.extend_from_slice(
-                                                                &small_frame.data(1)[..small_frame
-                                                                    .stride(1)
-                                                                    * small_frame.plane_height(1)
-                                                                        as usize],
-                                                            );
-                                                            (
-                                                                small_frame.plane_width(0),
-                                                                small_frame.plane_height(0),
-                                                                small_frame.stride(0),
-                                                                all_data,
-                                                            )
-                                                        } else {
-                                                            (
-                                                                small_frame.plane_width(0),
-                                                                small_frame.plane_height(0),
-                                                                small_frame.stride(0),
-                                                                small_frame.data(0).to_vec(),
-                                                            )
-                                                        };
-
-                                                    sync2.feed_frame(
-                                                        timestamp_us,
-                                                        frame_no,
-                                                        width,
-                                                        height,
-                                                        stride,
-                                                        &pixels,
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    sync_failed2.store(true, SeqCst);
-                                                    if collect_batch_points {
-                                                        ::log::warn!(
-                                                            "[batch_sync] frame conversion failed for '{}': {}",
-                                                            frame_error_filename,
-                                                            e
+                                                                    as usize],
                                                         );
+                                                        all_data.extend_from_slice(
+                                                            &small_frame.data(1)[..small_frame
+                                                                .stride(1)
+                                                                * small_frame.plane_height(1)
+                                                                    as usize],
+                                                        );
+                                                        (
+                                                            small_frame.plane_width(0),
+                                                            small_frame.plane_height(0),
+                                                            small_frame.stride(0),
+                                                            all_data,
+                                                        )
                                                     } else {
-                                                        err2((
-                                                            "An error occured: %1".to_string(),
-                                                            e.to_string(),
-                                                        ));
-                                                    }
+                                                        (
+                                                            small_frame.plane_width(0),
+                                                            small_frame.plane_height(0),
+                                                            small_frame.stride(0),
+                                                            small_frame.data(0).to_vec(),
+                                                        )
+                                                    };
+
+                                                sync2.feed_frame(
+                                                    timestamp_us,
+                                                    frame_no,
+                                                    width,
+                                                    height,
+                                                    stride,
+                                                    &pixels,
+                                                );
+                                            }
+                                            Err(e) => {
+                                                sync_failed2.store(true, SeqCst);
+                                                if collect_batch_points {
+                                                    ::log::warn!(
+                                                        "[batch_sync] frame conversion failed for '{}': {}",
+                                                        frame_error_filename,
+                                                        e
+                                                    );
+                                                } else {
+                                                    err2((
+                                                        "An error occured: %1".to_string(),
+                                                        e.to_string(),
+                                                    ));
                                                 }
                                             }
-                                            frame_no += 1;
                                         }
-                                        abs_frame_no += 1;
-                                        Ok(())
-                                    },
-                                );
-                                if let Err(e) =
-                                    proc.start_decoder_only(sync.get_ranges(), cancel_flag.clone())
-                                {
-                                    sync_failed.store(true, SeqCst);
-                                    if collect_batch_points {
-                                        ::log::warn!(
-                                            "[batch_sync] decoder failed for '{}': {}",
-                                            filesystem::get_filename(&url),
-                                            e
-                                        );
-                                    } else {
-                                        err(("An error occured: %1".to_string(), e.to_string()));
+                                        frame_no += 1;
                                     }
-                                }
-
-                                sync.finished_feeding_frames();
-                                sync_frames = sync_frame_count.load(SeqCst);
-                            }
-                            Err(error) => {
-                                sync_failed.store(true, SeqCst);
-                                if collect_batch_points {
-                                    ::log::warn!(
-                                        "[batch_sync] video processor failed for '{}': {}",
-                                        filesystem::get_filename(&url),
-                                        error
-                                    );
-                                } else {
-                                    err(("An error occured: %1".to_string(), error.to_string()));
-                                }
-                            }
+                                    abs_frame_no += 1;
+                                    Ok(())
+                                },
+                            );
+                            proc.start_decoder_only(ranges, cancel_flag.clone())
                         };
+
+                        // Decide whether to attempt GPU. Blocklist is advisory
+                        // only when the user has GPU enabled; if GPU is off we
+                        // skip the check entirely.
+                        let try_gpu = match (gpu_decoding, codec_sig.as_ref()) {
+                            (true, Some(sig)) => {
+                                if crate::rendering::gpu_codec_blocklist::is_blocklisted(sig) {
+                                    ::log::info!(
+                                        "[batch_sync] skipping GPU for blocklisted signature {:?} on '{}'",
+                                        sig,
+                                        filesystem::get_filename(&url)
+                                    );
+                                    false
+                                } else {
+                                    true
+                                }
+                            }
+                            (true, None) => true,
+                            (false, _) => false,
+                        };
+
+                        let result = if try_gpu {
+                            match try_run(true, sync.get_ranges()) {
+                                Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                                    if let Some(sig) = codec_sig.clone() {
+                                        ::log::info!(
+                                            "[batch_sync] GPU decode failed for '{}' (signature {:?}), retrying with software",
+                                            filesystem::get_filename(&url),
+                                            sig
+                                        );
+                                        crate::rendering::gpu_codec_blocklist::record_failure(sig);
+                                    } else {
+                                        ::log::info!(
+                                            "[batch_sync] GPU decode failed for '{}' (no signature available), retrying with software",
+                                            filesystem::get_filename(&url)
+                                        );
+                                    }
+                                    try_run(false, sync.get_ranges())
+                                }
+                                other => other,
+                            }
+                        } else {
+                            try_run(false, sync.get_ranges())
+                        };
+
+                        if let Err(e) = result {
+                            sync_failed.store(true, SeqCst);
+                            if collect_batch_points {
+                                ::log::warn!(
+                                    "[batch_sync] decoder failed for '{}': {}",
+                                    filesystem::get_filename(&url),
+                                    e
+                                );
+                            } else {
+                                err(("An error occured: %1".to_string(), e.to_string()));
+                            }
+                        }
+                        sync.finished_feeding_frames();
+                        sync_frames = sync_frame_count.load(SeqCst);
                     } else {
                         let detail = format!(
                             "Invalid autosync parameters (queue apply): {sync_failure_detail}"
@@ -8919,6 +8987,47 @@ mod tests {
     }
 
     #[test]
+    fn render_queue_marks_completed_batch_sync_job_done_pending_until_batch_finishes() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        queue.register_batch_sync_jobs([1, 2]);
+
+        queue.record_batch_sync_result(
+            1,
+            vec![sync_candidate(1, 1000.0, 1000.0, 0.9)],
+            vec![1000.0],
+        );
+
+        let q = queue.queue.borrow();
+        assert_eq!(batch_status(&queue, 1)["color"], "done_pending");
+        assert_eq!(q[0].processing_progress, 1.0);
+        assert_eq!(q[0].current_frame, 0);
+        assert_eq!(q[0].total_frames, 100);
+        assert_eq!(batch_status(&queue, 2)["color"], "pending");
+    }
+
+    #[test]
+    fn render_queue_batch_sync_restart_resets_done_pending_to_pending() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        queue.register_batch_sync_jobs([1, 2]);
+        queue.record_batch_sync_result(
+            1,
+            vec![sync_candidate(1, 1000.0, 1000.0, 0.9)],
+            vec![1000.0],
+        );
+
+        queue.register_batch_sync_jobs([1, 2]);
+
+        let q = queue.queue.borrow();
+        assert_eq!(batch_status(&queue, 1)["color"], "pending");
+        assert_eq!(q[0].processing_progress, 0.0);
+        assert_eq!(q[0].current_frame, 0);
+    }
+
+    #[test]
     fn render_queue_start_batch_autosync_requeues_finished_sync_only_jobs() {
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
@@ -10598,6 +10707,34 @@ mod tests {
         );
         assert!(qml.contains("render_queue.confirm_batch_sync_repair()"));
         assert!(qml.contains("render_queue.skip_batch_sync_repair()"));
+        assert!(
+            qml.contains("done_pending"),
+            "render queue delegates must show completed-but-unconfirmed batch sync rows"
+        );
+        assert!(
+            qml.contains("syncDonePending ? 1.0"),
+            "done_pending batch sync rows must show 100% progress"
+        );
+        assert!(
+            qml.contains("property bool canStopProgress: isInProgress && !syncDonePending"),
+            "done_pending batch sync rows must not use the Stop/reset action"
+        );
+        assert!(
+            qml.contains("text: canStopProgress? qsTr(\"Stop\") : qsTr(\"Reset status\")"),
+            "Stop label must only be shown for cancellable progress"
+        );
+        assert!(
+            qml.contains("enabled: canResetStatus || canStopProgress"),
+            "done_pending batch sync rows must not enable reset while waiting for batch confirmation"
+        );
+        assert!(
+            qml.contains("function isDonePendingJob(id)"),
+            "multi-selection reset must be able to detect done_pending rows"
+        );
+        assert!(
+            qml.contains("if (dlg.isDonePendingJob(id)) continue;"),
+            "multi-selection reset must skip done_pending rows"
+        );
     }
 
     #[test]

@@ -242,17 +242,50 @@ pub fn get_filename(url: &str) -> String {
             log::error!("Unknown android url scheme: {url}");
         }
 
-        let pathbuf = url_to_pathbuf(url)?;
-        if pathbuf.is_dir() && !pathbuf.to_str().unwrap().ends_with(".RDC") {
-            return Ok(String::new());
+        match url_to_pathbuf(url) {
+            Ok(pathbuf) => {
+                if pathbuf.is_dir() && !pathbuf.to_str().unwrap().ends_with(".RDC") {
+                    return Ok(String::new());
+                }
+                Ok(pathbuf
+                    .file_name()
+                    .ok_or(FilesystemError::NotAFile(url.into()))?
+                    .to_string_lossy()
+                    .to_string())
+            }
+            // Cross-OS URL fallback: Url::to_file_path rejects e.g.
+            // file:///Users/... on Windows (no drive letter), which would
+            // otherwise drop the filename and break the same-folder fallback
+            // in StabilizationManager::get_new_videofile_url.
+            Err(_) => Ok(filename_from_url_string(url)),
         }
-        Ok(pathbuf
-            .file_name()
-            .ok_or(FilesystemError::NotAFile(url.into()))?
-            .to_string_lossy()
-            .to_string())
     }
     result!(inner(url), url)
+}
+
+fn filename_from_url_string(url: &str) -> String {
+    let mut s = url;
+    if let Some(pos) = s.find("://") {
+        let after_scheme = &s[pos + 3..];
+        match after_scheme.find('/') {
+            Some(slash) => s = &after_scheme[slash..],
+            None => return String::new(),
+        }
+    }
+    if let Some(q) = s.find(|c| c == '?' || c == '#') {
+        s = &s[..q];
+    }
+    if s.ends_with('/') || s.ends_with('\\') {
+        return String::new();
+    }
+    let segment = match s.rfind(|c| c == '/' || c == '\\') {
+        Some(i) => &s[i + 1..],
+        None => s,
+    };
+    match urlencoding::decode(segment) {
+        Ok(decoded) => decoded.into_owned(),
+        Err(_) => segment.to_string(),
+    }
 }
 pub fn get_folder(url: &str) -> String {
     fn inner(url: &str) -> Result<String> {
@@ -744,6 +777,87 @@ pub fn folder_access_granted(folder_url: &str) {
     if !already_allowed {
         let mut lock = ALLOWED_FOLDERS.write();
         lock.insert(folder_url);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{filename_from_url_string, get_filename};
+
+    #[test]
+    fn helper_mac_url() {
+        assert_eq!(
+            filename_from_url_string("file:///Users/foo/Videos/clip.mp4"),
+            "clip.mp4"
+        );
+    }
+
+    #[test]
+    fn helper_win_url() {
+        assert_eq!(
+            filename_from_url_string("file:///C:/Users/Foo/Videos/clip.mp4"),
+            "clip.mp4"
+        );
+    }
+
+    #[test]
+    fn helper_unicode_percent() {
+        assert_eq!(
+            filename_from_url_string("file:///Users/foo/Videos/%E6%B5%8B%E8%AF%95.mp4"),
+            "测试.mp4"
+        );
+    }
+
+    #[test]
+    fn helper_space_percent() {
+        assert_eq!(
+            filename_from_url_string("file:///Users/foo/My%20Videos/clip%20final.mp4"),
+            "clip final.mp4"
+        );
+    }
+
+    #[test]
+    fn helper_folder_url_returns_empty() {
+        assert_eq!(filename_from_url_string("file:///Users/foo/Videos/"), "");
+    }
+
+    #[test]
+    fn helper_image_sequence_token() {
+        assert_eq!(
+            filename_from_url_string("file:///Users/foo/Videos/clip_%2504d.png"),
+            "clip_%04d.png"
+        );
+    }
+
+    #[test]
+    fn helper_strips_query_and_fragment() {
+        assert_eq!(
+            filename_from_url_string("file:///Users/foo/Videos/clip.mp4?token=abc"),
+            "clip.mp4"
+        );
+        assert_eq!(
+            filename_from_url_string("file:///Users/foo/Videos/clip.mp4#frag"),
+            "clip.mp4"
+        );
+    }
+
+    #[test]
+    fn get_filename_bare_fast_path() {
+        assert_eq!(get_filename("clip.mp4"), "clip.mp4");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn get_filename_cross_os_uses_fallback_on_windows() {
+        // mac-style URL: Url::to_file_path() fails on Windows -> degraded path runs
+        assert_eq!(
+            get_filename("file:///Users/foo/Videos/clip.mp4"),
+            "clip.mp4"
+        );
+        assert_eq!(
+            get_filename("file:///Users/foo/Videos/%E6%B5%8B%E8%AF%95.mp4"),
+            "测试.mp4"
+        );
     }
 }
 

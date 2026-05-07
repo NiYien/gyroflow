@@ -724,6 +724,10 @@ impl Controller {
 
     fn start_autosync(&mut self, timestamps_fract: String, sync_params: String, mode: String) {
         rendering::clear_log();
+        // Reset the GPU-decode codec blocklist at every Auto-sync entry: a new
+        // press is the user's signal to "try again", giving GPU a fresh chance
+        // even after prior failures in this session.
+        rendering::gpu_codec_blocklist::clear();
 
         let sync_params =
             serde_json::from_str(&sync_params) as serde_json::Result<synchronization::SyncParams>;
@@ -863,133 +867,192 @@ impl Controller {
             let proc_height = self.processing_resolution;
             let gpu_decoding = self.stabilizer.gpu_decoding.load(SeqCst);
             core::run_threaded(move || {
-                let mut frame_no = 0;
-                let mut abs_frame_no = 0;
+                // Probe codec signature so we can consult the GPU blocklist
+                // before attempting decode and record on failure. Probe only
+                // when GPU is even a candidate; if the user has GPU disabled,
+                // we go straight to software without paying probe cost.
+                let codec_sig = if gpu_decoding {
+                    match VideoProcessor::get_video_info(&input_file.url) {
+                        Ok(info) => Some(rendering::gpu_codec_blocklist::CodecSignature::from(&info)),
+                        Err(e) => {
+                            ::log::debug!(
+                                "[autosync] codec signature probe failed: {e:?} (proceeding without blocklist consultation)"
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
 
-                let mut decoder_options = ffmpeg_next::Dictionary::new();
-                if input_file.image_sequence_fps > 0.0 {
-                    let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
-                    decoder_options.set(
-                        "framerate",
-                        &format!("{}/{}", fps.numerator(), fps.denominator()),
-                    );
-                }
-                if input_file.image_sequence_start > 0 {
-                    decoder_options.set(
-                        "start_number",
-                        &format!("{}", input_file.image_sequence_start),
-                    );
-                }
-                if proc_height > 0 {
-                    decoder_options.set(
-                        "scale",
-                        &format!("{}x{}", (proc_height * 16) / 9, proc_height),
-                    );
-                }
-                ::log::debug!("Decoder options: {:?}", decoder_options);
-
+                // Wrap sync in Rc before try_run so the closure captures the Rc
+                // (cheap to clone per attempt) instead of the underlying value.
                 let sync = std::rc::Rc::new(sync);
 
-                match VideoProcessor::from_file(
-                    &input_file.url,
-                    gpu_decoding,
-                    0,
-                    Some(decoder_options),
-                ) {
-                    Ok(mut proc) => {
-                        let err2 = err.clone();
-                        let sync2 = sync.clone();
-                        proc.on_frame(
-                            move |timestamp_us,
-                                  input_frame,
-                                  _output_frame,
-                                  converter,
-                                  _rate_control| {
-                                assert!(_output_frame.is_none());
+                let try_run = |use_gpu: bool, ranges: Vec<(f64, f64)>| -> Result<(), rendering::FFmpegError> {
+                    let mut frame_no = 0;
+                    let mut abs_frame_no = 0;
 
-                                if abs_frame_no % every_nth_frame == 0 {
-                                    let h = if proc_height > 0 {
-                                        proc_height as u32
-                                    } else {
-                                        input_frame.height()
-                                    };
-                                    let ratio = input_frame.height() as f64 / h as f64;
-                                    let sw = (input_frame.width() as f64 / ratio).round() as u32;
-                                    let sh = (input_frame.height() as f64
-                                        / (input_frame.width() as f64 / sw as f64))
-                                        .round()
-                                        as u32;
-                                    // NeuFlow (of_method=3 or 4) needs NV12 for color data;
-                                    // other methods use GRAY8.
-                                    let pix_fmt = if sync2.sync_params.of_method == 3 || sync2.sync_params.of_method == 4 {
-                                        ffmpeg_next::format::Pixel::NV12
-                                    } else {
-                                        ffmpeg_next::format::Pixel::GRAY8
-                                    };
-                                    match converter.scale(
-                                        input_frame,
-                                        pix_fmt,
-                                        sw,
-                                        sh,
-                                    ) {
-                                        Ok(small_frame) => {
-                                            let (width, height, stride, pixels) = if sync2.sync_params.of_method == 3 || sync2.sync_params.of_method == 4 {
-                                                // NV12: pass all planes (Y + UV)
-                                                let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
-                                                              + small_frame.stride(1) * small_frame.plane_height(1) as usize;
-                                                let all_data = {
-                                                    let _g = gyroflow_core::synchronization::sync_perf::StageGuard::new(
-                                                        gyroflow_core::synchronization::sync_perf::Stage::DecodeNv12Concat,
-                                                    );
-                                                    let mut buf = Vec::with_capacity(total_len);
-                                                    buf.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
-                                                    buf.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
-                                                    buf
-                                                };
-                                                (
-                                                    small_frame.plane_width(0),
-                                                    small_frame.plane_height(0),
-                                                    small_frame.stride(0),
-                                                    all_data,
-                                                )
-                                            } else {
-                                                (
-                                                    small_frame.plane_width(0),
-                                                    small_frame.plane_height(0),
-                                                    small_frame.stride(0),
-                                                    small_frame.data(0).to_vec(),
-                                                )
-                                            };
-
-                                            sync2.feed_frame(
-                                                timestamp_us,
-                                                frame_no,
-                                                width,
-                                                height,
-                                                stride,
-                                                &pixels,
-                                            );
-                                        }
-                                        Err(e) => err2((
-                                            "An error occured: %1".to_string(),
-                                            e.to_string(),
-                                        )),
-                                    }
-                                    frame_no += 1;
-                                }
-                                abs_frame_no += 1;
-                                Ok(())
-                            },
+                    let mut decoder_options = ffmpeg_next::Dictionary::new();
+                    if input_file.image_sequence_fps > 0.0 {
+                        let fps = rendering::fps_to_rational(input_file.image_sequence_fps);
+                        decoder_options.set(
+                            "framerate",
+                            &format!("{}/{}", fps.numerator(), fps.denominator()),
                         );
-                        if let Err(e) = proc.start_decoder_only(ranges, cancel_flag.clone()) {
-                            err(("An error occured: %1".to_string(), e.to_string()));
-                        }
-                        sync.finished_feeding_frames();
                     }
-                    Err(error) => {
-                        err(("An error occured: %1".to_string(), error.to_string()));
+                    if input_file.image_sequence_start > 0 {
+                        decoder_options.set(
+                            "start_number",
+                            &format!("{}", input_file.image_sequence_start),
+                        );
                     }
+                    if proc_height > 0 {
+                        decoder_options.set(
+                            "scale",
+                            &format!("{}x{}", (proc_height * 16) / 9, proc_height),
+                        );
+                    }
+                    ::log::debug!("Decoder options: {:?}", decoder_options);
+
+                    let mut proc = VideoProcessor::from_file(
+                        &input_file.url,
+                        use_gpu,
+                        0,
+                        Some(decoder_options),
+                    )?;
+
+                    let err2 = err.clone();
+                    let sync2 = sync.clone();
+                    proc.on_frame(
+                        move |timestamp_us,
+                              input_frame,
+                              _output_frame,
+                              converter,
+                              _rate_control| {
+                            assert!(_output_frame.is_none());
+
+                            if abs_frame_no % every_nth_frame == 0 {
+                                let h = if proc_height > 0 {
+                                    proc_height as u32
+                                } else {
+                                    input_frame.height()
+                                };
+                                let ratio = input_frame.height() as f64 / h as f64;
+                                let sw = (input_frame.width() as f64 / ratio).round() as u32;
+                                let sh = (input_frame.height() as f64
+                                    / (input_frame.width() as f64 / sw as f64))
+                                    .round()
+                                    as u32;
+                                // NeuFlow (of_method=3 or 4) needs NV12 for color data;
+                                // other methods use GRAY8.
+                                let pix_fmt = if sync2.sync_params.of_method == 3 || sync2.sync_params.of_method == 4 {
+                                    ffmpeg_next::format::Pixel::NV12
+                                } else {
+                                    ffmpeg_next::format::Pixel::GRAY8
+                                };
+                                match converter.scale(
+                                    input_frame,
+                                    pix_fmt,
+                                    sw,
+                                    sh,
+                                ) {
+                                    Ok(small_frame) => {
+                                        let (width, height, stride, pixels) = if sync2.sync_params.of_method == 3 || sync2.sync_params.of_method == 4 {
+                                            // NV12: pass all planes (Y + UV)
+                                            let total_len = small_frame.stride(0) * small_frame.plane_height(0) as usize
+                                                          + small_frame.stride(1) * small_frame.plane_height(1) as usize;
+                                            let all_data = {
+                                                let _g = gyroflow_core::synchronization::sync_perf::StageGuard::new(
+                                                    gyroflow_core::synchronization::sync_perf::Stage::DecodeNv12Concat,
+                                                );
+                                                let mut buf = Vec::with_capacity(total_len);
+                                                buf.extend_from_slice(&small_frame.data(0)[..small_frame.stride(0) * small_frame.plane_height(0) as usize]);
+                                                buf.extend_from_slice(&small_frame.data(1)[..small_frame.stride(1) * small_frame.plane_height(1) as usize]);
+                                                buf
+                                            };
+                                            (
+                                                small_frame.plane_width(0),
+                                                small_frame.plane_height(0),
+                                                small_frame.stride(0),
+                                                all_data,
+                                            )
+                                        } else {
+                                            (
+                                                small_frame.plane_width(0),
+                                                small_frame.plane_height(0),
+                                                small_frame.stride(0),
+                                                small_frame.data(0).to_vec(),
+                                            )
+                                        };
+
+                                        sync2.feed_frame(
+                                            timestamp_us,
+                                            frame_no,
+                                            width,
+                                            height,
+                                            stride,
+                                            &pixels,
+                                        );
+                                    }
+                                    Err(e) => err2((
+                                        "An error occured: %1".to_string(),
+                                        e.to_string(),
+                                    )),
+                                }
+                                frame_no += 1;
+                            }
+                            abs_frame_no += 1;
+                            Ok(())
+                        },
+                    );
+                    proc.start_decoder_only(ranges, cancel_flag.clone())
                 };
+
+                // Decide whether to attempt GPU. Blocklist is advisory only when
+                // the user setting allows GPU; if GPU is off we skip the check.
+                let try_gpu = match (gpu_decoding, codec_sig.as_ref()) {
+                    (true, Some(sig)) => {
+                        if rendering::gpu_codec_blocklist::is_blocklisted(sig) {
+                            ::log::info!(
+                                "[autosync] skipping GPU for blocklisted signature {:?}",
+                                sig
+                            );
+                            false
+                        } else {
+                            true
+                        }
+                    }
+                    (true, None) => true,
+                    (false, _) => false,
+                };
+
+                let result = if try_gpu {
+                    match try_run(true, ranges.clone()) {
+                        Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                            if let Some(sig) = codec_sig.clone() {
+                                ::log::info!(
+                                    "[autosync] GPU decode failed for signature {:?}, retrying with software",
+                                    sig
+                                );
+                                rendering::gpu_codec_blocklist::record_failure(sig);
+                            } else {
+                                ::log::info!(
+                                    "[autosync] GPU decode failed (no signature available), retrying with software"
+                                );
+                            }
+                            try_run(false, ranges)
+                        }
+                        other => other,
+                    }
+                } else {
+                    try_run(false, ranges)
+                };
+
+                if let Err(e) = result {
+                    err(("An error occured: %1".to_string(), e.to_string()));
+                }
+                sync.finished_feeding_frames();
             });
         } else {
             let detail = format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
