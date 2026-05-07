@@ -1696,7 +1696,7 @@ Item {
                     BasicText {
                         visible: dlg.hasSyncStatus;
                         text: dlg.syncColor === "green" ? qsTr("Sync confirmed")
-                            : dlg.syncDonePending ? qsTr("Sync complete, waiting for batch confirmation")
+                            : dlg.syncDonePending ? qsTr("Sync complete")
                             : qsTr("Sync not confirmed");
                         color: dlg.syncColor === "green" ? root.finishedStatusColor
                             : dlg.syncDonePending ? root.pendingSyncStatusColor
@@ -1751,7 +1751,7 @@ Item {
                         leftPadding: 0;
                         anchors.horizontalCenter: parent.horizontalCenter;
                         horizontalAlignment: Text.AlignHCenter;
-                        text: syncDonePending ? qsTr("Waiting for batch confirmation")
+                        text: syncDonePending ? qsTr("Sync complete")
                                           : isProcessing? qsTr("Synchronizing...")
                                           : qsTr("Elapsed: %1. Remaining: %2").arg("<b>" + elapsed + "</b>").arg("<b>" + (statusBg.shown? "---" : remaining) + "</b>");
                     }

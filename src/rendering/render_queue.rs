@@ -1330,7 +1330,7 @@ impl RenderQueue {
                 "confirmed_points": 0,
                 "discarded_points": 0,
                 "repair_round": self.batch_sync_repair_round,
-                "message": "Sync completed. Waiting for batch confirmation.",
+                "message": "Sync complete.",
             }).to_string());
             itm.processing_progress = 1.0;
         });
@@ -9001,6 +9001,7 @@ mod tests {
 
         let q = queue.queue.borrow();
         assert_eq!(batch_status(&queue, 1)["color"], "done_pending");
+        assert_eq!(batch_status(&queue, 1)["message"], "Sync complete.");
         assert_eq!(q[0].processing_progress, 1.0);
         assert_eq!(q[0].current_frame, 0);
         assert_eq!(q[0].total_frames, 100);
@@ -10714,6 +10715,11 @@ mod tests {
         assert!(
             qml.contains("syncDonePending ? 1.0"),
             "done_pending batch sync rows must show 100% progress"
+        );
+        assert!(
+            !qml.contains(concat!("Waiting", " for batch confirmation"))
+                && !qml.contains(concat!("waiting", " for batch confirmation")),
+            "done_pending UI must not show the batch-confirmation wait prompt"
         );
         assert!(
             qml.contains("property bool canStopProgress: isInProgress && !syncDonePending"),
