@@ -67,7 +67,7 @@ fn niyien_version_info(base_version: &str, build_time: Option<&str>) -> NiyienVe
         let trimmed = run_number.trim();
         if let Ok(run_number_num) = trimmed.parse::<u64>() {
             return NiyienVersionInfo {
-                canonical: format!("{base_version}-0.ni.{run_number_num}"),
+                canonical: format!("{base_version}-ni.{run_number_num}"),
                 display: format!("{}(ni{})", base_version, padded_run_number(run_number_num)),
                 numeric: format!("{}.{}", numeric_core_version(base_version), run_number_num),
             };
@@ -76,7 +76,7 @@ fn niyien_version_info(base_version: &str, build_time: Option<&str>) -> NiyienVe
 
     let dev_token = build_time.unwrap_or("1").trim();
     NiyienVersionInfo {
-        canonical: format!("{base_version}-0.dev.{dev_token}"),
+        canonical: format!("{base_version}-dev.{dev_token}"),
         display: format!("{base_version}(dev{dev_token})"),
         numeric: format!("{}.1", numeric_core_version(base_version)),
     }

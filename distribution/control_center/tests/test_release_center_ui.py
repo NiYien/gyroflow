@@ -198,10 +198,10 @@ class HiddenManagementApiTests(unittest.TestCase):
     @staticmethod
     def _seed_policy() -> dict:
         return {
-            "auto_version": "1.6.3-0.ni.5",
+            "auto_version": "1.6.3-ni.5",
             "versions": [
                 {
-                    "version": "1.6.3-0.ni.5",
+                    "version": "1.6.3-ni.5",
                     "tag": "v1.6.3-niyien.1",
                     "channels": ["auto", "manual"],
                     "recommended": True,
@@ -209,7 +209,7 @@ class HiddenManagementApiTests(unittest.TestCase):
                     "plugin_tag": "v1.6.3",
                 },
                 {
-                    "version": "1.6.2-0.ni.4",
+                    "version": "1.6.2-ni.4",
                     "tag": "v1.6.2-niyien.1",
                     "channels": ["manual"],
                     "recommended": False,
@@ -217,7 +217,7 @@ class HiddenManagementApiTests(unittest.TestCase):
                     "plugin_tag": "v1.6.2",
                 },
                 {
-                    "version": "1.6.1-0.ni.3",
+                    "version": "1.6.1-ni.3",
                     "tag": "v1.6.1-niyien.1",
                     "channels": ["manual"],
                     "recommended": False,
@@ -234,11 +234,11 @@ class HiddenManagementApiTests(unittest.TestCase):
         api = HiddenManagementApi(self._seed_policy())
         result = api.list_hidden_view_data()
         self.assertTrue(result["ok"], msg=result)
-        self.assertEqual(result["auto_version"], "1.6.3-0.ni.5")
+        self.assertEqual(result["auto_version"], "1.6.3-ni.5")
         self.assertEqual(len(result["app_versions"]), 3)
         # Spot-check first row carries all surfaced fields.
         first = result["app_versions"][0]
-        self.assertEqual(first["version"], "1.6.3-0.ni.5")
+        self.assertEqual(first["version"], "1.6.3-ni.5")
         self.assertEqual(first["tag"], "v1.6.3-niyien.1")
         self.assertEqual(first["channels"], ["auto", "manual"])
         self.assertEqual(first["plugin_tag"], "v1.6.3")
@@ -248,7 +248,7 @@ class HiddenManagementApiTests(unittest.TestCase):
         self.assertEqual(len(result["derived_plugins"]), 3)
         v161 = next(p for p in result["derived_plugins"] if p.get("ref") == "v1.6.1")
         self.assertTrue(v161["hidden"])
-        self.assertEqual(v161["used_by_app_versions"], ["1.6.1-0.ni.3"])
+        self.assertEqual(v161["used_by_app_versions"], ["1.6.1-ni.3"])
         # No orphans: blacklist entry has a matching version row.
         self.assertEqual(result["extra_hidden_plugins"], [])
 
@@ -273,7 +273,7 @@ class HiddenManagementApiTests(unittest.TestCase):
     def test_apply_hidden_changes_rejects_auto_version(self):
         api = HiddenManagementApi(self._seed_policy())
         result = api.apply_hidden_changes({
-            "app_versions_to_hide": ["1.6.3-0.ni.5"],
+            "app_versions_to_hide": ["1.6.3-ni.5"],
             "plugin_keys_to_hide": [],
             "plugin_keys_to_unhide": [],
         })
@@ -287,7 +287,7 @@ class HiddenManagementApiTests(unittest.TestCase):
         # Seed an extra entry so we can hide 2 app + 2 plugin keys at once.
         policy = self._seed_policy()
         policy["versions"].append({
-            "version": "1.5.9-0.ni.2",
+            "version": "1.5.9-ni.2",
             "tag": "v1.5.9-niyien.1",
             "channels": ["manual"],
             "recommended": False,
@@ -297,7 +297,7 @@ class HiddenManagementApiTests(unittest.TestCase):
         })
         api = HiddenManagementApi(policy)
         result = api.apply_hidden_changes({
-            "app_versions_to_hide": ["1.6.2-0.ni.4", "1.5.9-0.ni.2"],
+            "app_versions_to_hide": ["1.6.2-ni.4", "1.5.9-ni.2"],
             "plugin_keys_to_hide": [
                 {"kind": "release", "ref": "v1.6.2"},
                 {"kind": "artifact", "run_id": 1234},
@@ -312,7 +312,7 @@ class HiddenManagementApiTests(unittest.TestCase):
         # Final policy: 2 entries removed, 2 plugin keys appended to blacklist.
         final = api.vercel.current_policy
         version_ids = sorted(v["version"] for v in final["versions"])
-        self.assertEqual(version_ids, ["1.6.1-0.ni.3", "1.6.3-0.ni.5"])
+        self.assertEqual(version_ids, ["1.6.1-ni.3", "1.6.3-ni.5"])
         # hidden_plugins: original v1.6.1 plus the two new keys.
         self.assertEqual(len(final["hidden_plugins"]), 3)
         kinds_refs = sorted(
@@ -339,7 +339,7 @@ class HiddenManagementApiTests(unittest.TestCase):
         # blacklist (deduped), but it MUST still leave entry.plugin_tag intact.
         self.assertTrue(result["ok"], msg=result)
         final = api.vercel.current_policy
-        v161_entry = next(v for v in final["versions"] if v["version"] == "1.6.1-0.ni.3")
+        v161_entry = next(v for v in final["versions"] if v["version"] == "1.6.1-ni.3")
         self.assertEqual(v161_entry["plugin_tag"], "v1.6.1")
         # And the blacklist did not duplicate.
         self.assertEqual(len(final["hidden_plugins"]), 1)

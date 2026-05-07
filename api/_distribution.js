@@ -190,12 +190,11 @@ function selectSource(config, country) {
 }
 
 function getDefaultAppVersion() {
-  // Canonical format matches build.rs:57-83 (distribution/control_center plan):
-  //   Tag build          →  "1.6.3"
-  //   Action build N     →  "1.6.3-0.ni.N"
-  // Keep -0.ni.1 as the fallback so has_app_update() in distribution.rs
-  // has a valid prerelease that compares lower than a real tagged release.
-  return process.env.NIYIEN_APP_VERSION || `${process.env.npm_package_version || "1.6.3"}-0.ni.1`;
+  // Canonical format matches build.rs / _scripts/niyien_version.py:
+  //   Tag build       →  "1.6.4"            (bare base, first release of that base)
+  //   Action build N  →  "1.6.4-ni.N"       (later than bare base under niyien comparator)
+  //   Local dev       →  "1.6.4-dev.<TS>"
+  return process.env.NIYIEN_APP_VERSION || `${process.env.npm_package_version || "1.6.3"}-ni.1`;
 }
 
 function getDefaultReleaseTag(version) {

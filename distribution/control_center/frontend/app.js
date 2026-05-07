@@ -1161,12 +1161,12 @@ function selectSourceItem(el, items) {
     entry = items.find(x => String(x.run_id) === el.dataset.runId);
     publishState.selected = { kind: 'artifact', ...entry };
     // Keep existing major/minor/patch, set suffix based on run_number
-    document.getElementById('pub-suffix').textContent = `-0.ni.${entry.run_number}`;
+    document.getElementById('pub-suffix').textContent = `-ni.${entry.run_number}`;
     document.getElementById('pub-changelog').value = entry.title || '';
   } else if (kind === 'orphan') {
     entry = items.find(x => x.version === el.dataset.version);
     publishState.selected = { kind: 'orphan', ...entry };
-    // Auto-fill version digits from entry.version (e.g. "1.6.3-0.ni.5")
+    // Auto-fill version digits from entry.version (e.g. "1.6.3-ni.5")
     const v = String(entry.version || '').split(/[-.]/);
     document.getElementById('pub-major').value = v[0] || '0';
     document.getElementById('pub-minor').value = v[1] || '0';
@@ -1485,7 +1485,7 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
   const pat = document.getElementById('pub-patch').value;
   const suffix = document.getElementById('pub-suffix').textContent || '';
   // For orphan entries, use the original full version string from the policy
-  // entry (it may contain pre-release/build suffix like `-0.ni.5` that the
+  // entry (it may contain pre-release/build suffix like `-ni.5` that the
   // 3-int form can't reconstruct). Without this, hide_version would diff
   // against a truncated key and leave the orphan in place.
   const version = publishState.selected.kind === 'orphan'
@@ -1658,9 +1658,47 @@ async function loadResourcesState() {
     statusEl.className = 'text-sm mb-4 text-slate-500';
     resourcesState.loaded = true;
     fillReleasePlanFieldsFromResourcesPayload(r);
+    // Best-effort: when the publish-plan inputs are still empty after
+    // pulling Vercel envs (typical first-publish on a fresh deploy),
+    // fetch the upstream latest tags and fill the blanks. Avoids the
+    // narrow-scope guard in _start_pan123_publish refusing to run.
+    autoFillResourceTagsIfEmpty().catch(() => {});
   } catch (e) {
     statusEl.textContent = `调用失败: ${e}`;
     statusEl.className = 'text-sm mb-4 text-red-600';
+  }
+}
+
+async function autoFillResourceTagsIfEmpty() {
+  const lensEl = document.getElementById('plan-lens-tag');
+  const pluginEl = document.getElementById('plan-plugin-tag');
+  const sdkEl = document.getElementById('plan-sdk-base');
+  const lensEmpty = lensEl && !lensEl.value.trim();
+  // Plugin artifact mode has its own selectable list — only auto-fill
+  // the release-mode plugin_tag input.
+  const pluginEmpty = pluginEl
+    && !pluginEl.value.trim()
+    && (releasePlanState.pluginMode || 'release') === 'release';
+  const sdkEmpty = sdkEl && !sdkEl.value.trim();
+  if (!lensEmpty && !pluginEmpty && !sdkEmpty) return;
+  try {
+    const r = await pywebview.api.get_latest_resource_tags();
+    if (!r || !r.ok) return;
+    if (lensEmpty && r.lens_tag) {
+      lensEl.value = r.lens_tag;
+      lensEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (pluginEmpty && r.plugin_tag) {
+      pluginEl.value = r.plugin_tag;
+      pluginEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    if (sdkEmpty && r.sdk_base) {
+      sdkEl.value = r.sdk_base;
+      sdkEl.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    refreshReleasePlanChecklist();
+  } catch (e) {
+    console.warn('autoFillResourceTagsIfEmpty failed:', e);
   }
 }
 

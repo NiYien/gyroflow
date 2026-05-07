@@ -227,7 +227,7 @@ python C:\Users\Jhe\Desktop\github\gyroflow\distribution\control_center\control_
 
 - `Tag = v1.6.3`
 
-然后直接创建并推送。**注意**：打 tag 时不带 `-0.ni.N` 后缀 —— 该后缀是 `build.rs` 对非 tag 构建（Action workflow_dispatch）自动追加的，用户无需手填。
+然后直接创建并推送。**注意**：tag 必须是裸 `vX.Y.Z`，任何带后缀（`-niyien.1`、`-beta1`、`-rc1` 等）都会被 `release.yml::validate-tag` 直接拒绝构建。`-ni.<RUN_NUMBER>` 是 `build.rs` 对非 tag 构建（Action workflow_dispatch）自动追加的 schema，用户无需手填。
 
 #### 方式 B：直接填 Tag
 

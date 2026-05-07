@@ -85,7 +85,7 @@ def resolve_version_info(repo_root: pathlib.Path) -> dict[str, str]:
         return {
             "kind": "action",
             "base": base,
-            "canonical": f"{base}-0.ni.{run_number}",
+            "canonical": f"{base}-ni.{run_number}",
             "display": f"{base}(ni{padded_run_number(run_number)})",
             "numeric_core": numeric_core(base),
             "file": numeric,
@@ -95,7 +95,7 @@ def resolve_version_info(repo_root: pathlib.Path) -> dict[str, str]:
     return {
         "kind": "dev",
         "base": base,
-        "canonical": f"{base}-0.dev.{build_time}",
+        "canonical": f"{base}-dev.{build_time}",
         "display": f"{base}(dev{build_time})",
         "numeric_core": numeric_core(base),
         "file": f"{numeric_core(base)}.1",

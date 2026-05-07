@@ -19,7 +19,26 @@ permissions:
   artifact-metadata: read
 
 jobs:
+  validate-tag:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      # Niyien canonical schema requires release tags to be bare base versions
+      # (e.g. v1.6.4). Suffixes like v1.6.4-niyien.1 are reserved for the
+      # actions-run schema (X.Y.Z-ni.<RUN_NUMBER>) emitted by build.rs and
+      # would collide with the custom comparator in src/distribution.rs.
+      - name: Validate tag name
+        run: |
+          tag='${{ github.ref_name }}'
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag $tag does not match ^v[0-9]+\\.[0-9]+\\.[0-9]+$ (bare base only)." >&2
+            echo "Suffixed pre-release tags are not allowed. Trigger workflow_dispatch instead." >&2
+            exit 1
+          fi
+
   build:
+    needs: [validate-tag]
+    if: ${{ always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped') }}
     strategy:
       fail-fast: false
       # Linux remains paused; Android APK publishing is restored.

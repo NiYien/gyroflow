@@ -126,7 +126,7 @@ https://download.niyien.com/releases/<tag>/...
       "recommended": true
     },
     {
-      "version": "1.6.3-0.ni.7",
+      "version": "1.6.3-ni.7",
       "tag": "run-12345678",
       "channels": ["manual"],
       "changelog": "小更新，仅手动可见 (GitHub Action artifact)",
@@ -136,10 +136,10 @@ https://download.niyien.com/releases/<tag>/...
 }
 ```
 
-> 版本号格式说明：`build.rs:57-83` 生成的 canonical 有两种 —
-> tag 构建用纯主版本 `1.6.3`；Action 构建用 `<major>.<minor>.<patch>-0.ni.<GITHUB_RUN_NUMBER>`。
-> `control_center` 发布到 `NIYIEN_RELEASE_POLICY_JSON` 的 `version` 字段必须严格采用这两种格式之一，
-> 否则客户端 `distribution.rs::has_app_update()` 会走 semver pre-release 比较，导致每次启动都误报"有新版"。
+> 版本号格式说明：`build.rs:57-83` 生成的 canonical 有三种 —
+> tag 构建用纯主版本 `1.6.3`；Action 构建用 `<major>.<minor>.<patch>-ni.<GITHUB_RUN_NUMBER>`；本地 dev 构建用 `<base>-dev.<BUILD_TIME>`。
+> `control_center` 发布到 `NIYIEN_RELEASE_POLICY_JSON` 的 `version` 字段必须严格采用上述格式之一。
+> 客户端 `distribution.rs::has_app_update()` 使用自定义 niyien 比较器（**不**是 SemVer 默认）：跨 base 看 (major,minor,patch)；同 base 内"裸 base < 任何带后缀 build"；同 schema 按尾部数字递增；跨 schema 时 `ni > dev`。
 
 ## 5. 首次部署
 
@@ -226,7 +226,7 @@ NIYIEN_MIRROR_PATH=/data/www/download.niyien.com/releases
 v1.6.3
 ```
 
-（打 tag 时不带 `-0.ni.N` 后缀。`-0.ni.<RUN_NUMBER>` 是 build.rs 对非 tag 构建自动追加的，用户无需也不应该在 tag 名里手动写。）
+（tag 必须是裸 `vX.Y.Z`，任何带后缀（`-niyien.1`、`-beta1`、`-rc1` 等）的 tag 都会被 `release.yml::validate-tag` 直接拒掉。`-ni.<RUN_NUMBER>` 是 build.rs 对非 tag 构建自动追加的 schema，用户无需也不应该在 tag 名里手动写。需要灰度时走 workflow_dispatch + control_center 在 `manual` channel 发 `-ni.<N>`。）
 
 产物：
 

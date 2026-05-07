@@ -760,8 +760,96 @@ fn compare_app_versions(a: &str, b: &str) -> Ordering {
     }
 }
 
-fn parse_app_version(version: &str) -> Option<semver::Version> {
-    semver::Version::parse(version.trim().trim_start_matches('v')).ok()
+// NiYien custom version ordering. Rejects SemVer's "release > pre-release"
+// rule because for niyien builds the bare base (e.g. "1.6.3") is the first
+// release of that base and any "<base>-<schema>.<N>" build is a later one.
+//
+// Cross-base: pure (major, minor, patch) numeric comparison. Suffix never
+// influences cross-base ordering, so 1.6.4 > 1.6.3-ni.999.
+//
+// Same base: bare base < any suffixed build. Within the same suffix schema
+// (ni / dev), the trailing integer is compared numerically so ni.28 > ni.27.
+// Across schemas, "ni" outranks "dev" so a CI build always beats a local
+// dev build at the same base.
+#[derive(Debug, PartialEq, Eq)]
+struct NiyienVersion {
+    base: (u64, u64, u64),
+    suffix: Option<NiyienSuffix>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct NiyienSuffix {
+    schema: String,
+    sequence: Option<u64>,
+    raw: String,
+}
+
+fn parse_app_version(version: &str) -> Option<NiyienVersion> {
+    let trimmed = version.trim().trim_start_matches('v');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let (base_str, suffix_str) = match trimmed.split_once('-') {
+        Some((b, s)) => (b, Some(s)),
+        None => (trimmed, None),
+    };
+    let mut parts = base_str.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    let minor = parts.next()?.parse::<u64>().ok()?;
+    let patch = parts.next()?.parse::<u64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    let suffix = suffix_str.map(|raw| {
+        let (schema, seq) = match raw.split_once('.') {
+            Some((k, n)) => (k.to_owned(), n.parse::<u64>().ok()),
+            None => (raw.to_owned(), None),
+        };
+        NiyienSuffix {
+            schema,
+            sequence: seq,
+            raw: raw.to_owned(),
+        }
+    });
+    Some(NiyienVersion {
+        base: (major, minor, patch),
+        suffix,
+    })
+}
+
+fn schema_priority(schema: &str) -> u8 {
+    // Higher number = newer at the same base. Extend when adding schemas.
+    match schema {
+        "ni" => 2,
+        "dev" => 1,
+        _ => 0,
+    }
+}
+
+fn cmp_niyien(a: &NiyienVersion, b: &NiyienVersion) -> Ordering {
+    a.base.cmp(&b.base).then_with(|| match (&a.suffix, &b.suffix) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Less,
+        (Some(_), None) => Ordering::Greater,
+        (Some(x), Some(y)) => schema_priority(&x.schema)
+            .cmp(&schema_priority(&y.schema))
+            .then_with(|| match (x.sequence, y.sequence) {
+                (Some(xn), Some(yn)) => xn.cmp(&yn),
+                _ => x.raw.cmp(&y.raw),
+            }),
+    })
+}
+
+impl Ord for NiyienVersion {
+    fn cmp(&self, other: &Self) -> Ordering {
+        cmp_niyien(self, other)
+    }
+}
+
+impl PartialOrd for NiyienVersion {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 pub fn app_update_package_for_platform(
@@ -1940,10 +2028,25 @@ mod app_update_tests {
 
     #[test]
     fn app_version_compare_requires_candidate_to_be_newer() {
+        // Cross-base: numeric (major, minor, patch) only; suffix never wins across base.
         assert!(app_version_is_newer_than("1.6.4", "1.6.3"));
         assert!(app_version_is_newer_than("v1.6.4", "1.6.3"));
-        assert!(app_version_is_newer_than("1.6.4-0.ni.7", "1.6.3"));
-        assert!(!app_version_is_newer_than("1.6.3-0.ni.7", "1.6.3"));
+        assert!(app_version_is_newer_than("1.6.4-ni.1", "1.6.3-ni.999"));
+        assert!(!app_version_is_newer_than("1.6.3-ni.999", "1.6.4"));
+
+        // Same base: bare base is the FIRST release of that base, any suffix is later.
+        assert!(app_version_is_newer_than("1.6.3-ni.1", "1.6.3"));
+        assert!(!app_version_is_newer_than("1.6.3", "1.6.3-ni.1"));
+
+        // Same base + same schema: numeric on the trailing sequence.
+        assert!(app_version_is_newer_than("1.6.3-ni.28", "1.6.3-ni.27"));
+        assert!(!app_version_is_newer_than("1.6.3-ni.27", "1.6.3-ni.28"));
+
+        // Same base + cross schema: ni > dev.
+        assert!(app_version_is_newer_than("1.6.3-ni.1", "1.6.3-dev.42"));
+        assert!(!app_version_is_newer_than("1.6.3-dev.42", "1.6.3-ni.1"));
+
+        // Equal / older / unparseable.
         assert!(!app_version_is_newer_than("1.6.3", "1.6.3"));
         assert!(!app_version_is_newer_than("1.6.2", "1.6.3"));
         assert!(!app_version_is_newer_than("not-a-version", "1.6.3"));
@@ -1956,8 +2059,8 @@ mod app_update_tests {
                 "app": {
                     "manual_versions": [
                         { "version": "0.0.1", "changelog": "old" },
-                        { "version": "9999.9.7-0.ni.10", "changelog": "older test" },
-                        { "version": "9999.9.9-0.ni.1", "changelog": "latest test" },
+                        { "version": "9999.9.7-ni.10", "changelog": "older test" },
+                        { "version": "9999.9.9-ni.1", "changelog": "latest test" },
                         { "version": "9999.9.8", "changelog": "older stable" }
                     ]
                 }
@@ -1966,7 +2069,7 @@ mod app_update_tests {
         .unwrap();
 
         let manual = latest_manual_app_update(&manifest).unwrap();
-        assert_eq!(manual.version, "9999.9.9-0.ni.1");
+        assert_eq!(manual.version, "9999.9.9-ni.1");
         assert_eq!(manual.changelog, "latest test");
     }
 
@@ -1978,8 +2081,8 @@ mod app_update_tests {
                     "version": "9999.9.8",
                     "changelog": "stable update",
                     "manual_versions": [
-                        { "version": "9999.9.7-0.ni.10", "changelog": "older test" },
-                        { "version": "9999.9.9-0.ni.1", "changelog": "latest test" }
+                        { "version": "9999.9.7-ni.10", "changelog": "older test" },
+                        { "version": "9999.9.9-ni.1", "changelog": "latest test" }
                     ]
                 }
             }"#,
@@ -1992,7 +2095,7 @@ mod app_update_tests {
         assert_eq!(candidates[0].version, "9999.9.8");
         assert_eq!(candidates[0].changelog, "stable update");
         assert_eq!(candidates[1].channel, "manual");
-        assert_eq!(candidates[1].version, "9999.9.9-0.ni.1");
+        assert_eq!(candidates[1].version, "9999.9.9-ni.1");
         assert_eq!(candidates[1].changelog, "latest test");
     }
 
@@ -2044,7 +2147,7 @@ mod app_update_tests {
                     "url": "https://example.test/stable.exe",
                     "manual_versions": [
                         {
-                            "version": "9.9.9-0.ni.1",
+                            "version": "9.9.9-ni.1",
                             "url": "https://example.test/test.exe"
                         }
                     ]

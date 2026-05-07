@@ -495,7 +495,7 @@ class PluginBundleSelectionTests(unittest.TestCase):
             {
                 "action": "publish_and_push",
                 "source_kind": "artifact",
-                "version": "1.2.3-0.ni.7",
+                "version": "1.2.3-ni.7",
                 "run_id": 55,
                 "changelog": "release notes",
                 "recommended": True,
@@ -515,7 +515,7 @@ class PluginBundleSelectionTests(unittest.TestCase):
         self.assertEqual(len(api.pan123_calls), 1)
         call = api.pan123_calls[0]
         self.assertEqual(call["app_tag"], "run-55")
-        self.assertEqual(call["app_version"], "1.2.3-0.ni.7")
+        self.assertEqual(call["app_version"], "1.2.3-ni.7")
         self.assertEqual(call["app_run_id"], 55)
         self.assertEqual(call["scope"], ["app", "lens", "plugin"])
         self.assertEqual(
@@ -556,7 +556,7 @@ class PluginBundleSelectionTests(unittest.TestCase):
         self.assertEqual(upsert["NIYIEN_SDK_BASE"], "https://download.example.test/sdk/")
         self.assertEqual(upsert["NIYIEN_SDK_DISABLED"], "")
         policy_json = upsert["NIYIEN_RELEASE_POLICY_JSON"]
-        self.assertIn('"auto_version": "1.2.3-0.ni.7"', policy_json)
+        self.assertIn('"auto_version": "1.2.3-ni.7"', policy_json)
         self.assertIn('"tag": "run-55"', policy_json)
         self.assertIn('"lens_tag": "lens-hash"', policy_json)
         self.assertIn('"plugin_tag": "plugin-hash"', policy_json)

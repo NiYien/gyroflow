@@ -1421,6 +1421,62 @@ class Api:
         except Exception as e:
             return _error(e, "get_resources_state")
 
+    def get_latest_resource_tags(self) -> dict:
+        """Best-effort latest tag lookup for the publish-plan UI.
+
+        When NIYIEN_LENS_RELEASE_TAG / NIYIEN_PLUGINS_TAG are empty (first
+        publish on a fresh deploy), the publish-plan inputs would otherwise
+        stay blank and trip the `_start_pan123_publish` narrow-scope guard.
+        This API gives the frontend a "fill the blank with the upstream
+        latest release" suggestion so the operator can just click submit.
+
+        Returns {ok, lens_tag, plugin_tag, sdk_base, errors}. Per-resource
+        failures populate `errors[resource]` but never throw — callers
+        always get a complete shape, with empty strings for unavailable
+        sources.
+        """
+        DEFAULT_SDK_BASE = "https://api.gyroflow.xyz/sdk/"
+        out: dict = {
+            "ok": True,
+            "lens_tag": "",
+            "plugin_tag": "",
+            "sdk_base": DEFAULT_SDK_BASE,
+            "errors": {},
+        }
+        try:
+            cfg = config_module.load_config()
+        except Exception as e:
+            return _error(e, "get_latest_resource_tags")
+        try:
+            owner = str(cfg.get("lens_data_owner", "")).strip()
+            repo = str(cfg.get("lens_data_repo", "")).strip()
+            if owner and repo:
+                releases = self._gh_for(owner, repo, cfg).list_repo_releases(owner, repo)
+                latest = next(
+                    (r for r in releases
+                     if not r.get("draft") and not r.get("prerelease")),
+                    releases[0] if releases else None,
+                )
+                if latest:
+                    out["lens_tag"] = str(latest.get("tag_name", "")).strip()
+        except Exception as e:
+            out["errors"]["lens"] = f"{e.__class__.__name__}: {e}"
+        try:
+            owner = str(cfg.get("plugins_owner", "")).strip()
+            repo = str(cfg.get("plugins_repo", "")).strip()
+            if owner and repo:
+                releases = self._gh_for(owner, repo, cfg).list_repo_releases(owner, repo)
+                latest = next(
+                    (r for r in releases
+                     if not r.get("draft") and not r.get("prerelease")),
+                    releases[0] if releases else None,
+                )
+                if latest:
+                    out["plugin_tag"] = str(latest.get("tag_name", "")).strip()
+        except Exception as e:
+            out["errors"]["plugin"] = f"{e.__class__.__name__}: {e}"
+        return out
+
     def _fetch_lens_metadata_for_tag(self, cfg: dict, lens_tag: str) -> dict:
         """Read lens release's metadata.json to extract version + sha256.
 
