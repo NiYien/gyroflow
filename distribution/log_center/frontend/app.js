@@ -276,7 +276,7 @@
         if (mech.startsWith("file:")) {
           toast(`剪贴板工具不可用；已保存到 ${mech.slice(5)}`, "warn", 6000);
         } else {
-          toast(`Prompt 已复制（${res.data.chars} 字符），粘贴到 Claude 即可。`, "success");
+          toast(`Prompt 已复制（${res.data.chars} 字符），粘贴到 Codex 即可。`, "success");
         }
       } catch (e) {
         toast("复制 prompt 失败：" + e.message, "error");

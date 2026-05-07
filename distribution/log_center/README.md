@@ -11,16 +11,15 @@ Built on **pywebview + Python + vanilla HTML/JS** — no Node, no bundler.
 2. Downloads each bundle from the appropriate backend
    (Cloudflare R2 for `region == "global"`, 123 网盘 for `region == "cn"`).
 3. Auto-extracts the zip into a local cache directory you can browse.
-4. One-click **Copy prompt for Claude**: substitutes the bundle's manifest,
-   log tail, incidents, and `.gyroflow` summary into a markdown template
-   on the system clipboard so you can paste straight into a Claude chat.
+4. One-click **Copy prompt for Codex**: substitutes the extracted bundle
+   directory, user summary, app version, OS, and GPU into a markdown
+   template on the system clipboard.
 5. Single or batch deletion that cleans **R2/123 + Upstash KV + local
    cache** in one shot.
 
 ## Prerequisites
 
-- **Python 3.10+** (Windows builds bundle `tkinter` for the clipboard
-  fallback — works out of the box).
+- **Python 3.10+**.
 - `pip` reachable from your shell.
 - Credentials with read+delete scope for:
   - Cloudflare R2 (the `gyroflow-feedback` bucket)
@@ -35,8 +34,9 @@ cd distribution/log_center
 pip install -r requirements.txt
 ```
 
-`requirements.txt` pulls `pywebview`, `boto3`, `requests`. If you
-also want `.zst`-inside-zip auto-decompression (Phase 4 client default):
+`requirements.txt` pulls `pywebview`, `boto3`, `requests`, and
+`pyperclip`. If you also want `.zst`-inside-zip auto-decompression
+(Phase 4 client default):
 
 ```bash
 pip install zstandard
@@ -94,7 +94,7 @@ LOG_CENTER_DEBUG=1 python log_center.py
    extracted directory stays.
 4. **Open local** — opens that directory in your OS file manager.
 5. **Copy prompt** — renders `templates/analyze.md` with this row's
-   data and copies the markdown to your clipboard. Paste it into Claude.
+   data and copies the markdown to your clipboard. Paste it into Codex.
 6. **Notes** — type into the textarea inside the Summary cell; it
    auto-saves to the local sqlite (never uploaded).
 7. **Delete** — confirms, then removes from R2/123 + KV + local cache.
@@ -124,10 +124,9 @@ distribution/log_center/
 
 ## Templates
 
-`templates/analyze.md` is the seed Claude prompt. Edit freely — the
-substituted placeholders are: `{user_summary}`, `{email}`,
-`{app_version}`, `{os}`, `{gpu}`, `{log_current}` (last 50 KB),
-`{incidents}`, `{project_summary}` (markdown summary of `.gyroflow`).
+`templates/analyze.md` is the seed Codex prompt. Edit freely — the
+substituted placeholders are: `{feedback_dir}`, `{user_summary}`,
+`{app_version}`, `{os}`, `{gpu}`.
 
 ## Troubleshooting
 
@@ -141,7 +140,7 @@ substituted placeholders are: `{user_summary}`, `{email}`,
   account as the uploader. If feedback was uploaded under different
   credentials than your tool's, you'll see this. Double-check
   `PAN123_CLIENT_ID` matches the one vercel uses.
-- **Clipboard fallback to a file** → no Tk/pbcopy/xclip/wl-copy
+- **Clipboard fallback to a file** → no pyperclip/pbcopy/xclip/wl-copy
   available. The path the prompt was written to appears in the toast.
 - **`pywebview` window is blank on Linux** → install
   `python3-gi gir1.2-webkit2-4.1` (or `gir1.2-webkit2-4.0`).

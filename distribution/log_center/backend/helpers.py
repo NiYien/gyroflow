@@ -6,7 +6,7 @@ log tail, and clipboard write.
 
 Clipboard fallback: pywebview lacks a stable cross-platform clipboard
 API across all backends, so we use the platform shims below
-(Windows tkinter, macOS pbcopy, Linux xclip / wl-copy) and fall back to
+(Windows pyperclip, macOS pbcopy, Linux xclip / wl-copy) and fall back to
 writing a ``clipboard_fallback.txt`` next to the cache root.
 """
 
@@ -234,7 +234,8 @@ def summarize_gyroflow_project(path: Path) -> str:
 
 def clipboard_set(text: str, *, fallback_dir: Optional[Path] = None) -> str:
     """Best-effort clipboard write. Returns the actual mechanism used:
-    ``"win"`` / ``"mac"`` / ``"xclip"`` / ``"wl-copy"`` / ``"file:<path>"``.
+    ``"pyperclip"`` / ``"mac"`` / ``"xclip"`` / ``"wl-copy"`` /
+    ``"file:<path>"``.
 
     If every native shim fails we drop the text into
     ``<fallback_dir>/clipboard_fallback.txt`` and return that path so the
@@ -242,18 +243,11 @@ def clipboard_set(text: str, *, fallback_dir: Optional[Path] = None) -> str:
     """
     if sys.platform == "win32":
         try:
-            import tkinter  # part of stdlib on Windows builds
-            r = tkinter.Tk()
-            r.withdraw()
-            r.clipboard_clear()
-            r.clipboard_append(text)
-            # update() forces tk to push the data to the OS clipboard
-            # before we destroy the root.
-            r.update()
-            r.destroy()
-            return "win"
+            import pyperclip
+            pyperclip.copy(text)
+            return "pyperclip"
         except Exception as exc:
-            print(f"[log_center.helpers] tk clipboard failed: {exc}", file=sys.stderr)
+            print(f"[log_center.helpers] pyperclip clipboard failed: {exc}", file=sys.stderr)
     elif sys.platform == "darwin":
         try:
             p = subprocess.Popen(["pbcopy"], stdin=subprocess.PIPE)

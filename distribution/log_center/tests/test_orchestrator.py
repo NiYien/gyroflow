@@ -16,6 +16,7 @@ from backend.config import (  # noqa: E402
     Config, Pan123Config, R2Config, UpstashKvConfig,
 )
 from backend.index import IndexDB  # noqa: E402
+from backend import orchestrator as orchestrator_module  # noqa: E402
 from backend.orchestrator import BackendAPI  # noqa: E402
 
 
@@ -171,26 +172,41 @@ def test_delete_one_routes_per_region(tmp_path):
     assert any(lk[0] == "fb:index:20260502" and lk[1] == "20260502-cnx" for lk in fakes["kv"].lrems)
 
 
-def test_copy_prompt_renders(tmp_path):
+def test_copy_prompt_renders_directory_prompt(tmp_path, monkeypatch):
     items = [{
         "id": "20260502-glo", "region": "global",
         "ts": "2026-05-02T12:00:00Z",
         "size": 100, "bucket_path": "feedback/20260502/glo.zip",
         "summary": "row summary", "email": "row@example.com",
     }]
+    copied = {}
+
+    def fake_clipboard_set(text, *, fallback_dir=None):
+        copied["text"] = text
+        return "test"
+
+    monkeypatch.setattr(orchestrator_module, "clipboard_set", fake_clipboard_set)
+
     backend, _ = _build_backend(tmp_path, items)
     backend.refresh()
-    backend.download_one("20260502-glo")
+    download = backend.download_one("20260502-glo")
+    assert download["ok"], download
+    extracted = Path(download["data"]["download_path"])
     res = backend.copy_prompt("20260502-glo")
     assert res["ok"], res
-    # Either real clipboard OK or fallback file path.
-    mech = res["data"]["mechanism"]
-    assert mech in ("win", "mac", "xclip", "wl-copy") or mech.startswith("file:")
-    # If clipboard fell back to a file, read it; otherwise check chars > 0.
-    if mech.startswith("file:"):
-        text = Path(mech[5:]).read_text(encoding="utf-8")
-        assert "from manifest" in text  # manifest.json wins over sqlite row
-        assert "log line" in text
-    else:
-        assert res["data"]["chars"] > 200
-        assert "Gyroflow maintainer" in res["data"]["preview"]
+    assert res["data"]["mechanism"] == "test"
+    text = copied["text"]
+
+    assert str(extracted) in text
+    assert "from manifest" in text
+    assert "1.6.3" in text
+    assert "Windows 11" in text
+    assert "NVIDIA" in text
+
+    assert "row@example.com" not in text
+    assert "m@example.com" not in text
+    assert "log line" not in text
+    assert "WARN something" not in text
+    assert "Tail of the current session log" not in text
+    assert "incidents.log" not in text
+    assert ".gyroflow project" not in text

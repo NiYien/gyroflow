@@ -1,6 +1,8 @@
 # NiYien log_center (Phase 5 feedback management tool) — runtime deps.
 # Keep minimal: pywebview for the GUI shell, boto3 for R2 (S3-compatible),
-# requests for niyien admin API + 123 OpenAPI + Upstash REST.
+# requests for niyien admin API + 123 OpenAPI + Upstash REST, pyperclip
+# for reliable Windows clipboard writes from pywebview/pythonw.
 pywebview>=5.0
 boto3>=1.34
 requests>=2.31
+pyperclip>=1.9

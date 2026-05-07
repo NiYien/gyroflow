@@ -23,12 +23,9 @@ from .helpers import (
     directory_size,
     extract_zip,
     find_first_existing,
-    find_first_with_suffix,
     human_size,
     open_in_file_manager,
     safe_rmtree,
-    summarize_gyroflow_project,
-    tail_text_file,
 )
 from .index import IndexDB
 from .kv import UpstashKvClient, UpstashKvError
@@ -37,7 +34,6 @@ from .r2 import R2Client
 
 
 PROMPT_TEMPLATE_PATH = Path(__file__).resolve().parent.parent / "templates" / "analyze.md"
-LOG_TAIL_BYTES = 50 * 1024  # 50 KB per design D8
 
 
 def _ok(data: Any = None) -> dict[str, Any]:
@@ -398,30 +394,14 @@ class BackendAPI:
             except Exception:
                 manifest = {}
 
-        log_path = find_first_existing(root, ["logs/current-session.log", "current-session.log"])
-        incidents_path = find_first_existing(root, ["logs/incidents.log", "incidents.log"])
-        project_path = find_first_with_suffix(root, ".gyroflow")
-
-        log_current = tail_text_file(log_path, LOG_TAIL_BYTES) if log_path else "(not present)"
-        if incidents_path and incidents_path.exists():
-            incidents = incidents_path.read_text(encoding="utf-8", errors="replace")
-        else:
-            incidents = "(not present)"
-        project_summary = (
-            summarize_gyroflow_project(project_path) if project_path else "(not present)"
-        )
-
         substitutions = {
+            "feedback_dir": str(root),
             "user_summary": (
                 manifest.get("summary") or row.get("summary") or "(no summary)"
             ),
-            "email": manifest.get("email") or row.get("email") or "(none)",
             "app_version": manifest.get("app_version") or row.get("app_version") or "(unknown)",
             "os": manifest.get("os") or row.get("os") or "(unknown)",
             "gpu": manifest.get("gpu") or row.get("gpu") or "(unknown)",
-            "log_current": log_current or "(empty)",
-            "incidents": incidents or "(empty)",
-            "project_summary": project_summary or "(none)",
         }
         try:
             template = PROMPT_TEMPLATE_PATH.read_text(encoding="utf-8")
