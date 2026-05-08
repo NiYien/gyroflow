@@ -2093,7 +2093,12 @@ Item {
             // queued, so sorting here would always be a no-op.
         }
         onLoadFiles: (urls) => {
-            if (!urls.length) return;
+            const inputCount = urls.length;
+            console.log("[queue_drop:drop] urls=" + inputCount);
+            if (!inputCount) {
+                console.log("[queue_drop:drop] reason=no_urls");
+                return;
+            }
             // [queue-pair-ux T4] 分类文件：_mix.bin 为陀螺仪文件，无扩展名尝试作为文件夹，其他为视频
             try {
                 let urlStrings = [];
@@ -2105,7 +2110,11 @@ Item {
             } catch (e) {
                 console.log("filter_supported_drop_items failed:", e);
             }
-            if (!urls.length) return;
+            console.log("[queue_drop:filter] input=" + inputCount + " filtered=" + urls.length);
+            if (!urls.length) {
+                console.log("[queue_drop:drop] reason=filtered_empty");
+                return;
+            }
             let videoUrls = [];
             for (const url of urls) {
                 const fname = filesystem.get_filename(url).toLowerCase();
@@ -2147,7 +2156,11 @@ Item {
                     videoUrls.push(url);
                 }
             }
-            if (!videoUrls.length) return;
+            if (!videoUrls.length) {
+                console.log("[queue_drop:drop] reason=no_video_urls filtered=" + urls.length);
+                return;
+            }
+            console.log("[queue_drop:queue] queued=" + videoUrls.length);
             const firstVideoUrl = render_queue.first_renderable_video_file(
                 JSON.stringify(videoUrls.map(u => u.toString())),
                 JSON.stringify(fileDialog.extensions)

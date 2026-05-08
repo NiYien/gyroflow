@@ -15,6 +15,7 @@ qrc!(pub rsrc_qml,
         "src/ui/Statistics.qml",
         "src/ui/SettingsSelector.qml",
         "src/ui/Util.js",
+        "src/ui/DropRules.js",
 
         "src/ui/menu/Advanced.qml",
         "src/ui/menu/device_timezones.js",

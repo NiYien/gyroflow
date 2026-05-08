@@ -8817,9 +8817,9 @@ fn parse_gyro_metadata(
 // Rules:
 //   - Group URLs by everything before the final '.' (key is case-sensitive
 //     to stay correct on case-sensitive filesystems).
-//   - Within a group, if a .gyroflow project *and* a video (extension ∈
+//   - Within a group, if a .gyroflow file *and* a video (extension ∈
 //     `extensions` after lowercasing, minus "gyroflow") both exist, drop the
-//     .gyroflow.
+//     .gyroflow without reading it.
 //   - Also drop .gyroflow projects whose `videofile` points to a video URL
 //     already present in the batch.
 //   - Lone .gyroflow (no sibling video) is preserved.
@@ -8888,10 +8888,14 @@ where
         }
     }
     let mut drop_set: HashSet<String> = HashSet::new();
+    drop_set.extend(same_stem_gyroflows.iter().cloned());
     for gyroflow_url in gyroflow_urls {
+        if same_stem_gyroflows.contains(&gyroflow_url) {
+            continue;
+        }
         if let Some(video_url) = project_video_url(&gyroflow_url) {
             let video_key = comparable_video_url_key(&video_url);
-            if same_stem_gyroflows.contains(&gyroflow_url) || video_url_keys.contains(&video_key) {
+            if video_url_keys.contains(&video_key) {
                 drop_set.insert(gyroflow_url);
             }
         }
@@ -11204,17 +11208,20 @@ mod tests {
     }
 
     #[test]
-    fn filter_pairs_preserves_same_stem_gyroflow_preset_without_videofile() {
+    fn filter_pairs_drops_same_stem_gyroflow_without_reading_project() {
         let urls = vec![
             "file:///C:/clips/clip.mp4".to_string(),
             "file:///C:/clips/clip.gyroflow".to_string(),
         ];
+        let mut calls = 0;
         let out =
             filter_paired_gyroflow_siblings_impl_with_project_reader(&urls, &default_exts(), |_| {
+                calls += 1;
                 None
             });
 
-        assert_eq!(out, urls);
+        assert_eq!(out, vec!["file:///C:/clips/clip.mp4".to_string()]);
+        assert_eq!(calls, 0);
     }
 
     #[test]
@@ -11745,6 +11752,127 @@ mod tests {
         let out = filter_supported_drop_items_impl(&urls, &default_exts());
 
         assert_eq!(out, vec!["file:///C:/clips/A001.R3D".to_string()]);
+    }
+
+    #[test]
+    fn video_area_hover_uses_lightweight_drop_acceptance() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        assert!(
+            qml.contains("import \"DropRules.js\" as DropRules"),
+            "VideoArea must import the shared lightweight drop rules"
+        );
+        let drop_area_idx = qml
+            .find("id: da;")
+            .expect("VideoArea main drop area exists");
+        let remaining = &qml[drop_area_idx.saturating_sub(128)..];
+        let entered_idx = remaining
+            .find("onEntered:")
+            .expect("VideoArea main drop area handles hover");
+        let dropped_idx = remaining
+            .find("onDropped:")
+            .expect("VideoArea main drop area handles drop");
+        let entered = &remaining[entered_idx..dropped_idx];
+
+        assert!(
+            entered.contains("DropRules.acceptsAnyUrl("),
+            "VideoArea hover must use lightweight QML URL-string acceptance"
+        );
+        assert!(
+            !entered.contains("render_queue.has_supported_drop_item("),
+            "VideoArea hover must not call the heavy Rust drop support check before mouse release"
+        );
+    }
+
+    #[test]
+    fn lightweight_drop_rules_are_shared_and_packaged() {
+        let rules = include_str!("../ui/DropRules.js");
+        let drop_target = include_str!("../ui/components/DropTarget.qml");
+        let resources = include_str!("../resources_qml.rs");
+        let qmldir = include_str!("../ui/qmldir");
+
+        assert!(rules.contains("function acceptsUrl("));
+        assert!(rules.contains("function acceptsAnyUrl("));
+        assert!(rules.contains("acceptedFilenameSuffixes"));
+        assert!(rules.contains("return true;"));
+        assert!(
+            drop_target.contains("import \"../DropRules.js\" as DropRules")
+                && drop_target.contains("DropRules.acceptsUrl("),
+            "DropTarget must reuse the shared lightweight drop rules"
+        );
+        assert!(
+            resources.contains("\"src/ui/DropRules.js\"") && qmldir.contains("DropRules 1.0 DropRules.js"),
+            "DropRules.js must be available from qrc and the local QML module"
+        );
+    }
+
+    #[test]
+    fn video_area_drop_keeps_full_filtering_path() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let drop_area_idx = qml
+            .find("id: da;")
+            .expect("VideoArea main drop area exists");
+        let remaining = &qml[drop_area_idx.saturating_sub(128)..];
+        let dropped_idx = remaining
+            .find("onDropped:")
+            .expect("VideoArea main drop area handles drop");
+        let dropped = &remaining[dropped_idx..];
+
+        assert!(dropped.contains("render_queue.filter_supported_drop_items("));
+        assert!(dropped.contains("render_queue.list_video_files_in_folder("));
+        assert!(dropped.contains("render_queue.is_gyro_mix_file("));
+        assert!(dropped.contains("root.loadMultipleFiles(fileUrls, false)"));
+    }
+
+    #[test]
+    fn video_area_batch_filters_paired_gyroflow_before_routing() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+
+        assert!(
+            body.contains("render_queue.filter_paired_gyroflow_siblings("),
+            "VideoArea.loadMultipleFiles must drop same-name .gyroflow siblings before routing"
+        );
+        assert!(
+            body.contains("const droppedPairedGyroflow = urls.length < originalUrlCount"),
+            "VideoArea.loadMultipleFiles must track whether paired .gyroflow entries were dropped"
+        );
+        assert!(
+            body.contains("root.loadFile(urls[0], skip_detection, 0, \"\", droppedPairedGyroflow)"),
+            "single-video fallback must suppress associated .gyroflow only when batch filtering dropped one"
+        );
+    }
+
+    #[test]
+    fn video_area_video_load_after_project_suppresses_associated_gyroflow() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadFile")
+            .expect("VideoArea.loadFile exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function loadCrmProxyPair")
+            .expect("loadFile block end marker exists");
+        let body = &remaining[..next_fn_idx];
+
+        assert!(
+            body.contains("const hadProjectFile = !!controller.project_file_url"),
+            "VideoArea.loadFile must capture whether a .gyroflow project was active before controller.load_video clears it"
+        );
+        assert!(
+            body.contains("const skipAssociatedGyroflow = suppressAssociatedGyroflow || hadProjectFile"),
+            "loading a video after a project must suppress same-name .gyroflow loading"
+        );
+        assert!(
+            body.contains("if (!root.pendingGyroflowData && !skipAssociatedGyroflow)"),
+            "associated .gyroflow prompt must be guarded by the suppression flag"
+        );
     }
 
     #[test]

@@ -2,6 +2,7 @@
 // Copyright © 2021-2022 Adrian <adrian.eddy at gmail>
 
 import QtQuick
+import "../DropRules.js" as DropRules
 
 Rectangle {
     id: root;
@@ -37,14 +38,7 @@ Rectangle {
         anchors.fill: parent;
         enabled: root.visible;
         function acceptsUrl(url: url): bool {
-            const filename = url.toString().split(/[\\/]/).pop().toLowerCase();
-            const hasExtension = filename.includes(".");
-            if (!hasExtension) return true;
-            for (const suffix of root.acceptedFilenameSuffixes) {
-                if (filename.endsWith(suffix.toLowerCase())) return true;
-            }
-            const ext = filename.split(".").pop();
-            return root.extensions.indexOf(ext) > -1;
+            return DropRules.acceptsUrl(url, root.extensions, root.acceptedFilenameSuffixes);
         }
         onEntered: (drag) => {
             if (!drag.urls.length) return;

@@ -7,3 +7,4 @@ Shortcuts 1.0 Shortcuts.qml
 VideoArea 1.0 VideoArea.qml
 SettingsSelector 1.0 SettingsSelector.qml
 Util 1.0 Util.js
+DropRules 1.0 DropRules.js

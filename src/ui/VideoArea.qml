@@ -7,6 +7,7 @@ import MDKVideo
 import "components/"
 import "menu/" as Menu
 import "Util.js" as Util
+import "DropRules.js" as DropRules
 
 Item {
     id: root;
@@ -381,7 +382,9 @@ Item {
         return true;
     }
 
-    function loadFile(url: url, skip_detection: bool, queueJobId: int, crmTelemetryUrl: url): void {
+    function loadFile(url: url, skip_detection: bool, queueJobId: int, crmTelemetryUrl: url, suppressAssociatedGyroflow: bool): void {
+        const hadProjectFile = !!controller.project_file_url;
+        const skipAssociatedGyroflow = suppressAssociatedGyroflow || hadProjectFile;
         let filename = filesystem.get_filename(url);
         let folder = filesystem.get_folder(url);
 
@@ -430,7 +433,7 @@ Item {
             messageBox(Modal.Info, qsTr("In order to load all R3D parts, you need to select the entire .RDC folder."), [
                 { text: qsTr("OK"), accent: true, clicked: function() {
                     opf.selectFolder("", function(_) {
-                        root.loadFile(root.loadedFileUrl);
+                        root.loadFile(root.loadedFileUrl, false, 0, "", skipAssociatedGyroflow);
                     });
                 } },
             ], null, undefined, "open-rdc-folder");
@@ -446,7 +449,7 @@ Item {
                     const detectedFps = controller.get_image_sequence_fps(firstFileUrl);
                     if (detectedFps > 0) {
                         controller.image_sequence_fps = detectedFps;
-                        loadFile(newUrl, true, 0, crmTelemetryUrl);
+                        loadFile(newUrl, true, 0, crmTelemetryUrl, skipAssociatedGyroflow);
                         vid.setFrameRate(detectedFps);
                         return;
                     }
@@ -456,7 +459,7 @@ Item {
                         const fps = dlg.mainColumn.children[1].value;
                         settings.setValue("imageSequenceFps", fps);
                         controller.image_sequence_fps = fps;
-                        loadFile(newUrl, true, 0, crmTelemetryUrl);
+                        loadFile(newUrl, true, 0, crmTelemetryUrl, skipAssociatedGyroflow);
                         vid.setFrameRate(fps);
                     } },
                     { text: qsTr("Cancel") },
@@ -479,7 +482,7 @@ Item {
                     } },
                     { text: qsTr("No"), clicked: function() {
                         externalSdkModal = null;
-                        loadFile(url, true, 0, crmTelemetryUrl);
+                        loadFile(url, true, 0, crmTelemetryUrl, skipAssociatedGyroflow);
                     } },
                 ])
                 externalSdkModal = dlg;
@@ -518,7 +521,7 @@ Item {
             }
             window.exportSettings.updateCodecParams();
         }
-        if (!root.pendingGyroflowData) {
+        if (!root.pendingGyroflowData && !skipAssociatedGyroflow) {
             let gfBaseFilename = filename;
             if (gfBaseFilename.includes("%0")) {
                 gfBaseFilename = gfBaseFilename.replace(/%0(\d+)d/, (_, len) => controller.image_sequence_start.toString().padStart(parseInt(len), '0'));
@@ -591,8 +594,19 @@ Item {
                 return;
             }
         }
+        const originalUrlCount = urls.length;
+        try {
+            const filteredJson = render_queue.filter_paired_gyroflow_siblings(
+                JSON.stringify(urls.map(u => u.toString())),
+                JSON.stringify(fileDialog.extensions)
+            );
+            urls = JSON.parse(filteredJson);
+        } catch (e) {
+            console.log("filter_paired_gyroflow_siblings failed:", e);
+        }
+        const droppedPairedGyroflow = urls.length < originalUrlCount;
         if (urls.length == 1) {
-            root.loadFile(urls[0], skip_detection);
+            root.loadFile(urls[0], skip_detection, 0, "", droppedPairedGyroflow);
             return;
         }
         if (urls.length < 1) return;
@@ -996,17 +1010,20 @@ Item {
             enabled: queue.item && !queue.item.shown && !queue.item.isDragging;
 
             onEntered: (drag) => {
-                if (!drag.urls.length) return;
-                let urlStrings = [];
-                for (const url of drag.urls) urlStrings.push(url.toString());
-                drag.accepted = render_queue.has_supported_drop_item(
-                    JSON.stringify(urlStrings),
-                    JSON.stringify(fileDialog.extensions)
-                );
+                const count = drag.urls.length;
+                if (!count) {
+                    console.log("[main_drop:hover] urls=0 accepted=false reason=no_urls");
+                    return;
+                }
+                drag.accepted = DropRules.acceptsAnyUrl(drag.urls, fileDialog.extensions, ["_mix.bin", ".rdc"]);
+                console.log("[main_drop:hover] urls=" + count + " accepted=" + drag.accepted);
             }
             onDropped: (drop) => {
+                const dropCount = drop.urls.length;
+                console.log("[main_drop:drop] urls=" + dropCount);
                 if (isCalibrator) {
                     calibrator_window.loadFiles(drop.urls);
+                    console.log("[main_drop:drop] calibrator_dispatched=" + dropCount);
                     return;
                 }
                 // [queue-pair-ux T6] 分离文件夹和普通文件
@@ -1023,6 +1040,11 @@ Item {
                     ));
                 } catch (e) {
                     console.log("filter_supported_drop_items failed:", e);
+                }
+                console.log("[main_drop:filter] input=" + dropCount + " filtered=" + filteredUrls.length);
+                if (!filteredUrls.length) {
+                    console.log("[main_drop:drop] reason=filtered_empty");
+                    return;
                 }
                 for (const url of filteredUrls) {
                     const fname = filesystem.get_filename(url).toLowerCase();
@@ -1059,6 +1081,9 @@ Item {
                 // 剩余普通文件走原有逻辑
                 if (fileUrls.length > 0) {
                     root.loadMultipleFiles(fileUrls, false);
+                    console.log("[main_drop:dispatch] files=" + fileUrls.length + " target=" + (fileUrls.length > 1 ? "queue" : "main"));
+                } else {
+                    console.log("[main_drop:drop] reason=no_video_urls filtered=" + filteredUrls.length);
                 }
             }
         }
