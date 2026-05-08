@@ -923,13 +923,20 @@ macro_rules! update_model {
     ($this:ident, $job_id:ident, $itm:ident $action:block) => {
         {
             if let Ok(mut q) = $this.queue.try_borrow_mut() {
-                if let Some(job) = $this.jobs.get(&$job_id) {
-                    if job.queue_index < q.row_count() as usize {
-                        //let mut $itm = &mut q[job.queue_index];
-                        let mut $itm = q[job.queue_index].clone();
+                if let Some(cached_index) = $this.jobs.get(&$job_id).map(|job| job.queue_index) {
+                    let row_index = (cached_index < q.row_count() as usize
+                        && q[cached_index].job_id == $job_id)
+                        .then_some(cached_index)
+                        .or_else(|| q.iter().position(|item| item.job_id == $job_id));
+                    if let Some(row_index) = row_index {
+                        if let Some(job) = $this.jobs.get_mut(&$job_id) {
+                            job.queue_index = row_index;
+                        }
+                        //let mut $itm = &mut q[row_index];
+                        let mut $itm = q[row_index].clone();
                         $action
-                        q.change_line(job.queue_index, $itm);
-                        //q.data_changed(job.queue_index);
+                        q.change_line(row_index, $itm);
+                        //q.data_changed(row_index);
                     }
                 }
             }
@@ -1732,8 +1739,15 @@ impl RenderQueue {
             .ok()
             .and_then(|queue| {
                 self.jobs.get(&job_id).and_then(|job| {
-                    (job.queue_index < queue.row_count() as usize)
+                    (job.queue_index < queue.row_count() as usize
+                        && queue[job.queue_index].job_id == job_id)
                         .then(|| queue[job.queue_index].sync_status.clone())
+                        .or_else(|| {
+                            queue
+                                .iter()
+                                .find(|item| item.job_id == job_id)
+                                .map(|item| item.sync_status.clone())
+                        })
                 })
             })
             .filter(|status| !status.is_empty())
@@ -9693,6 +9707,42 @@ mod tests {
     }
 
     #[test]
+    fn update_model_uses_job_id_when_cached_queue_index_is_stale() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        queue.jobs.get_mut(&2).unwrap().queue_index = 0;
+
+        let job_id = 2;
+        update_model!(queue, job_id, itm {
+            itm.sync_status = QString::from(r#"{"color":"yellow"}"#);
+        });
+
+        let q = queue.queue.borrow();
+        assert!(q[0].sync_status.is_empty());
+        assert_eq!(q[1].sync_status.to_string(), r#"{"color":"yellow"}"#);
+    }
+
+    #[test]
+    fn render_queue_batch_sync_status_lookup_uses_job_id_when_cached_queue_index_is_stale() {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        add_eta_job(&mut queue, 3, 2);
+        queue.register_batch_sync_jobs([1, 2, 3]);
+
+        queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
+        queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
+        assert_eq!(batch_status(&queue, 1)["color"], "green");
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+
+        queue.jobs.get_mut(&3).unwrap().queue_index = 0;
+
+        assert_eq!(batch_status(&queue, 3)["color"], "yellow");
+    }
+
+    #[test]
     fn render_queue_batch_sync_restart_resets_done_pending_to_pending() {
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
@@ -11903,9 +11953,18 @@ mod tests {
             qml.contains("function onBatch_sync_status_changed()"),
             "render queue must react to batch sync status changes"
         );
+        let sync_status_binding = qml
+            .lines()
+            .find(|line| line.contains("property var syncStatus:"))
+            .expect("render queue delegates must define a syncStatus binding");
         assert!(
-            qml.contains("render_queue.get_batch_sync_status_json(job_id)"),
-            "render queue delegates must read per-job sync status"
+            sync_status_binding.contains("sync_status"),
+            "render queue delegates must read the model sync_status role directly"
+        );
+        assert!(
+            !sync_status_binding.contains("get_batch_sync_status_json(job_id)")
+                && !sync_status_binding.contains("syncStatusVersion"),
+            "delegate syncStatus must not depend on global refresh signals or queue lookup"
         );
         assert!(
             qml.contains("dlg.hasSyncStatus"),

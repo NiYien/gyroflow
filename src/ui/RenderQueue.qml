@@ -912,7 +912,7 @@ Item {
             property string skipReason: skip_reason;
             property string errorString: error_string;
             property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
-            property var syncStatus: { root.syncStatusVersion; try { return JSON.parse(render_queue.get_batch_sync_status_json(job_id)); } catch(e) { return { color: "none" }; } }
+            property var syncStatus: { try { return sync_status ? JSON.parse(sync_status) : { color: "none" }; } catch(e) { return { color: "none" }; } }
             property string syncColor: syncStatus.color || "none"
             property bool syncDonePending: syncColor === "done_pending"
             property bool hasSyncStatus: syncColor === "green" || syncColor === "yellow" || syncDonePending
