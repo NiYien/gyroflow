@@ -84,14 +84,21 @@ impl GyroflowLogger {
         false
     }
 
-    fn is_suppressed_noise_warning(target: &str, level: Level, body: &str) -> bool {
-        level == Level::Warn
+    fn is_suppressed_noise_record(target: &str, level: Level, body: &str) -> bool {
+        if level == Level::Warn
             && Self::matches_noise_target(target)
             && (target == "mp4parse"
                 || target.starts_with("mp4parse::")
                 || target.starts_with("mp4parse.")
                 || target.starts_with("mp4parse_"))
             && body.contains("InvalidData(HdlrPredefinedNonzero)")
+        {
+            return true;
+        }
+
+        level == Level::Error
+            && target == "telemetry_parser::cooke::bin"
+            && body.starts_with("Unknown Cooke data: Length: 71 (0x47) bytes")
     }
 }
 
@@ -107,7 +114,7 @@ impl Log for GyroflowLogger {
         let target = record.target();
         let lvl = record.level();
         let body = record.args().to_string();
-        if Self::is_suppressed_noise_warning(target, lvl, &body) {
+        if Self::is_suppressed_noise_record(target, lvl, &body) {
             return;
         }
         // Noise filter: third-party crates limited to Warn+.
@@ -224,31 +231,56 @@ mod tests {
 
     #[test]
     fn logger_suppresses_only_known_mp4parse_hdlr_predefined_noise() {
-        assert!(GyroflowLogger::is_suppressed_noise_warning(
+        assert!(GyroflowLogger::is_suppressed_noise_record(
             "mp4parse",
             Level::Warn,
             "InvalidData(HdlrPredefinedNonzero)",
         ));
-        assert!(GyroflowLogger::is_suppressed_noise_warning(
+        assert!(GyroflowLogger::is_suppressed_noise_record(
             "mp4parse::read",
             Level::Warn,
             "metadata parse returned InvalidData(HdlrPredefinedNonzero)",
         ));
 
-        assert!(!GyroflowLogger::is_suppressed_noise_warning(
+        assert!(!GyroflowLogger::is_suppressed_noise_record(
             "mp4parse",
             Level::Warn,
             "InvalidData(UnexpectedEof)",
         ));
-        assert!(!GyroflowLogger::is_suppressed_noise_warning(
+        assert!(!GyroflowLogger::is_suppressed_noise_record(
             "gyroflow",
             Level::Warn,
             "InvalidData(HdlrPredefinedNonzero)",
         ));
-        assert!(!GyroflowLogger::is_suppressed_noise_warning(
+        assert!(!GyroflowLogger::is_suppressed_noise_record(
             "mp4parse",
             Level::Error,
             "InvalidData(HdlrPredefinedNonzero)",
+        ));
+    }
+
+    #[test]
+    fn logger_suppresses_known_cooke_unknown_data_noise() {
+        assert!(GyroflowLogger::is_suppressed_noise_record(
+            "telemetry_parser::cooke::bin",
+            Level::Error,
+            "Unknown Cooke data: Length: 71 (0x47) bytes",
+        ));
+
+        assert!(!GyroflowLogger::is_suppressed_noise_record(
+            "telemetry_parser::cooke::bin",
+            Level::Error,
+            "Unknown Cooke data: Length: 72 (0x48) bytes",
+        ));
+        assert!(!GyroflowLogger::is_suppressed_noise_record(
+            "telemetry_parser::cooke::bin",
+            Level::Error,
+            "Failed to parse YAML: bad input",
+        ));
+        assert!(!GyroflowLogger::is_suppressed_noise_record(
+            "gyroflow_core::gyro_source",
+            Level::Error,
+            "Unknown Cooke data: Length: 71 (0x47) bytes",
         ));
     }
 }

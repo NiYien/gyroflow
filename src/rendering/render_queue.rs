@@ -180,6 +180,10 @@ struct Job {
     render_epoch: Arc<AtomicU64>,
     project_data: Option<String>,
     last_finished_export_project: Option<u32>,
+    // Snapshot of stab.gyro.get_offsets() at the most recent .gyroflow write
+    // (T1 in defer_batch_sync_confirmation, or T2 after cross-video confirm).
+    // Used to skip redundant T2 rewrites when offsets are unchanged.
+    last_written_offsets: Option<BTreeMap<i64, f64>>,
     stab: Option<Arc<StabilizationManager>>,
     base_lens_metadata: Option<JobLensMetadataBackup>,
     lens_group_config_override: Option<JobLensGroupOverride>,
@@ -847,8 +851,12 @@ pub struct RenderQueue {
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
     list_video_files_in_folder:
         qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
+    list_crm_proxy_files_in_folder:
+        qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
     filter_paired_gyroflow_siblings:
         qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    crm_proxy_pair: qt_method!(fn(&self, urls_json: String) -> QString),
+    crm_proxy_pairs: qt_method!(fn(&self, urls_json: String) -> QString),
     first_renderable_video_file:
         qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
     is_gyro_mix_file: qt_method!(fn(&self, url: String) -> bool),
@@ -863,6 +871,7 @@ pub struct RenderQueue {
     get_gyro_file_info_json: qt_method!(fn(&self, index: usize) -> QString),
     has_gyro_files: qt_method!(fn(&self) -> bool),
     batch_motion_ready: qt_method!(fn(&self) -> bool),
+    has_crm_proxy_jobs: qt_method!(fn(&self) -> bool),
     batch_match_gyro: qt_method!(fn(&mut self)),
     apply_match_results: qt_method!(fn(&mut self)),
     start_batch_autosync: qt_method!(fn(&mut self)),
@@ -1290,19 +1299,25 @@ impl RenderQueue {
             self.reset_job(job_id);
         }
 
-        let job_ids = {
+        let (job_ids, batch_sync_job_ids) = {
             let Ok(queue) = self.queue.try_borrow() else {
                 return;
             };
-            queue
+            let job_ids = queue
                 .iter()
                 .filter(|item| item.status == JobStatus::Queued && item.total_frames > 0)
-                .filter_map(|item| {
-                    let job = self.jobs.get(&item.job_id)?;
+                .map(|item| item.job_id)
+                .collect::<Vec<_>>();
+            let batch_sync_job_ids = job_ids
+                .iter()
+                .copied()
+                .filter_map(|job_id| {
+                    let job = self.jobs.get(&job_id)?;
                     let stab = job.stab.as_ref()?;
-                    (!stab.gyro.read().file_metadata.read().is_komodo).then_some(item.job_id)
+                    (!stab.gyro.read().file_metadata.read().is_komodo).then_some(job_id)
                 })
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            (job_ids, batch_sync_job_ids)
         };
         if job_ids.is_empty() {
             return;
@@ -1310,7 +1325,7 @@ impl RenderQueue {
         // Reset the GPU-decode codec blocklist at every batch entry so a fresh
         // batch can re-attempt GPU even after a previous batch recorded failures.
         crate::rendering::gpu_codec_blocklist::clear();
-        self.register_batch_sync_jobs(job_ids);
+        self.register_batch_sync_jobs(batch_sync_job_ids);
         self.export_project = 2;
         self.start();
     }
@@ -1521,9 +1536,57 @@ impl RenderQueue {
                     video.job_id,
                     Self::batch_sync_candidates_from_confirmed_points(&video.confirmed_points),
                 );
+                let default_suffix = self.default_suffix.to_string();
                 if let Some(job) = self.jobs.get_mut(&video.job_id) {
                     if let Some(stab) = job.stab.clone() {
                         Self::apply_batch_sync_points_to_stab(&stab, &video.confirmed_points);
+
+                        // T2 Green: rewrite .gyroflow only if confirmed offsets differ
+                        // from the T1 snapshot stashed in last_written_offsets.
+                        let t2_offsets: BTreeMap<i64, f64> =
+                            stab.gyro.read().get_offsets().clone();
+                        let needs_rewrite = job
+                            .last_written_offsets
+                            .as_ref()
+                            .map(|t1| t1 != &t2_offsets)
+                            .unwrap_or(true);
+                        if needs_rewrite {
+                            let (data, gf_url) = Self::build_export_project_payload(
+                                &job.additional_data,
+                                &job.render_options,
+                                &default_suffix,
+                            );
+                            match stab.export_gyroflow_file(
+                                &gf_url,
+                                core::GyroflowProjectType::WithGyroData,
+                                &data,
+                            ) {
+                                Ok(()) => {
+                                    ::log::info!(
+                                        target: "video.render",
+                                        "[batch-sync-write T2 green] rewrote {} ({} offsets)",
+                                        gf_url,
+                                        t2_offsets.len()
+                                    );
+                                    job.last_written_offsets = Some(t2_offsets);
+                                }
+                                Err(e) => {
+                                    ::log::warn!(
+                                        target: "video.render",
+                                        "[batch-sync-write T2 green] Failed to rewrite .gyroflow: {}: {:?}",
+                                        gf_url,
+                                        e
+                                    );
+                                }
+                            }
+                        } else {
+                            ::log::debug!(
+                                target: "video.render",
+                                "[batch-sync-write T2 skip] green offsets unchanged for job {}",
+                                video.job_id
+                            );
+                        }
+
                         if job.last_finished_export_project == Some(2) {
                             job.project_data = Self::get_gyroflow_data_internal_with_type(
                                 &stab,
@@ -1532,6 +1595,52 @@ impl RenderQueue {
                                 core::GyroflowProjectType::WithGyroData,
                                 false,
                             );
+                        }
+                    }
+                }
+            } else if video.color == BatchSyncVideoColor::Yellow {
+                // T2 Yellow: clear `offsets` field in the on-disk .gyroflow but
+                // leave stab.gyro untouched so the user can manually re-sync from
+                // the in-memory state. Skip when T1 never wrote or wrote empty.
+                let default_suffix = self.default_suffix.to_string();
+                if let Some(job) = self.jobs.get_mut(&video.job_id) {
+                    let needs_clear = job
+                        .last_written_offsets
+                        .as_ref()
+                        .map(|t1| !t1.is_empty())
+                        .unwrap_or(false);
+                    if !needs_clear {
+                        ::log::debug!(
+                            target: "video.render",
+                            "[batch-sync-write T2 skip] yellow offsets already empty/missing for job {}",
+                            video.job_id
+                        );
+                    } else if let Some(stab) = job.stab.clone() {
+                        let (data, gf_url) = Self::build_export_project_payload(
+                            &job.additional_data,
+                            &job.render_options,
+                            &default_suffix,
+                        );
+                        let empty: BTreeMap<i64, f64> = BTreeMap::new();
+                        match Self::write_gyroflow_with_offsets_override(
+                            &stab, &data, &gf_url, &empty,
+                        ) {
+                            Ok(()) => {
+                                ::log::info!(
+                                    target: "video.render",
+                                    "[batch-sync-write T2 yellow] cleared offsets in {} (stab.gyro unchanged)",
+                                    gf_url
+                                );
+                                job.last_written_offsets = Some(empty);
+                            }
+                            Err(msg) => {
+                                ::log::warn!(
+                                    target: "video.render",
+                                    "[batch-sync-write T2 yellow] Failed to clear offsets in .gyroflow: {}: {}",
+                                    gf_url,
+                                    msg
+                                );
+                            }
                         }
                     }
                 }
@@ -1737,15 +1846,38 @@ impl RenderQueue {
                     .flat_map(|points| points.iter().copied()),
             )
             .collect::<Vec<_>>();
-        let preferred_timestamps_ms = preferred_batch_sync_repair_timestamps_ms(&stab);
-        let Some(next_ts_ms) = choose_batch_sync_repair_timestamp_ms(
+        let optim_candidates = preferred_batch_sync_repair_timestamps_ms(&stab);
+        let rank_candidates = rank_pool_repair_timestamps_ms(&stab);
+        let avoidance_ms = batch_sync_repair_avoidance_ms(duration_ms);
+        let Some((next_ts_ms, pool)) = next_batch_sync_repair_timestamp_ms(
             duration_ms,
             &failed_points,
-            &preferred_timestamps_ms,
+            &optim_candidates,
+            &rank_candidates,
         )
         else {
+            // Diagnostic when the fix's two-stage selection ran but both pools
+            // are empty — distinguishes "no fix attempt" from "fix attempted
+            // but data offered nothing reachable past the avoidance window".
+            ::log::debug!(
+                "[batch_sync] repair exhausted: job={} optim={} rank={} attempted={} avoidance={:.0}ms",
+                job_id,
+                optim_candidates.len(),
+                rank_candidates.len(),
+                failed_points.len(),
+                avoidance_ms
+            );
             return false;
         };
+        if pool == RepairCandidatePool::Rank {
+            ::log::debug!(
+                "[batch_sync] repair rank-pool fallback: job={} optim={} rank={} attempted={}",
+                job_id,
+                optim_candidates.len(),
+                rank_candidates.len(),
+                failed_points.len()
+            );
+        }
         self.batch_sync_attempted_timestamps_ms
             .entry(job_id)
             .or_default()
@@ -1935,6 +2067,7 @@ impl RenderQueue {
                 render_epoch: Default::default(),
                 project_data,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: Some(stab.clone()),
                 base_lens_metadata,
                 lens_group_config_override: None,
@@ -2275,6 +2408,9 @@ impl RenderQueue {
         if let Some(job) = self.jobs.get_mut(&job_id) {
             job.cancel_flag.store(false, SeqCst);
             job.last_finished_export_project = None;
+            // Stale snapshot must not survive a reset, otherwise the next round's
+            // T2 confirm pass would falsely mark unchanged offsets as cache hits.
+            job.last_written_offsets = None;
         }
 
         // Recreate StabilizationManager from project_data if it was released after rendering
@@ -2430,6 +2566,70 @@ impl RenderQueue {
             core::GyroflowProjectType::Simple,
             true,
         )
+    }
+
+    // Mirror render-time logic at render_queue.rs ~3364-3379: merge render output
+    // into additional_data and derive the .gyroflow URL alongside the video output.
+    // Reused by T1 (defer_batch_sync_confirmation branch) and T2 (cross-video
+    // confirmation pass) to write/rewrite the project file.
+    fn build_export_project_payload(
+        additional_data: &str,
+        render_options: &RenderOptions,
+        default_suffix: &str,
+    ) -> (String, String) {
+        let merged_additional_data = if let Ok(serde_json::Value::Object(mut obj)) =
+            serde_json::from_str(additional_data) as serde_json::Result<serde_json::Value>
+        {
+            if let Ok(output) = serde_json::to_value(render_options) {
+                obj.insert("output".into(), output);
+            }
+            serde_json::to_string(&obj).unwrap_or_default()
+        } else {
+            additional_data.to_owned()
+        };
+
+        let gf_folder = render_options.output_folder.clone();
+        let gf_file = filesystem::filename_with_extension(
+            &render_options.output_filename.replace(default_suffix, ""),
+            "gyroflow",
+        );
+        let gf_url = filesystem::get_file_url(&gf_folder, &gf_file, true);
+        (merged_additional_data, gf_url)
+    }
+
+    // Serialize stab to a .gyroflow JSON, override the top-level "offsets" field
+    // with the supplied map (empty map => clear), then write to gf_url.
+    // Used by:
+    //   * T1 defer branch — inject sync_stats.points (do_autosync skips set_offset
+    //     in batch mode, so we cannot rely on stab.gyro at this point)
+    //   * T2 yellow path — clear offsets without mutating stab.gyro
+    fn write_gyroflow_with_offsets_override(
+        stab: &StabilizationManager,
+        additional_data: &str,
+        gf_url: &str,
+        offsets: &BTreeMap<i64, f64>,
+    ) -> Result<(), String> {
+        let json_str = stab
+            .export_gyroflow_data(
+                core::GyroflowProjectType::WithGyroData,
+                additional_data,
+                Some(gf_url),
+            )
+            .map_err(|e| format!("export_gyroflow_data: {:?}", e))?;
+        let mut obj: serde_json::Value =
+            serde_json::from_str(&json_str).map_err(|e| format!("parse: {}", e))?;
+        let offsets_obj: serde_json::Map<String, serde_json::Value> = offsets
+            .iter()
+            .map(|(k, v)| (k.to_string(), serde_json::Value::from(*v)))
+            .collect();
+        obj["offsets"] = serde_json::Value::Object(offsets_obj);
+        // Match export_gyroflow_data's pretty-print formatting (lib.rs:2480) so the
+        // file remains diff-friendly and editable.
+        let serialized =
+            serde_json::to_string_pretty(&obj).map_err(|e| format!("serialize: {}", e))?;
+        filesystem::write(gf_url, serialized.as_bytes())
+            .map_err(|e| format!("write: {:?}", e))?;
+        Ok(())
     }
 
     fn get_gyroflow_data_internal_with_type(
@@ -2938,6 +3138,7 @@ impl RenderQueue {
                 _ => core::GyroflowProjectType::Simple,
             };
             let allow_finished_project_file_reference = finished_export_project != 2;
+            let job_is_batch_sync = self.batch_sync_job_ids.contains(&job_id);
             let progress = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this,
@@ -2976,7 +3177,7 @@ impl RenderQueue {
                     // start() from launching the next sync worker (the "batch sync
                     // stalls after N parallel jobs" bug).
                     let defer_progress_to_confirm =
-                        finished_export_project == 2 && finished;
+                        job_is_batch_sync && finished_export_project == 2 && finished;
                     update_model!(this, job_id, itm {
                         if !defer_progress_to_confirm {
                             itm.current_frame = current_frame as u64;
@@ -3215,11 +3416,12 @@ impl RenderQueue {
                 self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2;
             let batch_sync_done = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
-                move |this, (job_id, render_epoch, points, attempted_timestamps_ms): (
+                move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot): (
                     u32,
                     u64,
                     Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
                     Vec<f64>,
+                    Option<BTreeMap<i64, f64>>,
                 )| {
                     let current_epoch = this
                         .jobs
@@ -3228,6 +3430,11 @@ impl RenderQueue {
                         .unwrap_or(0);
                     if current_epoch != render_epoch {
                         return;
+                    }
+                    if let Some(snapshot) = t1_snapshot {
+                        if let Some(job) = this.jobs.get_mut(&job_id) {
+                            job.last_written_offsets = Some(snapshot);
+                        }
                     }
                     this.record_batch_sync_result(job_id, points, attempted_timestamps_ms);
                 },
@@ -3255,7 +3462,65 @@ impl RenderQueue {
                     let points = sync_stats.points;
                     let attempted_timestamps_ms = sync_stats.attempted_timestamps_ms;
                     Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
-                    batch_sync_done((job_id, capture_epoch, points, attempted_timestamps_ms));
+
+                    // T1: persist .gyroflow before notifying main thread.
+                    // Pre-19253394 behavior wrote the project file at this exact point
+                    // (export_project==2 branch in `if export_project > 0`); the defer
+                    // early-return previously skipped it. We restore the write here and
+                    // also stash the snapshot in last_written_offsets so the cross-video
+                    // confirm pass (T2) can skip a redundant rewrite when offsets match.
+                    //
+                    // do_autosync in collect_batch_points mode (~render_queue.rs:4849)
+                    // intentionally skips gyro.set_offset, leaving stab.gyro empty until
+                    // T2 apply_batch_sync_points_to_stab. So we must derive the T1
+                    // offsets directly from sync_stats.points and inject them via JSON
+                    // post-processing (mirrors the T2 yellow path), without touching
+                    // stab.gyro itself.
+                    let (t1_data, t1_url) = Self::build_export_project_payload(
+                        &additional_data,
+                        &render_options,
+                        &default_suffix,
+                    );
+                    let t1_offsets: BTreeMap<i64, f64> = points
+                        .iter()
+                        .map(|p| {
+                            let ts = ((p.timestamp_ms - p.offset_ms) * 1000.0) as i64;
+                            (ts, p.offset_ms)
+                        })
+                        .collect();
+                    let t1_snapshot: Option<BTreeMap<i64, f64>> = match Self::write_gyroflow_with_offsets_override(
+                        &stab,
+                        &t1_data,
+                        &t1_url,
+                        &t1_offsets,
+                    ) {
+                        Ok(()) => {
+                            ::log::info!(
+                                target: "video.render",
+                                "[batch-sync-write T1] wrote {} ({} offsets)",
+                                t1_url,
+                                t1_offsets.len()
+                            );
+                            Some(t1_offsets)
+                        }
+                        Err(msg) => {
+                            ::log::warn!(
+                                target: "video.render",
+                                "[batch-sync-write T1] Failed to save .gyroflow: {}: {}",
+                                t1_url,
+                                msg
+                            );
+                            None
+                        }
+                    };
+
+                    batch_sync_done((
+                        job_id,
+                        capture_epoch,
+                        points,
+                        attempted_timestamps_ms,
+                        t1_snapshot,
+                    ));
                     progress((1.0, 1, 1, true, false));
                     return;
                 }
@@ -5304,6 +5569,8 @@ impl RenderQueue {
                     let p = entry.path();
                     if p.is_dir() {
                         subdirs.push(p);
+                    } else if is_ignored_system_file_path(&p) {
+                        continue;
                     } else if p
                         .file_name()
                         .and_then(|n| n.to_str())
@@ -5352,6 +5619,7 @@ impl RenderQueue {
             .unwrap_or_default()
             .into_iter()
             .map(|e| e.to_ascii_lowercase())
+            .filter(|e| e != "gyroflow" && e != "crm")
             .collect();
 
         let suffix_lower = self.default_suffix.to_string().to_ascii_lowercase();
@@ -5366,6 +5634,16 @@ impl RenderQueue {
             &suffix_lower,
             &mut found,
         );
+        Self::scan_crm_proxy_folder(
+            dir,
+            0,
+            MAX_VIDEO_FOLDER_DEPTH,
+            MAX_VIDEO_FOLDER_RESULTS,
+            &exts_lower,
+            &mut found,
+        );
+        found.sort();
+        found.dedup();
 
         let urls: Vec<String> = found
             .iter()
@@ -5374,6 +5652,49 @@ impl RenderQueue {
 
         ::log::info!(
             "[list_video_files_in_folder] root={}, returned {} videos (max_depth={}, cap={})",
+            path,
+            urls.len(),
+            MAX_VIDEO_FOLDER_DEPTH,
+            MAX_VIDEO_FOLDER_RESULTS
+        );
+        QString::from(serde_json::to_string(&urls).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    fn list_crm_proxy_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
+        const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
+        const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
+
+        let path = filesystem::url_to_path(&folder_url);
+        let dir = std::path::Path::new(&path);
+        if !dir.is_dir() {
+            ::log::warn!("[list_crm_proxy_files_in_folder] not a directory: {}", path);
+            return QString::from("[]");
+        }
+
+        let exts_lower: Vec<String> = serde_json::from_str::<Vec<String>>(&extensions_json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| e != "gyroflow")
+            .collect();
+
+        let mut found: Vec<std::path::PathBuf> = Vec::new();
+        Self::scan_crm_proxy_folder(
+            dir,
+            0,
+            MAX_VIDEO_FOLDER_DEPTH,
+            MAX_VIDEO_FOLDER_RESULTS,
+            &exts_lower,
+            &mut found,
+        );
+
+        let urls: Vec<String> = found
+            .iter()
+            .map(|p| filesystem::path_to_url(&p.to_string_lossy()))
+            .collect();
+
+        ::log::info!(
+            "[list_crm_proxy_files_in_folder] root={}, returned {} files (max_depth={}, cap={})",
             path,
             urls.len(),
             MAX_VIDEO_FOLDER_DEPTH,
@@ -5415,7 +5736,7 @@ impl RenderQueue {
             let p = entry.path();
             if p.is_dir() {
                 subdirs.push(p);
-            } else if p.is_file() {
+            } else if p.is_file() && !is_ignored_system_file_path(&p) {
                 files.push(p);
             }
         }
@@ -5431,6 +5752,9 @@ impl RenderQueue {
                 .and_then(|e| e.to_str())
                 .map(|e| {
                     let el = e.to_ascii_lowercase();
+                    if el == "gyroflow" || el == "crm" {
+                        return false;
+                    }
                     exts_lower.iter().any(|x| x == &el)
                 })
                 .unwrap_or(false);
@@ -5466,6 +5790,90 @@ impl RenderQueue {
         }
     }
 
+    fn scan_crm_proxy_folder(
+        dir: &std::path::Path,
+        depth: usize,
+        max_depth: usize,
+        max_results: usize,
+        exts_lower: &[String],
+        out: &mut Vec<std::path::PathBuf>,
+    ) {
+        if depth > max_depth {
+            return;
+        }
+        if out.len() >= max_results {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                ::log::warn!(
+                    "[scan_crm_proxy_folder] cannot read dir {}: {:?}",
+                    dir.display(),
+                    e
+                );
+                return;
+            }
+        };
+
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                subdirs.push(p);
+            } else if p.is_file() && !is_ignored_system_file_path(&p) {
+                files.push(p);
+            }
+        }
+        files.sort();
+        subdirs.sort();
+
+        let mut urls: Vec<String> = files
+            .iter()
+            .filter(|p| {
+                p.extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| {
+                        let el = e.to_ascii_lowercase();
+                        el == "crm" || exts_lower.iter().any(|x| x == &el)
+                    })
+                    .unwrap_or(false)
+            })
+            .map(|p| filesystem::path_to_url(&p.to_string_lossy()))
+            .collect();
+        urls.sort();
+
+        let paired_urls: HashSet<String> = crm_proxy_pairs_impl(&urls)
+            .into_iter()
+            .flat_map(|pair| [pair.crm_url, pair.proxy_url])
+            .collect();
+
+        for p in files {
+            if out.len() >= max_results {
+                return;
+            }
+            let url = filesystem::path_to_url(&p.to_string_lossy());
+            if paired_urls.contains(&url) {
+                out.push(p);
+            }
+        }
+
+        for d in subdirs {
+            if out.len() >= max_results {
+                return;
+            }
+            Self::scan_crm_proxy_folder(
+                &d,
+                depth + 1,
+                max_depth,
+                max_results,
+                exts_lower,
+                out,
+            );
+        }
+    }
+
     // Given a JSON array of URLs, drop any .gyroflow whose stem matches a
     // sibling video URL in the same batch (same directory, same stem — case-
     // sensitive, OS-agnostic). Keep the video so add_file runs its video
@@ -5495,6 +5903,18 @@ impl RenderQueue {
                 result.len()
             );
         }
+        QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    fn crm_proxy_pair(&self, urls_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let result = crm_proxy_pair_impl(&urls);
+        QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "null".to_string()))
+    }
+
+    fn crm_proxy_pairs(&self, urls_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let result = crm_proxy_pairs_impl(&urls);
         QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
     }
 
@@ -5629,6 +6049,18 @@ impl RenderQueue {
             }
         }
         has_renderable_job
+    }
+
+    fn has_crm_proxy_jobs(&self) -> bool {
+        self.jobs.values().any(|job| {
+            job.stab.as_ref().is_some_and(|stab| {
+                stab.gyro
+                    .read()
+                    .file_url
+                    .to_ascii_lowercase()
+                    .ends_with(".crm")
+            }) || job.project_data.as_deref().is_some_and(project_uses_crm_gyro)
+        })
     }
 
     fn update_gyro_file_parse_result(
@@ -7720,28 +8152,55 @@ fn batch_match_sync_overrides(init_offset_ms: Option<f64>) -> (f64, f64) {
     (init_offset_s, search_size_s)
 }
 
-fn preferred_batch_sync_repair_timestamps_ms(stab: &StabilizationManager) -> Vec<f64> {
-    let (duration_ms, max_sync_points, initial_offset_ms) = {
-        let sync_settings = stab.lens.read().sync_settings.clone().unwrap_or_default();
-        let sync_params = serde_json::from_value::<gyroflow_core::synchronization::SyncParams>(
-            sync_settings,
-        )
-        .unwrap_or_default();
-        (
-            stab.params.read().duration_ms,
-            sync_params.max_sync_points.max(1),
-            sync_params.initial_offset * 1000.0,
-        )
-    };
+// Pool selector for next_batch_sync_repair_timestamp_ms — distinguishes
+// "primary OptimSync candidate" from "rank-based fallback" so the caller can
+// log a diagnostic when fallback fires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RepairCandidatePool {
+    Optim,
+    Rank,
+}
 
-    let preferred = stab.get_optimal_sync_points(max_sync_points.max(5), initial_offset_ms)
+// Shared parameter extraction used by both the OptimSync pool and the rank
+// pool. Centralizing avoids drift between the two helpers.
+fn batch_sync_repair_pool_params(stab: &StabilizationManager) -> (f64, usize, f64) {
+    let sync_settings = stab.lens.read().sync_settings.clone().unwrap_or_default();
+    let sync_params = serde_json::from_value::<gyroflow_core::synchronization::SyncParams>(
+        sync_settings,
+    )
+    .unwrap_or_default();
+    (
+        stab.params.read().duration_ms,
+        sync_params.max_sync_points.max(1),
+        sync_params.initial_offset * 1000.0,
+    )
+}
+
+// Avoidance distance scales as `min(30s, max(2s, duration_ms / 8))`. The 30s
+// upper bound is the historical default (round-1 selection should not land
+// adjacent to round-0 attempts on long clips); the 2s floor lets short clips
+// (<= ~16s) actually pick a different ts at all instead of having the whole
+// timeline swallowed by a fixed 30s window.
+fn batch_sync_repair_avoidance_ms(duration_ms: f64) -> f64 {
+    (duration_ms / 8.0).max(2_000.0).min(30_000.0)
+}
+
+fn preferred_batch_sync_repair_timestamps_ms(stab: &StabilizationManager) -> Vec<f64> {
+    let (duration_ms, max_sync_points, initial_offset_ms) = batch_sync_repair_pool_params(stab);
+    stab.get_optimal_sync_points(max_sync_points.max(5), initial_offset_ms)
         .into_iter()
         .map(|fract| fract * duration_ms)
         .filter(|timestamp| timestamp.is_finite())
-        .collect::<Vec<_>>();
-    if !preferred.is_empty() {
-        return preferred;
-    }
+        .collect()
+}
+
+// Rank-based candidate pool, used as fallback when OptimSync top-N candidates
+// all collide with already-attempted timestamps. sync_data.rank is denser
+// (sample rate ~1/ratio over the full duration) so it can yield candidates
+// that escape the avoidance window even on clips where OptimSync only returns
+// a handful of high-motion points.
+fn rank_pool_repair_timestamps_ms(stab: &StabilizationManager) -> Vec<f64> {
+    let (duration_ms, max_sync_points, initial_offset_ms) = batch_sync_repair_pool_params(stab);
     rank_qualified_sync_timestamps_ms(
         stab,
         duration_ms,
@@ -7783,14 +8242,38 @@ fn rank_qualified_sync_timestamps_ms(
     ranked.into_iter().map(|(timestamp_ms, _)| timestamp_ms).collect()
 }
 
+// Two-stage candidate selection: try the OptimSync pool first; when every
+// OptimSync candidate is filtered by the avoidance window, fall through to
+// the denser rank pool. Returning the chosen pool lets the caller emit a
+// diagnostic on fallback.
+fn next_batch_sync_repair_timestamp_ms(
+    duration_ms: f64,
+    failed_points: &[f64],
+    optim_candidates: &[f64],
+    rank_candidates: &[f64],
+) -> Option<(f64, RepairCandidatePool)> {
+    if let Some(ts) = choose_batch_sync_repair_timestamp_ms(duration_ms, failed_points, optim_candidates) {
+        return Some((ts, RepairCandidatePool::Optim));
+    }
+    choose_batch_sync_repair_timestamp_ms(duration_ms, failed_points, rank_candidates)
+        .map(|ts| (ts, RepairCandidatePool::Rank))
+}
+
+// Picks the first preferred timestamp that stays outside the avoidance window
+// around every previously-attempted timestamp. Avoidance is duration-adaptive
+// (see batch_sync_repair_avoidance_ms). Clips shorter than 500ms are rejected
+// outright — sync needs at least ~0.5s of frames for stable optical flow, and
+// the previous 1000ms guard regressed at the boundary (1001ms clips like
+// P1004731 squeaked through but had nowhere to put a non-colliding ts).
 fn choose_batch_sync_repair_timestamp_ms(
     duration_ms: f64,
     failed_points: &[f64],
     preferred_timestamps_ms: &[f64],
 ) -> Option<f64> {
-    if !duration_ms.is_finite() || duration_ms < 1000.0 {
+    if !duration_ms.is_finite() || duration_ms < 500.0 {
         return None;
     }
+    let avoidance_ms = batch_sync_repair_avoidance_ms(duration_ms);
     preferred_timestamps_ms
         .into_iter()
         .copied()
@@ -7798,7 +8281,7 @@ fn choose_batch_sync_repair_timestamp_ms(
         .find(|candidate| {
             failed_points
                 .iter()
-                .all(|failed| (*candidate - *failed).abs() > 30_000.0)
+                .all(|failed| (*candidate - *failed).abs() > avoidance_ms)
         })
 }
 
@@ -8335,19 +8818,24 @@ fn filter_paired_gyroflow_siblings_impl_with_project_reader<F>(
 where
     F: FnMut(&str) -> Option<String>,
 {
+    let urls: Vec<String> = urls
+        .iter()
+        .filter(|url| !is_ignored_system_file_url(url))
+        .cloned()
+        .collect();
     if urls.len() <= 1 {
-        return urls.to_vec();
+        return urls;
     }
     let video_exts: HashSet<String> = extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
-        .filter(|e| e != "gyroflow")
+        .filter(|e| e != "gyroflow" && e != "crm")
         .collect();
 
     let mut groups: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
     let mut video_url_keys: HashSet<String> = HashSet::new();
     let mut gyroflow_urls: Vec<String> = Vec::new();
-    for u in urls {
+    for u in &urls {
         let Some(dot) = u.rfind('.') else { continue };
         let slash_idx = u.rfind(['/', '\\']).unwrap_or(0);
         if dot <= slash_idx {
@@ -8388,6 +8876,25 @@ where
         .filter(|u| !drop_set.contains(*u))
         .cloned()
         .collect()
+}
+
+fn is_ignored_system_file_path(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(is_ignored_system_file_name)
+        .unwrap_or(false)
+}
+
+fn is_ignored_system_file_url(url: &str) -> bool {
+    filesystem::get_filename(url)
+        .split(['/', '\\'])
+        .next_back()
+        .map(is_ignored_system_file_name)
+        .unwrap_or(false)
+}
+
+fn is_ignored_system_file_name(name: &str) -> bool {
+    name.starts_with("._")
 }
 
 #[derive(serde::Deserialize)]
@@ -8455,14 +8962,89 @@ fn file_extension(url: &str) -> Option<String> {
     Some(url[dot + 1..].to_ascii_lowercase())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+struct CrmProxyPair {
+    crm_url: String,
+    proxy_url: String,
+}
+
+fn crm_proxy_key(url: &str) -> Option<&str> {
+    let dot = url.rfind('.')?;
+    let slash_idx = url.rfind(['/', '\\']).unwrap_or(0);
+    if dot <= slash_idx {
+        return None;
+    }
+    let mut key_end = dot;
+    let stem = &url[slash_idx + 1..dot];
+    if stem
+        .get(stem.len().saturating_sub("_Proxy".len())..)
+        .map(|suffix| suffix.eq_ignore_ascii_case("_Proxy"))
+        .unwrap_or(false)
+    {
+        key_end -= "_Proxy".len();
+    }
+    Some(&url[..key_end])
+}
+
+fn crm_proxy_pair_impl(urls: &[String]) -> Option<CrmProxyPair> {
+    crm_proxy_pairs_impl(urls).into_iter().next()
+}
+
+fn crm_proxy_pairs_impl(urls: &[String]) -> Vec<CrmProxyPair> {
+    const PROXY_EXT_PRIORITY: [&str; 6] = ["mp4", "mov", "mxf", "mkv", "webm", "insv"];
+
+    let mut crm_urls: Vec<&String> = urls
+        .iter()
+        .filter(|url| !is_ignored_system_file_url(url))
+        .filter(|url| file_extension(url).as_deref() == Some("crm"))
+        .collect();
+    crm_urls.sort();
+
+    let mut pairs = Vec::new();
+    for crm_url in crm_urls {
+        let Some(key) = crm_proxy_key(crm_url) else {
+            continue;
+        };
+        for proxy_ext in PROXY_EXT_PRIORITY {
+            if let Some(proxy_url) = urls.iter().find(|candidate| {
+                !is_ignored_system_file_url(candidate)
+                    && file_extension(candidate).as_deref() == Some(proxy_ext)
+                    && crm_proxy_key(candidate) == Some(key)
+            }) {
+                pairs.push(CrmProxyPair {
+                    crm_url: crm_url.clone(),
+                    proxy_url: proxy_url.clone(),
+                });
+                break;
+            }
+        }
+    }
+    pairs
+}
+
+fn project_uses_crm_gyro(data: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(data)
+        .ok()
+        .and_then(|v| {
+            v.get("gyro_source")?
+                .get("filepath")?
+                .as_str()
+                .map(|s| s.to_ascii_lowercase().ends_with(".crm"))
+        })
+        .unwrap_or(false)
+}
+
 fn first_renderable_video_file_impl(urls: &[String], extensions: &[String]) -> Option<String> {
     let video_exts: std::collections::HashSet<String> = extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
-        .filter(|e| e != "gyroflow")
+        .filter(|e| e != "gyroflow" && e != "crm")
         .collect();
 
     urls.iter().find_map(|url| {
+        if is_ignored_system_file_url(url) {
+            return None;
+        }
         file_extension(url)
             .filter(|ext| video_exts.contains(ext))
             .map(|_| url.clone())
@@ -8489,22 +9071,36 @@ fn accepted_drop_extensions(extensions: &[String]) -> HashSet<String> {
     extensions
         .iter()
         .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+        .filter(|e| e != "crm")
         .collect()
 }
 
 fn filter_supported_drop_items_impl(urls: &[String], extensions: &[String]) -> Vec<String> {
     let accepted_exts = accepted_drop_extensions(extensions);
+    let paired_crm_urls: HashSet<String> = crm_proxy_pairs_impl(urls)
+        .into_iter()
+        .map(|pair| pair.crm_url)
+        .collect();
     urls.iter()
-        .filter(|url| is_supported_drop_item_impl(url, &accepted_exts))
+        .filter(|url| {
+            !is_ignored_system_file_url(url)
+                && (is_supported_drop_item_impl(url, &accepted_exts)
+                    || paired_crm_urls.contains(url.as_str()))
+        })
         .cloned()
         .collect()
 }
 
 fn has_supported_drop_item_impl(urls: &[String], extensions: &[String]) -> bool {
     let accepted_exts = accepted_drop_extensions(extensions);
+    let has_paired_crm = !crm_proxy_pairs_impl(urls).is_empty();
 
-    urls.iter()
-        .any(|url| is_supported_drop_item_impl(url, &accepted_exts))
+    has_paired_crm
+        || urls
+            .iter()
+            .any(|url| {
+                !is_ignored_system_file_url(url) && is_supported_drop_item_impl(url, &accepted_exts)
+            })
 }
 
 fn first_url_requiring_external_sdk_impl<F>(
@@ -8515,6 +9111,9 @@ where
     F: FnMut(&str) -> bool,
 {
     urls.iter().find_map(|url| {
+        if is_ignored_system_file_url(url) {
+            return None;
+        }
         let filename = filesystem::get_filename(url);
         requires_install(&filename).then(|| url.clone())
     })
@@ -8559,6 +9158,7 @@ mod tests {
                 render_epoch: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: Some(job_stab),
                 base_lens_metadata: Some(base_lens_metadata),
                 lens_group_config_override: None,
@@ -8642,6 +9242,7 @@ mod tests {
                 render_epoch: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: Some(stab),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -8693,6 +9294,7 @@ mod tests {
                 render_epoch: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: Some(stab),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -8878,6 +9480,78 @@ mod tests {
     }
 
     #[test]
+    fn batch_sync_repair_avoidance_window_clamps_to_min_floor_and_max_ceiling() {
+        // Floor: very short clips clamp to 2s instead of letting duration/8
+        // collapse to a useless sub-second window.
+        assert_eq!(batch_sync_repair_avoidance_ms(1_001.0), 2_000.0);
+        assert_eq!(batch_sync_repair_avoidance_ms(8_000.0), 2_000.0);
+        // Linear region (8s..240s)
+        assert_eq!(batch_sync_repair_avoidance_ms(60_000.0), 7_500.0);
+        assert_eq!(batch_sync_repair_avoidance_ms(180_000.0), 22_500.0);
+        // Ceiling: long clips stay at the historical 30s cap.
+        assert_eq!(batch_sync_repair_avoidance_ms(240_000.0), 30_000.0);
+        assert_eq!(batch_sync_repair_avoidance_ms(600_000.0), 30_000.0);
+    }
+
+    #[test]
+    fn render_queue_repair_short_clip_avoidance_window_scales_down() {
+        // 8s clip: avoidance = max(2000, 1000) = 2000ms.
+        // Candidate 1500ms is 500ms from attempted 1000ms → wiped.
+        let none = choose_batch_sync_repair_timestamp_ms(8_000.0, &[1_000.0], &[1_500.0]);
+        assert_eq!(none, None);
+        // Candidate 3500ms is 2500ms from attempted → clears the 2000ms window.
+        let some = choose_batch_sync_repair_timestamp_ms(8_000.0, &[1_000.0], &[3_500.0]);
+        assert_eq!(some, Some(3_500.0));
+    }
+
+    #[test]
+    fn render_queue_repair_skips_clips_below_500ms() {
+        // 300ms clip: shorter than the 500ms guard → reject regardless of
+        // candidate quality. Protects sync from running on too-few frames.
+        let none = choose_batch_sync_repair_timestamp_ms(300.0, &[], &[150.0]);
+        assert_eq!(none, None);
+        // 500ms is at the guard boundary — strict less-than means 500 passes.
+        let some = choose_batch_sync_repair_timestamp_ms(500.0, &[], &[250.0]);
+        assert_eq!(some, Some(250.0));
+    }
+
+    #[test]
+    fn render_queue_repair_falls_back_to_rank_pool_when_optimsync_candidates_avoided() {
+        // Round-0 attempted [1000, 2000]; OptimSync deterministically returns
+        // those same two timestamps (the docs ground truth scenario from
+        // P1004731). Rank pool offers a denser sweep — 50000ms escapes the
+        // 22500ms avoidance window for a 180s clip.
+        let optim = vec![1_000.0, 2_000.0];
+        let rank = vec![5_000.0, 50_000.0];
+        let attempted = vec![1_000.0, 2_000.0];
+        let result = next_batch_sync_repair_timestamp_ms(180_000.0, &attempted, &optim, &rank);
+        assert_eq!(result, Some((50_000.0, RepairCandidatePool::Rank)));
+    }
+
+    #[test]
+    fn render_queue_repair_prefers_optim_pool_when_it_has_a_clear_candidate() {
+        // If OptimSync already has a candidate outside the avoidance window
+        // we keep using it — fallback to rank pool is reserved for the
+        // exhaustion path.
+        let optim = vec![60_000.0];
+        let rank = vec![90_000.0];
+        let attempted = vec![1_000.0];
+        let result = next_batch_sync_repair_timestamp_ms(180_000.0, &attempted, &optim, &rank);
+        assert_eq!(result, Some((60_000.0, RepairCandidatePool::Optim)));
+    }
+
+    #[test]
+    fn render_queue_repair_returns_none_when_both_pools_exhausted() {
+        // Both pools collide with attempted timestamps inside the avoidance
+        // window — caller will turn this into "FinishedWithYellow".
+        let attempted = vec![1_000.0, 30_000.0, 60_000.0];
+        let optim = vec![1_000.0];
+        let rank = vec![30_000.0, 60_000.0];
+        let result = next_batch_sync_repair_timestamp_ms(180_000.0, &attempted, &optim, &rank);
+        assert_eq!(result, None);
+    }
+
+    #[test]
     fn batch_sync_rank_lookup_uses_sync_data_at_timestamp() {
         let stab = StabilizationManager::default();
         {
@@ -9048,6 +9722,24 @@ mod tests {
     }
 
     #[test]
+    fn render_queue_start_batch_autosync_runs_komodo_export_jobs_without_sync_confirmation() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        {
+            let job = queue.jobs.get(&1).unwrap();
+            let stab = job.stab.as_ref().unwrap();
+            stab.gyro.write().file_metadata.write().is_komodo = true;
+        }
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.start_batch_autosync();
+
+        assert_eq!(queue.export_project, 2);
+        assert!(!queue.batch_sync_job_ids.contains(&1));
+        assert_eq!(batch_status(&queue, 1)["color"], "none");
+    }
+
+    #[test]
     fn render_queue_repair_avoids_attempted_ranges_when_no_points_returned() {
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
@@ -9091,9 +9783,10 @@ mod tests {
             .trim_end_matches("ms")
             .parse::<f64>()
             .unwrap();
+        let avoidance_ms = batch_sync_repair_avoidance_ms(180_000.0);
         assert!(
-            (repair_ts_ms - first_repair_ts_ms).abs() > 30_000.0,
-            "repair reused a previous no-point attempt at {repair_ts_ms}"
+            (repair_ts_ms - first_repair_ts_ms).abs() > avoidance_ms,
+            "repair reused a previous no-point attempt at {repair_ts_ms} (avoidance={avoidance_ms}ms)"
         );
     }
 
@@ -9591,6 +10284,7 @@ mod tests {
                 render_epoch: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: Some(Arc::new(StabilizationManager::default())),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -9635,6 +10329,7 @@ mod tests {
                 render_epoch: Default::default(),
                 project_data: None,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: Some(Arc::new(StabilizationManager::default())),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -9776,6 +10471,62 @@ mod tests {
     }
 
     #[test]
+    fn reset_job_clears_last_written_offsets() {
+        // Stale snapshot must not survive reset, otherwise next round's T2
+        // confirm pass would falsely mark unchanged offsets as cache hits.
+        let mut queue = queue_with_eta_job(JobStatus::Finished);
+        {
+            let mut snapshot = BTreeMap::new();
+            snapshot.insert(1_000_000, 5.0);
+            queue.jobs.get_mut(&1).unwrap().last_written_offsets = Some(snapshot);
+        }
+        assert!(queue.jobs.get(&1).unwrap().last_written_offsets.is_some());
+
+        queue.reset_job(1);
+
+        assert_eq!(queue.jobs.get(&1).unwrap().last_written_offsets, None);
+    }
+
+    #[test]
+    fn write_gyroflow_with_offsets_override_pretty_prints_and_overrides_offsets() {
+        // Helper used by T1 (inject sync_stats.points) and T2 yellow (clear).
+        // Verify: file written, offsets replaced verbatim, pretty-printed (line breaks).
+        let stab = StabilizationManager::default();
+        let dir = tempfile::tempdir().unwrap();
+        let gf_url = filesystem::path_to_url(&dir.path().join("test.gyroflow").to_string_lossy());
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(1_000_000_i64, 5.5_f64);
+        overrides.insert(2_500_000_i64, -3.25_f64);
+
+        RenderQueue::write_gyroflow_with_offsets_override(&stab, "{}", &gf_url, &overrides)
+            .expect("write succeeds");
+
+        let raw = filesystem::read_to_string(&gf_url).expect("file exists");
+        // Pretty-printed JSON has line breaks; dense to_string would not.
+        assert!(raw.contains('\n'), "expected pretty-printed JSON with line breaks");
+
+        let obj: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
+        let offsets = obj.get("offsets").expect("offsets key present");
+        // BTreeMap<i64,f64> is serialized as { "<ts>": <offset_ms>, ... }
+        assert_eq!(offsets["1000000"].as_f64(), Some(5.5));
+        assert_eq!(offsets["2500000"].as_f64(), Some(-3.25));
+        assert_eq!(offsets.as_object().unwrap().len(), 2);
+
+        // Empty override => empty offsets object (T2 yellow path).
+        let empty: BTreeMap<i64, f64> = BTreeMap::new();
+        RenderQueue::write_gyroflow_with_offsets_override(&stab, "{}", &gf_url, &empty)
+            .expect("empty write succeeds");
+        let raw = filesystem::read_to_string(&gf_url).expect("file exists");
+        let obj: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
+        assert_eq!(
+            obj["offsets"].as_object().map(|o| o.len()),
+            Some(0),
+            "yellow path should leave offsets as empty object"
+        );
+    }
+
+    #[test]
     fn reset_job_clears_stale_processing_progress() {
         let mut queue = queue_with_eta_job(JobStatus::Finished);
         {
@@ -9839,6 +10590,7 @@ mod tests {
                 render_epoch: render_epoch.clone(),
                 project_data: None,
                 last_finished_export_project: None,
+                last_written_offsets: None,
                 stab: None,
                 base_lens_metadata: None,
                 lens_group_config_override: None,
@@ -10232,6 +10984,7 @@ mod tests {
             render_epoch: Default::default(),
             project_data: None,
             last_finished_export_project: None,
+            last_written_offsets: None,
             stab: None,
             base_lens_metadata: None,
             lens_group_config_override: Some(JobLensGroupOverride {
@@ -10293,7 +11046,7 @@ mod tests {
     fn default_exts() -> Vec<String> {
         vec![
             "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng",
-            "braw", "r3d", "nev",
+            "braw", "r3d", "nev", "crm",
         ]
         .into_iter()
         .map(String::from)
@@ -10549,6 +11302,23 @@ mod tests {
     }
 
     #[test]
+    fn first_url_requiring_external_sdk_skips_appledouble_sidecars() {
+        let urls = vec![
+            "file:///C:/clips/._needs-red.R3D".to_string(),
+            "file:///C:/clips/needs-braw.braw".to_string(),
+        ];
+        let mut checked = Vec::new();
+
+        let out = first_url_requiring_external_sdk_impl(&urls, |filename| {
+            checked.push(filename.to_string());
+            filename.ends_with(".R3D") || filename.ends_with(".braw")
+        });
+
+        assert_eq!(out, Some("file:///C:/clips/needs-braw.braw".to_string()));
+        assert_eq!(checked, vec!["needs-braw.braw"]);
+    }
+
+    #[test]
     fn first_renderable_video_file_uses_later_video_when_first_is_gyroflow() {
         let urls = vec![
             "file:///C:/clips/session.gyroflow".to_string(),
@@ -10558,6 +11328,422 @@ mod tests {
         let out = first_renderable_video_file_impl(&urls, &default_exts());
 
         assert_eq!(out, Some("file:///C:/clips/clip.mp4".to_string()));
+    }
+
+    #[test]
+    fn crm_proxy_first_renderable_video_file_ignores_crm_extension() {
+        let urls = vec![
+            "file:///C:/clips/A.crm".to_string(),
+            "file:///C:/clips/A.mp4".to_string(),
+        ];
+
+        let out = first_renderable_video_file_impl(&urls, &default_exts());
+
+        assert_eq!(out, Some("file:///C:/clips/A.mp4".to_string()));
+    }
+
+    #[test]
+    fn crm_proxy_pair_uses_same_directory_and_stem() {
+        let urls = vec![
+            "file:///C:/clips/A.crm".to_string(),
+            "file:///C:/clips/A.mp4".to_string(),
+        ];
+
+        let out = crm_proxy_pair_impl(&urls);
+
+        assert_eq!(
+            out,
+            Some(CrmProxyPair {
+                crm_url: "file:///C:/clips/A.crm".to_string(),
+                proxy_url: "file:///C:/clips/A.mp4".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn crm_proxy_pair_matches_canon_proxy_suffix() {
+        let urls = vec![
+            "file:///C:/clips/A_0045C781X260508_000220EJ_R5MK2.CRM".to_string(),
+            "file:///C:/clips/A_0045C781X260508_000220EJ_R5MK2_Proxy.MP4".to_string(),
+        ];
+
+        let out = crm_proxy_pair_impl(&urls);
+
+        assert_eq!(
+            out,
+            Some(CrmProxyPair {
+                crm_url: "file:///C:/clips/A_0045C781X260508_000220EJ_R5MK2.CRM".to_string(),
+                proxy_url: "file:///C:/clips/A_0045C781X260508_000220EJ_R5MK2_Proxy.MP4"
+                    .to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn crm_proxy_pair_does_not_match_across_directories() {
+        let urls = vec![
+            "file:///C:/one/A.crm".to_string(),
+            "file:///C:/two/A.mp4".to_string(),
+        ];
+
+        assert_eq!(crm_proxy_pair_impl(&urls), None);
+    }
+
+    #[test]
+    fn crm_proxy_pair_does_not_match_different_stems() {
+        let urls = vec![
+            "file:///C:/clips/A.crm".to_string(),
+            "file:///C:/clips/B.mp4".to_string(),
+        ];
+
+        assert_eq!(crm_proxy_pair_impl(&urls), None);
+    }
+
+    #[test]
+    fn crm_proxy_pair_is_case_insensitive_on_extension() {
+        let urls = vec![
+            "file:///C:/clips/A.CRM".to_string(),
+            "file:///C:/clips/A.MOV".to_string(),
+        ];
+
+        let out = crm_proxy_pair_impl(&urls);
+
+        assert_eq!(
+            out,
+            Some(CrmProxyPair {
+                crm_url: "file:///C:/clips/A.CRM".to_string(),
+                proxy_url: "file:///C:/clips/A.MOV".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn crm_proxy_pair_prefers_configured_proxy_extension_order() {
+        let urls = vec![
+            "file:///C:/clips/A.crm".to_string(),
+            "file:///C:/clips/A.mov".to_string(),
+            "file:///C:/clips/A.mp4".to_string(),
+        ];
+
+        let out = crm_proxy_pair_impl(&urls);
+
+        assert_eq!(
+            out,
+            Some(CrmProxyPair {
+                crm_url: "file:///C:/clips/A.crm".to_string(),
+                proxy_url: "file:///C:/clips/A.mp4".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn crm_proxy_pairs_supports_multiple_independent_clips() {
+        let urls = vec![
+            "file:///C:/clips/B.mov".to_string(),
+            "file:///C:/clips/A.crm".to_string(),
+            "file:///C:/clips/B.crm".to_string(),
+            "file:///C:/clips/A.mp4".to_string(),
+        ];
+
+        let out = crm_proxy_pairs_impl(&urls);
+
+        assert_eq!(
+            out,
+            vec![
+                CrmProxyPair {
+                    crm_url: "file:///C:/clips/A.crm".to_string(),
+                    proxy_url: "file:///C:/clips/A.mp4".to_string(),
+                },
+                CrmProxyPair {
+                    crm_url: "file:///C:/clips/B.crm".to_string(),
+                    proxy_url: "file:///C:/clips/B.mov".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn crm_proxy_pairs_skips_appledouble_sidecars() {
+        let urls = vec![
+            "file:///C:/clips/._A.crm".to_string(),
+            "file:///C:/clips/._A.mp4".to_string(),
+            "file:///C:/clips/A.crm".to_string(),
+            "file:///C:/clips/A.mp4".to_string(),
+        ];
+
+        let out = crm_proxy_pairs_impl(&urls);
+
+        assert_eq!(
+            out,
+            vec![CrmProxyPair {
+                crm_url: "file:///C:/clips/A.crm".to_string(),
+                proxy_url: "file:///C:/clips/A.mp4".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn crm_proxy_pair_missing_proxy_is_none() {
+        let urls = vec!["file:///C:/clips/A.crm".to_string()];
+
+        assert_eq!(crm_proxy_pair_impl(&urls), None);
+    }
+
+    #[test]
+    fn crm_proxy_app_video_dialog_accepts_crm_files() {
+        let qml = include_str!("../ui/App.qml");
+
+        assert!(
+            qml.contains("\"crm\""),
+            "main video file dialog must let Canon CRM files participate in proxy pairing"
+        );
+    }
+
+    #[test]
+    fn crm_proxy_video_area_routes_pair_before_queue() {
+        let qml = include_str!("../ui/VideoArea.qml");
+
+        assert!(
+            qml.contains("render_queue.crm_proxy_pair(")
+                && qml.contains("loadCrmProxyPair(")
+                && qml.contains("pendingCrmTelemetryUrl")
+                && qml.contains("pairs.length === 1 && urls.length === 2"),
+            "VideoArea must load the proxy and defer CRM telemetry instead of queueing CRM as video"
+        );
+    }
+
+    #[test]
+    fn crm_proxy_video_area_reports_unmatched_crm() {
+        let qml = include_str!("../ui/VideoArea.qml");
+
+        assert!(
+            qml.contains("pairs.length === crmCount")
+                && qml.contains("const hasRenderableVideo")
+                && qml.contains("Canon CRM files must be loaded together with a same-name proxy video."),
+            "VideoArea must report standalone or unmatched CRM files instead of silently dropping them"
+        );
+    }
+
+    #[test]
+    fn crm_proxy_folder_scan_does_not_treat_crm_as_video() {
+        let dir = tempfile::tempdir().unwrap();
+        let video_path = dir.path().join("A.mp4");
+        let crm_path = dir.path().join("B.crm");
+        std::fs::write(&video_path, []).unwrap();
+        std::fs::write(&crm_path, []).unwrap();
+
+        let mut found = Vec::new();
+        RenderQueue::scan_video_folder(dir.path(), 0, 3, 600, &default_exts(), "", &mut found);
+
+        assert_eq!(found, vec![video_path]);
+    }
+
+    #[test]
+    fn crm_proxy_folder_scan_collects_crm_and_proxy_candidates() {
+        let dir = tempfile::tempdir().unwrap();
+        let video_path = dir
+            .path()
+            .join("A_0045C781X260508_000220EJ_R5MK2_Proxy.MP4");
+        let crm_path = dir.path().join("A_0045C781X260508_000220EJ_R5MK2.CRM");
+        let unrelated_crm_path = dir.path().join("B.CRM");
+        std::fs::write(&video_path, []).unwrap();
+        std::fs::write(&crm_path, []).unwrap();
+        std::fs::write(&unrelated_crm_path, []).unwrap();
+
+        let mut found = Vec::new();
+        RenderQueue::scan_crm_proxy_folder(dir.path(), 0, 3, 600, &default_exts(), &mut found);
+
+        assert_eq!(found, vec![crm_path, video_path]);
+    }
+
+    #[test]
+    fn crm_proxy_folder_video_list_includes_paired_crm_for_legacy_callers() {
+        let dir = tempfile::tempdir().unwrap();
+        let video_path = dir
+            .path()
+            .join("A_0045C781X260508_000220EJ_R5MK2_Proxy.MP4");
+        let crm_path = dir.path().join("A_0045C781X260508_000220EJ_R5MK2.CRM");
+        let unrelated_crm_path = dir.path().join("B.CRM");
+        std::fs::write(&video_path, []).unwrap();
+        std::fs::write(&crm_path, []).unwrap();
+        std::fs::write(&unrelated_crm_path, []).unwrap();
+
+        let queue = RenderQueue::default();
+        let out = queue.list_video_files_in_folder(
+            filesystem::path_to_url(&dir.path().to_string_lossy()),
+            serde_json::to_string(&default_exts()).unwrap(),
+        );
+        let urls: Vec<String> = serde_json::from_str(&out.to_string()).unwrap();
+
+        assert_eq!(
+            urls,
+            vec![
+                filesystem::path_to_url(&crm_path.to_string_lossy()),
+                filesystem::path_to_url(&video_path.to_string_lossy()),
+            ]
+        );
+    }
+
+    #[test]
+    fn folder_video_scan_skips_appledouble_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let video_path = dir.path().join("A001.R3D");
+        let sidecar_path = dir.path().join("._A001.R3D");
+        std::fs::write(&video_path, []).unwrap();
+        std::fs::write(&sidecar_path, []).unwrap();
+
+        let mut found = Vec::new();
+        RenderQueue::scan_video_folder(dir.path(), 0, 3, 600, &default_exts(), "", &mut found);
+
+        assert_eq!(found, vec![video_path]);
+    }
+
+    #[test]
+    fn folder_video_scan_descends_into_appledouble_named_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested_dir = dir.path().join("._clips");
+        std::fs::create_dir(&nested_dir).unwrap();
+        let video_path = nested_dir.join("A001.R3D");
+        std::fs::write(&video_path, []).unwrap();
+
+        let mut found = Vec::new();
+        RenderQueue::scan_video_folder(dir.path(), 0, 3, 600, &default_exts(), "", &mut found);
+
+        assert_eq!(found, vec![video_path]);
+    }
+
+    #[test]
+    fn folder_gyro_scan_skips_appledouble_sidecars() {
+        let dir = tempfile::tempdir().unwrap();
+        let gyro_path = dir.path().join("2026-05-07_15-51-23_mix.bin");
+        let sidecar_path = dir.path().join("._2026-05-07_15-51-23_mix.bin");
+        std::fs::write(&gyro_path, []).unwrap();
+        std::fs::write(&sidecar_path, []).unwrap();
+
+        let queue = RenderQueue::default();
+        let found = queue.scan_gyro_folder(dir.path(), 0);
+
+        assert_eq!(found, vec![gyro_path]);
+    }
+
+    #[test]
+    fn folder_gyro_scan_descends_into_appledouble_named_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let nested_dir = dir.path().join("._clips");
+        std::fs::create_dir(&nested_dir).unwrap();
+        let gyro_path = nested_dir.join("2026-05-07_15-51-23_mix.bin");
+        std::fs::write(&gyro_path, []).unwrap();
+
+        let queue = RenderQueue::default();
+        let found = queue.scan_gyro_folder(dir.path(), 0);
+
+        assert_eq!(found, vec![gyro_path]);
+    }
+
+    #[test]
+    fn batch_url_filter_skips_appledouble_sidecars_before_pairing() {
+        let urls = vec![
+            "file:///C:/clips/._A001.R3D".to_string(),
+            "file:///C:/clips/A001.R3D".to_string(),
+            "file:///C:/clips/A001.gyroflow".to_string(),
+        ];
+
+        let out = filter_paired_gyroflow_siblings_impl_with_project_reader(
+            &urls,
+            &default_exts(),
+            |url| {
+                if url == "file:///C:/clips/A001.gyroflow" {
+                    Some("file:///C:/clips/A001.R3D".to_string())
+                } else {
+                    None
+                }
+            },
+        );
+
+        assert_eq!(out, vec!["file:///C:/clips/A001.R3D".to_string()]);
+    }
+
+    #[test]
+    fn first_renderable_video_file_skips_appledouble_sidecars() {
+        let urls = vec![
+            "file:///C:/clips/._A001.R3D".to_string(),
+            "file:///C:/clips/A001.R3D".to_string(),
+        ];
+
+        let out = first_renderable_video_file_impl(&urls, &default_exts());
+
+        assert_eq!(out, Some("file:///C:/clips/A001.R3D".to_string()));
+    }
+
+    #[test]
+    fn supported_drop_filter_skips_appledouble_sidecars() {
+        let urls = vec![
+            "file:///C:/clips/._A001.R3D".to_string(),
+            "file:///C:/clips/A001.R3D".to_string(),
+        ];
+
+        let out = filter_supported_drop_items_impl(&urls, &default_exts());
+
+        assert_eq!(out, vec!["file:///C:/clips/A001.R3D".to_string()]);
+    }
+
+    #[test]
+    fn crm_proxy_app_video_export_blocks_crm_workflow() {
+        let qml = include_str!("../ui/App.qml");
+
+        assert!(
+            qml.contains("isCanonCrmWorkflow()") && qml.contains("showCanonCrmProjectOnlyMessage()"),
+            "Canon CRM workflow must be project-only for video export actions"
+        );
+    }
+
+    #[test]
+    fn crm_proxy_render_queue_pairs_proxy_with_external_gyro_url() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+
+        assert!(
+            qml.contains("render_queue.crm_proxy_pairs(")
+                && qml.contains("crmProxyGyroByProxy")
+                && qml.contains("render_queue.add_file(url.toString(), crmProxyGyroByProxy[")
+                && qml.contains("fname.endsWith(\".crm\")")
+                && qml.contains("pairs.length !== crmCount")
+                && qml.contains("crmProxyGyroByProxyArg"),
+            "Render queue must pair CRM files with proxy jobs and skip standalone CRM queue entries"
+        );
+    }
+
+    #[test]
+    fn crm_proxy_render_queue_video_export_is_project_only() {
+        let queue_qml = include_str!("../ui/RenderQueue.qml");
+        let app_qml = include_str!("../ui/App.qml");
+
+        assert!(
+            queue_qml.contains("render_queue.has_crm_proxy_jobs()")
+                && queue_qml.contains("window.showCanonCrmProjectOnlyMessage()"),
+            "Render queue start must block video export for CRM proxy jobs"
+        );
+        assert!(
+            app_qml.contains("render_queue.has_crm_proxy_jobs()")
+                && app_qml.contains("window.showCanonCrmProjectOnlyMessage()"),
+            "Simple mode batch video export must block CRM proxy jobs"
+        );
+    }
+
+    #[test]
+    fn crm_proxy_jobs_detect_released_finished_project_snapshot() {
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        let job = queue.jobs.get_mut(&1).unwrap();
+        job.project_data = Some(
+            serde_json::json!({
+                "gyro_source": {
+                    "filepath": "file:///C:/clips/A.crm"
+                }
+            })
+            .to_string(),
+        );
+        job.stab = None;
+
+        assert!(queue.has_crm_proxy_jobs());
     }
 
     #[test]
@@ -10581,6 +11767,13 @@ mod tests {
     #[test]
     fn supported_drop_item_rejects_plain_bin_without_video_or_folder() {
         let urls = vec!["file:///C:/clips/cam.bin".to_string()];
+
+        assert!(!has_supported_drop_item_impl(&urls, &default_exts()));
+    }
+
+    #[test]
+    fn crm_proxy_supported_drop_item_rejects_standalone_crm() {
+        let urls = vec!["file:///C:/clips/A.crm".to_string()];
 
         assert!(!has_supported_drop_item_impl(&urls, &default_exts()));
     }
@@ -10659,8 +11852,8 @@ mod tests {
     fn simple_mode_batch_auto_sync_requires_motion_data() {
         let qml = include_str!("../ui/App.qml");
         let marker_idx = qml
-            .find("id: simpleAutoSyncBtn")
-            .expect("simple auto sync button exists");
+            .find("id: simpleExportBtnRow")
+            .expect("simple export button row exists");
         let remaining = &qml[marker_idx..];
         let branch_end = remaining
             .find("id: simpleExportStabilizedBtn")
@@ -10668,6 +11861,12 @@ mod tests {
         let branch = &remaining[..branch_end];
 
         assert!(branch.contains("render_queue.batch_motion_ready()"));
+        assert!(branch.contains("function refreshQueueRowCount()"));
+        assert!(branch.contains("Component.onCompleted: refreshQueueRowCount();"));
+        assert!(branch.contains("function onMatch_apply_finished(): void"));
+        assert!(branch.contains("simpleExportBtnRow.refreshQueueRowCount();"));
+        assert!(branch.contains("readonly property int _queueMatchVersion"));
+        assert!(branch.contains("readonly property bool _queueMode: videoArea.queue && simpleExportBtnRow.queueRowCount > 0"));
         let click_idx = branch
             .find("onClicked:")
             .expect("auto sync button has click handler");

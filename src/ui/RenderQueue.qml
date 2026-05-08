@@ -635,7 +635,13 @@ Item {
             clip: true;
             Ease on implicitWidth { }
             Behavior on accentColor { ColorAnimation { duration: 700; easing.type: Easing.OutExpo; } }
-            onClicked: render_queue[statuses[status][3]]();
+            onClicked: {
+                if (status === "stopped" && (render_queue.export_project === 0 || render_queue.export_project === 4) && render_queue.has_crm_proxy_jobs()) {
+                    window.showCanonCrmProjectOnlyMessage();
+                    return;
+                }
+                render_queue[statuses[status][3]]();
+            }
         }
     }
 
@@ -790,6 +796,20 @@ Item {
                                 console.log("[AddFolder] parsed more.length=" + more.length);
                             } catch (e) {
                                 console.log("[AddFolder] list_video_files_in_folder FAILED:", e);
+                                return;
+                            }
+                            try {
+                                const crmJsonStr = render_queue.list_crm_proxy_files_in_folder(
+                                    folderUrl.toString(),
+                                    JSON.stringify(fileDialog.extensions)
+                                );
+                                const crmMore = JSON.parse(crmJsonStr);
+                                for (const v of crmMore) {
+                                    if (!more.includes(v)) more.push(v);
+                                }
+                                console.log("[AddFolder] parsed crmMore.length=" + crmMore.length);
+                            } catch (e) {
+                                console.log("[AddFolder] list_crm_proxy_files_in_folder FAILED:", e);
                                 return;
                             }
                             if (more.length === 0) {
@@ -1934,7 +1954,8 @@ Item {
             }
             return additional;
         }
-        function add(outFolder: string, urls: list<url>): void {
+        function add(outFolder: string, urls: list<url>, crmProxyGyroByProxyArg: var): void {
+            let crmProxyGyroByProxy = crmProxyGyroByProxyArg || {};
             try {
                 const filteredJson = render_queue.filter_paired_gyroflow_siblings(
                     JSON.stringify(urls.map(u => u.toString())),
@@ -1943,6 +1964,34 @@ Item {
                 urls = JSON.parse(filteredJson);
             } catch (e) {
                 console.log("filter_paired_gyroflow_siblings failed:", e);
+            }
+            if (!urls.length) return;
+            try {
+                const crmCount = urls.filter(u => filesystem.get_filename(u).toLowerCase().endsWith(".crm")).length;
+                const pairs = JSON.parse(render_queue.crm_proxy_pairs(JSON.stringify(urls.map(u => u.toString()))));
+                if (crmCount > 0 && pairs.length !== crmCount) {
+                    const proxySet = {};
+                    const pairedCrmUrls = {};
+                    for (const pair of pairs) {
+                        proxySet[pair.proxy_url] = true;
+                        pairedCrmUrls[pair.crm_url] = true;
+                    }
+                    urls = urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm") || pairedCrmUrls[u.toString()]);
+                    const firstVideoUrl = render_queue.first_renderable_video_file(
+                        JSON.stringify(urls.map(u => u.toString())),
+                        JSON.stringify(fileDialog.extensions)
+                    );
+                    if (!firstVideoUrl) {
+                        messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
+                        return;
+                    }
+                }
+                for (const pair of pairs) {
+                    crmProxyGyroByProxy[pair.proxy_url] = pair.crm_url;
+                }
+                urls = urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm"));
+            } catch (e) {
+                console.log("crm_proxy_pairs failed:", e);
             }
             if (!urls.length) return;
 
@@ -1956,7 +2005,7 @@ Item {
                 if (Qt.platform.os === "android" && isSandboxed) {
                     const fixed = window.exportSettings ? window.exportSettings.queueFixedOutputPath : "";
                     if (fixed && filesystem.can_create_file(fixed, "check.tmp")) {
-                        add(fixed, urls);
+                        add(fixed, urls, crmProxyGyroByProxy);
                         return;
                     }
                     window.outputFile.selectFolder("", function(folder_url) {
@@ -1966,7 +2015,7 @@ Item {
                         }
                         filesystem.folder_access_granted(folder_url);
                         Qt.callLater(filesystem.save_allowed_folders);
-                        add(folder_url, urls);
+                        add(folder_url, urls, crmProxyGyroByProxy);
                     });
                     return;
                 }
@@ -1996,11 +2045,11 @@ Item {
                     remaining--;
                     let el = messageBox(Modal.Info, qsTr("Due to file access restrictions, you need to select the destination folder manually.\nClick Ok and select the destination folder."), [
                         { text: qsTr("Ok"), clicked: () => {
-                            outputFile.selectFolder(folder, function(_) { if (!remaining) add(outFolder, urls); });
+                            outputFile.selectFolder(folder, function(_) { if (!remaining) add(outFolder, urls, crmProxyGyroByProxy); });
                         }},
                     ], undefined, Text.AutoText, "file-access-restriction");
                     if (!el) { // Don't show again triggered
-                        outputFile.selectFolder(folder, function(_) { if (!remaining) add(outFolder, urls); });
+                        outputFile.selectFolder(folder, function(_) { if (!remaining) add(outFolder, urls, crmProxyGyroByProxy); });
                     }
                 }
                 return;
@@ -2016,9 +2065,9 @@ Item {
             }
             if (urlsRequiringSdk.length > 0) {
                 if (urlsReady.length > 0) {
-                    add(outFolder, urlsReady);
+                    add(outFolder, urlsReady, crmProxyGyroByProxy);
                 }
-                root.ensureExternalSdkForQueue(urlsRequiringSdk, function() { add(outFolder, urlsRequiringSdk); });
+                root.ensureExternalSdkForQueue(urlsRequiringSdk, function() { add(outFolder, urlsRequiringSdk, crmProxyGyroByProxy); });
                 return;
             }
             additional = JSON.stringify(additional);
@@ -2032,7 +2081,7 @@ Item {
             const r3dUrls = urls.filter(u => u.toString().toLowerCase().endsWith(".r3d"));
             const otherUrls = urls.filter(u => !u.toString().toLowerCase().endsWith(".r3d"));
             for (const url of otherUrls) {
-                const job_id = render_queue.add_file(url.toString(), "", additional);
+                const job_id = render_queue.add_file(url.toString(), crmProxyGyroByProxy[url.toString()] || "", additional);
                 loader.pendingJobs[job_id] = true;
             }
             if (otherUrls.length > 0) loader.updateStatus();
@@ -2062,6 +2111,8 @@ Item {
                 const fname = filesystem.get_filename(url).toLowerCase();
                 if (render_queue.is_gyro_mix_file(url.toString())) {
                     render_queue.add_gyro_file(url.toString());
+                } else if (fname.endsWith(".crm")) {
+                    videoUrls.push(url);
                 } else if (fname.endsWith(".bin")) {
                     continue;
                 } else if (!fname.includes(".") || fname.endsWith(".rdc")) {
@@ -2079,6 +2130,18 @@ Item {
                         for (const v of more) videoUrls.push(v);
                     } catch (e) {
                         console.log("list_video_files_in_folder failed:", e);
+                    }
+                    try {
+                        const crmJsonStr = render_queue.list_crm_proxy_files_in_folder(
+                            url.toString(),
+                            JSON.stringify(fileDialog.extensions)
+                        );
+                        const crmMore = JSON.parse(crmJsonStr);
+                        for (const v of crmMore) {
+                            if (!videoUrls.map(x => x.toString()).includes(v)) videoUrls.push(v);
+                        }
+                    } catch (e) {
+                        console.log("list_crm_proxy_files_in_folder failed:", e);
                     }
                 } else {
                     videoUrls.push(url);

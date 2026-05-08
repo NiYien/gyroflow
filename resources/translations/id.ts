@@ -188,6 +188,13 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="2136"/>
+        <source>Canon CRM files are supported through the proxy workflow only.
+Export a project file and use it with your RAW workflow.</source>
+        <translation>File Canon CRM hanya didukung melalui alur kerja proxy.
+Ekspor file proyek dan gunakan dengan alur kerja RAW Anda.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="541"/>
         <source>Choose a video file</source>
         <translation>Pilih file video</translation>
@@ -2797,6 +2804,22 @@ Buka &lt;b&gt;Terminal&lt;/b&gt; dan masukkan perintah berikut:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
+        <source>Sync complete</source>
+        <translation>Sinkronisasi selesai</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1635"/>
+        <source>Sync complete: %1</source>
+        <translation>Sinkronisasi selesai: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1985"/>
+        <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
+        <translation>File Canon CRM harus dimuat bersama video proxy dengan nama yang sama.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="622"/>
         <source>Pause</source>
         <translation>Pause</translation>
@@ -4798,6 +4821,14 @@ Apakah anda yakin ingin melanjutkan?</translation>
 </context>
 <context>
     <name>VideoArea</name>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="400"/>
+        <location filename="../../src/ui/VideoArea.qml" line="547"/>
+        <location filename="../../src/ui/VideoArea.qml" line="585"/>
+        <location filename="../../src/ui/VideoArea.qml" line="589"/>
+        <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
+        <translation>File Canon CRM harus dimuat bersama video proxy dengan nama yang sama.</translation>
+    </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="515"/>
         <source>There&apos;s a %1 file associated with this video, do you want to load it?</source>

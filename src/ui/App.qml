@@ -536,7 +536,7 @@ Rectangle {
 
     FileDialog {
         id: fileDialog;
-        property var extensions: [ "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng", "braw", "r3d", "nev" ];
+        property var extensions: [ "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng", "braw", "r3d", "nev", "crm" ];
 
         title: qsTr("Choose a video file")
         nameFilters: Qt.platform.os == "android"? undefined : [qsTr("Video files") + " (*." + extensions.concat(extensions.map(x => x.toUpperCase())).join(" *.") + ")"];
@@ -705,12 +705,19 @@ Rectangle {
                     anchors.horizontalCenterOffset: -(queueBtn.width + spacing) / 2;
                     spacing: 10 * dpiScale;
                     property int queueRowCount: 0;
+                    function refreshQueueRowCount(): void {
+                        queueRowCount = render_queue.queue.rowCount();
+                    }
                     Connections {
                         target: render_queue;
                         function onQueue_changed(): void {
-                            simpleExportBtnRow.queueRowCount = render_queue.queue.rowCount();
+                            simpleExportBtnRow.refreshQueueRowCount();
+                        }
+                        function onMatch_apply_finished(): void {
+                            simpleExportBtnRow.refreshQueueRowCount();
                         }
                     }
+                    Component.onCompleted: refreshQueueRowCount();
                     Button {
                         id: simpleAutoSyncBtn;
                         text: qsTr("Auto sync");
@@ -722,12 +729,13 @@ Rectangle {
                         // Gate on stable layout flags rather than dynamic `parent` reference,
                         // so the binding reliably re-evaluates after theme/mode toggles.
                         width: (window.isMobileLayout && window.isSimpleMode) ? mobileSimpleExportBtnCol.width : implicitWidth;
-                        // Queue path: when the render queue is visible with pending jobs, run the
+                        // Queue path: when the render queue has pending jobs, run the
                         // queue with export_project=2 so each job performs autosync and writes a
                         // .gyroflow project file — no video encode. Uses the queue's built-in
                         // parallel_renders for concurrency. Otherwise falls back to main-canvas sync.
-                        readonly property bool _queueMode: videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
-                        readonly property bool _queueMotionReady: _queueMode && videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready();
+                        readonly property bool _queueMode: videoArea.queue && simpleExportBtnRow.queueRowCount > 0;
+                        readonly property int _queueMatchVersion: videoArea.queue ? videoArea.queue.matchVersion : -1;
+                        readonly property bool _queueMotionReady: _queueMode && _queueMatchVersion >= 0 && render_queue.batch_motion_ready();
                         enabled: _queueMode
                             ? (render_queue.status !== "active" && _queueMotionReady)
                             : (window.videoArea.vid.loaded && !controller.sync_in_progress);
@@ -766,6 +774,10 @@ Rectangle {
                         property bool pendingRenderAfterSync: false;
 
                         function doSingleRender(): void {
+                            if (window.isCanonCrmWorkflow()) {
+                                window.showCanonCrmProjectOnlyMessage();
+                                return;
+                            }
                             window.videoArea.vid.pause();
                             renderBtn.allowFile = false;
                             renderBtn.allowLens = false;
@@ -796,6 +808,10 @@ Rectangle {
                             // Batch path — render queue panel is open with pending jobs
                             if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
                                 if (!render_queue.batch_motion_ready()) return;
+                                if (render_queue.has_crm_proxy_jobs()) {
+                                    window.showCanonCrmProjectOnlyMessage();
+                                    return;
+                                }
                                 render_queue.export_project = 4;
                                 render_queue.prepare_finished_jobs_for_video_export();
                                 render_queue.start();
@@ -899,6 +915,10 @@ Rectangle {
                         Component.onCompleted: updateModel();
 
                         function render(): void {
+                            if (window.isCanonCrmWorkflow()) {
+                                window.showCanonCrmProjectOnlyMessage();
+                                return;
+                            }
                             const fname = vidInfo.item.filename.toLowerCase();
                             if (fname.endsWith('.braw') || ((fname.endsWith('.r3d') || fname.endsWith('.nev')) && !controller.find_redline()) || fname.endsWith('.dng')) {
                                 messageBox(Modal.Info, qsTr("This format is not available for rendering.\nThe recommended workflow is to export project file and use one of [video editor plugins] (%1).").replace(/\[(.*?)\]/, '<a href="https://gyroflow.xyz/download#plugins"><font color="' + styleTextColor + '">$1</font></a>').arg("DaVinci Resolve, Adobe Premiere/Ae, Final Cut Pro"), [
@@ -2105,6 +2125,18 @@ Rectangle {
         };
     }
     function getAdditionalProjectDataJson(): string { return JSON.stringify(getAdditionalProjectData()); }
+
+    function isCanonCrmWorkflow(): bool {
+        return window.motionData
+            && window.motionData.lastSelectedFile
+            && window.motionData.lastSelectedFile.toString().toLowerCase().endsWith(".crm");
+    }
+
+    function showCanonCrmProjectOnlyMessage(): void {
+        messageBox(Modal.Info, qsTr("Canon CRM files are supported through the proxy workflow only.\nExport a project file and use it with your RAW workflow."), [
+            { text: qsTr("Ok"), accent: true }
+        ]);
+    }
 
     function saveProjectToUrl(url: url, type: string): void {
         videoArea.videoLoader.show(qsTr("Saving..."), false);

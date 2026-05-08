@@ -36,6 +36,7 @@ Item {
     property int pendingQueueJobId: 0;
     property url pendingExternalGyroFallbackUrl: "";
     property int pendingExternalGyroFallbackProjectVersion: 0;
+    property url pendingCrmTelemetryUrl: "";
     property bool queueEditLoading: false;
     property url loadedFileUrl;
 
@@ -51,6 +52,7 @@ Item {
         root.pendingQueueJobId = 0;
         root.pendingExternalGyroFallbackUrl = "";
         root.pendingExternalGyroFallbackProjectVersion = 0;
+        root.pendingCrmTelemetryUrl = "";
         const targetQueueJobId = +queueJobId;
         root.queueEditLoading = targetQueueJobId > 0;
 
@@ -311,6 +313,12 @@ Item {
             if (!root.pendingGyroflowData && render_queue.editing_job_id > 0) {
                 root.queueEditLoading = false;
             }
+            if (is_main_video && root.pendingCrmTelemetryUrl && root.pendingCrmTelemetryUrl.toString()) {
+                const crmUrl = root.pendingCrmTelemetryUrl;
+                root.pendingCrmTelemetryUrl = "";
+                window.motionData.lastSelectedFile = crmUrl;
+                controller.load_telemetry(crmUrl, false, window.videoArea.vid, -1, 0);
+            }
         }
         function onChart_data_changed(): void {
             timeline.triggerUpdateChart("");
@@ -373,7 +381,7 @@ Item {
         return true;
     }
 
-    function loadFile(url: url, skip_detection: bool, queueJobId: int): void {
+    function loadFile(url: url, skip_detection: bool, queueJobId: int, crmTelemetryUrl: url): void {
         let filename = filesystem.get_filename(url);
         let folder = filesystem.get_folder(url);
 
@@ -387,6 +395,10 @@ Item {
             url = parts.join("/");
             filename = filesystem.get_filename(url);
             folder = filesystem.get_folder(url);
+        }
+        if (filename.toLowerCase().endsWith(".crm")) {
+            messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
+            return;
         }
 
         if (isMobile || filename.toLowerCase().endsWith(".r3d") || filename.toLowerCase().endsWith(".nev") || filename.toLowerCase().endsWith(".braw")) {
@@ -434,7 +446,7 @@ Item {
                     const detectedFps = controller.get_image_sequence_fps(firstFileUrl);
                     if (detectedFps > 0) {
                         controller.image_sequence_fps = detectedFps;
-                        loadFile(newUrl, true);
+                        loadFile(newUrl, true, 0, crmTelemetryUrl);
                         vid.setFrameRate(detectedFps);
                         return;
                     }
@@ -444,7 +456,7 @@ Item {
                         const fps = dlg.mainColumn.children[1].value;
                         settings.setValue("imageSequenceFps", fps);
                         controller.image_sequence_fps = fps;
-                        loadFile(newUrl, true);
+                        loadFile(newUrl, true, 0, crmTelemetryUrl);
                         vid.setFrameRate(fps);
                     } },
                     { text: qsTr("Cancel") },
@@ -467,7 +479,7 @@ Item {
                     } },
                     { text: qsTr("No"), clicked: function() {
                         externalSdkModal = null;
-                        loadFile(url, true);
+                        loadFile(url, true, 0, crmTelemetryUrl);
                     } },
                 ])
                 externalSdkModal = dlg;
@@ -492,6 +504,7 @@ Item {
         }
         root.pendingExternalGyroFallbackUrl = "";
         root.pendingExternalGyroFallbackProjectVersion = 0;
+        root.pendingCrmTelemetryUrl = crmTelemetryUrl || "";
         controller.load_video(url, vid);
         if (!isCalibrator) {
             const suffix = window.advanced.defaultSuffix.text;
@@ -529,7 +542,55 @@ Item {
         vidInfo.updateEntry("Contains gyro", "---");
         timeline.editingSyncPoint = false;
     }
+    function loadCrmProxyPair(pair: var, skip_detection: bool): void {
+        if (!pair || !pair.crm_url || !pair.proxy_url) {
+            messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
+            return;
+        }
+        root.loadFile(Qt.url(pair.proxy_url), skip_detection, 0, Qt.url(pair.crm_url));
+    }
+
     function loadMultipleFiles(urls: list<url>, skip_detection: bool): void {
+        if (urls.length > 0) {
+            let hasCrm = false;
+            let crmCount = 0;
+            const urlStrings = [];
+            for (const url of urls) {
+                urlStrings.push(url.toString());
+                if (filesystem.get_filename(url).toLowerCase().endsWith(".crm")) {
+                    hasCrm = true;
+                    crmCount++;
+                }
+            }
+            if (hasCrm) {
+                try {
+                    const pairs = JSON.parse(render_queue.crm_proxy_pairs(JSON.stringify(urlStrings)));
+                    const firstVideoUrl = render_queue.first_renderable_video_file(
+                        JSON.stringify(urlStrings),
+                        JSON.stringify(fileDialog.extensions)
+                    );
+                    const hasRenderableVideo = !!firstVideoUrl;
+                    if (pairs.length === 1 && urls.length === 2) {
+                        const pair = JSON.parse(render_queue.crm_proxy_pair(JSON.stringify(urlStrings)));
+                        loadCrmProxyPair(pair, skip_detection);
+                    } else if (pairs.length === crmCount) {
+                        queue.item.dt.loadFiles(urls);
+                        queue.item.shown = true;
+                    } else if (hasRenderableVideo) {
+                        const pairedCrmUrls = {};
+                        for (const pair of pairs) pairedCrmUrls[pair.crm_url] = true;
+                        queue.item.dt.loadFiles(urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm") || pairedCrmUrls[u.toString()]));
+                        queue.item.shown = true;
+                    } else {
+                        messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
+                    }
+                } catch (e) {
+                    console.log("crm_proxy_pair failed:", e);
+                    messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
+                }
+                return;
+            }
+        }
         if (urls.length == 1) {
             root.loadFile(urls[0], skip_detection);
             return;
