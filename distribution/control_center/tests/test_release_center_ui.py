@@ -46,6 +46,15 @@ class ReleaseCenterUiTests(unittest.TestCase):
         self.assertIn("list_plugin_action_builds", app_js)
         self.assertIn("selectPluginArtifactItem", app_js)
 
+    def test_lens_tag_has_latest_release_refresh_button(self):
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn('id="plan-lens-tag-refresh"', html)
+        self.assertIn("loadLatestLensTagForPlan", app_js)
+        self.assertIn("getElementById('plan-lens-tag-refresh')", app_js)
+        self.assertIn("get_latest_resource_tags", app_js)
+
 
 # ---- Hidden Management tab (release-hidden-management capability) ----
 

@@ -608,6 +608,7 @@ function setReleasePlanControlsLocked(locked) {
     'plan-include-plugin',
     'plan-include-sdk',
     'plan-lens-tag',
+    'plan-lens-tag-refresh',
     'plan-plugin-tag',
     'plan-plugin-artifact',
     'plan-plugin-run-id',
@@ -912,6 +913,7 @@ document.querySelectorAll('.mode-btn').forEach(btn => {
 document.querySelectorAll('.plan-plugin-mode-btn').forEach(btn => {
   btn.addEventListener('click', () => setReleasePlanPluginMode(btn.dataset.planPluginMode));
 });
+document.getElementById('plan-lens-tag-refresh')?.addEventListener('click', loadLatestLensTagForPlan);
 document.getElementById('plan-plugin-artifact-refresh')?.addEventListener('click', () => loadPluginArtifactBuilds(true));
 ['plan-include-lens', 'plan-include-plugin', 'plan-include-sdk', 'plan-lens-tag', 'plan-plugin-tag', 'plan-plugin-artifact', 'plan-sdk-base'].forEach(id => {
   document.getElementById(id)?.addEventListener('input', () => {
@@ -1699,6 +1701,57 @@ async function autoFillResourceTagsIfEmpty() {
     refreshReleasePlanChecklist();
   } catch (e) {
     console.warn('autoFillResourceTagsIfEmpty failed:', e);
+  }
+}
+
+async function loadLatestLensTagForPlan() {
+  const lensEl = document.getElementById('plan-lens-tag');
+  const resultEl = document.getElementById('execute-publish-result');
+  const button = document.getElementById('plan-lens-tag-refresh');
+  if (!lensEl) return;
+  const previousText = button?.textContent || '刷新';
+  if (button) {
+    button.disabled = true;
+    button.textContent = '刷新中...';
+  }
+  if (resultEl) {
+    resultEl.textContent = '正在读取最新 Lens/CameraDB Release...';
+    resultEl.className = 'text-sm text-slate-600';
+  }
+  try {
+    const r = await pywebview.api.get_latest_resource_tags();
+    if (!r || !r.ok) {
+      const message = r?.error || '读取最新 Lens/CameraDB Release 失败';
+      if (resultEl) {
+        resultEl.textContent = message;
+        resultEl.className = 'text-sm text-red-600';
+      }
+      return;
+    }
+    if (!r.lens_tag) {
+      if (resultEl) {
+        resultEl.textContent = '未找到可用的 Lens/CameraDB Release';
+        resultEl.className = 'text-sm text-amber-600';
+      }
+      return;
+    }
+    lensEl.value = r.lens_tag;
+    lensEl.dispatchEvent(new Event('input', { bubbles: true }));
+    refreshReleasePlanChecklist();
+    if (resultEl) {
+      resultEl.textContent = `已刷新 Lens/CameraDB Tag: ${r.lens_tag}`;
+      resultEl.className = 'text-sm text-emerald-600';
+    }
+  } catch (e) {
+    if (resultEl) {
+      resultEl.textContent = `读取最新 Lens/CameraDB Release 失败: ${e}`;
+      resultEl.className = 'text-sm text-red-600';
+    }
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = previousText;
+    }
   }
 }
 
