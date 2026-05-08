@@ -2302,6 +2302,28 @@ impl StabilizationManager {
             .map(|(a, b)| (a * params.duration_ms, b * params.duration_ms))
             .collect::<Vec<_>>();
 
+        // Bake the current source's display anchor (= video track elst.media_time)
+        // into the saved offsets: subtract anchor from both keys (us) and values (ms).
+        // Mirrored on import (lib.rs::import_gyroflow_data adds the *current*
+        // source's anchor back). No-op when anchor is None / 0.
+        let display_anchor_us = params.video_display_anchor_us.unwrap_or(0);
+        let display_anchor_ms = display_anchor_us as f64 / 1000.0;
+        let baked_offsets: std::collections::BTreeMap<i64, f64> = if display_anchor_us == 0 {
+            gyro.get_offsets().clone()
+        } else {
+            gyro.get_offsets()
+                .iter()
+                .map(|(k, v)| (k - display_anchor_us, v - display_anchor_ms))
+                .collect()
+        };
+        if display_anchor_us != 0 {
+            ::log::info!(
+                "Display anchor baked into export: -{} us; {} offsets",
+                display_anchor_us,
+                baked_offsets.len()
+            );
+        }
+
         let mut obj = serde_json::json!({
             "title": "Gyroflow data file",
             "version": 4,
@@ -2371,7 +2393,7 @@ impl StabilizationManager {
                 "detected_source":    gyro.file_metadata.read().detected_source,
             },
 
-            "offsets": gyro.get_offsets(), // timestamp, offset value
+            "offsets": &baked_offsets, // timestamp (us), offset value (ms); baked with -display_anchor_us
             "keyframes": self.keyframes.read().serialize(),
 
             // "trim_ranges": params.trim_ranges,
@@ -3140,13 +3162,33 @@ impl StabilizationManager {
             }
 
             if let Some(serde_json::Value::Object(offsets)) = obj.get("offsets") {
+                // Unbake: add the *current* source's display anchor (= video
+                // track elst.media_time) to each (key, value). Mirrors the
+                // bake performed in export_gyroflow_data. When current source
+                // has no elst (CRM, most other containers), or the file was
+                // saved on a non-anchor source, this is a no-op.
+                let current_anchor_us = self.params.read().video_display_anchor_us.unwrap_or(0);
+                let current_anchor_ms = current_anchor_us as f64 / 1000.0;
+
+                let parsed: BTreeMap<i64, f64> = offsets
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        let k_us: i64 = k.parse().ok()?;
+                        let v_ms: f64 = v.as_f64()?;
+                        Some((k_us + current_anchor_us, v_ms + current_anchor_ms))
+                    })
+                    .collect();
+
+                if current_anchor_us != 0 {
+                    ::log::info!(
+                        "Display anchor un-baked on import: +{} us (current source elst); {} offsets",
+                        current_anchor_us,
+                        parsed.len()
+                    );
+                }
+
                 let mut gyro = self.gyro.write();
-                gyro.set_offsets(
-                    offsets
-                        .iter()
-                        .filter_map(|(k, v)| Some((k.parse().ok()?, v.as_f64()?)))
-                        .collect(),
-                );
+                gyro.set_offsets(parsed);
                 self.keyframes.write().update_gyro(&gyro);
             }
             obj.remove("offsets");

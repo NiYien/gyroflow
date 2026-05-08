@@ -2618,9 +2618,19 @@ impl RenderQueue {
             .map_err(|e| format!("export_gyroflow_data: {:?}", e))?;
         let mut obj: serde_json::Value =
             serde_json::from_str(&json_str).map_err(|e| format!("parse: {}", e))?;
+        // Match the bake performed in export_gyroflow_data (lib.rs): subtract
+        // the current source's display anchor (= video track elst.media_time)
+        // from each (key, value). This keeps T1 batch-sync snapshots and the
+        // T2 yellow path consistent with the regular export path.
+        let display_anchor_us = stab.params.read().video_display_anchor_us.unwrap_or(0);
+        let display_anchor_ms = display_anchor_us as f64 / 1000.0;
         let offsets_obj: serde_json::Map<String, serde_json::Value> = offsets
             .iter()
-            .map(|(k, v)| (k.to_string(), serde_json::Value::from(*v)))
+            .map(|(k, v)| {
+                let baked_k = k - display_anchor_us;
+                let baked_v = v - display_anchor_ms;
+                (baked_k.to_string(), serde_json::Value::from(baked_v))
+            })
             .collect();
         obj["offsets"] = serde_json::Value::Object(offsets_obj);
         // Match export_gyroflow_data's pretty-print formatting (lib.rs:2480) so the

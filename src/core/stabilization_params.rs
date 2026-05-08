@@ -96,6 +96,14 @@ pub struct StabilizationParams {
     pub video_created_at: Option<i64>,
     pub video_timezone: Option<String>,
 
+    /// Video container's edit list media_time in microseconds (e.g. Canon
+    /// _Proxy.MP4 has 33367 us; CRM and most other sources are None). Captured
+    /// at video load time and used as a runtime "display anchor" to bake/unbake
+    /// sync offsets when the same .gyroflow file is reused across paired
+    /// sources (Proxy ↔ CRM). Not serialized into .gyroflow JSON.
+    #[serde(default, skip_serializing)]
+    pub video_display_anchor_us: Option<i64>,
+
     pub trim_ranges: Vec<(f64, f64)>,
 
     pub video_rotation: f64,
@@ -181,6 +189,7 @@ impl Default for StabilizationParams {
             duration_ms: 0.0,
             video_created_at: None,
             video_timezone: None,
+            video_display_anchor_us: None,
         }
     }
 }

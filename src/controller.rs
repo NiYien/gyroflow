@@ -1441,6 +1441,41 @@ impl Controller {
                                     cancel_flag,
                                 );
                                 stab.recompute_undistortion();
+
+                                // Display anchor: only set for Canon Cinema RAW Proxy
+                                // companion files (filename `*_Proxy.MP4`/`.mov` AND
+                                // detected_source starts with "Canon"). Container-layer
+                                // metadata cannot distinguish R52-style 1-frame Proxy
+                                // offsets from regular Canon H.264/HEVC encodings (both
+                                // carry elst.media_time = 1 frame for B-frame reorder),
+                                // so we hard-code the rule on filename + brand. 1 frame
+                                // duration is derived from fps so 29.97/59.94/etc all
+                                // resolve correctly.
+                                let url_lower = url.to_ascii_lowercase();
+                                let is_canon_proxy_name = url_lower.ends_with("_proxy.mp4")
+                                    || url_lower.ends_with("_proxy.mov");
+                                let is_canon = stab
+                                    .gyro
+                                    .read()
+                                    .file_metadata
+                                    .read()
+                                    .detected_source
+                                    .as_deref()
+                                    .is_some_and(|s| s.starts_with("Canon"));
+                                let anchor_us = if is_canon_proxy_name && is_canon && fps > 0.0 {
+                                    Some((1_000_000.0 / fps).round() as i64)
+                                } else {
+                                    None
+                                };
+                                stab.params.write().video_display_anchor_us = anchor_us;
+                                ::log::info!(
+                                    target: "video.load",
+                                    "video_display_anchor_us = {:?} (is_canon_proxy_name={} is_canon={} fps={:.6})",
+                                    anchor_us,
+                                    is_canon_proxy_name,
+                                    is_canon,
+                                    fps
+                                );
                             } else {
                                 if sample_index > -1 {
                                     load_options.sample_index = Some(sample_index as usize);
