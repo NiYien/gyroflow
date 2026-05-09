@@ -188,6 +188,11 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Lanjutkan</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2804,6 +2809,47 @@ Buka &lt;b&gt;Terminal&lt;/b&gt; dan masukkan perintah berikut:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Sinkronisasi batch tidak menghasilkan hasil yang andal.** Mohon periksa:
+
+**1. Video kalibrasi telah dimuat**
+
+Video pendek (kurang dari 10 detik) yang direkam bersamaan dengan file giroskop.
+
+**2. Video dan file giroskop telah dipasangkan dengan benar**
+
+Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: klik kanan pada video → **"Pasangkan dengan Giroskop"**, lalu pilih file giroskop yang sesuai.
+
+**3. Jika tidak ada 2 video kalibrasi untuk hari itu**
+
+- Pinjam data sinkronisasi dari hari sebelumnya/berikutnya: salin video kalibrasi dan file giroskopnya ke folder hari ini, tambahkan kembali ke antrean, lalu pasangkan secara manual.
+- Atau rekam ulang video kalibrasi dan tambahkan kembali ke antrean.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 video akan menggunakan lensa Anamorphic</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Pasangkan dengan Giroskop</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2919,11 +2965,6 @@ Buka &lt;b&gt;Terminal&lt;/b&gt; dan masukkan perintah berikut:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Lewati</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Sinkronisasi batch tidak menghasilkan hasil yang andal. Periksa pembagian giro atau pencocokan batch lalu coba lagi.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

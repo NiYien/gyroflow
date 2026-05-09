@@ -187,6 +187,11 @@ Notez que ce n&apos;est qu&apos;un indicateur visuel, il n&apos;affecte pas le r
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Continuer</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2806,6 +2811,47 @@ Ouvrez &lt;b&gt;Terminal&lt;/b&gt; et entrez la commande suivante&#xa0;:</transl
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**La synchronisation par lot n'a pas produit de résultat fiable.** Veuillez vérifier :
+
+**1. Les vidéos de calibration sont chargées**
+
+Vidéos courtes (moins de 10 secondes) enregistrées simultanément avec le fichier gyroscopique.
+
+**2. Les vidéos et fichiers gyroscopiques sont correctement appariés**
+
+Pour toute vidéo non appariée, vous pouvez l'apparier manuellement : clic droit sur la vidéo → **"Apparier avec gyro"**, puis sélectionnez le fichier correspondant.
+
+**3. S'il n'y a pas 2 vidéos de calibration pour la journée**
+
+- Empruntez les données de synchronisation de la veille ou du lendemain : copiez les vidéos de calibration et leurs fichiers gyroscopiques dans le dossier du jour, réajoutez à la file et appariez manuellement.
+- Ou refilmer des vidéos de calibration et les rajouter à la file.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 vidéo(s) utiliseront une optique anamorphique</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Apparier avec gyro</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2921,11 +2967,6 @@ Ouvrez &lt;b&gt;Terminal&lt;/b&gt; et entrez la commande suivante&#xa0;:</transl
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Ignorer</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>La synchronisation par lots n'a pas produit de résultat fiable. Vérifiez le partage gyro ou l'appariement par lots, puis réessayez.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

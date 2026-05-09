@@ -287,9 +287,9 @@ Item {
                     { text: qsTr("Skip"), clicked: () => render_queue.skip_batch_sync_repair() }
                 ]);
             } else if (kind === "all_yellow") {
-                messageBox(Modal.Warning, qsTr("Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again."), [
+                messageBox(Modal.Warning, qsTr("**Batch synchronization did not produce a reliable result.** Please check:\n\n**1. Calibration videos are loaded**\n\nShort videos (under 10 seconds) recorded simultaneously with the gyro file.\n\n**2. Videos and gyro files are correctly paired**\n\nFor any unpaired video, you can pair manually: right-click the video → **\"Pair with Gyro\"**, then select the matching gyro file.\n\n**3. If there are not 2 calibration videos for the day**\n\n- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.\n- Or re-shoot calibration videos and re-add to the queue."), [
                     { text: qsTr("Ok") }
-                ]);
+                ], undefined, Text.MarkdownText);
             } else if (kind === "finished_with_yellow") {
                 messageBox(Modal.Warning, qsTr("Some videos are still not reliably synchronized after repair."), [
                     { text: qsTr("Ok") }

@@ -186,6 +186,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Jatka</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2806,6 +2811,47 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Erien synkronointi ei tuottanut luotettavaa tulosta.** Tarkista:
+
+**1. Kalibrointivideot on ladattu**
+
+Lyhyet videot (alle 10 sekuntia), jotka on tallennettu samanaikaisesti gyrotiedoston kanssa.
+
+**2. Videot ja gyrotiedostot on yhdistetty oikein**
+
+Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **"Yhdistä gyroon"** ja valitse vastaava gyrotiedosto.
+
+**3. Jos päivälle ei ole 2 kalibrointivideota**
+
+- Käytä edellisen/seuraavan päivän synkronointidataa: kopioi kalibrointivideot ja niiden gyrotiedostot päivän kansioon, lisää uudelleen jonoon ja yhdistä manuaalisesti.
+- Tai kuvaa uusi kalibrointivideo ja lisää se jonoon.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 videota käyttää anamorfista objektiivia</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Yhdistä gyroon</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2921,11 +2967,6 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Ohita</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Eräsynkronointi ei tuottanut luotettavaa tulosta. Tarkista gyron jako tai erävastaavuus ja yritä uudelleen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

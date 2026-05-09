@@ -742,7 +742,15 @@ Rectangle {
                         onClicked: {
                             if (simpleAutoSyncBtn._queueMode) {
                                 if (!simpleAutoSyncBtn._queueMotionReady) return;
-                                render_queue.start_batch_autosync();
+                                const anamorphicCount = render_queue.get_anamorphic_applied_count();
+                                if (anamorphicCount > 0) {
+                                    messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
+                                        { text: qsTr("Cancel") },
+                                        { text: qsTr("Continue"), accent: true, clicked: () => render_queue.start_batch_autosync() }
+                                    ]);
+                                } else {
+                                    render_queue.start_batch_autosync();
+                                }
                                 return;
                             }
                             if (window.sync) window.sync.runAutosync();

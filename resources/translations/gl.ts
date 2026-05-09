@@ -186,6 +186,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Continuar</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2805,6 +2810,47 @@ Abre &lt;b&gt;Terminal&lt;/b&gt; e introduce o seguinte comando:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**A sincronización por lotes non produciu un resultado fiable.** Comproba:
+
+**1. Os vídeos de calibración están cargados**
+
+Vídeos curtos (menos de 10 segundos) gravados ao mesmo tempo que o ficheiro do xiroscopio.
+
+**2. Os vídeos e os ficheiros do xiroscopio están correctamente emparellados**
+
+Para vídeos sen emparellar, podes facelo manualmente: clic dereito no vídeo → **"Emparellar co xiroscopio"** e selecciona o ficheiro correspondente.
+
+**3. Se non hai 2 vídeos de calibración para o día**
+
+- Toma os datos de sincronización do día anterior ou posterior: copia os vídeos de calibración e os seus ficheiros do xiroscopio ao cartafol do día, engade de novo á cola e emparella manualmente.
+- Ou grava novos vídeos de calibración e engádeos á cola.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 vídeo(s) usarán óptica anamórfica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Emparellar co xiroscopio</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2920,11 +2966,6 @@ Abre &lt;b&gt;Terminal&lt;/b&gt; e introduce o seguinte comando:</translation>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Omitir</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>A sincronización en lote non produciu un resultado fiable. Comproba a división xiroscópica ou a correspondencia en lote e téntao de novo.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

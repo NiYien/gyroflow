@@ -187,6 +187,11 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Pokračovať</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2807,6 +2812,47 @@ Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translatio
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Hromadná synchronizácia neposkytla spoľahlivý výsledok.** Skontrolujte:
+
+**1. Sú načítané kalibračné videá**
+
+Krátke videá (do 10 sekúnd) natočené súčasne so súborom gyroskopu.
+
+**2. Videá a súbory gyroskopu sú správne spárované**
+
+Nespárované video môžete spárovať ručne: pravým tlačidlom na video → **"Spárovať s gyroskopom"** a vyberte zodpovedajúci súbor gyroskopu.
+
+**3. Ak pre daný deň nie sú 2 kalibračné videá**
+
+- Použite údaje zo susedného dňa: skopírujte kalibračné videá a ich gyroskopy do priečinka daného dňa, znova pridajte do frontu a ručne spárujte.
+- Alebo natočte nové kalibračné videá a pridajte ich do frontu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 videí použije anamorfný objektív</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Spárovať s gyroskopom</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2922,11 +2968,6 @@ Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translatio
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Preskočiť</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Hromadná synchronizácia nepriniesla spoľahlivý výsledok. Skontrolujte rozdelenie gyra alebo hromadné priraďovanie a skúste znova.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

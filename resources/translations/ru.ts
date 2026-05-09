@@ -187,6 +187,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Продолжить</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2807,6 +2812,47 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Пакетная синхронизация не дала надёжного результата.** Проверьте:
+
+**1. Калибровочные видео загружены**
+
+Короткие ролики (менее 10 секунд), записанные одновременно с файлом гироскопа.
+
+**2. Видео и файлы гироскопа правильно сопоставлены**
+
+Для несопоставленных видео можно сделать это вручную: щёлкните правой кнопкой по видео → **"Сопоставить с гироскопом"** и выберите соответствующий файл.
+
+**3. Если для данного дня нет 2 калибровочных видео**
+
+- Возьмите данные синхронизации с предыдущего/следующего дня: скопируйте калибровочные видео и файлы гироскопа в папку текущего дня, повторно добавьте в очередь и сопоставьте вручную.
+- Или переснимите калибровочные видео и добавьте их в очередь.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>В %1 видео будет использован анаморфотный объектив</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Сопоставить с гироскопом</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2922,11 +2968,6 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Пропустить</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Пакетная синхронизация не дала надёжного результата. Проверьте разделение гиро или пакетное сопоставление и повторите попытку.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

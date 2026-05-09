@@ -187,6 +187,11 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Devam</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2802,6 +2807,47 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Toplu senkronizasyon güvenilir bir sonuç vermedi.** Lütfen şunları kontrol edin:
+
+**1. Kalibrasyon videoları yüklendi mi**
+
+Jiroskop dosyasıyla eş zamanlı olarak çekilmiş, 10 saniyenin altındaki kısa videolar.
+
+**2. Videolar ve jiroskop dosyaları doğru eşleştirildi mi**
+
+Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıklayın → **"Jiroskopla eşleştir"** ve ilgili jiroskop dosyasını seçin.
+
+**3. O gün için 2 kalibrasyon videosu yoksa**
+
+- Önceki/sonraki gün senkron verilerini kullanın: kalibrasyon videolarını ve jiroskop dosyalarını o günün klasörüne kopyalayın, kuyruğa yeniden ekleyin ve manuel eşleştirin.
+- Veya yeni bir kalibrasyon videosu çekip kuyruğa ekleyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 video Anamorfik mercek kullanacak</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Jiroskopla eşleştir</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2917,11 +2963,6 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Atla</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Toplu senkronizasyon güvenilir sonuç vermedi. Gyro bölünmesini veya toplu eşleştirmeyi kontrol edip tekrar deneyin.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

@@ -187,6 +187,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Συνέχεια</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2807,6 +2812,47 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Ο μαζικός συγχρονισμός δεν παρήγαγε αξιόπιστο αποτέλεσμα.** Ελέγξτε:
+
+**1. Έχουν φορτωθεί βίντεο βαθμονόμησης**
+
+Σύντομα βίντεο (κάτω από 10 δευτερόλεπτα) που έχουν εγγραφεί ταυτόχρονα με το αρχείο γυροσκοπίου.
+
+**2. Τα βίντεο και τα γυροσκόπια είναι σωστά αντιστοιχισμένα**
+
+Για μη αντιστοιχισμένα βίντεο, μπορείτε να αντιστοιχίσετε χειροκίνητα: δεξί κλικ στο βίντεο → **"Σύζευξη με γυροσκόπιο"** και επιλέξτε το αντίστοιχο αρχείο.
+
+**3. Αν δεν υπάρχουν 2 βίντεο βαθμονόμησης για την ημέρα**
+
+- Δανειστείτε δεδομένα από την προηγούμενη/επόμενη ημέρα: αντιγράψτε τα βίντεο βαθμονόμησης και τα γυροσκόπια στον φάκελο της ημέρας, προσθέστε ξανά στη σειρά και αντιστοιχίστε χειροκίνητα.
+- Ή ξανακινηματογραφήστε βίντεο βαθμονόμησης και προσθέστε τα ξανά.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 βίντεο θα χρησιμοποιήσουν ανάμορφο φακό</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Σύζευξη με γυροσκόπιο</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2922,11 +2968,6 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Παράλειψη</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Ο μαζικός συγχρονισμός δεν παρήγαγε αξιόπιστο αποτέλεσμα. Ελέγξτε τη διάσπαση γυροσκοπίου ή τη μαζική αντιστοίχιση και προσπαθήστε ξανά.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

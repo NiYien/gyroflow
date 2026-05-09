@@ -187,6 +187,11 @@ Bemærk, at dette kun er en visuel indikator og påvirker ikke resultatet.</tran
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Fortsæt</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2807,6 +2812,47 @@ På grund af sandkassebegrænsninger skal du oprette det selv.
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Batchsynkronisering gav ikke et pålideligt resultat.** Kontroller:
+
+**1. Kalibreringsvideoer er indlæst**
+
+Korte videoer (under 10 sekunder) optaget samtidig med gyrofilen.
+
+**2. Videoer og gyrofiler er parret korrekt**
+
+Du kan parre manuelt: højreklik på videoen → **"Par med gyro"** og vælg den tilhørende gyrofil.
+
+**3. Hvis der ikke er 2 kalibreringsvideoer for dagen**
+
+- Lån synkroniseringsdata fra dagen før/efter: kopier kalibreringsvideoerne og deres gyrofiler til dagens mappe, tilføj dem igen, og par manuelt.
+- Eller optag nye kalibreringsvideoer og tilføj dem igen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 videoer bruger anamorf optik</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Par med gyro</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2922,11 +2968,6 @@ På grund af sandkassebegrænsninger skal du oprette det selv.
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Spring over</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Batch-synkronisering gav ikke et pålideligt resultat. Tjek gyro-opdeling eller batch-matchning og prøv igen.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

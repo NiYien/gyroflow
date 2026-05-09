@@ -141,7 +141,7 @@ Rectangle {
                     BasicText {
                         id: t;
                         width: parent.width;
-                        horizontalAlignment: Text.AlignHCenter;
+                        horizontalAlignment: textFormat === Text.MarkdownText? Text.AlignLeft : Text.AlignHCenter;
                         wrapMode: Text.WordWrap;
                         font.pixelSize: (root.isWide && screenSize < 7.0? 12 : 14) * dpiScale;
                         rightPadding: 10 * dpiScale;

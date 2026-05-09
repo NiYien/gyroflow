@@ -892,6 +892,7 @@ pub struct RenderQueue {
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
     get_batch_sync_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
     get_batch_sync_prompt_kind: qt_method!(fn(&self) -> QString),
+    get_anamorphic_applied_count: qt_method!(fn(&self) -> u32),
     get_assigned_gyro_job_ids_json: qt_method!(fn(&self) -> QString),
     get_adjacent_gyro_index: qt_method!(fn(&self, job_id: u32, offset: i32) -> i32),
     enter_pairing_mode: qt_method!(fn(&mut self, gyro_index: usize)),
@@ -1764,6 +1765,46 @@ impl RenderQueue {
 
     pub fn get_batch_sync_prompt_kind(&self) -> QString {
         QString::from(self.batch_sync_prompt_kind.to_string())
+    }
+
+    /// Count queue jobs whose effective lens config will apply manual anamorphic
+    /// (i.e. global manual_edit on AND group has anamorphic_enabled). Used by
+    /// QML to decide whether to show the pre-flight warning before batch sync.
+    pub fn get_anamorphic_applied_count(&self) -> u32 {
+        let manual_edit = self.stabilizer.get_lens_group_manual_edit();
+        if !manual_edit {
+            return 0;
+        }
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let mut count: u32 = 0;
+        for job in self.jobs.values() {
+            let Some(stab) = job.stab.as_ref() else { continue; };
+            let metadata = {
+                let gyro = stab.gyro.read();
+                gyro.file_metadata.read().clone()
+            };
+            let Some(lens_index) =
+                niyien_lens_presets::extract_lens_index(&metadata.additional_data)
+            else { continue; };
+            // Use the per-job override-aware helper so that jobs with a
+            // lens_group_config_override take precedence over global configs.
+            let Some((group_config, _)) =
+                effective_lens_group_config_for_group(job, &global_configs, lens_index)
+            else { continue; };
+            let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
+                manual_edit,
+                group_config,
+                &metadata,
+            );
+            let applies_anamorphic = cfg_for_build
+                .as_ref()
+                .map(|cfg| cfg.anamorphic_enabled)
+                .unwrap_or(false);
+            if applies_anamorphic {
+                count += 1;
+            }
+        }
+        count
     }
 
     pub fn confirm_batch_sync_repair(&mut self) {
@@ -6856,9 +6897,17 @@ impl RenderQueue {
                     t_cache.elapsed().as_secs_f64() * 1000.0
                 );
 
-                // [queue-render-skip] 标记无陀螺仪数据和校准对的视频为 Skipped
+                // [queue-render-skip] Collect would-skip jobs first, then decide:
+                //   - If ALL jobs lack gyro data (no_gyro) and none are calibration_pair,
+                //     skip the per-video "Skipped" labels and pop the AllYellow guide modal
+                //     instead — the user clicked Match expecting matches, not a row of skips.
+                //   - Otherwise (mixed / calibration), keep original per-video Skipped behavior.
+                let mut no_gyro_jobs: Vec<u32> = Vec::new();
+                let mut calibration_jobs: Vec<u32> = Vec::new();
+                let mut total_results: usize = 0;
                 if let Some(ref match_results) = this.match_results {
                     let job_ids_now = this.get_ordered_job_ids();
+                    total_results = match_results.results.len();
                     for result in &match_results.results {
                         let job_id = result
                             .job_id
@@ -6867,28 +6916,52 @@ impl RenderQueue {
                             match result.status {
                                 core::gyro_match::MatchStatus::Unmatched
                                 | core::gyro_match::MatchStatus::NoCreationTime => {
-                                    update_model!(this, job_id, itm {
-                                        itm.skip_reason = QString::from("no_gyro");
-                                        itm.status = JobStatus::Skipped;
-                                    });
-                                    ::log::info!(
-                                        "[queue-render-skip] job {} marked Skipped (no_gyro)",
-                                        job_id
-                                    );
+                                    no_gyro_jobs.push(job_id);
                                 }
                                 core::gyro_match::MatchStatus::CalibrationPair => {
-                                    update_model!(this, job_id, itm {
-                                        itm.skip_reason = QString::from("calibration");
-                                        itm.status = JobStatus::Skipped;
-                                    });
-                                    ::log::info!(
-                                        "[queue-render-skip] job {} marked Skipped (calibration)",
-                                        job_id
-                                    );
+                                    calibration_jobs.push(job_id);
                                 }
                                 _ => {}
                             }
                         }
+                    }
+                }
+
+                let all_no_gyro = !no_gyro_jobs.is_empty()
+                    && calibration_jobs.is_empty()
+                    && no_gyro_jobs.len() == total_results;
+
+                if all_no_gyro {
+                    ::log::info!(
+                        "[queue-render-skip] all {} job(s) have no gyro data — popping AllYellow guide instead of marking Skipped",
+                        no_gyro_jobs.len()
+                    );
+                    // Reset to None first so QML's lastBatchSyncPromptKind dedupe clears,
+                    // then set AllYellow so the guide modal actually pops.
+                    this.batch_sync_prompt_kind = BatchSyncPromptKind::None;
+                    this.batch_sync_status_changed();
+                    this.batch_sync_prompt_kind = BatchSyncPromptKind::AllYellow;
+                    this.batch_sync_status_changed();
+                } else {
+                    for job_id in no_gyro_jobs {
+                        update_model!(this, job_id, itm {
+                            itm.skip_reason = QString::from("no_gyro");
+                            itm.status = JobStatus::Skipped;
+                        });
+                        ::log::info!(
+                            "[queue-render-skip] job {} marked Skipped (no_gyro)",
+                            job_id
+                        );
+                    }
+                    for job_id in calibration_jobs {
+                        update_model!(this, job_id, itm {
+                            itm.skip_reason = QString::from("calibration");
+                            itm.status = JobStatus::Skipped;
+                        });
+                        ::log::info!(
+                            "[queue-render-skip] job {} marked Skipped (calibration)",
+                            job_id
+                        );
                     }
                 }
 
@@ -12619,5 +12692,89 @@ mod tests {
                 "batch state change must auto-apply: {needle}"
             );
         }
+    }
+
+    #[test]
+    fn get_anamorphic_applied_count_returns_zero_when_manual_edit_off() {
+        let mut config = niyien_lens_presets::LensGroupConfig::default();
+        config.lens_index = 0;
+        config.anamorphic_enabled = true;
+        config.squeeze_ratio = Some(1.5);
+        config.squeeze_direction = Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+        let metadata = core::gyro_source::FileMetadata::default();
+        let queue = queue_with_lens_display_job(false, config, metadata);
+        assert_eq!(queue.get_anamorphic_applied_count(), 0);
+    }
+
+    #[test]
+    fn get_anamorphic_applied_count_returns_zero_when_anamorphic_disabled() {
+        let mut config = niyien_lens_presets::LensGroupConfig::default();
+        config.lens_index = 0;
+        config.anamorphic_enabled = false;
+        // Must include lens_index so the loop reaches the anamorphic check;
+        // without it the job is skipped by extract_lens_index and the test
+        // would pass vacuously (never exercising the disabled-anamorphic branch).
+        let metadata = core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            ..Default::default()
+        };
+        let queue = queue_with_lens_display_job(true, config, metadata);
+        assert_eq!(queue.get_anamorphic_applied_count(), 0);
+    }
+
+    #[test]
+    fn get_anamorphic_applied_count_returns_one_when_manual_edit_and_anamorphic() {
+        let mut config = niyien_lens_presets::LensGroupConfig::default();
+        config.lens_index = 0;
+        config.anamorphic_enabled = true;
+        config.squeeze_ratio = Some(1.5);
+        config.squeeze_direction = Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+        // Metadata must declare lens_index so extract_lens_index resolves the group;
+        // jobs without lens_index in additional_data are skipped by the implementation.
+        let metadata = core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            ..Default::default()
+        };
+        let queue = queue_with_lens_display_job(true, config, metadata);
+        assert_eq!(queue.get_anamorphic_applied_count(), 1);
+    }
+
+    #[test]
+    fn get_anamorphic_applied_count_per_job_override_wins_over_global() {
+        // Global config: anamorphic_enabled=true.
+        let mut global_config = niyien_lens_presets::LensGroupConfig::default();
+        global_config.lens_index = 0;
+        global_config.anamorphic_enabled = true;
+        global_config.squeeze_ratio = Some(1.5);
+        global_config.squeeze_direction =
+            Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+        let metadata = core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            ..Default::default()
+        };
+        // Build queue using global config (anamorphic on).
+        let mut queue = queue_with_lens_display_job(true, global_config, metadata);
+
+        // Per-job override: anamorphic_enabled=false for the same lens group.
+        let mut override_config = niyien_lens_presets::LensGroupConfig::default();
+        override_config.lens_index = 0;
+        override_config.anamorphic_enabled = false;
+        let mut override_configs =
+            niyien_lens_presets::default_lens_group_configs();
+        override_configs[0] = override_config;
+        let mut enabled_groups = vec![false; niyien_lens_presets::LENS_GROUP_COUNT];
+        enabled_groups[0] = true;
+        let job_override = JobLensGroupOverride {
+            configs: override_configs,
+            enabled_groups,
+        };
+
+        // Inject the override into the existing job.
+        if let Some(job) = queue.jobs.get_mut(&1) {
+            job.lens_group_config_override = Some(job_override);
+        }
+
+        // The per-job override (anamorphic off) must win: count = 0.
+        assert_eq!(queue.get_anamorphic_applied_count(), 0);
     }
 }

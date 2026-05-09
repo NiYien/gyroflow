@@ -187,6 +187,11 @@ Ten obszar jest tylko wizualizacją i nie wpływa na końcowy render.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>Kontynuuj</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2807,6 +2812,47 @@ Otwórz &lt;b&gt;Terminal&lt;/b&gt; i wprowadź następującą komendę:</transl
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**Synchronizacja wsadowa nie dała wiarygodnego wyniku.** Sprawdź:
+
+**1. Filmy kalibracyjne są wczytane**
+
+Krótkie filmy (poniżej 10 sekund) nagrane równocześnie z plikiem żyroskopu.
+
+**2. Filmy i pliki żyroskopu są poprawnie sparowane**
+
+Niesparowany film możesz sparować ręcznie: kliknij prawym przyciskiem na film → **"Sparuj z żyroskopem"** i wybierz odpowiedni plik żyroskopu.
+
+**3. Jeśli na dany dzień nie ma 2 filmów kalibracyjnych**
+
+- Skorzystaj z danych z poprzedniego/następnego dnia: skopiuj filmy kalibracyjne i ich pliki żyroskopu do folderu danego dnia, dodaj ponownie do kolejki i sparuj ręcznie.
+- Lub nagraj nowe filmy kalibracyjne i dodaj je do kolejki.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 filmów użyje obiektywu anamorficznego</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>Sparuj z żyroskopem</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2922,11 +2968,6 @@ Otwórz &lt;b&gt;Terminal&lt;/b&gt; i wprowadź następującą komendę:</transl
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>Pomiń</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>Synchronizacja wsadowa nie dała wiarygodnego wyniku. Sprawdź podział gyro lub dopasowanie wsadowe i spróbuj ponownie.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>

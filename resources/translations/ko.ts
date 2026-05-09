@@ -186,6 +186,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="749"/>
+        <source>Continue</source>
+        <translation>계속</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2136"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
@@ -2806,6 +2811,47 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation>**일괄 동기화에서 신뢰할 수 있는 결과를 얻지 못했습니다.** 다음을 확인하세요:
+
+**1. 캘리브레이션 영상이 로드되었는지**
+
+자이로 파일과 동시에 녹화된 10 초 미만의 짧은 영상.
+
+**2. 영상과 자이로 파일이 올바르게 짝지어졌는지**
+
+짝이 없는 영상은 수동으로 연결할 수 있습니다: 영상에서 마우스 오른쪽 버튼 → **"자이로와 페어링"** 후 해당 자이로 파일을 선택하세요.
+
+**3. 그날의 캘리브레이션 영상이 2 개가 없는 경우**
+
+- 전날/다음날의 시간 동기화 데이터를 사용: 캘리브레이션 영상과 자이로 파일을 그날 폴더로 복사한 뒤, 큐에 다시 추가하고 위 방법으로 수동 페어링합니다.
+- 또는 새 캘리브레이션 영상을 다시 촬영해 큐에 추가합니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 개 영상이 Anamorphic 렌즈를 사용합니다</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
+        <source>Pair with Gyro</source>
+        <translation>자이로와 페어링</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
@@ -2921,11 +2967,6 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <location filename="../../src/ui/RenderQueue.qml" line="289"/>
         <source>Skip</source>
         <translation>건너뛰기</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
-        <source>Batch synchronization did not produce a reliable result. Check gyro splitting or batch matching and try again.</source>
-        <translation>일괄 동기화에서 안정적인 결과를 얻지 못했습니다. 자이로 분할 또는 일괄 매칭을 확인 후 다시 시도하세요.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="296"/>
