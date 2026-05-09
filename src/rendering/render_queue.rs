@@ -12069,6 +12069,38 @@ mod tests {
     }
 
     #[test]
+    fn video_area_batch_queue_dispatch_shows_queue_before_loading() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+        let batch_idx = body
+            .find("const urlsCopy = [...urls];")
+            .expect("ordinary batch queue path must copy URLs before dispatch");
+        let batch_body = &body[batch_idx..];
+
+        let show_idx = batch_body
+            .find("queue.item.shown = true")
+            .expect("batch queue path must show the render queue");
+        let later_idx = batch_body
+            .find("Qt.callLater(function()")
+            .expect("batch queue path must defer loading until after the queue can render");
+        let load_idx = batch_body
+            .find("queue.item.dt.loadFiles(urlsCopy)")
+            .expect("batch queue path must dispatch to the queue drop target");
+
+        assert!(
+            show_idx < later_idx && later_idx < load_idx,
+            "VideoArea.loadMultipleFiles must show the queue before deferring batch loading so the queue loader is visible"
+        );
+    }
+
+    #[test]
     fn video_area_video_load_after_project_suppresses_associated_gyroflow() {
         let qml = include_str!("../ui/VideoArea.qml");
         let fn_idx = qml

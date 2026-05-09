@@ -577,13 +577,14 @@ Item {
                         const pair = JSON.parse(render_queue.crm_proxy_pair(JSON.stringify(urlStrings)));
                         loadCrmProxyPair(pair, skip_detection);
                     } else if (pairs.length === crmCount) {
-                        queue.item.dt.loadFiles(urls);
                         queue.item.shown = true;
+                        Qt.callLater(function() { queue.item.dt.loadFiles(urls); });
                     } else if (hasRenderableVideo) {
                         const pairedCrmUrls = {};
                         for (const pair of pairs) pairedCrmUrls[pair.crm_url] = true;
-                        queue.item.dt.loadFiles(urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm") || pairedCrmUrls[u.toString()]));
                         queue.item.shown = true;
+                        const filteredCrmUrls = urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm") || pairedCrmUrls[u.toString()]);
+                        Qt.callLater(function() { queue.item.dt.loadFiles(filteredCrmUrls); });
                     } else {
                         messageBox(Modal.Error, qsTr("Canon CRM files must be loaded together with a same-name proxy video."), [ { text: qsTr("Ok") } ]);
                     }
@@ -632,8 +633,8 @@ Item {
         // Multiple items → batch into render queue. queue.item.dt.loadFiles
         // handles .gyroflow (project or preset) and video URLs uniformly.
         const urlsCopy = [...urls];
-        queue.item.dt.loadFiles(urlsCopy);
         queue.item.shown = true;
+        Qt.callLater(function() { queue.item.dt.loadFiles(urlsCopy); });
     }
 
     function askForOutputLocation(folder: url, filename: string, choice: bool, cb: var): void {
