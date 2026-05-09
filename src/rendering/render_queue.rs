@@ -11065,6 +11065,152 @@ mod tests {
         assert_eq!(effective[1].focal_length_mm, Some(50.0));
     }
 
+    fn export_project_data_with_effective_job_lens_group(job: &Job, manual_edit: bool) -> String {
+        let stab = job.stab.as_ref().unwrap();
+        let global_configs = niyien_lens_presets::default_lens_group_configs();
+        let effective_configs = effective_lens_group_configs(job, &global_configs);
+        let metadata = metadata_snapshot_for_job(job).unwrap();
+        let lens_index = niyien_lens_presets::extract_lens_index(&metadata.additional_data)
+            .expect("lens index");
+        let group_config = effective_configs.get(lens_index).unwrap();
+        let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
+            manual_edit,
+            group_config,
+            &metadata,
+        );
+        let profile = niyien_lens_presets::build_lens_profile(
+            &metadata,
+            stab.params.read().size,
+            cfg_for_build.as_ref(),
+            Some(&stab.lens.read()),
+        )
+        .unwrap();
+        *stab.lens.write() = profile;
+
+        RenderQueue::get_gyroflow_data_internal_with_type(
+            stab.as_ref(),
+            "{}",
+            &job.render_options,
+            core::GyroflowProjectType::Simple,
+            false,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn selected_job_lens_group_override_exports_effective_anamorphic_lens_model() {
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.size = (1920, 1080);
+            params.frame_count = 1;
+            params.fps = 30.0;
+        }
+        let metadata = core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        {
+            let mut gyro = stab.gyro.write();
+            gyro.file_metadata = metadata.clone().into();
+        }
+        let base_lens_metadata = JobLensMetadataBackup::from_metadata(&metadata);
+
+        let mut local_configs = niyien_lens_presets::default_lens_group_configs();
+        local_configs[0].focal_length_mm = Some(35.0);
+        local_configs[0].anamorphic_enabled = true;
+        local_configs[0].preset_id = Some("sirui_saturn_35mm_t2_9_1_60x".to_owned());
+        local_configs[0].squeeze_direction =
+            Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+        let job = Job {
+            queue_index: 0,
+            render_options: RenderOptions::default(),
+            base_render_output_size: Some((1920, 1080)),
+            original_output_size: (0, 0),
+            auto_rotate: false,
+            additional_data: String::new(),
+            cancel_flag: Default::default(),
+            render_epoch: Default::default(),
+            project_data: None,
+            last_finished_export_project: None,
+            last_written_offsets: None,
+            stab: Some(stab),
+            base_lens_metadata: Some(base_lens_metadata),
+            lens_group_config_override: Some(JobLensGroupOverride {
+                configs: local_configs,
+                enabled_groups: vec![true, false, false, false, false, false],
+            }),
+            lens_group_index: Some(0),
+            video_created_at: None,
+            original_video_rotation: 0.0,
+        };
+
+        let project_data = export_project_data_with_effective_job_lens_group(&job, true);
+        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+
+        assert_eq!(
+            project["calibration_data"]["lens_model"],
+            "Sirui Saturn 35mm T2.9 1.60x"
+        );
+        assert_eq!(project["calibration_data"]["input_horizontal_stretch"], 1.6);
+        assert_eq!(
+            project["calibration_data"]["output_dimension"],
+            serde_json::json!({ "w": 3072, "h": 1080 })
+        );
+    }
+
+    #[test]
+    fn selected_job_lens_group_override_leaves_global_settings_unchanged() {
+        let stabilizer = Arc::new(StabilizationManager::default());
+        let mut global_configs = niyien_lens_presets::default_lens_group_configs();
+        global_configs[0].focal_length_mm = Some(24.0);
+        *stabilizer.lens_group_config.write() = global_configs.clone();
+
+        let mut requested = global_configs.clone();
+        requested[0].focal_length_mm = Some(35.0);
+        requested[0].anamorphic_enabled = true;
+        requested[0].squeeze_ratio = Some(1.5);
+        requested[0].squeeze_direction =
+            Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+
+        let mut queue = RenderQueue::new(stabilizer.clone());
+        queue.jobs.insert(
+            1,
+            Job {
+                queue_index: 0,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                last_finished_export_project: None,
+                last_written_offsets: None,
+                stab: None,
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+            },
+        );
+
+        queue.set_selected_lens_group_config(
+            serde_json::to_string(&vec![1_u32]).unwrap(),
+            niyien_lens_presets::lens_group_config_to_json(&requested),
+        );
+
+        assert_eq!(*stabilizer.lens_group_config.read(), global_configs);
+        assert!(queue.jobs[&1]
+            .lens_group_config_override
+            .as_ref()
+            .unwrap()
+            .is_group_enabled(0));
+    }
+
     #[test]
     fn lens_profile_metadata_for_group_build_preserves_auto_focal_from_lens_params() {
         let metadata = core::gyro_source::FileMetadata {

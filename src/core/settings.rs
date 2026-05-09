@@ -10,6 +10,13 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering::SeqCst},
 };
 
+#[cfg(test)]
+fn test_settings_file_override() -> &'static std::sync::Mutex<Option<PathBuf>> {
+    static PATH: std::sync::OnceLock<std::sync::Mutex<Option<PathBuf>>> =
+        std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::sync::Mutex::new(None))
+}
+
 pub fn data_dir() -> PathBuf {
     static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -234,6 +241,27 @@ pub fn flush() {
     store();
 }
 
+#[cfg(test)]
+pub fn with_test_settings_file<R>(file: PathBuf, f: impl FnOnce() -> R) -> R {
+    let previous_map = map().read().clone();
+    *map().write() = HashMap::new();
+    if let Some(parent) = file.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    *test_settings_file_override().lock().unwrap() = Some(file);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    std::thread::sleep(std::time::Duration::from_millis(1300));
+
+    *test_settings_file_override().lock().unwrap() = None;
+    *map().write() = previous_map;
+
+    match result {
+        Ok(value) => value,
+        Err(payload) => std::panic::resume_unwind(payload),
+    }
+}
+
 pub fn try_get(key: &str) -> Option<serde_json::Value> {
     map().read().get(key).map(Clone::clone)
 }
@@ -311,7 +339,7 @@ fn spawn_store_thread() {
 }
 
 fn store() {
-    let file = data_dir().join("settings.json");
+    let file = settings_file();
     let map = map().read().clone();
     let json = serde_json::to_string_pretty(&map).unwrap();
     if let Err(e) = std::fs::write(&file, json) {
@@ -319,4 +347,13 @@ fn store() {
     } else {
         log::info!("Settings saved to {file:?}");
     }
+}
+
+fn settings_file() -> PathBuf {
+    #[cfg(test)]
+    if let Some(file) = test_settings_file_override().lock().unwrap().clone() {
+        return file;
+    }
+
+    data_dir().join("settings.json")
 }

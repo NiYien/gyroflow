@@ -70,6 +70,7 @@ pub struct ResolvedAnamorphic {
     pub squeeze_ratio: f64,
     pub distortion_coeffs: Vec<f64>,
     pub distortion_model: Option<String>,
+    pub lens_model_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -123,6 +124,21 @@ fn builtin_preset_file(name: &str) -> Option<&'static str> {
         )),
         "blazar_viper_75mm_1_50x.json" => Some(include_str!(
             "../../resources/lens_presets/blazar_viper_75mm_1_50x.json"
+        )),
+        "sirui_35mm_f1_8_1_33x.json" => Some(include_str!(
+            "../../resources/lens_presets/sirui_35mm_f1_8_1_33x.json"
+        )),
+        "sirui_saturn_35mm_t2_9_1_60x.json" => Some(include_str!(
+            "../../resources/lens_presets/sirui_saturn_35mm_t2_9_1_60x.json"
+        )),
+        "sirui_saturn_50mm_t2_9_1_60x.json" => Some(include_str!(
+            "../../resources/lens_presets/sirui_saturn_50mm_t2_9_1_60x.json"
+        )),
+        "laowa_nanomorph_35mm_t2_4_1_50x.json" => Some(include_str!(
+            "../../resources/lens_presets/laowa_nanomorph_35mm_t2_4_1_50x.json"
+        )),
+        "aivascope_58mm_1_50x.json" => Some(include_str!(
+            "../../resources/lens_presets/aivascope_58mm_1_50x.json"
         )),
         _ => None,
     }
@@ -430,15 +446,13 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
         .map(normalize_preset_id)
         .filter(|value| !value.is_empty())
     {
-        if let Some(preset) = load_presets()
-            .into_iter()
-            .find(|preset| preset.id == preset_id)
-        {
+        if let Some(preset) = find_preset_by_id(preset_id) {
             return Some(ResolvedAnamorphic {
                 squeeze_direction,
                 squeeze_ratio: preset.squeeze_ratio,
                 distortion_coeffs: preset.distortion_coeffs,
                 distortion_model: Some(preset.distortion_model),
+                lens_model_label: Some(preset.name),
             });
         }
         log::warn!("Anamorphic preset not found: {preset_id}");
@@ -450,7 +464,89 @@ pub fn resolve_anamorphic_config(config: Option<&LensGroupConfig>) -> Option<Res
         squeeze_ratio,
         distortion_coeffs: Vec::new(),
         distortion_model: None,
+        lens_model_label: Some(manual_anamorphic_label(squeeze_ratio, squeeze_direction)),
     })
+}
+
+fn find_preset_by_id(preset_id: &str) -> Option<AnamorphicPreset> {
+    load_presets()
+        .into_iter()
+        .find(|preset| preset.id == preset_id)
+        .or_else(|| {
+            load_builtin_presets()
+                .into_iter()
+                .find(|preset| preset.id == preset_id)
+        })
+}
+
+fn find_preset_by_name(name: &str) -> Option<AnamorphicPreset> {
+    let normalized_name = name.trim();
+    if normalized_name.is_empty() {
+        return None;
+    }
+    load_presets()
+        .into_iter()
+        .find(|preset| preset.name == normalized_name)
+        .or_else(|| {
+            load_builtin_presets()
+                .into_iter()
+                .find(|preset| preset.name == normalized_name)
+        })
+}
+
+pub fn effective_anamorphic_label(config: Option<&LensGroupConfig>) -> Option<String> {
+    resolve_anamorphic_config(config).and_then(|anamorphic| anamorphic.lens_model_label)
+}
+
+pub fn lens_group_config_from_lens_profile(
+    profile: &LensProfile,
+    lens_index: usize,
+) -> Option<LensGroupConfig> {
+    if lens_index >= LENS_GROUP_COUNT {
+        return None;
+    }
+
+    let horizontal_stretch =
+        sanitize_positive(Some(profile.input_horizontal_stretch)).unwrap_or(1.0);
+    let vertical_stretch = sanitize_positive(Some(profile.input_vertical_stretch)).unwrap_or(1.0);
+    let (anamorphic_enabled, squeeze_direction, squeeze_ratio) = if horizontal_stretch > 1.01 {
+        (
+            true,
+            Some(SqueezeDirection::Horizontal),
+            Some(horizontal_stretch),
+        )
+    } else if vertical_stretch > 1.01 {
+        (true, Some(SqueezeDirection::Vertical), Some(vertical_stretch))
+    } else {
+        (false, None, None)
+    };
+
+    let preset_id = if anamorphic_enabled {
+        find_preset_by_name(&profile.lens_model).map(|preset| preset.id)
+    } else {
+        None
+    };
+
+    let mut config = LensGroupConfig {
+        lens_index,
+        focal_length_mm: sanitize_manual_focal_length_mm(profile.focal_length),
+        anamorphic_enabled,
+        preset_id,
+        squeeze_direction,
+        squeeze_ratio,
+        lens_correction_amount: None,
+    };
+
+    if config.anamorphic_enabled && config.preset_id.is_none() && config.squeeze_ratio.is_none() {
+        config.anamorphic_enabled = false;
+        config.squeeze_direction = None;
+    }
+
+    if config.has_values() {
+        Some(config)
+    } else {
+        None
+    }
 }
 
 pub fn build_lens_profile(
@@ -530,6 +626,9 @@ pub fn build_lens_profile(
         if !anamorphic.distortion_coeffs.is_empty() || anamorphic.distortion_model.is_some() {
             profile.fisheye_params.distortion_coeffs = anamorphic.distortion_coeffs;
             profile.distortion_model = anamorphic.distortion_model;
+        }
+        if let Some(label) = anamorphic.lens_model_label {
+            profile.lens_model = label;
         }
     }
 
@@ -863,6 +962,14 @@ fn sanitize_manual_focal_length_mm(value: Option<f64>) -> Option<f64> {
 
 fn sanitize_video_focal_length_mm(value: Option<f64>) -> Option<f64> {
     sanitize_positive(value)
+}
+
+fn manual_anamorphic_label(squeeze_ratio: f64, direction: SqueezeDirection) -> String {
+    let direction = match direction {
+        SqueezeDirection::Horizontal => "H",
+        SqueezeDirection::Vertical => "V",
+    };
+    format!("Manual anamorphic {squeeze_ratio:.2}x {direction}")
 }
 
 fn value_to_u64(value: &serde_json::Value) -> Option<u64> {
@@ -1347,6 +1454,126 @@ mod tests {
             profile.frame_readout_direction,
             Some(crate::stabilization_params::ReadoutDirection::BottomToTop)
         );
+    }
+
+    #[test]
+    fn build_lens_profile_uses_preset_name_as_anamorphic_lens_model() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            squeeze_direction: Some(SqueezeDirection::Horizontal),
+            ..Default::default()
+        };
+
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+
+        assert_eq!(profile.lens_model, "Sirui Saturn 35mm T2.9 1.60x");
+    }
+
+    #[test]
+    fn build_lens_profile_uses_manual_horizontal_anamorphic_lens_model() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            squeeze_direction: Some(SqueezeDirection::Horizontal),
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        };
+
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+
+        assert_eq!(profile.lens_model, "Manual anamorphic 1.50x H");
+    }
+
+    #[test]
+    fn build_lens_profile_uses_manual_vertical_anamorphic_lens_model() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            squeeze_direction: Some(SqueezeDirection::Vertical),
+            squeeze_ratio: Some(1.33),
+            ..Default::default()
+        };
+
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+
+        assert_eq!(profile.lens_model, "Manual anamorphic 1.33x V");
+    }
+
+    #[test]
+    fn build_lens_profile_preserves_fallback_lens_model_without_anamorphic() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let mut fallback = LensProfile::default();
+        fallback.lens_model = "Fallback Lens".to_owned();
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            ..Default::default()
+        };
+
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback)).unwrap();
+
+        assert_eq!(profile.lens_model, "Fallback Lens");
+    }
+
+    #[test]
+    fn build_lens_profile_does_not_use_anamorphic_label_when_config_is_not_effective() {
+        let mut metadata = FileMetadata::default();
+        metadata.unit_pixel_focal_length = Some(100.0);
+
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            squeeze_direction: Some(SqueezeDirection::Horizontal),
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        };
+        let effective = effective_lens_group_config_for_build(false, &config, &metadata).unwrap();
+
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None).unwrap();
+
+        assert_ne!(profile.lens_model, "Manual anamorphic 1.50x H");
+        assert_eq!(profile.input_horizontal_stretch, 1.0);
+    }
+
+    #[test]
+    fn lens_group_config_from_lens_profile_matches_builtin_preset_name() {
+        let mut profile = LensProfile::default();
+        profile.lens_model = "Sirui star 50mm 1.33x".to_owned();
+        profile.focal_length = Some(16.0);
+        profile.input_horizontal_stretch = 1.33;
+        profile.input_vertical_stretch = 1.0;
+
+        let config = lens_group_config_from_lens_profile(&profile, 0).unwrap();
+
+        assert_eq!(config.lens_index, 0);
+        assert_eq!(config.focal_length_mm, Some(16.0));
+        assert!(config.anamorphic_enabled);
+        assert_eq!(
+            config.preset_id.as_deref(),
+            Some("sirui_xingchen_50mm_1_33x")
+        );
+        assert_eq!(config.squeeze_direction, Some(SqueezeDirection::Horizontal));
+        assert_eq!(config.squeeze_ratio, Some(1.33));
     }
 
     #[test]

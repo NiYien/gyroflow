@@ -1793,13 +1793,19 @@ impl Controller {
         self.lens_group_status_changed();
     }
     fn get_lens_group_manual_edit(&self) -> bool {
+        if self.stabilizer.has_project_lens_group_config() {
+            return true;
+        }
         self.stabilizer.get_lens_group_manual_edit()
     }
     fn set_lens_group_manual_edit(&self, enabled: bool) {
-        if self.stabilizer.get_lens_group_manual_edit() == enabled {
+        if !self.stabilizer.has_project_lens_group_config()
+            && self.stabilizer.get_lens_group_manual_edit() == enabled
+        {
             return;
         }
         self.stabilizer.set_lens_group_manual_edit(enabled);
+        self.lens_group_config_changed();
         self.lens_group_manual_edit_changed();
         // Reapply the selected lens-group decision to the main stabilizer and recompute
         // so the live preview reflects the new manual/auto state immediately.
@@ -2584,6 +2590,8 @@ impl Controller {
                         QString::default(),
                         QString::default(),
                     );
+                    self.lens_group_config_changed();
+                    self.lens_group_manual_edit_changed();
                 }
                 self.gyro_loaded = self.gyro_has_raw_imu() || self.gyro_has_quaternions();
                 self.gyro_changed();

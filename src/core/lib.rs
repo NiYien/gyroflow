@@ -170,6 +170,7 @@ pub struct StabilizationManager {
     pub input_file: Arc<RwLock<InputFile>>,
 
     pub lens_group_config: Arc<RwLock<Vec<LensGroupConfig>>>,
+    pub project_lens_group_config: Arc<RwLock<Option<Vec<LensGroupConfig>>>>,
     pub lens_group_status: Arc<RwLock<Vec<LensGroupStatus>>>,
     // Global "Manual edit" toggle for the lens group panel. Missing focal length
     // can still be filled from the group config; anamorphic replacement requires
@@ -224,6 +225,7 @@ impl Default for StabilizationManager {
                     niyien_lens_presets::lens_group_configs_from_json(&stored)
                 }
             })),
+            project_lens_group_config: Arc::new(RwLock::new(None)),
             lens_group_status: Arc::new(RwLock::new(
                 niyien_lens_presets::default_lens_group_statuses(),
             )),
@@ -1907,20 +1909,28 @@ impl StabilizationManager {
         let configs = niyien_lens_presets::lens_group_configs_from_json(json);
         // Persist normalized JSON (not the raw input — raw input may be stale or malformed).
         let normalized = niyien_lens_presets::lens_group_config_to_json(&configs);
+        *self.project_lens_group_config.write() = None;
         *self.lens_group_config.write() = configs;
         settings::set(
             "lens_group_configs_v1",
             serde_json::Value::String(normalized),
         );
+        settings::flush();
     }
 
     pub fn set_lens_group_manual_edit(&self, enabled: bool) {
+        *self.project_lens_group_config.write() = None;
         self.lens_group_manual_edit.store(enabled, SeqCst);
         settings::set("lens_group_manual_edit", serde_json::Value::Bool(enabled));
+        settings::flush();
     }
 
     pub fn get_lens_group_manual_edit(&self) -> bool {
         self.lens_group_manual_edit.load(SeqCst)
+    }
+
+    pub fn has_project_lens_group_config(&self) -> bool {
+        self.project_lens_group_config.read().is_some()
     }
 
     fn lens_group_baseline_for_build(&self, applies_anamorphic: bool) -> LensProfile {
@@ -2075,9 +2085,13 @@ impl StabilizationManager {
         .and_then(|profile| profile.get_json().ok())
     }
     pub fn get_lens_group_config_json(&self) -> String {
+        if let Some(configs) = self.project_lens_group_config.read().as_ref() {
+            return niyien_lens_presets::lens_group_config_to_json(configs);
+        }
         niyien_lens_presets::lens_group_config_to_json(&self.lens_group_config.read())
     }
     pub fn clear_lens_group_config(&self) {
+        *self.project_lens_group_config.write() = None;
         *self.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
     }
     pub fn set_lens_group_status(&self, statuses: Vec<LensGroupStatus>) {
@@ -2164,6 +2178,9 @@ impl StabilizationManager {
             smoothing: Arc::new(RwLock::new(self.smoothing.read().clone())),
             input_file: Arc::new(RwLock::new(self.input_file.read().clone())),
             lens_group_config: self.lens_group_config.clone(),
+            project_lens_group_config: Arc::new(RwLock::new(
+                self.project_lens_group_config.read().clone(),
+            )),
             lens_group_status: self.lens_group_status.clone(),
             lens_group_manual_edit: self.lens_group_manual_edit.clone(),
             lens_profile_db: self.lens_profile_db.clone(),
@@ -2207,6 +2224,7 @@ impl StabilizationManager {
         // Drop the anamorphic baseline snapshot so a new project doesn't inherit the
         // previous video's distortion coefficients when the user toggles anamorphic on.
         *self.pre_anamorphic_backup.write() = None;
+        *self.project_lens_group_config.write() = None;
 
         self.pose_estimator.clear();
     }
@@ -2944,6 +2962,20 @@ impl StabilizationManager {
                 l.load_from_json_value(&lens);
                 let db = self.lens_profile_db.read();
                 l.resolve_interpolations(&db);
+                let lens_index = {
+                    let gyro = self.gyro.read();
+                    let md = gyro.file_metadata.read();
+                    niyien_lens_presets::extract_lens_index(&md.additional_data).unwrap_or(0)
+                };
+                let project_config =
+                    niyien_lens_presets::lens_group_config_from_lens_profile(&l, lens_index);
+                drop(l);
+                *self.project_lens_group_config.write() = project_config.map(|config| {
+                    let mut configs = niyien_lens_presets::default_lens_group_configs();
+                    let lens_index = config.lens_index;
+                    configs[lens_index] = config;
+                    configs
+                });
             }
             if let Some(serde_json::Value::Object(obj)) = obj.get_mut("stabilization") {
                 let mut params = self.params.write();
@@ -3721,6 +3753,7 @@ pub enum GyroflowCoreError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn apply_main_video_telemetry_falls_back_to_synthetic_when_lens_id_is_missing() {
@@ -3867,6 +3900,511 @@ mod tests {
         assert_eq!(lens.focal_length, Some(50.0));
         assert_eq!(lens.fisheye_params.camera_matrix[0], [5000.0, 0.0, 960.0]);
         assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 5000.0, 540.0]);
+    }
+
+    #[test]
+    fn lens_group_config_json_normalizes_all_persistent_fields() {
+        let configs = niyien_lens_presets::lens_group_configs_from_json(
+            r#"[{
+                "lens_index": 2,
+                "focal_length_mm": 35.0,
+                "anamorphic_enabled": true,
+                "preset_id": "sirui_saturn_35mm_t2_9_1_60x",
+                "squeeze_direction": "vertical",
+                "squeeze_ratio": 1.6,
+                "lens_correction_amount": 42.0
+            }]"#,
+        );
+        let json = niyien_lens_presets::lens_group_config_to_json(&configs);
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let group = value.as_array().unwrap()[2].as_object().unwrap();
+
+        assert_eq!(group["lens_index"], 2);
+        assert_eq!(group["focal_length_mm"], 35.0);
+        assert_eq!(group["anamorphic_enabled"], true);
+        assert_eq!(group["preset_id"], "sirui_saturn_35mm_t2_9_1_60x");
+        assert_eq!(group["squeeze_direction"], "vertical");
+        assert_eq!(group["squeeze_ratio"], 1.6);
+        assert_eq!(group["lens_correction_amount"], 42.0);
+    }
+
+    #[test]
+    #[serial]
+    fn set_lens_group_config_json_flushes_normalized_value_immediately() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file.clone(), || {
+            let manager = StabilizationManager::default();
+            manager.set_lens_group_config_json(
+                r#"[{
+                    "lens_index": 2,
+                    "focal_length_mm": 35.0,
+                    "anamorphic_enabled": true,
+                    "preset_id": "sirui_saturn_35mm_t2_9_1_60x",
+                    "squeeze_direction": "vertical",
+                    "squeeze_ratio": 1.6,
+                    "lens_correction_amount": 42.0
+                }]"#,
+            );
+
+            let settings_json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&settings_file).unwrap()).unwrap();
+            let stored = settings_json["lens_group_configs_v1"]
+                .as_str()
+                .unwrap();
+            let groups: Vec<niyien_lens_presets::LensGroupConfig> =
+                serde_json::from_str(stored).unwrap();
+
+            assert_eq!(groups[2].focal_length_mm, Some(35.0));
+            assert!(groups[2].anamorphic_enabled);
+            assert_eq!(
+                groups[2].preset_id.as_deref(),
+                Some("sirui_saturn_35mm_t2_9_1_60x")
+            );
+            assert_eq!(
+                groups[2].squeeze_direction,
+                Some(niyien_lens_presets::SqueezeDirection::Vertical)
+            );
+            assert_eq!(groups[2].squeeze_ratio, Some(1.6));
+            assert_eq!(groups[2].lens_correction_amount, Some(42.0));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn set_lens_group_manual_edit_flushes_value_immediately() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file.clone(), || {
+            let manager = StabilizationManager::default();
+            manager.set_lens_group_manual_edit(true);
+
+            let settings_json: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&settings_file).unwrap()).unwrap();
+            assert_eq!(settings_json["lens_group_manual_edit"], true);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn new_manager_restores_stored_lens_group_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let mut configs = niyien_lens_presets::default_lens_group_configs();
+            configs[3].focal_length_mm = Some(45.0);
+            configs[3].anamorphic_enabled = true;
+            configs[3].squeeze_direction =
+                Some(niyien_lens_presets::SqueezeDirection::Vertical);
+            configs[3].squeeze_ratio = Some(1.33);
+            settings::set(
+                "lens_group_configs_v1",
+                serde_json::Value::String(niyien_lens_presets::lens_group_config_to_json(
+                    &configs,
+                )),
+            );
+            settings::set("lens_group_manual_edit", serde_json::Value::Bool(true));
+            settings::flush();
+
+            let manager = StabilizationManager::default();
+            let restored = manager.lens_group_config.read().clone();
+
+            assert_eq!(restored[3].focal_length_mm, Some(45.0));
+            assert!(restored[3].anamorphic_enabled);
+            assert_eq!(
+                restored[3].squeeze_direction,
+                Some(niyien_lens_presets::SqueezeDirection::Vertical)
+            );
+            assert_eq!(restored[3].squeeze_ratio, Some(1.33));
+            assert!(manager.get_lens_group_manual_edit());
+        });
+    }
+
+    fn manager_with_effective_lens_group_profile(config: LensGroupConfig) -> StabilizationManager {
+        let manager = StabilizationManager::default();
+        let size = (1920, 1080);
+        {
+            let mut params = manager.params.write();
+            params.size = size;
+            params.frame_count = 1;
+            params.fps = 30.0;
+            params.duration_ms = 1000.0 / 30.0;
+        }
+
+        let metadata = gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": config.lens_index }),
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = metadata.clone().into();
+        }
+
+        let profile =
+            niyien_lens_presets::build_lens_profile(&metadata, size, Some(&config), None)
+                .unwrap();
+        *manager.lens.write() = profile;
+        manager
+    }
+
+    fn export_project_json(manager: &StabilizationManager) -> serde_json::Value {
+        let data = manager
+            .export_gyroflow_data(GyroflowProjectType::Simple, "{}", None)
+            .unwrap();
+        serde_json::from_str(&data).unwrap()
+    }
+
+    #[test]
+    fn export_gyroflow_data_writes_manual_focal_lens_group_profile() {
+        let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            ..Default::default()
+        });
+
+        let project = export_project_json(&manager);
+        let calibration = &project["calibration_data"];
+
+        assert_eq!(calibration["focal_length"], 35.0);
+        assert_eq!(
+            calibration["fisheye_params"]["camera_matrix"],
+            serde_json::json!([
+                [3500.0, 0.0, 960.0],
+                [0.0, 3500.0, 540.0],
+                [0.0, 0.0, 1.0]
+            ])
+        );
+    }
+
+    #[test]
+    fn export_gyroflow_data_writes_anamorphic_preset_calibration_data() {
+        let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+            ..Default::default()
+        });
+
+        let project = export_project_json(&manager);
+        let calibration = &project["calibration_data"];
+
+        assert_eq!(
+            calibration["lens_model"],
+            "Sirui Saturn 35mm T2.9 1.60x"
+        );
+        assert_eq!(calibration["input_horizontal_stretch"], 1.6);
+        assert_eq!(calibration["input_vertical_stretch"], 1.0);
+        assert_eq!(calibration["calib_dimension"], serde_json::json!({ "w": 3072, "h": 1080 }));
+        assert_eq!(calibration["orig_dimension"], serde_json::json!({ "w": 3072, "h": 1080 }));
+        assert_eq!(calibration["output_dimension"], serde_json::json!({ "w": 3072, "h": 1080 }));
+        assert_eq!(calibration["distortion_model"], "opencv_fisheye");
+        assert_eq!(
+            calibration["fisheye_params"]["camera_matrix"],
+            serde_json::json!([
+                [3500.0, 0.0, 1536.0],
+                [0.0, 3500.0, 540.0],
+                [0.0, 0.0, 1.0]
+            ])
+        );
+        assert_eq!(
+            calibration["fisheye_params"]["distortion_coeffs"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    fn export_gyroflow_data_writes_manual_anamorphic_calibration_data() {
+        let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        });
+
+        let project = export_project_json(&manager);
+        let calibration = &project["calibration_data"];
+
+        assert_eq!(calibration["lens_model"], "Manual anamorphic 1.50x H");
+        assert_eq!(calibration["input_horizontal_stretch"], 1.5);
+        assert_eq!(calibration["input_vertical_stretch"], 1.0);
+        assert_eq!(calibration["output_dimension"], serde_json::json!({ "w": 2880, "h": 1080 }));
+        assert_eq!(
+            calibration["fisheye_params"]["camera_matrix"],
+            serde_json::json!([
+                [3500.0, 0.0, 1440.0],
+                [0.0, 3500.0, 540.0],
+                [0.0, 0.0, 1.0]
+            ])
+        );
+    }
+
+    #[test]
+    fn import_gyroflow_data_restores_exported_anamorphic_lens_profile() {
+        let source = manager_with_effective_lens_group_profile(LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+            ..Default::default()
+        });
+        let data = source
+            .export_gyroflow_data(GyroflowProjectType::Simple, "{}", None)
+            .unwrap();
+
+        let target = StabilizationManager::default();
+        let mut is_preset = false;
+        target
+            .import_gyroflow_data(
+                data.as_bytes(),
+                false,
+                None,
+                |_| (),
+                Arc::new(AtomicBool::new(false)),
+                &mut is_preset,
+                false,
+            )
+            .unwrap();
+
+        let source_lens = source.lens.read().clone();
+        let target_lens = target.lens.read().clone();
+        assert_eq!(target_lens.lens_model, source_lens.lens_model);
+        assert_eq!(
+            target_lens.input_horizontal_stretch,
+            source_lens.input_horizontal_stretch
+        );
+        assert_eq!(
+            target_lens
+                .output_dimension
+                .as_ref()
+                .map(|dim| (dim.w, dim.h)),
+            source_lens
+                .output_dimension
+                .as_ref()
+                .map(|dim| (dim.w, dim.h))
+        );
+        assert_eq!(
+            target_lens.fisheye_params.camera_matrix,
+            source_lens.fisheye_params.camera_matrix
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn import_gyroflow_data_does_not_mutate_global_lens_group_settings() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let project_source = manager_with_effective_lens_group_profile(LensGroupConfig {
+                lens_index: 1,
+                focal_length_mm: Some(50.0),
+                anamorphic_enabled: true,
+                squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+                squeeze_ratio: Some(1.5),
+                ..Default::default()
+            });
+            let data = project_source
+                .export_gyroflow_data(GyroflowProjectType::Simple, "{}", None)
+                .unwrap();
+
+            let target = StabilizationManager::default();
+            target.set_lens_group_config_json(
+                r#"[{
+                    "lens_index": 0,
+                    "focal_length_mm": 35.0
+                }]"#,
+            );
+            target.set_lens_group_manual_edit(true);
+            let configs_before = target.lens_group_config.read().clone();
+            let settings_configs_before = settings::get_str("lens_group_configs_v1", "");
+            let manual_edit_before = target.get_lens_group_manual_edit();
+
+            let mut is_preset = false;
+            target
+                .import_gyroflow_data(
+                    data.as_bytes(),
+                    false,
+                    None,
+                    |_| (),
+                    Arc::new(AtomicBool::new(false)),
+                    &mut is_preset,
+                    false,
+                )
+                .unwrap();
+
+            assert_eq!(*target.lens_group_config.read(), configs_before);
+            assert_eq!(
+                settings::get_str("lens_group_configs_v1", ""),
+                settings_configs_before
+            );
+            assert_eq!(target.get_lens_group_manual_edit(), manual_edit_before);
+            assert!(settings::get_bool("lens_group_manual_edit", false));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn import_gyroflow_data_exposes_project_lens_group_config_from_calibration_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            target.set_lens_group_config_json(
+                r#"[{
+                    "lens_index": 0,
+                    "focal_length_mm": 35.0
+                }]"#,
+            );
+            target.set_lens_group_manual_edit(false);
+            let global_configs_before = target.lens_group_config.read().clone();
+
+            let project = serde_json::json!({
+                "title": "Gyroflow data file",
+                "version": 4,
+                "videofile": "",
+                "calibration_data": {
+                    "lens_model": "Sirui star 50mm 1.33x",
+                    "focal_length": 16.0,
+                    "input_horizontal_stretch": 1.33,
+                    "input_vertical_stretch": 1.0,
+                    "output_dimension": { "w": 2554, "h": 1080 },
+                    "calib_dimension": { "w": 2554, "h": 1080 },
+                    "orig_dimension": { "w": 2554, "h": 1080 },
+                    "distortion_model": "opencv_fisheye",
+                    "fisheye_params": {
+                        "camera_matrix": [
+                            [1307.2340425531916, 0.0, 1277.0],
+                            [0.0, 1307.2340425531916, 540.0],
+                            [0.0, 0.0, 1.0]
+                        ],
+                        "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
+                    }
+                }
+            });
+
+            let mut is_preset = false;
+            target
+                .import_gyroflow_data(
+                    project.to_string().as_bytes(),
+                    false,
+                    None,
+                    |_| (),
+                    Arc::new(AtomicBool::new(false)),
+                    &mut is_preset,
+                    false,
+                )
+                .unwrap();
+
+            let displayed =
+                niyien_lens_presets::lens_group_configs_from_json(&target.get_lens_group_config_json());
+            assert_eq!(
+                displayed[0].preset_id.as_deref(),
+                Some("sirui_xingchen_50mm_1_33x")
+            );
+            assert_eq!(displayed[0].focal_length_mm, Some(16.0));
+            assert!(displayed[0].anamorphic_enabled);
+            assert_eq!(
+                displayed[0].squeeze_direction,
+                Some(niyien_lens_presets::SqueezeDirection::Horizontal)
+            );
+            assert_eq!(displayed[0].squeeze_ratio, Some(1.33));
+            assert_eq!(*target.lens_group_config.read(), global_configs_before);
+            assert!(!target.get_lens_group_manual_edit());
+            assert_eq!(
+                settings::get_str("lens_group_configs_v1", ""),
+                niyien_lens_presets::lens_group_config_to_json(&global_configs_before)
+            );
+            assert!(!settings::get_bool("lens_group_manual_edit", true));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn set_lens_group_manual_edit_clears_project_lens_group_display_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            target.set_lens_group_config_json(
+                r#"[{
+                    "lens_index": 0,
+                    "focal_length_mm": 35.0
+                }]"#,
+            );
+
+            let project = serde_json::json!({
+                "title": "Gyroflow data file",
+                "version": 4,
+                "videofile": "",
+                "calibration_data": {
+                    "lens_model": "Sirui star 50mm 1.33x",
+                    "focal_length": 16.0,
+                    "input_horizontal_stretch": 1.33,
+                    "input_vertical_stretch": 1.0,
+                    "fisheye_params": {
+                        "camera_matrix": [
+                            [1307.2340425531916, 0.0, 1277.0],
+                            [0.0, 1307.2340425531916, 540.0],
+                            [0.0, 0.0, 1.0]
+                        ],
+                        "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
+                    }
+                }
+            });
+
+            let mut is_preset = false;
+            target
+                .import_gyroflow_data(
+                    project.to_string().as_bytes(),
+                    false,
+                    None,
+                    |_| (),
+                    Arc::new(AtomicBool::new(false)),
+                    &mut is_preset,
+                    false,
+                )
+                .unwrap();
+            assert!(target.has_project_lens_group_config());
+
+            target.set_lens_group_manual_edit(false);
+
+            assert!(!target.has_project_lens_group_config());
+            let displayed =
+                niyien_lens_presets::lens_group_configs_from_json(&target.get_lens_group_config_json());
+            assert_eq!(displayed[0].preset_id, None);
+            assert_eq!(displayed[0].focal_length_mm, Some(35.0));
+        });
+    }
+
+    #[test]
+    fn export_gyroflow_data_does_not_emit_top_level_lens_group_config() {
+        let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled: true,
+            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        });
+
+        let project = export_project_json(&manager);
+
+        assert!(project.get("calibration_data").is_some());
+        assert!(project.get("lens_group_config").is_none());
     }
 
     #[test]
