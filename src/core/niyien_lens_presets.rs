@@ -125,21 +125,6 @@ fn builtin_preset_file(name: &str) -> Option<&'static str> {
         "blazar_viper_75mm_1_50x.json" => Some(include_str!(
             "../../resources/lens_presets/blazar_viper_75mm_1_50x.json"
         )),
-        "sirui_35mm_f1_8_1_33x.json" => Some(include_str!(
-            "../../resources/lens_presets/sirui_35mm_f1_8_1_33x.json"
-        )),
-        "sirui_saturn_35mm_t2_9_1_60x.json" => Some(include_str!(
-            "../../resources/lens_presets/sirui_saturn_35mm_t2_9_1_60x.json"
-        )),
-        "sirui_saturn_50mm_t2_9_1_60x.json" => Some(include_str!(
-            "../../resources/lens_presets/sirui_saturn_50mm_t2_9_1_60x.json"
-        )),
-        "laowa_nanomorph_35mm_t2_4_1_50x.json" => Some(include_str!(
-            "../../resources/lens_presets/laowa_nanomorph_35mm_t2_4_1_50x.json"
-        )),
-        "aivascope_58mm_1_50x.json" => Some(include_str!(
-            "../../resources/lens_presets/aivascope_58mm_1_50x.json"
-        )),
         _ => None,
     }
 }

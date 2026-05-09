@@ -15,6 +15,9 @@ resources/camera_presets
 # niyien-lens-data build.rs 下载产物（不 commit）
 resources/lens_presets/
 resources/camera_db/
+# Tag pin written by build.rs after each successful niyien-lens-data fetch;
+# used as the offline fallback on subsequent builds.
+resources/.lens_data_pin
 # lens 数据已迁至 niyien-lens-data 独立仓库
 distribution/data/lens/
 *.exe
@@ -59,3 +62,4 @@ distribution/log_center/log_center.config.json
 /distribution/log_center/backend/__pycache__
 /distribution/log_center/tests/__pycache__
 /_runlogs
+/distribution/control_center/tests/__pycache__
