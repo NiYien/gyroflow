@@ -851,7 +851,7 @@ function fillReleasePlanFieldsFromResourcesPayload(payload) {
     pluginHidden ? '' : cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
     pluginHidden ? '' : cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
   );
-  if (sdkBase) sdkBase.value = sdkHidden ? '' : cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/';
+  if (sdkBase) sdkBase.value = sdkHidden ? '' : cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://www.niyien.com/api/sdk/';
   if (includeLens) includeLens.checked = !lensHidden;
   if (includePlugin) includePlugin.checked = !pluginHidden;
   if (includeSdk) includeSdk.checked = !sdkHidden;
@@ -1637,7 +1637,7 @@ async function loadResourcesState() {
       pluginHidden ? '' : cur.NIYIEN_PLUGINS_ARTIFACT_NAME || d.plugins_artifact_name || '',
       pluginHidden ? '' : cur.NIYIEN_PLUGINS_RUN_ID || d.plugins_run_id || '',
     );
-    setInputValueIfPresent('plan-sdk-base', sdkHidden ? '' : cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://api.gyroflow.xyz/sdk/');
+    setInputValueIfPresent('plan-sdk-base', sdkHidden ? '' : cur.NIYIEN_SDK_BASE || d.sdk_base || 'https://www.niyien.com/api/sdk/');
     const includeLens = document.getElementById('plan-include-lens');
     if (includeLens) includeLens.checked = !lensHidden;
     const includePlugin = document.getElementById('plan-include-plugin');

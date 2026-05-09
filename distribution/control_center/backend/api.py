@@ -1435,7 +1435,7 @@ class Api:
         always get a complete shape, with empty strings for unavailable
         sources.
         """
-        DEFAULT_SDK_BASE = "https://api.gyroflow.xyz/sdk/"
+        DEFAULT_SDK_BASE = "https://www.niyien.com/api/sdk/"
         out: dict = {
             "ok": True,
             "lens_tag": "",

@@ -1,0 +1,314 @@
+{
+  "generated_at": "2026-05-09T12:48:40.590616+00:00",
+  "upstream_base": "https://api.gyroflow.xyz/sdk/",
+  "public_base": "https://api.niyien.com/sdk/",
+  "total": 76,
+  "missing_r2": [],
+  "missing_public": [],
+  "files": [
+    {
+      "relative_path": "AdobeSDK.zip",
+      "source_url": "https://api.gyroflow.xyz/sdk/AdobeSDK.zip"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_3.3.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_3.3.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_3.4.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_3.4.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_3.6.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_3.6.1.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_4.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_4.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_4.2.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_4.2.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_4.5.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_4.5.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_4.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_4.6.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_3.3.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_3.3.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_3.4.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_3.4.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_3.6.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_3.6.1.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_4.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_4.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_4.2.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_4.2.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_4.5.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_4.5.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_4.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_4.6.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_3.3.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_3.3.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_3.4.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_3.4.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_3.6.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_3.6.1.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_4.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_4.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_4.2.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_4.2.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_4.5.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_4.5.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_4.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_4.6.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_iOS_4.2.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_iOS_4.2.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_iOS_4.5.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_iOS_4.5.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_iOS_4.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_iOS_4.6.0.tar.gz"
+    },
+    {
+      "relative_path": "Blackmagic_RAW_SDK_iOS_5.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_iOS_5.0.0.tar.gz"
+    },
+    {
+      "relative_path": "Qt-ios-6.5.2-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.5.2-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.5.3-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.5.3-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.6.0-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.6.0-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.6.1-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.6.1-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.6.2-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.6.2-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.6.3-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.6.3-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.7.0-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.7.0-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.7.1-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.7.1-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.7.2-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.7.2-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.7.3-libQt6QuickDialogs2.a",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.7.3-libQt6QuickDialogs2.a"
+    },
+    {
+      "relative_path": "Qt-ios-6.8.0-QtQuickDialogs2",
+      "source_url": "https://api.gyroflow.xyz/sdk/Qt-ios-6.8.0-QtQuickDialogs2"
+    },
+    {
+      "relative_path": "RED_SDK_Dev_8.5.1.zip",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Dev_8.5.1.zip"
+    },
+    {
+      "relative_path": "RED_SDK_Dev_9.1.2.zip",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Dev_9.1.2.zip"
+    },
+    {
+      "relative_path": "RED_SDK_Linux.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Linux_8.4.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux_8.4.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Linux_8.5.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux_8.5.1.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Linux_8.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux_8.6.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Linux_9.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux_9.0.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Linux_9.0.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux_9.0.1.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Linux_9.1.2.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Linux_9.1.2.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS_8.4.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_8.4.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS_8.5.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_8.5.1.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS_8.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_8.6.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS_9.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_9.0.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS_9.0.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_9.0.1.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_MacOS_9.1.2.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_9.1.2.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows_8.4.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows_8.4.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows_8.5.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows_8.5.1.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows_8.6.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows_8.6.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows_9.0.0.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows_9.0.0.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows_9.0.1.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows_9.0.1.tar.gz"
+    },
+    {
+      "relative_path": "RED_SDK_Windows_9.1.2.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/RED_SDK_Windows_9.1.2.tar.gz"
+    },
+    {
+      "relative_path": "avcodec-62-nvenc11-linux.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/avcodec-62-nvenc11-linux.tar.gz"
+    },
+    {
+      "relative_path": "avcodec-62-nvenc11-windows.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/avcodec-62-nvenc11-windows.tar.gz"
+    },
+    {
+      "relative_path": "libshaderc_shared.so",
+      "source_url": "https://api.gyroflow.xyz/sdk/libshaderc_shared.so"
+    },
+    {
+      "relative_path": "shaderc_shared.dll",
+      "source_url": "https://api.gyroflow.xyz/sdk/shaderc_shared.dll"
+    },
+    {
+      "relative_path": "v1.5.1/Blackmagic_RAW_SDK_Linux.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/v1.5.1/Blackmagic_RAW_SDK_Linux.tar.gz"
+    },
+    {
+      "relative_path": "v1.5.1/Blackmagic_RAW_SDK_MacOS.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/v1.5.1/Blackmagic_RAW_SDK_MacOS.tar.gz"
+    },
+    {
+      "relative_path": "v1.5.1/Blackmagic_RAW_SDK_Windows.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/v1.5.1/Blackmagic_RAW_SDK_Windows.tar.gz"
+    },
+    {
+      "relative_path": "v1.5.1/RED_SDK_Linux.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/v1.5.1/RED_SDK_Linux.tar.gz"
+    },
+    {
+      "relative_path": "v1.5.1/RED_SDK_MacOS.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/v1.5.1/RED_SDK_MacOS.tar.gz"
+    },
+    {
+      "relative_path": "v1.5.1/RED_SDK_Windows.tar.gz",
+      "source_url": "https://api.gyroflow.xyz/sdk/v1.5.1/RED_SDK_Windows.tar.gz"
+    }
+  ]
+}

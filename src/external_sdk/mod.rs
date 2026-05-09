@@ -11,8 +11,19 @@ use flate2::read::GzDecoder;
 use std::io;
 use std::io::*;
 
+const DEFAULT_SDK_BASE: &str = "https://www.niyien.com/api/sdk";
+
 lazy_static::lazy_static! {
     pub static ref SDK_PATH: std::io::Result<std::path::PathBuf> = get_sdk_path();
+}
+
+fn sdk_download_url(sdk_base: &str, filename: &str) -> String {
+    let base = if sdk_base.is_empty() {
+        DEFAULT_SDK_BASE
+    } else {
+        sdk_base
+    };
+    format!("{}/{}", base.trim_end_matches('/'), filename)
 }
 
 fn get_sdk_path() -> Result<std::path::PathBuf> {
@@ -188,5 +199,65 @@ impl<R: Read, C: FnMut(usize)> Read for ProgressReader<R, C> {
         self.total_read += read;
         (self.callback)(self.total_read);
         Ok(read)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn empty_sdk_base_uses_niyien_mirror_for_braw() {
+        let url = super::braw::BrawSdk::get_download_url("").unwrap();
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz"
+            );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz"
+            );
+        } else if cfg!(target_os = "linux") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_sdk_base_uses_niyien_mirror_for_red() {
+        let url = super::r3d::REDSdk::get_download_url("").unwrap();
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.1.2.tar.gz"
+            );
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/RED_SDK_MacOS_9.1.2.tar.gz"
+            );
+        } else if cfg!(target_os = "linux") {
+            assert_eq!(
+                url,
+                "https://www.niyien.com/api/sdk/RED_SDK_Linux_9.1.2.tar.gz"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_sdk_base_uses_niyien_mirror_for_ffmpeg_gpl() {
+        let url = super::FfmpegGpl::get_download_url("").unwrap();
+
+        if cfg!(target_os = "windows") {
+            assert_eq!(url, "https://www.niyien.com/api/sdk/ffmpeg_gpl_Windows.tar.gz");
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(url, "https://www.niyien.com/api/sdk/ffmpeg_gpl_MacOS.tar.gz");
+        } else if cfg!(target_os = "linux") {
+            assert_eq!(url, "https://www.niyien.com/api/sdk/ffmpeg_gpl_Linux.tar.gz");
+        }
     }
 }

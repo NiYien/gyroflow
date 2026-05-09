@@ -323,7 +323,7 @@ deploy *param:
         # Mirrors upstream gyroflow `_scripts/macos.just::bundle`; placed before
         # codesign here so the SDK dylibs are signed + notarized together with the app.
         FrameworksDir="$APP_BUNDLE/Contents/Frameworks"
-        : "${SDK_BASE:=https://api.gyroflow.xyz/sdk}"
+        : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
         if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
             curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.1.2.tar.gz" -o /tmp/red_sdk.tar.gz
             tar -xzf /tmp/red_sdk.tar.gz -C "$FrameworksDir/"
@@ -408,14 +408,15 @@ bundle *param:
 
     # Bundle BRAW and RED SDK
     FrameworksDir={{AppBundle}}/Contents/Frameworks
+    : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
     if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
-        curl -L https://api.gyroflow.xyz/sdk/RED_SDK_MacOS_9.1.2.tar.gz -o tmp.tar.gz
+        curl -L "$SDK_BASE/RED_SDK_MacOS_9.1.2.tar.gz" -o tmp.tar.gz
         7z x -aoa tmp.tar.gz
         7z x -o"$FrameworksDir/" tmp.tar
         rm tmp.tar tmp.tar.gz
     fi
     if [ ! -f "$FrameworksDir/BlackmagicRawAPI.framework/Versions/A/BlackmagicRawAPI" ]; then
-        curl -L https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz -o tmp.tar.gz
+        curl -L "$SDK_BASE/Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz" -o tmp.tar.gz
         7z x -aoa tmp.tar.gz
         7z x -o"$FrameworksDir/" tmp.tar
         rm tmp.tar tmp.tar.gz

@@ -8,6 +8,7 @@ from unittest import mock
 
 from _scripts import publish_pan123_release as publish_module
 from distribution.control_center.backend import api as api_module
+from distribution.control_center.backend import config as config_module
 from distribution.control_center.backend.api import Api
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -471,6 +472,80 @@ class PluginBundleSelectionTests(unittest.TestCase):
                 args = publish_module.parse_args()
 
         self.assertEqual(args.plugins_run_id, 0)
+
+    def test_publish_default_sdk_base_uses_niyien_mirror_and_keeps_six_assets(self):
+        self.assertEqual(publish_module.DEFAULT_SDK_BASE, "https://www.niyien.com/api/sdk")
+        self.assertEqual(
+            publish_module.SDK_FILENAMES,
+            (
+                "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz",
+                "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz",
+                "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz",
+                "RED_SDK_Windows_9.1.2.tar.gz",
+                "RED_SDK_MacOS_9.1.2.tar.gz",
+                "RED_SDK_Linux_9.1.2.tar.gz",
+            ),
+        )
+        candidates = publish_module.build_sdk_download_candidates(
+            "RED_SDK_Windows_9.1.2.tar.gz",
+            publish_module.DEFAULT_SDK_BASE,
+        )
+
+        self.assertEqual(
+            candidates[0]["url"],
+            "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.1.2.tar.gz",
+        )
+
+    def test_control_center_latest_resource_tags_default_sdk_base_uses_niyien_mirror(self):
+        class LatestResourceApi(FakeApi):
+            def _gh_for(self, owner, repo, cfg):
+                raise RuntimeError("offline")
+
+        result = LatestResourceApi().get_latest_resource_tags()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["sdk_base"], "https://www.niyien.com/api/sdk/")
+
+    def test_control_center_config_default_sdk_base_uses_niyien_mirror(self):
+        self.assertEqual(
+            config_module.DEFAULT_CONFIG["publish_defaults"]["sdk_base"],
+            "https://www.niyien.com/api/sdk/",
+        )
+
+    def test_manifest_global_default_sdk_base_uses_niyien_mirror(self):
+        script = """
+const handler = require('./api/manifest');
+process.env.NIYIEN_RELEASE_POLICY_JSON = JSON.stringify({
+  auto_version: '2.0.0',
+  versions: [{
+    version: '2.0.0',
+    tag: 'v2.0.0',
+    channels: ['auto', 'manual']
+  }]
+});
+delete process.env.NIYIEN_SDK_BASE;
+delete process.env.NIYIEN_GLOBAL_SDK_BASE;
+delete process.env.NIYIEN_SDK_DISABLED;
+const req = {
+  query: { country: 'US', platform: 'windows' },
+  headers: { host: 'www.niyien.com', 'x-forwarded-proto': 'https' },
+  socket: {}
+};
+const res = {
+  setHeader() {},
+  status() { return this; },
+  json(payload) { this.payload = payload; }
+};
+handler(req, res).then(() => {
+  if (res.payload.sdk_base !== 'https://www.niyien.com/api/sdk/') {
+    throw new Error(`sdk_base: ${res.payload.sdk_base}`);
+  }
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
+"""
+        subprocess.run(["node", "-e", script], cwd=REPO_ROOT, check=True)
 
     def test_apply_resources_now_does_not_write_envs_when_bundle_resolution_fails(self):
         api = FailingResolveApi()

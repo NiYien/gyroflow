@@ -60,7 +60,8 @@ install-deps:
 
         # Replace the Qt Quick Dialogs file with a patch to fix the file selection bug
         rm -f {{ExtDir}}/{{QtVersionIOS}}/ios/lib/libQt6QuickDialogs2.a
-        curl -L https://api.gyroflow.xyz/sdk/Qt-ios-{{QtVersionIOS}}-libQt6QuickDialogs2.a -o {{ExtDir}}/{{QtVersionIOS}}/ios/lib/libQt6QuickDialogs2.a
+        : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
+        curl -L "$SDK_BASE/Qt-ios-{{QtVersionIOS}}-libQt6QuickDialogs2.a" -o {{ExtDir}}/{{QtVersionIOS}}/ios/lib/libQt6QuickDialogs2.a
     fi
 
     if [ ! -f "{{ExtDir}}/vcpkg/installed/arm64-ios/lib/libopencv_core4.a" ]; then
@@ -189,8 +190,9 @@ build-and-package profile is_dist:
 
         # Bundle BRAW SDK
         FrameworksDir={{AppBundle}}/Frameworks
+        : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
         if [ ! -f "$FrameworksDir/BlackmagicRawAPI.framework/Versions/A/BlackmagicRawAPI" ]; then
-            curl -L https://api.gyroflow.xyz/sdk/Blackmagic_RAW_SDK_iOS_5.0.0.tar.gz -o tmp.tar.gz
+            curl -L "$SDK_BASE/Blackmagic_RAW_SDK_iOS_5.0.0.tar.gz" -o tmp.tar.gz
             7z x -aoa tmp.tar.gz
             7z x -o"$FrameworksDir/" tmp.tar
             rm tmp.tar tmp.tar.gz

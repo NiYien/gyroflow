@@ -168,7 +168,7 @@ EXPECTED_LENS_FILENAMES: tuple[str, ...] = (
     LENS_MANIFEST_ASSET_NAME,
 )
 EXPECTED_PLUGIN_FILENAMES: tuple[str, ...] = tuple(PLUGIN_ASSET_NAMES) + (PLUGIN_MANIFEST_ASSET_NAME,)
-DEFAULT_SDK_BASE = "https://api.gyroflow.xyz/sdk"
+DEFAULT_SDK_BASE = "https://www.niyien.com/api/sdk"
 DEFAULT_GLOBAL_PLUGINS_BASE = "https://github.com/NiYien/gyroflow-plugins/releases/latest/download"
 DEFAULT_GITHUB_API = "https://api.github.com"
 DEFAULT_123_API = "https://open-api.123pan.com"

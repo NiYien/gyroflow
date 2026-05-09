@@ -34,6 +34,13 @@ DEFAULT_CONFIG: dict = {
     "pan123_releases_root_id": "",
     "network_proxy": "127.0.0.1:6063",
     "git_remote": "origin",
+    "publish_defaults": {
+        "lens_data_tag": "",
+        "plugins_source_mode": "release",
+        "plugins_tag": "",
+        "plugins_artifact_name": "",
+        "sdk_base": "https://www.niyien.com/api/sdk/",
+    },
 }
 
 

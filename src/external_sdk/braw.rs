@@ -48,10 +48,6 @@ impl BrawSdk {
             return None;
         };
 
-        if !sdk_base.is_empty() {
-            Some(format!("{}/{}", sdk_base.trim_end_matches('/'), filename))
-        } else {
-            Some(format!("https://api.gyroflow.xyz/sdk/{}", filename))
-        }
+        Some(super::sdk_download_url(sdk_base, filename))
     }
 }

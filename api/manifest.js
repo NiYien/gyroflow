@@ -109,7 +109,10 @@ module.exports = async function handler(req, res) {
       ? ""
       : source.region === "cn"
         ? `${getDownloadApiBase(req)}/content/sdk/`
-        : autoEntry?.global_sdk_base || process.env.NIYIEN_SDK_BASE || `${source.base}/sdk/`;
+        : autoEntry?.global_sdk_base ||
+          process.env.NIYIEN_GLOBAL_SDK_BASE ||
+          process.env.NIYIEN_SDK_BASE ||
+          "https://www.niyien.com/api/sdk/";
   const pluginsBase =
     pluginsDisabled
       ? ""
