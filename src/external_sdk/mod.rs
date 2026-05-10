@@ -233,17 +233,17 @@ mod tests {
         if cfg!(target_os = "windows") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.1.2.tar.gz"
+                "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.2.0.tar.gz"
             );
         } else if cfg!(target_os = "macos") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/RED_SDK_MacOS_9.1.2.tar.gz"
+                "https://www.niyien.com/api/sdk/RED_SDK_MacOS_9.2.0.tar.gz"
             );
         } else if cfg!(target_os = "linux") {
             assert_eq!(
                 url,
-                "https://www.niyien.com/api/sdk/RED_SDK_Linux_9.1.2.tar.gz"
+                "https://www.niyien.com/api/sdk/RED_SDK_Linux_9.2.0.tar.gz"
             );
         }
     }

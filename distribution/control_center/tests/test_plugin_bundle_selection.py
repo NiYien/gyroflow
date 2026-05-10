@@ -481,19 +481,19 @@ class PluginBundleSelectionTests(unittest.TestCase):
                 "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz",
                 "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz",
                 "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz",
-                "RED_SDK_Windows_9.1.2.tar.gz",
-                "RED_SDK_MacOS_9.1.2.tar.gz",
-                "RED_SDK_Linux_9.1.2.tar.gz",
+                "RED_SDK_Windows_9.2.0.tar.gz",
+                "RED_SDK_MacOS_9.2.0.tar.gz",
+                "RED_SDK_Linux_9.2.0.tar.gz",
             ),
         )
         candidates = publish_module.build_sdk_download_candidates(
-            "RED_SDK_Windows_9.1.2.tar.gz",
+            "RED_SDK_Windows_9.2.0.tar.gz",
             publish_module.DEFAULT_SDK_BASE,
         )
 
         self.assertEqual(
             candidates[0]["url"],
-            "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.1.2.tar.gz",
+            "https://www.niyien.com/api/sdk/RED_SDK_Windows_9.2.0.tar.gz",
         )
 
     def test_control_center_latest_resource_tags_default_sdk_base_uses_niyien_mirror(self):

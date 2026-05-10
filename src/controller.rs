@@ -4766,13 +4766,25 @@ mod tests {
     }
 
     #[test]
-    fn qml_video_rs_playback_does_not_stop_polling_repeated_same_frame() {
+    fn qml_video_rs_pins_raw_preview_pipeline_fixes() {
+        // Pins the qml-video-rs fork at the commit that contains the R3D
+        // preview Play fix: MDKPlayer::play() schedules a deferred 500 ms
+        // seek(m_playerPosition) for R3D-SDK loads (m_isR3dFormat set from
+        // customDecoder.startsWith("R3D:")), automating the manual user-
+        // recovery sequence "Play → click timeline → fluid playback" so
+        // every Paused→Playing transition stays fluid. Reverting to an
+        // earlier commit re-introduces the 1–2-second-per-frame freeze.
+        const PINNED_REV: &str = "fa7007b09fed853aa6c958a4472f26d9c1f0e1c6";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
+        let expected = format!(
+            "source = \"git+https://github.com/NiYien/qml-video-rs?rev={hash}#{hash}\"",
+            hash = PINNED_REV,
+        );
 
         assert!(
-            lock.contains("source = \"git+https://github.com/NiYien/qml-video-rs?rev=fcba282a4edffaa6be8df235704293d6b688711a#fcba282a4edffaa6be8df235704293d6b688711a\""),
-            "qml-video-rs must stay pinned to the fork commit that keeps playback polling active"
+            lock.contains(&expected),
+            "qml-video-rs must stay pinned to the NiYien fork commit that contains the RAW preview pipeline fixes (D1: setUrl R3D/BRAW setDecoders routing, D2: setupPlayer setBufferRange(0) removal). Reverting to an earlier commit re-introduces the R3D Playing-state freeze."
         );
     }
 }

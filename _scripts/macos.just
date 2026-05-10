@@ -325,7 +325,7 @@ deploy *param:
         FrameworksDir="$APP_BUNDLE/Contents/Frameworks"
         : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
         if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
-            curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.1.2.tar.gz" -o /tmp/red_sdk.tar.gz
+            curl -fSL "$SDK_BASE/RED_SDK_MacOS_9.2.0.tar.gz" -o /tmp/red_sdk.tar.gz
             tar -xzf /tmp/red_sdk.tar.gz -C "$FrameworksDir/"
             rm -f /tmp/red_sdk.tar.gz
         fi
@@ -410,7 +410,7 @@ bundle *param:
     FrameworksDir={{AppBundle}}/Contents/Frameworks
     : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
     if [ ! -f "$FrameworksDir/REDR3D.dylib" ]; then
-        curl -L "$SDK_BASE/RED_SDK_MacOS_9.1.2.tar.gz" -o tmp.tar.gz
+        curl -L "$SDK_BASE/RED_SDK_MacOS_9.2.0.tar.gz" -o tmp.tar.gz
         7z x -aoa tmp.tar.gz
         7z x -o"$FrameworksDir/" tmp.tar
         rm tmp.tar tmp.tar.gz

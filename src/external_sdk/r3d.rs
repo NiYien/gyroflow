@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright © 2023 Adrian <adrian.eddy at gmail>
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::SeqCst;
 pub struct REDSdk {}
+
+const REQUIRED_RUNTIME_VERSION_PREFIX: &[u8] = b"9.2.0-";
 
 impl REDSdk {
     pub fn is_installed() -> bool {
@@ -12,20 +15,26 @@ impl REDSdk {
             let mut path = path.clone();
             path.push("_");
             if cfg!(target_os = "windows") {
-                return path.with_file_name("REDDecoder-x64.dll").exists()
-                    && path.with_file_name("REDR3D-x64.dll").exists()
-                    && path.with_file_name("REDOpenCL-x64.dll").exists()
-                    && path.with_file_name("REDCuda-x64.dll").exists();
+                return Self::all_runtime_files_supported(&[
+                    path.with_file_name("REDDecoder-x64.dll"),
+                    path.with_file_name("REDR3D-x64.dll"),
+                    path.with_file_name("REDOpenCL-x64.dll"),
+                    path.with_file_name("REDCuda-x64.dll"),
+                ]);
             } else if cfg!(target_os = "macos") {
-                return path.with_file_name("REDDecoder.dylib").exists()
-                    && path.with_file_name("REDMetal.dylib").exists()
-                    && path.with_file_name("REDOpenCL.dylib").exists()
-                    && path.with_file_name("REDR3D.dylib").exists();
+                return Self::all_runtime_files_supported(&[
+                    path.with_file_name("REDDecoder.dylib"),
+                    path.with_file_name("REDMetal.dylib"),
+                    path.with_file_name("REDOpenCL.dylib"),
+                    path.with_file_name("REDR3D.dylib"),
+                ]);
             } else if cfg!(target_os = "linux") {
-                return path.with_file_name("REDCuda-x64.so").exists()
-                    && path.with_file_name("REDDecoder-x64.so").exists()
-                    && path.with_file_name("REDOpenCL-x64.so").exists()
-                    && path.with_file_name("REDR3D-x64.so").exists();
+                return Self::all_runtime_files_supported(&[
+                    path.with_file_name("REDCuda-x64.so"),
+                    path.with_file_name("REDDecoder-x64.so"),
+                    path.with_file_name("REDOpenCL-x64.so"),
+                    path.with_file_name("REDR3D-x64.so"),
+                ]);
             }
         }
 
@@ -35,16 +44,32 @@ impl REDSdk {
 
     pub fn get_download_url(sdk_base: &str) -> Option<String> {
         let filename = if cfg!(target_os = "windows") {
-            "RED_SDK_Windows_9.1.2.tar.gz"
+            "RED_SDK_Windows_9.2.0.tar.gz"
         } else if cfg!(target_os = "macos") {
-            "RED_SDK_MacOS_9.1.2.tar.gz"
+            "RED_SDK_MacOS_9.2.0.tar.gz"
         } else if cfg!(target_os = "linux") {
-            "RED_SDK_Linux_9.1.2.tar.gz"
+            "RED_SDK_Linux_9.2.0.tar.gz"
         } else {
             return None;
         };
 
         Some(super::sdk_download_url(sdk_base, filename))
+    }
+
+    fn all_runtime_files_supported(paths: &[std::path::PathBuf]) -> bool {
+        paths.iter().all(|path| Self::runtime_file_supported(path))
+    }
+
+    fn runtime_file_supported(path: &Path) -> bool {
+        std::fs::read(path)
+            .map(|bytes| Self::is_supported_runtime_version(&bytes))
+            .unwrap_or(false)
+    }
+
+    fn is_supported_runtime_version(bytes: &[u8]) -> bool {
+        bytes
+            .windows(REQUIRED_RUNTIME_VERSION_PREFIX.len())
+            .any(|window| window == REQUIRED_RUNTIME_VERSION_PREFIX)
     }
 
     // Assumes regular filesystem
@@ -181,5 +206,29 @@ impl REDSdk {
                 ))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::REDSdk;
+
+    #[test]
+    fn red_runtime_version_accepts_only_required_major_minor_patch() {
+        assert!(REDSdk::is_supported_runtime_version(
+            b"9.2.0-b822452 (20260226 Wx64S)"
+        ));
+        assert!(!REDSdk::is_supported_runtime_version(
+            b"9.1.2-ad3d43d (20251027 Wx64S)"
+        ));
+    }
+
+    #[test]
+    fn red_runtime_file_check_rejects_existing_old_runtime() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let old_runtime = temp_dir.path().join("REDDecoder-x64.dll");
+        std::fs::write(&old_runtime, b"9.1.2-ad3d43d (20251027 Wx64S)").unwrap();
+
+        assert!(!REDSdk::runtime_file_supported(&old_runtime));
     }
 }

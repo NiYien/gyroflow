@@ -416,7 +416,7 @@ deploy:
     # the zip step here so the SDK DLLs ship inside the release archive.
     if ("{{Arch}}" -eq "x86_64") {
         if (-not (Test-Path -Path "$TargetDir\REDR3D-x64.dll")) {
-            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.1.2.tar.gz" -OutFile tmp.tar.gz
+            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.2.0.tar.gz" -OutFile tmp.tar.gz
             7z x -aoa tmp.tar.gz
             7z x -aoa -o"$TargetDir" tmp.tar
             Remove-Item tmp.tar.gz, tmp.tar -Force
@@ -512,7 +512,7 @@ bundle:
     if ("{{Arch}}" -eq "x86_64") {
         if (-not $Env:SDK_BASE) { $Env:SDK_BASE = "https://www.niyien.com/api/sdk" }
         if (-not (Test-Path -Path "$TargetDir\REDR3D-x64.dll")) {
-            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.1.2.tar.gz" -OutFile tmp.tar.gz
+            Invoke-WebRequest -URI "$Env:SDK_BASE/RED_SDK_Windows_9.2.0.tar.gz" -OutFile tmp.tar.gz
             7z x tmp.tar.gz
             7z x -o"$TargetDir\" tmp.tar
             Remove-Item -Path tmp.ta* -Force

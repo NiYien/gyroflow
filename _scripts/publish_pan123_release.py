@@ -109,9 +109,9 @@ SDK_FILENAMES = (
     "Blackmagic_RAW_SDK_Windows_5.0.0.tar.gz",
     "Blackmagic_RAW_SDK_MacOS_5.0.0.tar.gz",
     "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz",
-    "RED_SDK_Windows_9.1.2.tar.gz",
-    "RED_SDK_MacOS_9.1.2.tar.gz",
-    "RED_SDK_Linux_9.1.2.tar.gz",
+    "RED_SDK_Windows_9.2.0.tar.gz",
+    "RED_SDK_MacOS_9.2.0.tar.gz",
+    "RED_SDK_Linux_9.2.0.tar.gz",
 )
 
 SDK_DOWNLOAD_SOURCES = {
@@ -127,16 +127,16 @@ SDK_DOWNLOAD_SOURCES = {
         {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux_5.0.0.tar.gz"},
         {"kind": "direct", "path": "Blackmagic_RAW_SDK_Linux.tar.gz"},
     ),
-    "RED_SDK_Windows_9.1.2.tar.gz": (
-        {"kind": "direct", "path": "RED_SDK_Windows_9.1.2.tar.gz"},
+    "RED_SDK_Windows_9.2.0.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Windows_9.2.0.tar.gz"},
         {"kind": "direct", "path": "RED_SDK_Windows.tar.gz"},
     ),
-    "RED_SDK_MacOS_9.1.2.tar.gz": (
-        {"kind": "direct", "path": "RED_SDK_MacOS_9.1.2.tar.gz"},
+    "RED_SDK_MacOS_9.2.0.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_MacOS_9.2.0.tar.gz"},
         {"kind": "direct", "path": "RED_SDK_MacOS.tar.gz"},
     ),
-    "RED_SDK_Linux_9.1.2.tar.gz": (
-        {"kind": "direct", "path": "RED_SDK_Linux_9.1.2.tar.gz"},
+    "RED_SDK_Linux_9.2.0.tar.gz": (
+        {"kind": "direct", "path": "RED_SDK_Linux_9.2.0.tar.gz"},
         {"kind": "direct", "path": "RED_SDK_Linux.tar.gz"},
     ),
 }

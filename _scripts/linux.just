@@ -343,7 +343,7 @@ deploy *param:
         : "${SDK_BASE:=https://www.niyien.com/api/sdk}"
         curl -L "$SDK_BASE/libshaderc_shared.so" -o "$TARGET/lib/libshaderc_shared.so"
         if [ ! -f "$TARGET/lib/REDR3D-x64.so" ]; then
-            curl -fSL "$SDK_BASE/RED_SDK_Linux_9.1.2.tar.gz" -o /tmp/red_sdk.tar.gz
+            curl -fSL "$SDK_BASE/RED_SDK_Linux_9.2.0.tar.gz" -o /tmp/red_sdk.tar.gz
             tar -xzf /tmp/red_sdk.tar.gz -C "$TARGET/lib/"
             rm -f /tmp/red_sdk.tar.gz
         fi
