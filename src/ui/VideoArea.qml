@@ -383,8 +383,8 @@ Item {
     }
 
     function loadFile(url: url, skip_detection: bool, queueJobId: int, crmTelemetryUrl: url, suppressAssociatedGyroflow: bool): void {
-        const hadProjectFile = !!controller.project_file_url;
-        const skipAssociatedGyroflow = suppressAssociatedGyroflow || hadProjectFile;
+        const activeProjectFileUrl = controller.project_file_url ? controller.project_file_url.toString() : "";
+        const skipAssociatedGyroflow = !!suppressAssociatedGyroflow;
         let filename = filesystem.get_filename(url);
         let folder = filesystem.get_folder(url);
 
@@ -528,12 +528,17 @@ Item {
             }
             const gfFilename = filesystem.filename_with_extension(gfBaseFilename, "gyroflow");
             if (filesystem.exists_in_folder(folder, gfFilename)) {
-                messageBox(Modal.Question, qsTr("There's a %1 file associated with this video, do you want to load it?").arg("<b>" + gfFilename + "</b>"), [
-                    { text: qsTr("Yes"), clicked: function() {
-                        Qt.callLater(() => loadFile(filesystem.get_file_url(folder, gfFilename, false), true));
-                    } },
-                    { text: qsTr("No"), accent: true },
-                ]);
+                const gfUrl = filesystem.get_file_url(folder, gfFilename, false);
+                if (activeProjectFileUrl && activeProjectFileUrl == gfUrl.toString()) {
+                    Qt.callLater(() => loadFile(gfUrl, true, 0, "", true));
+                } else {
+                    messageBox(Modal.Question, qsTr("There's a %1 file associated with this video, do you want to load it?").arg("<b>" + gfFilename + "</b>"), [
+                        { text: qsTr("Yes"), clicked: function() {
+                            Qt.callLater(() => loadFile(gfUrl, true));
+                        } },
+                        { text: qsTr("No"), accent: true },
+                    ]);
+                }
             }
         }
 

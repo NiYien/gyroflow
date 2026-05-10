@@ -11193,7 +11193,7 @@ mod tests {
         let mut local_configs = niyien_lens_presets::default_lens_group_configs();
         local_configs[0].focal_length_mm = Some(35.0);
         local_configs[0].anamorphic_enabled = true;
-        local_configs[0].preset_id = Some("sirui_saturn_35mm_t2_9_1_60x".to_owned());
+        local_configs[0].preset_id = Some("sirui_xingchen_50mm_1_33x".to_owned());
         local_configs[0].squeeze_direction =
             Some(niyien_lens_presets::SqueezeDirection::Horizontal);
         let job = Job {
@@ -11224,12 +11224,12 @@ mod tests {
 
         assert_eq!(
             project["calibration_data"]["lens_model"],
-            "Sirui Saturn 35mm T2.9 1.60x"
+            "Sirui star 50mm 1.33x"
         );
-        assert_eq!(project["calibration_data"]["input_horizontal_stretch"], 1.6);
+        assert_eq!(project["calibration_data"]["input_horizontal_stretch"], 1.33);
         assert_eq!(
             project["calibration_data"]["output_dimension"],
-            serde_json::json!({ "w": 3072, "h": 1080 })
+            serde_json::json!({ "w": 2554, "h": 1080 })
         );
     }
 
@@ -12101,7 +12101,7 @@ mod tests {
     }
 
     #[test]
-    fn video_area_video_load_after_project_suppresses_associated_gyroflow() {
+    fn video_area_video_load_after_project_reloads_matching_associated_gyroflow() {
         let qml = include_str!("../ui/VideoArea.qml");
         let fn_idx = qml
             .find("function loadFile")
@@ -12113,16 +12113,32 @@ mod tests {
         let body = &remaining[..next_fn_idx];
 
         assert!(
-            body.contains("const hadProjectFile = !!controller.project_file_url"),
-            "VideoArea.loadFile must capture whether a .gyroflow project was active before controller.load_video clears it"
+            !body.contains("const hadProjectFile = !!controller.project_file_url"),
+            "VideoArea.loadFile must not suppress associated .gyroflow prompts based only on stale project_file_url"
         );
         assert!(
-            body.contains("const skipAssociatedGyroflow = suppressAssociatedGyroflow || hadProjectFile"),
-            "loading a video after a project must suppress same-name .gyroflow loading"
+            body.contains("const skipAssociatedGyroflow = !!suppressAssociatedGyroflow"),
+            "only explicit project/batch context may suppress associated .gyroflow handling"
         );
         assert!(
             body.contains("if (!root.pendingGyroflowData && !skipAssociatedGyroflow)"),
             "associated .gyroflow prompt must be guarded by the suppression flag"
+        );
+        assert!(
+            body.contains("const gfUrl = filesystem.get_file_url(folder, gfFilename, false)"),
+            "associated .gyroflow URL must be computed once for project match and prompt handling"
+        );
+        assert!(
+            body.contains("activeProjectFileUrl && activeProjectFileUrl == gfUrl.toString()"),
+            "loading the video for the active project must reload the matching .gyroflow automatically"
+        );
+        assert!(
+            body.contains("Qt.callLater(() => loadFile(gfUrl, true, 0, \"\", true))"),
+            "automatic project reload must suppress recursive associated .gyroflow handling"
+        );
+        assert!(
+            body.contains("messageBox(Modal.Question"),
+            "non-matching associated .gyroflow files must still prompt the user"
         );
     }
 

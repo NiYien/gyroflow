@@ -4333,6 +4333,67 @@ mod tests {
 
     #[test]
     #[serial]
+    fn import_gyroflow_data_ignores_focal_only_calibration_for_project_lens_group_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            target.set_lens_group_config_json(
+                r#"[{
+                    "lens_index": 0,
+                    "focal_length_mm": 35.0
+                }]"#,
+            );
+            target.set_lens_group_manual_edit(false);
+            let global_configs_before = target.lens_group_config.read().clone();
+
+            let project = serde_json::json!({
+                "title": "Gyroflow data file",
+                "version": 4,
+                "videofile": "",
+                "calibration_data": {
+                    "lens_model": "Ordinary lens",
+                    "focal_length": 35.0,
+                    "input_horizontal_stretch": 1.0,
+                    "input_vertical_stretch": 1.0,
+                    "fisheye_params": {
+                        "camera_matrix": [
+                            [1307.2340425531916, 0.0, 1277.0],
+                            [0.0, 1307.2340425531916, 540.0],
+                            [0.0, 0.0, 1.0]
+                        ],
+                        "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
+                    }
+                }
+            });
+
+            let mut is_preset = false;
+            target
+                .import_gyroflow_data(
+                    project.to_string().as_bytes(),
+                    false,
+                    None,
+                    |_| (),
+                    Arc::new(AtomicBool::new(false)),
+                    &mut is_preset,
+                    false,
+                )
+                .unwrap();
+
+            assert!(!target.has_project_lens_group_config());
+            assert_eq!(*target.lens_group_config.read(), global_configs_before);
+            assert_eq!(
+                target.get_lens_group_config_json(),
+                niyien_lens_presets::lens_group_config_to_json(&global_configs_before)
+            );
+            assert!(!target.get_lens_group_manual_edit());
+            assert!(!settings::get_bool("lens_group_manual_edit", true));
+        });
+    }
+
+    #[test]
+    #[serial]
     fn set_lens_group_manual_edit_clears_project_lens_group_display_config() {
         let tmp = tempfile::tempdir().unwrap();
         let settings_file = tmp.path().join("settings.json");

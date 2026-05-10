@@ -503,14 +503,14 @@ pub fn lens_group_config_from_lens_profile(
     } else if vertical_stretch > 1.01 {
         (true, Some(SqueezeDirection::Vertical), Some(vertical_stretch))
     } else {
-        (false, None, None)
+        return None;
     };
 
-    let preset_id = if anamorphic_enabled {
-        find_preset_by_name(&profile.lens_model).map(|preset| preset.id)
-    } else {
-        None
-    };
+    let preset_id = find_preset_by_name(&profile.lens_model).map(|preset| preset.id);
+    let manual_label = is_manual_anamorphic_label(&profile.lens_model);
+    if preset_id.is_none() && !manual_label {
+        return None;
+    }
 
     let mut config = LensGroupConfig {
         lens_index,
@@ -527,7 +527,7 @@ pub fn lens_group_config_from_lens_profile(
         config.squeeze_direction = None;
     }
 
-    if config.has_values() {
+    if config.anamorphic_enabled {
         Some(config)
     } else {
         None
@@ -955,6 +955,15 @@ fn manual_anamorphic_label(squeeze_ratio: f64, direction: SqueezeDirection) -> S
         SqueezeDirection::Vertical => "V",
     };
     format!("Manual anamorphic {squeeze_ratio:.2}x {direction}")
+}
+
+fn is_manual_anamorphic_label(label: &str) -> bool {
+    let mut parts = label.split_whitespace();
+    matches!(parts.next(), Some("Manual"))
+        && matches!(parts.next(), Some("anamorphic"))
+        && matches!(parts.next(), Some(ratio) if ratio.ends_with('x'))
+        && matches!(parts.next(), Some("H" | "V"))
+        && parts.next().is_none()
 }
 
 fn value_to_u64(value: &serde_json::Value) -> Option<u64> {
@@ -1559,6 +1568,46 @@ mod tests {
         );
         assert_eq!(config.squeeze_direction, Some(SqueezeDirection::Horizontal));
         assert_eq!(config.squeeze_ratio, Some(1.33));
+    }
+
+    #[test]
+    fn lens_group_config_from_lens_profile_ignores_focal_length_only() {
+        let mut profile = LensProfile::default();
+        profile.lens_model = "Ordinary lens".to_owned();
+        profile.focal_length = Some(35.0);
+        profile.input_horizontal_stretch = 1.0;
+        profile.input_vertical_stretch = 1.0;
+
+        assert!(lens_group_config_from_lens_profile(&profile, 0).is_none());
+    }
+
+    #[test]
+    fn lens_group_config_from_lens_profile_matches_manual_anamorphic_label() {
+        let mut profile = LensProfile::default();
+        profile.lens_model = "Manual anamorphic 1.50x H".to_owned();
+        profile.focal_length = Some(35.0);
+        profile.input_horizontal_stretch = 1.5;
+        profile.input_vertical_stretch = 1.0;
+
+        let config = lens_group_config_from_lens_profile(&profile, 0).unwrap();
+
+        assert_eq!(config.lens_index, 0);
+        assert_eq!(config.focal_length_mm, Some(35.0));
+        assert!(config.anamorphic_enabled);
+        assert_eq!(config.preset_id, None);
+        assert_eq!(config.squeeze_direction, Some(SqueezeDirection::Horizontal));
+        assert_eq!(config.squeeze_ratio, Some(1.5));
+    }
+
+    #[test]
+    fn lens_group_config_from_lens_profile_ignores_unknown_anamorphic_label() {
+        let mut profile = LensProfile::default();
+        profile.lens_model = "Ordinary stretched lens".to_owned();
+        profile.focal_length = Some(35.0);
+        profile.input_horizontal_stretch = 1.5;
+        profile.input_vertical_stretch = 1.0;
+
+        assert!(lens_group_config_from_lens_profile(&profile, 0).is_none());
     }
 
     #[test]
