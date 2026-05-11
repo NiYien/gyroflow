@@ -537,9 +537,26 @@ Rectangle {
     FileDialog {
         id: fileDialog;
         property var extensions: [ "mp4", "mov", "mxf", "mkv", "webm", "insv", "gyroflow", "png", "jpg", "exr", "dng", "braw", "r3d", "nev", "crm" ];
+        property var motionDataExtensions: window.motionData ? window.motionData.extensions : [];
+        function selectableExtensions(): var {
+            let result = [];
+            let seen = {};
+            for (const ext of extensions.concat(motionDataExtensions || [])) {
+                const normalized = ext.toString().replace(/^\./, "").toLowerCase();
+                if (!seen[normalized]) {
+                    seen[normalized] = true;
+                    result.push(normalized);
+                }
+            }
+            return result;
+        }
+        function selectableNameFilterExtensions(): var {
+            const exts = selectableExtensions();
+            return exts.concat(exts.map(x => x.toUpperCase()));
+        }
 
-        title: qsTr("Choose a video file")
-        nameFilters: Qt.platform.os == "android"? undefined : [qsTr("Video files") + " (*." + extensions.concat(extensions.map(x => x.toUpperCase())).join(" *.") + ")"];
+        title: qsTr("Choose a video or motion data file")
+        nameFilters: Qt.platform.os == "android"? undefined : [qsTr("Supported files") + " (*." + selectableNameFilterExtensions().join(" *.") + ")"];
         type: "video";
         fileMode: FileDialog.OpenFiles;
         onAccepted: {
@@ -1427,6 +1444,7 @@ Rectangle {
                     text: qsTranslate("VideoInformation", "Video information");
                     iconName: "info";
                     objectName: "simple-info";
+                    opened: true;
                     opacity: batchState.active ? 0.4 : 1.0;
                     innerItem.enabled: !batchState.active;
                     Button {
@@ -1460,30 +1478,7 @@ Rectangle {
                     text: qsTr("Sensor && Lens");
                     iconName: "chart";
                     objectName: "simple-sensor-lens";
-                    Row {
-                        width: parent.width;
-                        spacing: 8 * dpiScale;
-                        opacity: batchState.active ? 0.4 : 1.0;
-                        enabled: !batchState.active;
-                        Button {
-                            text: qsTranslate("Synchronization", "Auto sync");
-                            iconName: "spinner";
-                            width: (parent.width - parent.spacing) / 2;
-                            enabled: window.videoArea.vid.loaded && !controller.sync_in_progress;
-                            onClicked: {
-                                if (window.sync) window.sync.runAutosync();
-                            }
-                        }
-                        Button {
-                            text: qsTranslate("MotionData", "Open file");
-                            iconName: "folder";
-                            width: (parent.width - parent.spacing) / 2;
-                            enabled: window.videoArea.vid.loaded;
-                            onClicked: {
-                                if (window.motionData) window.motionData.openFileDialog();
-                            }
-                        }
-                    }
+                    opened: true;
                     BasicText {
                         width: parent.width;
                         wrapMode: Text.WordWrap;
@@ -1538,6 +1533,7 @@ Rectangle {
                     text: qsTranslate("Stabilization", "Stabilization");
                     iconName: "gyroflow";
                     objectName: "simple-stab";
+                    opened: false;
                     innerItem.enabled: window.videoArea.vid.loaded || batchState.active;
                     Menu.SimpleStabilization {
                         id: simpleStab;
@@ -1553,8 +1549,8 @@ Rectangle {
                     text: qsTr("Settings");
                     iconName: "settings";
                     objectName: "simple-settings";
-                    // Open by default so Export settings (now the first child) is visible.
-                    opened: true;
+                    // Collapsed on first run; MenuItem still preserves the user's saved state.
+                    opened: false;
                     opacity: batchState.active ? 0.4 : 1.0;
                     innerItem.enabled: !batchState.active;
                     // Export settings — moved here from the Video information section.
@@ -1562,7 +1558,7 @@ Rectangle {
                     Menu.SimpleExport {
                         width: parent.width;
                     }
-                    SectionDivider { }
+                    SectionDivider { label: qsTr("Other settings"); }
                     Label {
                         position: Label.LeftPosition;
                         text: qsTranslate("Advanced", "Language");

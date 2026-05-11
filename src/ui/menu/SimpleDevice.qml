@@ -14,7 +14,7 @@ MenuItem {
     text: qsTranslate("Device", "Device")
     iconName: "plugin"
     objectName: "simple-device"
-    opened: true
+    opened: false
     visible: controller.device_connected
         || controller.ota_state !== "none"
         || root.connectionStatusNeedsPanel()

@@ -855,6 +855,8 @@ pub struct RenderQueue {
         qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
     filter_paired_gyroflow_siblings:
         qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    filter_raw_proxy_siblings:
+        qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
     crm_proxy_pair: qt_method!(fn(&self, urls_json: String) -> QString),
     crm_proxy_pairs: qt_method!(fn(&self, urls_json: String) -> QString),
     first_renderable_video_file:
@@ -2026,6 +2028,11 @@ impl RenderQueue {
         let video_url = stab.input_file.read().url.clone();
 
         let editing = self.jobs.contains_key(&job_id);
+        if !editing && !stab_uses_crm_proxy(&stab) {
+            if !reconcile_raw_proxy_queue_input(self, &video_url, "") {
+                return;
+            }
+        }
 
         // [queue-batch-streamline T5] 输入视频去重：非编辑模式下跳过重复视频
         if !editing {
@@ -4010,6 +4017,10 @@ impl RenderQueue {
     }
 
     pub fn add_file(&mut self, url: String, gyro_url: String, additional_data: String) -> u32 {
+        if !reconcile_raw_proxy_queue_input(self, &url, &gyro_url) {
+            return 0;
+        }
+
         let job_id = fastrand::u32(1..2147483640);
 
         let is_gf_data = url.starts_with('{');
@@ -5714,6 +5725,7 @@ impl RenderQueue {
             .iter()
             .map(|p| filesystem::path_to_url(&p.to_string_lossy()))
             .collect();
+        let urls = filter_raw_proxy_siblings_impl(&urls, &exts_lower);
 
         ::log::info!(
             "[list_video_files_in_folder] root={}, returned {} videos (max_depth={}, cap={})",
@@ -5971,6 +5983,22 @@ impl RenderQueue {
         QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
     }
 
+    fn filter_raw_proxy_siblings(&self, urls_json: String, extensions_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let extensions: Vec<String> = serde_json::from_str(&extensions_json).unwrap_or_default();
+        let result = filter_raw_proxy_siblings_impl(&urls, &extensions);
+        let dropped = urls.len().saturating_sub(result.len());
+        if dropped > 0 {
+            ::log::info!(
+                "[filter_raw_proxy_siblings] dropped {} proxy siblings ({} -> {} urls)",
+                dropped,
+                urls.len(),
+                result.len()
+            );
+        }
+        QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
+    }
+
     fn crm_proxy_pair(&self, urls_json: String) -> QString {
         let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
         let result = crm_proxy_pair_impl(&urls);
@@ -6117,15 +6145,7 @@ impl RenderQueue {
     }
 
     fn has_crm_proxy_jobs(&self) -> bool {
-        self.jobs.values().any(|job| {
-            job.stab.as_ref().is_some_and(|stab| {
-                stab.gyro
-                    .read()
-                    .file_url
-                    .to_ascii_lowercase()
-                    .ends_with(".crm")
-            }) || job.project_data.as_deref().is_some_and(project_uses_crm_gyro)
-        })
+        self.jobs.values().any(job_uses_crm_proxy)
     }
 
     fn update_gyro_file_parse_result(
@@ -8907,6 +8927,226 @@ fn filter_paired_gyroflow_siblings_impl(urls: &[String], extensions: &[String]) 
     )
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+struct RawProxyPairKey {
+    folder: String,
+    stem: String,
+    raw_kind: RawProxyRawKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+enum RawProxyRawKind {
+    NikonNev,
+    RedR3d,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RawProxyInputClass {
+    Raw(RawProxyPairKey),
+    Proxy(Vec<RawProxyPairKey>),
+    ProtectedCrmProxy,
+    Unrelated,
+}
+
+fn filter_raw_proxy_siblings_impl(urls: &[String], extensions: &[String]) -> Vec<String> {
+    let urls: Vec<String> = urls
+        .iter()
+        .filter(|url| !is_ignored_system_file_url(url))
+        .cloned()
+        .collect();
+    if urls.len() <= 1 {
+        return urls;
+    }
+
+    let accepted_exts = accepted_raw_proxy_extensions(extensions);
+    let protected_crm_proxies: HashSet<String> = crm_proxy_pairs_impl(&urls)
+        .into_iter()
+        .map(|pair| pair.proxy_url)
+        .collect();
+
+    let mut raw_keys = HashSet::new();
+    let mut classes = Vec::with_capacity(urls.len());
+    for url in &urls {
+        let class = classify_raw_proxy_url(url, &accepted_exts, &protected_crm_proxies);
+        if let RawProxyInputClass::Raw(key) = &class {
+            raw_keys.insert(key.clone());
+        }
+        classes.push(class);
+    }
+
+    urls.into_iter()
+        .zip(classes)
+        .filter_map(|(url, class)| match class {
+            RawProxyInputClass::Proxy(keys) if keys.iter().any(|key| raw_keys.contains(key)) => None,
+            _ => Some(url),
+        })
+        .collect()
+}
+
+fn reconcile_raw_proxy_queue_input(queue: &mut RenderQueue, url: &str, gyro_url: &str) -> bool {
+    if url.starts_with('{') || !gyro_url.is_empty() {
+        return true;
+    }
+
+    let accepted_exts = default_raw_proxy_extensions();
+    match classify_raw_proxy_url(url, &accepted_exts, &HashSet::new()) {
+        RawProxyInputClass::Proxy(incoming_key) => {
+            if queue
+                .queue
+                .borrow()
+                .iter()
+                .any(|item| {
+                    raw_proxy_raw_key_for_url(&item.input_file.to_string())
+                        .is_some_and(|raw_key| incoming_key.contains(&raw_key))
+                })
+            {
+                ::log::info!(
+                    "[raw_proxy_reconcile] skipped proxy because RAW is already queued: {}",
+                    url
+                );
+                return false;
+            }
+            true
+        }
+        RawProxyInputClass::Raw(incoming_key) => {
+            let proxy_job_ids: Vec<u32> = queue
+                .queue
+                .borrow()
+                .iter()
+                .filter(|item| {
+                    queue
+                        .jobs
+                        .get(&item.job_id)
+                        .is_none_or(|job| !job_uses_crm_proxy(job))
+                        && raw_proxy_proxy_key_for_url(&item.input_file.to_string(), &accepted_exts)
+                            .is_some_and(|proxy_keys| proxy_keys.contains(&incoming_key))
+                })
+                .map(|item| item.job_id)
+                .collect();
+            for job_id in proxy_job_ids {
+                ::log::info!(
+                    "[raw_proxy_reconcile] removing queued proxy job {} before adding RAW: {}",
+                    job_id,
+                    url
+                );
+                queue.remove(job_id);
+            }
+            true
+        }
+        RawProxyInputClass::ProtectedCrmProxy | RawProxyInputClass::Unrelated => true,
+    }
+}
+
+fn classify_raw_proxy_url(
+    url: &str,
+    accepted_exts: &HashSet<String>,
+    protected_crm_proxies: &HashSet<String>,
+) -> RawProxyInputClass {
+    if protected_crm_proxies.contains(url) {
+        return RawProxyInputClass::ProtectedCrmProxy;
+    }
+    if let Some(key) = raw_proxy_raw_key_for_url(url) {
+        return RawProxyInputClass::Raw(key);
+    }
+    raw_proxy_proxy_key_for_url(url, accepted_exts)
+        .map(RawProxyInputClass::Proxy)
+        .unwrap_or(RawProxyInputClass::Unrelated)
+}
+
+fn raw_proxy_raw_key_for_url(url: &str) -> Option<RawProxyPairKey> {
+    let (folder, stem, ext) = raw_proxy_url_parts(url)?;
+    let raw_kind = match ext.as_str() {
+        "nev" => RawProxyRawKind::NikonNev,
+        "r3d" => RawProxyRawKind::RedR3d,
+        _ => return None,
+    };
+    Some(RawProxyPairKey {
+        folder,
+        stem,
+        raw_kind,
+    })
+}
+
+fn raw_proxy_proxy_key_for_url(
+    url: &str,
+    accepted_exts: &HashSet<String>,
+) -> Option<Vec<RawProxyPairKey>> {
+    let (folder, stem, ext) = raw_proxy_url_parts(url)?;
+    if !accepted_exts.contains(&ext) || is_raw_proxy_raw_extension(&ext) {
+        return None;
+    }
+    let mut keys = vec![RawProxyPairKey {
+        folder: folder.clone(),
+        stem: stem.clone(),
+        raw_kind: RawProxyRawKind::NikonNev,
+    }];
+    let red_stem = stem
+        .get(stem.len().saturating_sub("_Proxy".len())..)
+        .filter(|suffix| suffix.eq_ignore_ascii_case("_Proxy"))
+        .map(|_| stem[..stem.len() - "_Proxy".len()].to_string())
+        .unwrap_or(stem);
+    keys.push(RawProxyPairKey {
+        folder,
+        stem: red_stem,
+        raw_kind: RawProxyRawKind::RedR3d,
+    });
+    let keys: Vec<_> = keys.into_iter().filter(|key| !key.stem.is_empty()).collect();
+    (!keys.is_empty()).then_some(keys)
+}
+
+fn raw_proxy_url_parts(url: &str) -> Option<(String, String, String)> {
+    if is_ignored_system_file_url(url) {
+        return None;
+    }
+    let ext = file_extension(url)?;
+    let filename = filesystem::get_filename(url);
+    let dot = filename.rfind('.')?;
+    if dot == 0 {
+        return None;
+    }
+    let folder = raw_proxy_folder_key(url)?;
+    if folder.is_empty() {
+        return None;
+    }
+    Some((folder, filename[..dot].to_string(), ext))
+}
+
+fn raw_proxy_folder_key(url: &str) -> Option<String> {
+    let folder = filesystem::get_folder(url);
+    if !folder.is_empty() {
+        return Some(comparable_video_url_key(&folder));
+    }
+    if url.contains("://") && !url.to_ascii_lowercase().starts_with("file://") {
+        return None;
+    }
+    let slash_idx = url.rfind(['/', '\\'])?;
+    Some(url[..=slash_idx].to_string())
+}
+
+fn accepted_raw_proxy_extensions(extensions: &[String]) -> HashSet<String> {
+    extensions
+        .iter()
+        .map(|e| e.trim_start_matches('.').to_ascii_lowercase())
+        .filter(|e| {
+            matches!(
+                e.as_str(),
+                "mp4" | "mov" | "mxf" | "mkv" | "webm" | "insv" | "nev" | "r3d"
+            )
+        })
+        .collect()
+}
+
+fn default_raw_proxy_extensions() -> HashSet<String> {
+    ["mp4", "mov", "mxf", "mkv", "webm", "insv", "nev", "r3d"]
+        .into_iter()
+        .map(String::from)
+        .collect()
+}
+
+fn is_raw_proxy_raw_extension(ext: &str) -> bool {
+    matches!(ext, "nev" | "r3d")
+}
+
 fn filter_paired_gyroflow_siblings_impl_with_project_reader<F>(
     urls: &[String],
     extensions: &[String],
@@ -9133,6 +9373,21 @@ fn project_uses_crm_gyro(data: &str) -> bool {
                 .map(|s| s.to_ascii_lowercase().ends_with(".crm"))
         })
         .unwrap_or(false)
+}
+
+fn job_uses_crm_proxy(job: &Job) -> bool {
+    job.stab
+        .as_ref()
+        .is_some_and(|stab| stab_uses_crm_proxy(stab))
+        || job.project_data.as_deref().is_some_and(project_uses_crm_gyro)
+}
+
+fn stab_uses_crm_proxy(stab: &StabilizationManager) -> bool {
+    stab.gyro
+        .read()
+        .file_url
+        .to_ascii_lowercase()
+        .ends_with(".crm")
 }
 
 fn first_renderable_video_file_impl(urls: &[String], extensions: &[String]) -> Option<String> {
@@ -11336,6 +11591,180 @@ mod tests {
         .collect()
     }
 
+    fn queue_with_input_job(job_id: u32, input_url: &str) -> RenderQueue {
+        let mut queue = RenderQueue::default();
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id,
+            input_file: QString::from(input_url),
+            input_filename: QString::from(filesystem::get_filename(input_url)),
+            status: JobStatus::Queued,
+            ..Default::default()
+        });
+        let stab = Arc::new(StabilizationManager::default());
+        stab.input_file.write().url = input_url.to_string();
+        queue.jobs.insert(
+            job_id,
+            Job {
+                queue_index: 0,
+                render_options: RenderOptions {
+                    input_url: input_url.to_string(),
+                    input_filename: filesystem::get_filename(input_url),
+                    ..Default::default()
+                },
+                base_render_output_size: None,
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data: None,
+                last_finished_export_project: None,
+                last_written_offsets: None,
+                stab: Some(stab),
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                original_video_rotation: 0.0,
+                original_output_size: (0, 0),
+            },
+        );
+        queue
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_nikon_nev_drops_same_stem_proxies() {
+        let urls = vec![
+            "file:///C:/clips/A001.NEV".to_string(),
+            "file:///C:/clips/A001.MP4".to_string(),
+            "file:///C:/clips/A001.MOV".to_string(),
+        ];
+
+        let out = filter_raw_proxy_siblings_impl(&urls, &default_exts());
+
+        assert_eq!(out, vec!["file:///C:/clips/A001.NEV".to_string()]);
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_red_r3d_drops_same_stem_and_proxy_companions() {
+        let urls = vec![
+            "file:///C:/clips/A001.R3D".to_string(),
+            "file:///C:/clips/A001.MOV".to_string(),
+            "file:///C:/clips/A001_Proxy.MP4".to_string(),
+            "file:///C:/clips/B001_Proxy.MP4".to_string(),
+        ];
+
+        let out = filter_raw_proxy_siblings_impl(&urls, &default_exts());
+
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/clips/A001.R3D".to_string(),
+                "file:///C:/clips/B001_Proxy.MP4".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_preserves_non_matches_and_order() {
+        let urls = vec![
+            "file:///C:/clips/B001.MP4".to_string(),
+            "file:///C:/clips/A001.NEV".to_string(),
+            "file:///C:/clips/A001.MP4".to_string(),
+            "file:///C:/clips/C001.MOV".to_string(),
+            "file:///C:/raw/D001.NEV".to_string(),
+            "file:///C:/proxy/D001.MP4".to_string(),
+            "file:///C:/clips/._A001.MOV".to_string(),
+        ];
+
+        let out = filter_raw_proxy_siblings_impl(&urls, &default_exts());
+
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/clips/B001.MP4".to_string(),
+                "file:///C:/clips/A001.NEV".to_string(),
+                "file:///C:/clips/C001.MOV".to_string(),
+                "file:///C:/raw/D001.NEV".to_string(),
+                "file:///C:/proxy/D001.MP4".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_respects_proxy_extension_whitelist() {
+        let urls = vec![
+            "file:///C:/clips/A001.NEV".to_string(),
+            "file:///C:/clips/A001.MP4".to_string(),
+        ];
+        let extensions = vec!["nev".to_string(), "mov".to_string()];
+
+        let out = filter_raw_proxy_siblings_impl(&urls, &extensions);
+
+        assert_eq!(out, urls);
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_protects_crm_proxy_pairs() {
+        let urls = vec![
+            "file:///C:/clips/A001.CRM".to_string(),
+            "file:///C:/clips/A001_Proxy.MP4".to_string(),
+            "file:///C:/clips/A001.R3D".to_string(),
+        ];
+
+        let out = filter_raw_proxy_siblings_impl(&urls, &default_exts());
+
+        assert_eq!(out, urls);
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_existing_raw_skips_incoming_proxy() {
+        let mut queue = queue_with_input_job(10, "file:///C:/clips/A001.NEV");
+
+        let should_continue =
+            reconcile_raw_proxy_queue_input(&mut queue, "file:///C:/clips/A001.MP4", "");
+
+        assert!(!should_continue);
+        assert_eq!(queue.queue.borrow().row_count(), 1);
+        assert_eq!(
+            queue.queue.borrow()[0].input_file.to_string(),
+            "file:///C:/clips/A001.NEV"
+        );
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_incoming_raw_removes_existing_proxy() {
+        let mut queue = queue_with_input_job(10, "file:///C:/clips/A001_Proxy.MP4");
+
+        let should_continue =
+            reconcile_raw_proxy_queue_input(&mut queue, "file:///C:/clips/A001.R3D", "");
+
+        assert!(should_continue);
+        assert_eq!(queue.queue.borrow().row_count(), 0);
+        assert!(!queue.jobs.contains_key(&10));
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_incoming_raw_preserves_existing_crm_proxy_job() {
+        let mut queue = queue_with_input_job(10, "file:///C:/clips/A001_Proxy.MP4");
+        queue
+            .jobs
+            .get_mut(&10)
+            .unwrap()
+            .stab
+            .as_ref()
+            .unwrap()
+            .gyro
+            .write()
+            .file_url = "file:///C:/clips/A001.CRM".to_string();
+
+        let should_continue =
+            reconcile_raw_proxy_queue_input(&mut queue, "file:///C:/clips/A001.R3D", "");
+
+        assert!(should_continue);
+        assert_eq!(queue.queue.borrow().row_count(), 1);
+        assert!(queue.jobs.contains_key(&10));
+    }
+
     #[test]
     fn filter_pairs_drops_gyroflow_when_sibling_video_present() {
         let urls = vec![
@@ -11871,6 +12300,32 @@ mod tests {
     }
 
     #[test]
+    fn raw_proxy_input_deduplication_folder_video_list_drops_proxy_sibling() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("A001.NEV");
+        let proxy_path = dir.path().join("A001.MP4");
+        let other_path = dir.path().join("B001.MP4");
+        std::fs::write(&raw_path, []).unwrap();
+        std::fs::write(&proxy_path, []).unwrap();
+        std::fs::write(&other_path, []).unwrap();
+
+        let queue = RenderQueue::default();
+        let out = queue.list_video_files_in_folder(
+            filesystem::path_to_url(&dir.path().to_string_lossy()),
+            serde_json::to_string(&default_exts()).unwrap(),
+        );
+        let urls: Vec<String> = serde_json::from_str(&out.to_string()).unwrap();
+
+        assert_eq!(
+            urls,
+            vec![
+                filesystem::path_to_url(&raw_path.to_string_lossy()),
+                filesystem::path_to_url(&other_path.to_string_lossy()),
+            ]
+        );
+    }
+
+    #[test]
     fn folder_video_scan_skips_appledouble_sidecars() {
         let dir = tempfile::tempdir().unwrap();
         let video_path = dir.path().join("A001.R3D");
@@ -12069,6 +12524,185 @@ mod tests {
     }
 
     #[test]
+    fn raw_proxy_input_deduplication_video_area_uses_shared_filter_before_routing() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+        let raw_proxy_idx = body
+            .find("render_queue.filter_raw_proxy_siblings(")
+            .expect("VideoArea.loadMultipleFiles must call the shared RAW/proxy filter");
+        let routing_idx = body
+            .find("if (urls.length == 1)")
+            .expect("VideoArea.loadMultipleFiles must keep single-item routing");
+
+        assert!(
+            raw_proxy_idx < routing_idx,
+            "RAW/proxy filtering must run before single-vs-queue routing"
+        );
+    }
+
+    #[test]
+    fn video_area_single_motion_data_routes_before_single_video_fallback() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+
+        let single_motion_idx = body
+            .find("isSingleMotionDataFile(urls[0])")
+            .expect("VideoArea.loadMultipleFiles must check single motion-data files");
+        let load_motion_idx = body
+            .find("window.motionData.loadFile(urls[0])")
+            .expect("single motion-data files must reuse MotionData.loadFile");
+        let single_video_idx = body
+            .find("root.loadFile(urls[0], skip_detection, 0, \"\", droppedPairedGyroflow)")
+            .expect("VideoArea.loadMultipleFiles must keep the single-video fallback");
+
+        assert!(
+            single_motion_idx < load_motion_idx && load_motion_idx < single_video_idx,
+            "single motion-data routing must run before the single-video fallback"
+        );
+    }
+
+    #[test]
+    fn video_area_single_motion_data_keeps_video_and_project_extensions_video_first() {
+        let qml = include_str!("../ui/VideoArea.qml");
+
+        assert!(
+            qml.contains("function isVideoOrProjectFile(url: url): bool"),
+            "VideoArea must define a video-first exclusion helper"
+        );
+        for ext in [
+            "mp4", "mov", "mxf", "insv", "braw", "r3d", "nev", "crm", "gyroflow",
+        ] {
+            assert!(
+                qml.contains(&format!("\"{ext}\"")),
+                "VideoArea video-first helper must exclude .{ext}"
+            );
+        }
+        assert!(
+            qml.contains("if (isVideoOrProjectFile(url)) return false"),
+            "motion-data helper must not route video/project extensions as motion data"
+        );
+    }
+
+    #[test]
+    fn video_area_single_mix_bin_not_added_to_render_queue_before_motion_data_routing() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let helper_idx = qml
+            .find("function isSingleMotionDataFile")
+            .expect("VideoArea must define single motion-data helper");
+        let helper_remaining = &qml[helper_idx..];
+        let helper_end_idx = helper_remaining
+            .find("function loadMultipleFiles")
+            .expect("single motion-data helper must be before loadMultipleFiles");
+        let helper_body = &helper_remaining[..helper_end_idx];
+
+        assert!(
+            helper_body.contains("render_queue.is_gyro_mix_file(url.toString())"),
+            "single motion-data helper must explicitly recognize *_mix.bin files"
+        );
+
+        let drop_area_idx = qml
+            .find("id: da;")
+            .expect("VideoArea main drop area exists");
+        let drop_remaining = &qml[drop_area_idx..];
+        let drop_idx = drop_remaining
+            .find("onDropped:")
+            .expect("VideoArea main drop area handles drop");
+        let drop_body = &drop_remaining[drop_idx..];
+        let single_drop_idx = drop_body
+            .find("dropCount === 1 && isSingleMotionDataFile(drop.urls[0])")
+            .expect("single dropped motion-data files must be routed before batch gyro handling");
+        let add_gyro_idx = drop_body
+            .find("render_queue.add_gyro_file(")
+            .expect("batch drop path must keep render-queue gyro matching");
+        assert!(
+            single_drop_idx < add_gyro_idx,
+            "single *_mix.bin drops must route as current-video motion data before batch gyro handling"
+        );
+    }
+
+    #[test]
+    fn simple_mode_sensor_section_hides_duplicate_sync_and_motion_file_buttons() {
+        let qml = include_str!("../ui/App.qml");
+        let section_idx = qml
+            .find("id: simpleSensorLensSection")
+            .expect("Simple mode Sensor && Lens section exists");
+        let remaining = &qml[section_idx..];
+        let end_idx = remaining
+            .find("id: simpleSensorLensHr")
+            .expect("Simple mode Sensor && Lens section end marker exists");
+        let section = &remaining[..end_idx];
+
+        assert!(
+            section.contains("id: simpleDevice")
+                && section.contains("id: simpleMounting")
+                && section.contains("id: lensGroupConfig"),
+            "Simple mode Sensor && Lens must keep device, mounting, and lens group controls"
+        );
+        assert!(
+            !section.contains("qsTranslate(\"Synchronization\", \"Auto sync\")"),
+            "Simple mode Sensor && Lens must not expose the duplicate Auto sync button"
+        );
+        assert!(
+            !section.contains("window.motionData.openFileDialog()"),
+            "Simple mode Sensor && Lens must not expose the duplicate motion-data picker"
+        );
+
+        assert!(
+            qml.contains("ItemLoader { id: sync")
+                && qml.contains("sourceComponent: Component { Menu.Synchronization { } }")
+                && qml.contains("ItemLoader { id: motionData")
+                && qml.contains("Menu.MotionData { }"),
+            "Full mode Synchronization and Motion data controls must remain available"
+        );
+    }
+
+    #[test]
+    fn app_main_file_dialog_lists_motion_data_without_changing_video_extensions() {
+        let qml = include_str!("../ui/App.qml");
+        let dialog_idx = qml
+            .find("id: fileDialog;")
+            .expect("main file dialog exists");
+        let remaining = &qml[dialog_idx..];
+        let end_idx = remaining
+            .find("onRejected:")
+            .expect("main file dialog block end marker exists");
+        let dialog = &remaining[..end_idx];
+
+        assert!(
+            dialog.contains(
+                "property var extensions: [ \"mp4\", \"mov\", \"mxf\", \"mkv\", \"webm\", \"insv\", \"gyroflow\", \"png\", \"jpg\", \"exr\", \"dng\", \"braw\", \"r3d\", \"nev\", \"crm\" ]"
+            ),
+            "main file dialog extensions must remain the video/project set used by batch routing"
+        );
+        assert!(
+            dialog.contains("property var motionDataExtensions: window.motionData ? window.motionData.extensions : []"),
+            "main file dialog must use the MotionData extension set for selectable files"
+        );
+        assert!(
+            dialog.contains("function selectableExtensions()"),
+            "main file dialog must merge video and motion-data extensions for display"
+        );
+        assert!(
+            !dialog.contains("\"gcsv\""),
+            "main file dialog must not duplicate MotionData extensions in its video/project extension set"
+        );
+    }
+
+    #[test]
     fn video_area_batch_queue_dispatch_shows_queue_before_loading() {
         let qml = include_str!("../ui/VideoArea.qml");
         let fn_idx = qml
@@ -12164,6 +12798,37 @@ mod tests {
                 && qml.contains("pairs.length !== crmCount")
                 && qml.contains("crmProxyGyroByProxyArg"),
             "Render queue must pair CRM files with proxy jobs and skip standalone CRM queue entries"
+        );
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_render_queue_add_uses_shared_filter_after_crm_pairing() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let fn_idx = qml
+            .find("function add(outFolder")
+            .expect("RenderQueue dt.add exists");
+        let remaining = &qml[fn_idx..];
+        let end_idx = remaining
+            .find("onLoadFiles:")
+            .expect("RenderQueue dt.add ends before onLoadFiles");
+        let body = &remaining[..end_idx];
+        let crm_idx = body
+            .find("render_queue.crm_proxy_pairs(")
+            .expect("RenderQueue dt.add must preserve CRM pairing");
+        let raw_proxy_idx = body
+            .find("render_queue.filter_raw_proxy_siblings(")
+            .expect("RenderQueue dt.add must call the shared RAW/proxy filter");
+        let sdk_idx = body
+            .find("controller.check_external_sdk(")
+            .expect("RenderQueue dt.add must still partition SDK inputs");
+
+        assert!(
+            crm_idx < raw_proxy_idx && raw_proxy_idx < sdk_idx,
+            "RAW/proxy filtering must run after CRM pairing and before SDK partitioning"
+        );
+        assert!(
+            body.contains("if (job_id > 0) loader.pendingJobs[job_id] = true;"),
+            "RenderQueue dt.add must not wait on skipped add_file calls"
         );
     }
 
@@ -12638,6 +13303,113 @@ mod tests {
     }
 
     #[test]
+    fn raw_proxy_input_deduplication_r3d_sequential_loader_ignores_skipped_jobs() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let loader_idx = qml
+            .find("id: r3dSeqLoader")
+            .expect("R3D sequential loader exists");
+        let remaining = &qml[loader_idx..];
+        let end_idx = remaining
+            .find("LoaderOverlay")
+            .expect("R3D sequential loader ends before LoaderOverlay");
+        let body = &remaining[..end_idx];
+        let add_file_idx = body
+            .find("const job_id = render_queue.add_file(")
+            .expect("R3D sequential loader must call add_file");
+        let after_add_file = &body[add_file_idx..];
+        let pending_idx = after_add_file
+            .find("loader.pendingJobs[job_id] = true;")
+            .expect("R3D sequential loader must track real pending jobs");
+        let if_idx = after_add_file[..pending_idx]
+            .rfind("if (job_id > 0)")
+            .expect("R3D sequential loader must guard pending jobs");
+        let continue_idx = after_add_file
+            .find("else Qt.callLater(loadNext);")
+            .expect("R3D sequential loader must continue after skipped proxy inputs");
+
+        assert!(
+            if_idx < pending_idx,
+            "R3D sequential loader must not wait on skipped add_file calls"
+        );
+        assert!(
+            pending_idx < continue_idx,
+            "R3D sequential loader must continue after skipped proxy inputs"
+        );
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_sequential_loader_keeps_overlay_active_between_jobs() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let added_idx = qml
+            .find("function onAdded(job_id: real)")
+            .expect("onAdded handler exists");
+        let added_end_idx = added_idx
+            + qml[added_idx..]
+            .find("function onError")
+            .expect("onAdded ends before onError");
+        let added_body = &qml[added_idx..added_end_idx];
+        let added_load_next = added_body
+            .find("r3dSeqLoader.loadNext();")
+            .expect("onAdded must advance RED RAW sequential loader");
+        let added_update = added_body
+            .find("loader.updateStatus();")
+            .expect("onAdded must update loader status");
+        assert!(
+            added_load_next < added_update,
+            "onAdded must start the next RED RAW job before recomputing loader.active"
+        );
+
+        let error_idx = qml
+            .find("function onError(job_id: real")
+            .expect("onError handler exists");
+        let error_end_idx = error_idx
+            + qml[error_idx..]
+            .find("function onRender_progress")
+            .expect("onError ends before onRender_progress");
+        let error_body = &qml[error_idx..error_end_idx];
+        let error_load_next = error_body
+            .find("r3dSeqLoader.loadNext();")
+            .expect("onError must advance RED RAW sequential loader");
+        let error_update = error_body
+            .find("loader.updateStatus();")
+            .expect("onError must update loader status");
+        assert!(
+            error_load_next < error_update,
+            "onError must start the next RED RAW job before recomputing loader.active"
+        );
+    }
+
+    #[test]
+    fn raw_proxy_input_deduplication_nev_uses_red_sequential_loader() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let fn_idx = qml
+            .find("function add(outFolder")
+            .expect("RenderQueue dt.add exists");
+        let remaining = &qml[fn_idx..];
+        let end_idx = remaining
+            .find("onLoadFiles:")
+            .expect("RenderQueue dt.add ends before onLoadFiles");
+        let body = &remaining[..end_idx];
+        let red_raw_idx = body
+            .find("redRawUrls")
+            .expect("RenderQueue dt.add must partition RED RAW inputs");
+        let nev_idx = body
+            .find("endsWith(\".nev\")")
+            .expect("NEV files must be included in the RED sequential loader");
+        let add_file_idx = body
+            .find("render_queue.add_file(")
+            .expect("RenderQueue dt.add must add non-RED inputs directly");
+        let sequential_idx = body
+            .find("r3dSeqLoader.startSequential(redRawUrls, additional)")
+            .expect("RED RAW inputs must be handed to the sequential loader");
+
+        assert!(
+            red_raw_idx < add_file_idx && nev_idx < add_file_idx && add_file_idx < sequential_idx,
+            "NEV inputs must not be included in the concurrent add_file loop"
+        );
+    }
+
+    #[test]
     fn render_queue_mobile_add_bar_and_drop_hint_visibility_are_layout_specific() {
         let qml = include_str!("../ui/RenderQueue.qml");
 
@@ -12662,6 +13434,165 @@ mod tests {
         assert!(
             hint_block.contains("visible: lv.count === 0 && !window.isMobileLayout"),
             "drop hint must be hidden on mobile layout"
+        );
+    }
+
+    #[test]
+    fn simple_mode_ui_cleanup_video_area_drop_hint_mentions_gyro_but_keeps_mobile_hint() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let hint_idx = qml
+            .find("id: dropText")
+            .expect("VideoArea empty-state drop text exists");
+        let hint_block = &qml[hint_idx..hint_idx + 700.min(qml.len() - hint_idx)];
+
+        assert!(
+            hint_block.contains("qsTranslate(\"RenderQueue\", \"Drop video files or gyroscope data here\")"),
+            "desktop empty-state hint must reuse the RenderQueue translation context"
+        );
+        assert!(
+            !hint_block.contains("qsTr(\"Drop video files or gyroscope data here\")"),
+            "desktop empty-state hint must not create a duplicate VideoArea translation context"
+        );
+        assert!(
+            hint_block.contains("Click here to open a video file"),
+            "mobile empty-state hint must keep the click-to-open-video wording"
+        );
+        assert!(
+            hint_block.contains("scale: dropText.contentWidth > (parent.width - 50 * dpiScale)"),
+            "desktop empty-state hint must keep the existing narrow-layout scaling"
+        );
+    }
+
+    #[test]
+    fn simple_mode_ui_cleanup_render_queue_empty_hint_is_larger_and_panel_opaque() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let panel_bg_idx = qml
+            .find("color: styleBackground2")
+            .expect("RenderQueue panel background exists");
+        let panel_start = qml[..panel_bg_idx]
+            .rfind("Rectangle {")
+            .expect("RenderQueue panel background block starts before color");
+        let panel_bg = &qml[panel_start..panel_bg_idx + 220.min(qml.len() - panel_bg_idx)];
+
+        assert!(
+            !panel_bg.contains("opacity: 0.85"),
+            "RenderQueue panel background must be opaque when shown"
+        );
+
+        let mouse_idx = qml
+            .find("Consume pointer events over the render-queue panel")
+            .expect("RenderQueue panel event-consuming MouseArea exists");
+        let title_idx = qml
+            .find("id: titleText")
+            .expect("RenderQueue title follows panel event layer");
+        assert!(
+            panel_bg_idx < mouse_idx,
+            "RenderQueue panel event layer must sit above the opaque background"
+        );
+        assert!(
+            mouse_idx < title_idx,
+            "RenderQueue panel event layer must stay below interactive controls"
+        );
+        let mouse_end = title_idx;
+        let mouse_area = &qml[mouse_idx..mouse_end];
+        assert!(mouse_area.contains("anchors.fill: parent"));
+        assert!(mouse_area.contains("acceptedButtons: Qt.AllButtons"));
+        assert!(mouse_area.contains("hoverEnabled: true"));
+        assert!(mouse_area.contains("onWheel: (wheel) => { wheel.accepted = true; }"));
+        assert!(mouse_area.contains("onPositionChanged: (mouse) => { mouse.accepted = true; }"));
+        assert!(mouse_area.contains("onReleased: (mouse) => { mouse.accepted = true; }"));
+
+        let hint_idx = qml
+            .find("Drop video files or gyroscope data here")
+            .expect("render queue empty hint exists");
+        let hint_block_start = qml[..hint_idx]
+            .rfind("BasicText {")
+            .expect("render queue empty hint text block starts before text");
+        let hint_block = &qml[hint_block_start..hint_idx + 180.min(qml.len() - hint_idx)];
+        assert!(
+            hint_block.contains("font.pixelSize: 18 * dpiScale")
+                || hint_block.contains("font.pixelSize: 16 * dpiScale"),
+            "render queue empty hint must be larger than the previous 14*dpiScale size"
+        );
+    }
+
+    #[test]
+    fn simple_mode_ui_cleanup_render_queue_blocks_timeline_resize_handle() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let panel_idx = qml.find("id: bottomPanel").expect("bottom panel exists");
+        let panel = &qml[panel_idx..panel_idx + 900.min(qml.len() - panel_idx)];
+
+        assert!(
+            panel.contains("hr.enabled: !(queue.item && queue.item.shown)"),
+            "timeline resize handle must be disabled while the render queue is shown"
+        );
+    }
+
+    #[test]
+    fn simple_mode_ui_cleanup_timeline_advanced_menu_items_are_removed_for_simple_mode() {
+        let qml = include_str!("../ui/components/Timeline.qml");
+        let menu_idx = qml
+            .find("id: timelineContextMenu")
+            .expect("Timeline context menu exists");
+        let menu = &qml[menu_idx..];
+
+        assert!(
+            !menu.contains("visible: !window.isSimpleMode"),
+            "Timeline context menu must not assign visible on Action/Menu items that do not expose it"
+        );
+
+        for id in [
+            "manualSyncAction",
+            "estimateRollingShutterAction",
+            "estimateGyroBiasAction",
+            "chartDisplayModeSeparator",
+            "chartDisplayModeMenu",
+        ] {
+            assert!(
+                menu.contains(&format!("id: {id}")),
+                "Timeline context menu must give {id} an id for dynamic Simple-mode filtering"
+            );
+        }
+        assert!(menu.contains("function updateSimpleModeItems(): void"));
+        assert!(menu.contains("if (window.isSimpleMode && !simpleModeItemsRemoved)"));
+        assert!(menu.contains("timelineContextMenuInner.removeAction(manualSyncAction)"));
+        assert!(menu.contains("timelineContextMenuInner.removeAction(estimateRollingShutterAction)"));
+        assert!(menu.contains("timelineContextMenuInner.removeAction(estimateGyroBiasAction)"));
+        assert!(menu.contains("timelineContextMenuInner.removeItem(chartDisplayModeSeparator)"));
+        assert!(menu.contains("timelineContextMenuInner.removeMenu(chartDisplayModeMenu)"));
+        assert!(menu.contains("const simpleModeMenuOffset = isCalibrator ? 2 : 0"));
+        assert!(menu.contains("timelineContextMenuInner.insertAction(1 + simpleModeMenuOffset, manualSyncAction)"));
+        assert!(menu.contains("timelineContextMenuInner.insertAction(3 + simpleModeMenuOffset, estimateRollingShutterAction)"));
+        assert!(menu.contains("timelineContextMenuInner.insertAction(4 + simpleModeMenuOffset, estimateGyroBiasAction)"));
+        assert!(menu.contains("timelineContextMenuInner.insertItem(8 + simpleModeMenuOffset, chartDisplayModeSeparator)"));
+        assert!(menu.contains("timelineContextMenuInner.insertMenu(9 + simpleModeMenuOffset, chartDisplayModeMenu)"));
+    }
+
+    #[test]
+    fn simple_mode_ui_cleanup_simple_settings_has_other_settings_after_export() {
+        let qml = include_str!("../ui/App.qml");
+        let settings_idx = qml
+            .find("id: simpleSettingsSection")
+            .expect("Simple Settings section exists");
+        let settings = &qml[settings_idx..];
+        let export_idx = settings
+            .find("Menu.SimpleExport")
+            .expect("Simple Settings contains SimpleExport");
+        let after_export = &settings[export_idx..settings.len().min(export_idx + 900)];
+
+        assert!(
+            after_export.contains("SectionDivider { label: qsTr(\"Other settings\")"),
+            "Simple Settings must label the non-export controls as Other settings"
+        );
+        let other_idx = after_export
+            .find("Other settings")
+            .expect("Other settings divider appears after SimpleExport");
+        let language_idx = after_export
+            .find("qsTranslate(\"Advanced\", \"Language\")")
+            .expect("language control remains under Simple Settings");
+        assert!(
+            other_idx < language_idx,
+            "Other settings divider must appear before language/theme/GPU controls"
         );
     }
 

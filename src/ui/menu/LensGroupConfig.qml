@@ -12,7 +12,7 @@ MenuItem {
     text: qsTr("Lens groups")
     iconName: "lens"
     objectName: "lens-group-config"
-    opened: true
+    opened: false
     btnHeight: 28 * dpiScale
 
     property var statuses: []

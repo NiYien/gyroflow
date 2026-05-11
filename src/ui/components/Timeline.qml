@@ -649,6 +649,26 @@ Item {
             Menu {
                 id: timelineContextMenuInner;
                 font.pixelSize: 11.5 * dpiScale;
+                property bool simpleModeItemsRemoved: false;
+                function updateSimpleModeItems(): void {
+                    if (window.isSimpleMode && !simpleModeItemsRemoved) {
+                        timelineContextMenuInner.removeAction(manualSyncAction);
+                        timelineContextMenuInner.removeAction(estimateRollingShutterAction);
+                        timelineContextMenuInner.removeAction(estimateGyroBiasAction);
+                        timelineContextMenuInner.removeItem(chartDisplayModeSeparator);
+                        timelineContextMenuInner.removeMenu(chartDisplayModeMenu);
+                        simpleModeItemsRemoved = true;
+                    } else if (!window.isSimpleMode && simpleModeItemsRemoved) {
+                        const simpleModeMenuOffset = isCalibrator ? 2 : 0;
+                        timelineContextMenuInner.insertAction(1 + simpleModeMenuOffset, manualSyncAction);
+                        timelineContextMenuInner.insertAction(3 + simpleModeMenuOffset, estimateRollingShutterAction);
+                        timelineContextMenuInner.insertAction(4 + simpleModeMenuOffset, estimateGyroBiasAction);
+                        timelineContextMenuInner.insertItem(8 + simpleModeMenuOffset, chartDisplayModeSeparator);
+                        timelineContextMenuInner.insertMenu(9 + simpleModeMenuOffset, chartDisplayModeMenu);
+                        simpleModeItemsRemoved = false;
+                    }
+                }
+                onAboutToShow: updateSimpleModeItems();
                 Action {
                     id: addCalibAction;
                     iconName: "plus";
@@ -665,6 +685,7 @@ Item {
                     onTriggered: root.addAutoSyncPoint(root.position);
                 }
                 Action {
+                    id: manualSyncAction;
                     iconName: "plus";
                     text: qsTr("Add manual sync point here");
                     onTriggered: root.addManualSyncPoint(root.position);
@@ -678,6 +699,7 @@ Item {
                     }
                 }
                 Action {
+                    id: estimateRollingShutterAction;
                     iconName: "readout_time";
                     text: qsTr("Estimate rolling shutter here");
                     onTriggered: {
@@ -695,6 +717,7 @@ Item {
                     }
                 }
                 Action {
+                    id: estimateGyroBiasAction;
                     iconName: "bias";
                     text: qsTr("Estimate gyro bias here");
                     onTriggered: controller.estimate_bias(root.position);
@@ -755,8 +778,9 @@ Item {
                         onTriggered: root.restrictTrim = !root.restrictTrim;
                     }
                 }
-                QQC.MenuSeparator { verticalPadding: 5 * dpiScale; }
+                QQC.MenuSeparator { id: chartDisplayModeSeparator; verticalPadding: 5 * dpiScale; }
                 Menu {
+                    id: chartDisplayModeMenu;
                     font.pixelSize: 11.5 * dpiScale;
                     title: qsTr("Chart display mode")
                     Action { checkable: true; checked: chart.viewMode === 0; text: qsTr("Gyroscope");     onTriggered: root.setDisplayMode(0); }
@@ -769,6 +793,7 @@ Item {
                         Qt.callLater(function() {
                             timelineContextMenuInner.removeAction(addCalibAction);
                             timelineContextMenuInner.removeItem(msep);
+                            timelineContextMenuInner.updateSimpleModeItems();
                         })
                     }
                 }

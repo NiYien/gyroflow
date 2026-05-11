@@ -209,6 +209,11 @@ Export a project file and use it with your RAW workflow.</source>
         <translation>视频文件</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1561"/>
+        <source>Other settings</source>
+        <translation>其他设置</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="684"/>
         <source>Output path:</source>
         <translation>输出路径：</translation>
@@ -4977,11 +4982,6 @@ Your render queue and current file is saved automatically.</source>
         <location filename="../../src/ui/VideoArea.qml" line="906"/>
         <source>Loading %1...</source>
         <translation>正在加载 %1...</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/VideoArea.qml" line="906"/>
-        <source>Drop video file here</source>
-        <translation>将视频文件拖放到此处</translation>
     </message>
     <message>
         <location filename="../../src/ui/VideoArea.qml" line="337"/>

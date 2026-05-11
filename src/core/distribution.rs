@@ -188,6 +188,24 @@ fn dir_has_payload_recursive(path: &Path) -> bool {
 mod tests {
     use super::DistributionConfig;
 
+    fn object_default_window<'a>(qml: &'a str, object_name: &str) -> &'a str {
+        let marker = format!("objectName: \"{object_name}\"");
+        let idx = qml
+            .find(&marker)
+            .unwrap_or_else(|| panic!("missing QML objectName {object_name}"));
+        let end = (idx + 220).min(qml.len());
+        &qml[idx..end]
+    }
+
+    fn assert_opened_default(qml: &str, object_name: &str, expected: bool) {
+        let window = object_default_window(qml, object_name);
+        let needle = format!("opened: {expected}");
+        assert!(
+            window.contains(&needle),
+            "objectName {object_name} must declare {needle}; nearby QML:\n{window}"
+        );
+    }
+
     #[test]
     fn niyien_brand_display_name_drives_window_title_format() {
         let raw_config = include_str!("../../distribution/niyien.toml");
@@ -251,5 +269,26 @@ mod tests {
         assert!(macos_just.contains(r#"AppBundleName                 := "Gyroflow(NiYien).app""#));
         assert!(macos_just.contains("_deployment/_binaries/mac/{{AppBundleName}}"));
         assert!(!macos_just.contains("_deployment/_binaries/mac/Gyroflow.app"));
+    }
+
+    #[test]
+    fn simple_mode_menu_defaults_match_first_run_layout() {
+        let app_qml = include_str!("../ui/App.qml");
+        assert_opened_default(app_qml, "simple-info", true);
+        assert_opened_default(app_qml, "simple-sensor-lens", true);
+        assert_opened_default(app_qml, "simple-stab", false);
+        assert_opened_default(app_qml, "simple-settings", false);
+
+        assert_opened_default(include_str!("../ui/menu/SimpleDevice.qml"), "simple-device", false);
+        assert_opened_default(
+            include_str!("../ui/menu/MountingPresetSelector.qml"),
+            "simple-mounting",
+            false,
+        );
+        assert_opened_default(
+            include_str!("../ui/menu/LensGroupConfig.qml"),
+            "lens-group-config",
+            false,
+        );
     }
 }

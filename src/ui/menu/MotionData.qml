@@ -22,6 +22,7 @@ MenuItem {
     property string filename: "";
     property string detectedFormat: "";
     property url lastSelectedFile: "";
+    property alias extensions: fileDialog.extensions;
 
     FileDialog {
         id: fileDialog;

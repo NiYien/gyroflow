@@ -557,6 +557,25 @@ Item {
         }
         root.loadFile(Qt.url(pair.proxy_url), skip_detection, 0, Qt.url(pair.crm_url));
     }
+    function fileExtension(url: url): string {
+        const filename = filesystem.get_filename(url).toLowerCase();
+        const dot = filename.lastIndexOf(".");
+        return dot >= 0 ? filename.substring(dot + 1) : "";
+    }
+    function isVideoOrProjectFile(url: url): bool {
+        const videoFirstExtensions = ["mp4", "mov", "mxf", "insv", "braw", "r3d", "nev", "crm", "gyroflow"];
+        return videoFirstExtensions.indexOf(fileExtension(url)) >= 0;
+    }
+    function isSingleMotionDataFile(url: url): bool {
+        if (render_queue.is_gyro_mix_file(url.toString())) return true;
+        if (isVideoOrProjectFile(url)) return false;
+        const extensions = window.motionData ? window.motionData.extensions : [];
+        const ext = fileExtension(url);
+        for (const accepted of extensions || []) {
+            if (ext === accepted.toString().replace(/^\./, "").toLowerCase()) return true;
+        }
+        return false;
+    }
 
     function loadMultipleFiles(urls: list<url>, skip_detection: bool): void {
         if (urls.length > 0) {
@@ -611,7 +630,20 @@ Item {
             console.log("filter_paired_gyroflow_siblings failed:", e);
         }
         const droppedPairedGyroflow = urls.length < originalUrlCount;
+        try {
+            const filteredJson = render_queue.filter_raw_proxy_siblings(
+                JSON.stringify(urls.map(u => u.toString())),
+                JSON.stringify(fileDialog.extensions)
+            );
+            urls = JSON.parse(filteredJson);
+        } catch (e) {
+            console.log("filter_raw_proxy_siblings failed:", e);
+        }
         if (urls.length == 1) {
+            if (window.motionData && isSingleMotionDataFile(urls[0])) {
+                window.motionData.loadFile(urls[0]);
+                return;
+            }
             root.loadFile(urls[0], skip_detection, 0, "", droppedPairedGyroflow);
             return;
         }
@@ -984,7 +1016,7 @@ Item {
                 id: dropText;
                 property string loadingFile: "";
                 // [queue-gyro-column] 拖拽提示更新，支持陀螺仪数据
-                text: loadingFile? qsTr("Loading %1...").arg(loadingFile) : (Qt.platform.os == "ios" || Qt.platform.os == "android"? qsTr("Click here to open a video file") : qsTr("Drop video file here"));
+                text: loadingFile? qsTr("Loading %1...").arg(loadingFile) : (Qt.platform.os == "ios" || Qt.platform.os == "android"? qsTr("Click here to open a video file") : qsTranslate("RenderQueue", "Drop video files or gyroscope data here"));
                 font.pixelSize: (window.isMobileLayout? 23 : 30) * dpiScale;
                 anchors.centerIn: parent;
                 leftPadding: 0;
@@ -1021,7 +1053,8 @@ Item {
                     console.log("[main_drop:hover] urls=0 accepted=false reason=no_urls");
                     return;
                 }
-                drag.accepted = DropRules.acceptsAnyUrl(drag.urls, fileDialog.extensions, ["_mix.bin", ".rdc"]);
+                drag.accepted = (count === 1 && isSingleMotionDataFile(drag.urls[0]))
+                    || DropRules.acceptsAnyUrl(drag.urls, fileDialog.extensions, ["_mix.bin", ".rdc"]);
                 console.log("[main_drop:hover] urls=" + count + " accepted=" + drag.accepted);
             }
             onDropped: (drop) => {
@@ -1030,6 +1063,11 @@ Item {
                 if (isCalibrator) {
                     calibrator_window.loadFiles(drop.urls);
                     console.log("[main_drop:drop] calibrator_dispatched=" + dropCount);
+                    return;
+                }
+                if (dropCount === 1 && isSingleMotionDataFile(drop.urls[0])) {
+                    root.loadMultipleFiles(drop.urls, false);
+                    console.log("[main_drop:dispatch] files=1 target=motion_data");
                     return;
                 }
                 // [queue-pair-ux T6] 分离文件夹和普通文件
@@ -1343,6 +1381,7 @@ Item {
             width: parent? parent.width : 0;
             color: "transparent";
             hr.height: 30 * dpiScale;
+            hr.enabled: !(queue.item && queue.item.shown);
             hr.opacity: root.fullScreen || window.isMobileLayout? 0.1 : 1.0;
             additionalHeight: timeline.additionalHeight;
             defaultHeight: (window.isMobileLayout? 50 : 165) * dpiScale;

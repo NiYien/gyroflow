@@ -12,7 +12,7 @@ MenuItem {
     text: qsTr("Mounting position");
     iconName: "axes";
     objectName: "simple-mounting";
-    opened: true;
+    opened: false;
     btnHeight: 28 * dpiScale;
 
     property string currentMode: ""

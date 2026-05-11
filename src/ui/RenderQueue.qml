@@ -320,6 +320,14 @@ Item {
     Ease on anchors.bottomMargin { }
     Ease on anchors.topMargin { }
 
+    Rectangle {
+        color: styleBackground2
+        anchors.fill: parent;
+        radius: 5 * dpiScale;
+        border.width: 1;
+        border.color: styleVideoBorderColor;
+    }
+
     // Consume pointer events over the render-queue panel so clicks, right-clicks, hover and
     // wheel gestures do not leak to the video preview / timeline underneath.
     MouseArea {
@@ -329,15 +337,8 @@ Item {
         hoverEnabled: true;
         onWheel: (wheel) => { wheel.accepted = true; }
         onPressed: (mouse) => { mouse.accepted = true; }
-    }
-
-    Rectangle {
-        color: styleBackground2
-        opacity: 0.85;
-        anchors.fill: parent;
-        radius: 5 * dpiScale;
-        border.width: 1;
-        border.color: styleVideoBorderColor;
+        onPositionChanged: (mouse) => { mouse.accepted = true; }
+        onReleased: (mouse) => { mouse.accepted = true; }
     }
 
     BasicText {
@@ -520,7 +521,6 @@ Item {
             target: render_queue;
             function onAdded(job_id: real): void {
                 delete loader.pendingJobs[job_id];
-                loader.updateStatus();
                 // Sort the queue by filename whenever a job actually lands
                 // in the model (q.push happens here, not at add_file return).
                 // dt.add and r3dSeqLoader can't sort synchronously because
@@ -530,6 +530,7 @@ Item {
                     r3dSeqLoader.waiting = false;
                     r3dSeqLoader.loadNext();
                 }
+                loader.updateStatus();
             }
             function onError(job_id: real, text: string, arg: string, callback: string): void {
                 if (job_id == render_queue.main_job_id || loader.pendingJobs[job_id]) {
@@ -541,11 +542,11 @@ Item {
                     }
                 }
                 delete loader.pendingJobs[job_id];
-                loader.updateStatus();
                 if (r3dSeqLoader.waiting) {
                     r3dSeqLoader.waiting = false;
                     r3dSeqLoader.loadNext();
                 }
+                loader.updateStatus();
             }
             function onRender_progress(job_id: real, progress: real, frame: int, total_frames: int, finished: bool, start_time: real, is_conversion: bool): void {
                 if (job_id == render_queue.main_job_id) {
@@ -1932,7 +1933,7 @@ Item {
         anchors.centerIn: lv;
         color: styleTextColor;
         opacity: 0.5;
-        font.pixelSize: 14 * dpiScale;
+        font.pixelSize: 18 * dpiScale;
         leftPadding: 0;
     }
 
@@ -1988,6 +1989,15 @@ Item {
                 }
                 for (const pair of pairs) {
                     crmProxyGyroByProxy[pair.proxy_url] = pair.crm_url;
+                }
+                try {
+                    const filteredJson = render_queue.filter_raw_proxy_siblings(
+                        JSON.stringify(urls.map(u => u.toString())),
+                        JSON.stringify(fileDialog.extensions)
+                    );
+                    urls = JSON.parse(filteredJson);
+                } catch (e) {
+                    console.log("filter_raw_proxy_siblings failed:", e);
                 }
                 urls = urls.filter(u => !filesystem.get_filename(u).toLowerCase().endsWith(".crm"));
             } catch (e) {
@@ -2077,16 +2087,22 @@ Item {
             const nc = (a,b) => ne(a).localeCompare(ne(b));
             urls.sort(nc);
 
-            // R3D files must be loaded sequentially (REDline SDK doesn't support concurrent decoding)
-            const r3dUrls = urls.filter(u => u.toString().toLowerCase().endsWith(".r3d"));
-            const otherUrls = urls.filter(u => !u.toString().toLowerCase().endsWith(".r3d"));
+            // RED RAW files must be loaded sequentially (REDline SDK doesn't support concurrent decoding)
+            const redRawUrls = urls.filter(u => {
+                const lower = u.toString().toLowerCase();
+                return lower.endsWith(".r3d") || lower.endsWith(".nev");
+            });
+            const otherUrls = urls.filter(u => {
+                const lower = u.toString().toLowerCase();
+                return !lower.endsWith(".r3d") && !lower.endsWith(".nev");
+            });
             for (const url of otherUrls) {
                 const job_id = render_queue.add_file(url.toString(), crmProxyGyroByProxy[url.toString()] || "", additional);
-                loader.pendingJobs[job_id] = true;
+                if (job_id > 0) loader.pendingJobs[job_id] = true;
             }
             if (otherUrls.length > 0) loader.updateStatus();
-            if (r3dUrls.length > 0) {
-                r3dSeqLoader.startSequential(r3dUrls, additional);
+            if (redRawUrls.length > 0) {
+                r3dSeqLoader.startSequential(redRawUrls, additional);
             }
             // Filename sorting happens in onAdded (per-job, after q.push).
             // add_file returns synchronously but the actual model insertion is
@@ -2373,8 +2389,10 @@ Item {
             waiting = true;
             const url = queue.shift();
             const job_id = render_queue.add_file(url.toString(), "", additional);
-            loader.pendingJobs[job_id] = true;
-            loader.updateStatus();
+            if (job_id > 0) {
+                loader.pendingJobs[job_id] = true;
+                loader.updateStatus();
+            } else Qt.callLater(loadNext);
         }
     }
 
