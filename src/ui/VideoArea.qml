@@ -1384,7 +1384,7 @@ Item {
             hr.enabled: !(queue.item && queue.item.shown);
             hr.opacity: root.fullScreen || window.isMobileLayout? 0.1 : 1.0;
             additionalHeight: timeline.additionalHeight;
-            defaultHeight: (window.isMobileLayout? 50 : 165) * dpiScale;
+            defaultHeight: (window.isMobileLayout? 50 : (window.isSimpleMode? 90 : 165)) * dpiScale;
             minHeight: (root.fullScreen || window.isMobileLayout? 50 : 100) * dpiScale;
             lastHeight: settings.value("bottomPanelSize" + (root.fullScreen? "-full" : ""), defaultHeight);
             onHeightAdjusted: settings.setValue("bottomPanelSize" + (root.fullScreen? "-full" : ""), height);

@@ -4767,14 +4767,13 @@ mod tests {
 
     #[test]
     fn qml_video_rs_pins_raw_preview_pipeline_fixes() {
-        // Pins the qml-video-rs fork at the commit that contains the R3D
-        // preview Play fix: MDKPlayer::play() schedules a deferred 500 ms
-        // seek(m_playerPosition) for R3D-SDK loads (m_isR3dFormat set from
-        // customDecoder.startsWith("R3D:")), automating the manual user-
-        // recovery sequence "Play → click timeline → fluid playback" so
-        // every Paused→Playing transition stays fluid. Reverting to an
-        // earlier commit re-introduces the 1–2-second-per-frame freeze.
-        const PINNED_REV: &str = "fa7007b09fed853aa6c958a4472f26d9c1f0e1c6";
+        // Pins the qml-video-rs fork at the commit that contains the R3D/NEV
+        // preview fix: Play immediately re-anchors to the last rendered frame
+        // without a 500 ms timer, old R3D players are torn down off the GUI
+        // thread, callbacks are bound to their originating player, and loaded
+        // setup is de-duplicated. Reverting drops the fix and can reintroduce
+        // R3D Play stalls or clip-switch freezes.
+        const PINNED_REV: &str = "ea32009d086684a5a8c2e4e924a1e89e056df022";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
         let expected = format!(
@@ -4784,7 +4783,7 @@ mod tests {
 
         assert!(
             lock.contains(&expected),
-            "qml-video-rs must stay pinned to the NiYien fork commit that contains the RAW preview pipeline fixes (D1: setUrl R3D/BRAW setDecoders routing, D2: setupPlayer setBufferRange(0) removal). Reverting to an earlier commit re-introduces the R3D Playing-state freeze."
+            "qml-video-rs must stay pinned to the NiYien fork commit that contains the R3D/NEV preview re-anchor and teardown isolation fix."
         );
     }
 }
