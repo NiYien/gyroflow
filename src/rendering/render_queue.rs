@@ -7252,21 +7252,14 @@ impl RenderQueue {
                         item.init_offset_ms
                     );
                     let detected_source = md.detected_source.as_deref().unwrap_or("");
-                    let is_r3d = item
-                        .render_options
-                        .input_filename
-                        .to_ascii_lowercase()
-                        .ends_with(".r3d");
                     let has_metadata_rotation =
-                        item.original_video_rotation.round() as i32 != 0 && !is_r3d;
-                    if !is_r3d
-                        && should_apply_auto_rotate(
-                            has_metadata_rotation,
-                            item.auto_rotate,
-                            queue_auto_rotate,
-                            detected_source,
-                        )
-                    {
+                        item.original_video_rotation.round() as i32 != 0;
+                    if should_apply_auto_rotate(
+                        has_metadata_rotation,
+                        item.auto_rotate,
+                        queue_auto_rotate,
+                        detected_source,
+                    ) {
                         ::log::info!(
                             "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={}",
                             item.render_options.input_filename,
@@ -7370,10 +7363,9 @@ impl RenderQueue {
                         item.render_options.output_height = item.original_output_size.1;
                         item.stab.set_video_rotation(item.original_video_rotation);
 
-                        // Priority 1: metadata rotation dimension swap (R3D excluded)
+                        // Priority 1: metadata rotation dimension swap
                         let metadata_rot = item.original_video_rotation.round() as i32;
-                        let is_r3d = item.render_options.input_filename.to_ascii_lowercase().ends_with(".r3d");
-                        let has_metadata_rotation = metadata_rot != 0 && !is_r3d;
+                        let has_metadata_rotation = metadata_rot != 0;
                         if has_metadata_rotation && (metadata_rot == 90 || metadata_rot == 270) {
                             std::mem::swap(
                                 &mut item.render_options.output_width,
@@ -7392,13 +7384,12 @@ impl RenderQueue {
                         );
 
                         // Priority 2: gyroscope rotation (only when no metadata rotation)
-                        let should_apply_auto_rotation = !is_r3d
-                            && should_apply_auto_rotate(
-                                has_metadata_rotation,
-                                item.auto_rotate,
-                                queue_auto_rotate,
-                                &auto_rotate_detected_source,
-                            );
+                        let should_apply_auto_rotation = should_apply_auto_rotate(
+                            has_metadata_rotation,
+                            item.auto_rotate,
+                            queue_auto_rotate,
+                            &auto_rotate_detected_source,
+                        );
                         let auto_rotation = if should_apply_auto_rotation {
                             auto_rotation_results
                                 .get(&item.job_id)
@@ -11247,6 +11238,35 @@ mod tests {
         assert!(!should_apply_auto_rotate(false, false, false, "SenseFlow Mini"));
         assert!(!should_apply_auto_rotate(true, true, true, "SenseFlow Mini"));
         assert!(!should_apply_auto_rotate(false, true, true, "Sony FX3"));
+    }
+
+    #[test]
+    fn batch_rotation_logic_does_not_special_case_r3d() {
+        let source = include_str!("render_queue.rs");
+        assert!(
+            !source.contains(concat!(
+                "metadata rotation dimension swap (",
+                "R3D excluded",
+                ")"
+            )),
+            "R3D should use the same metadata rotation dimension swap path as regular videos"
+        );
+        assert!(
+            !source.contains(concat!("&& ", "!is", "_r3d")),
+            "R3D should not be removed from metadata rotation checks"
+        );
+        assert!(
+            !source.contains(concat!("if ", "!is", "_r3d")),
+            "R3D should not be skipped before SenseFlow auto-rotate calculation"
+        );
+        assert!(
+            !source.contains(concat!(
+                "let should_apply_auto_rotation = ",
+                "!is",
+                "_r3d"
+            )),
+            "R3D should use the same auto-rotate decision path as regular videos"
+        );
     }
 
     #[test]
