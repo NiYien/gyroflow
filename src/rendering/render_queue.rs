@@ -9409,7 +9409,7 @@ fn is_supported_drop_item_impl(url: &str, accepted_exts: &HashSet<String>) -> bo
         return true;
     }
     match file_extension(url) {
-        Some(ext) => ext == "rdc" || accepted_exts.contains(&ext),
+        Some(ext) => ext == "rdc" || ext == "rdm" || accepted_exts.contains(&ext),
         None => true,
     }
 }

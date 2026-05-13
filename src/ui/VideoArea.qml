@@ -1054,7 +1054,7 @@ Item {
                     return;
                 }
                 drag.accepted = (count === 1 && isSingleMotionDataFile(drag.urls[0]))
-                    || DropRules.acceptsAnyUrl(drag.urls, fileDialog.extensions, ["_mix.bin", ".rdc"]);
+                    || DropRules.acceptsAnyUrl(drag.urls, fileDialog.extensions, ["_mix.bin", ".rdc", ".rdm"]);
                 console.log("[main_drop:hover] urls=" + count + " accepted=" + drag.accepted);
             }
             onDropped: (drop) => {
@@ -1097,8 +1097,8 @@ Item {
                         hasGyroFile = true;
                     } else if (fname.endsWith(".bin")) {
                         continue;
-                    } else if (!fname.includes(".") || fname.endsWith(".rdc")) {
-                        // No extension or RED .RDC: treat as folder. Scan gyro _mix.bin files AND
+                    } else if (!fname.includes(".") || fname.endsWith(".rdc") || fname.endsWith(".rdm")) {
+                        // No extension or RED .RDC/.RDM: treat as folder. Scan gyro _mix.bin files AND
                         // recursively scan video files (max depth 3, max 600 videos,
                         // extension-filtered, excluding files whose stem ends with
                         // the configured output suffix, e.g. _stabilized).
@@ -1384,7 +1384,7 @@ Item {
             hr.enabled: !(queue.item && queue.item.shown);
             hr.opacity: root.fullScreen || window.isMobileLayout? 0.1 : 1.0;
             additionalHeight: timeline.additionalHeight;
-            defaultHeight: (window.isMobileLayout? 50 : (window.isSimpleMode? 90 : 165)) * dpiScale;
+            defaultHeight: (window.isMobileLayout? 50 : 165) * dpiScale;
             minHeight: (root.fullScreen || window.isMobileLayout? 50 : 100) * dpiScale;
             lastHeight: settings.value("bottomPanelSize" + (root.fullScreen? "-full" : ""), defaultHeight);
             onHeightAdjusted: settings.setValue("bottomPanelSize" + (root.fullScreen? "-full" : ""), height);

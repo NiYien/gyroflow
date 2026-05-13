@@ -77,6 +77,8 @@ MenuItem {
         return {
             lens_index: index,
             focal_length_mm: null,
+            pre_anamorphic_focal_length_mm: null,
+            pre_anamorphic_focal_length_captured: false,
             anamorphic_enabled: false,
             preset_id: null,
             squeeze_direction: "horizontal",
@@ -559,6 +561,10 @@ MenuItem {
                         root.updateCurrentConfig(config => {
                             config.anamorphic_enabled = cb.checked
                             if (!cb.checked) {
+                                if (config.pre_anamorphic_focal_length_captured)
+                                    config.focal_length_mm = config.pre_anamorphic_focal_length_mm
+                                config.pre_anamorphic_focal_length_mm = null
+                                config.pre_anamorphic_focal_length_captured = false
                                 config.preset_id = null
                                 config.squeeze_direction = "horizontal"
                                 config.squeeze_ratio = null
@@ -567,6 +573,10 @@ MenuItem {
                                 // of inheriting the previous session's slider value.
                                 config.lens_correction_amount = null
                             } else {
+                                if (!config.pre_anamorphic_focal_length_captured) {
+                                    config.pre_anamorphic_focal_length_mm = config.focal_length_mm || null
+                                    config.pre_anamorphic_focal_length_captured = true
+                                }
                                 if (!config.squeeze_direction)
                                     config.squeeze_direction = "horizontal"
                                 // First-time enable defaults to 0% — keeps the original
@@ -614,6 +624,8 @@ MenuItem {
                                         config.preset_id = option.id
                                         if (!config.squeeze_direction)
                                             config.squeeze_direction = "horizontal"
+                                        if ((option.focal_length_mm || 0) > 0)
+                                            config.focal_length_mm = option.focal_length_mm
                                         config.squeeze_ratio = option.squeeze_ratio
                                     }
                                 })

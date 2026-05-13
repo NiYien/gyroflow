@@ -244,7 +244,8 @@ pub fn get_filename(url: &str) -> String {
 
         match url_to_pathbuf(url) {
             Ok(pathbuf) => {
-                if pathbuf.is_dir() && !pathbuf.to_str().unwrap().ends_with(".RDC") {
+                let s = pathbuf.to_str().unwrap();
+                if pathbuf.is_dir() && !s.ends_with(".RDC") && !s.ends_with(".RDM") {
                     return Ok(String::new());
                 }
                 Ok(pathbuf

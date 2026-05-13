@@ -102,3 +102,20 @@ impl_models! {
     GoProHyperview => gopro_hyperview::GoProHyperview,
     DigitalStretch => digital_stretch::DigitalStretch,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn distortion_model_from_name_empty_falls_through_to_default() {
+        // Freezes the contract: an unrecognized name (here `""`, written verbatim by
+        // niyien-lens-data anamorphic presets) falls through to `DistortionModel::default()`.
+        // If anyone later adds a model whose `id()` is `""` it would shadow this fall-through
+        // and silently change behavior; the assert below would then fail.
+        assert_eq!(
+            DistortionModel::from_name("").id(),
+            DistortionModel::default().id()
+        );
+    }
+}

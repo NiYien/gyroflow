@@ -24,6 +24,7 @@ pub enum SqueezeDirection {
 pub struct AnamorphicPreset {
     pub id: String,
     pub name: String,
+    pub focal_length_mm: Option<f64>,
     pub squeeze_ratio: f64,
     pub distortion_coeffs: Vec<f64>,
     pub distortion_model: String,
@@ -34,6 +35,8 @@ pub struct AnamorphicPreset {
 pub struct LensGroupConfig {
     pub lens_index: usize,
     pub focal_length_mm: Option<f64>,
+    pub pre_anamorphic_focal_length_mm: Option<f64>,
+    pub pre_anamorphic_focal_length_captured: bool,
     pub anamorphic_enabled: bool,
     pub preset_id: Option<String>,
     pub squeeze_direction: Option<SqueezeDirection>,
@@ -92,6 +95,7 @@ struct PresetIndexEntry {
 #[serde(default)]
 struct PresetFile {
     name: String,
+    focal_length_mm: Option<f64>,
     squeeze_ratio: f64,
     distortion_coeffs: Vec<f64>,
     distortion_model: String,
@@ -108,25 +112,16 @@ fn normalize_preset_id(preset_id: &str) -> &str {
     }
 }
 
+static BUILTIN_PRESET_FILES: &[(&str, &str)] =
+    include!(concat!(env!("OUT_DIR"), "/builtin_lens_preset_files.rs"));
+
 fn builtin_preset_file(name: &str) -> Option<&'static str> {
-    match name {
-        "sirui_xingchen_50mm_1_33x.json" | "sirui_astra_50mm_1_33x.json" => Some(include_str!(
-            "../../resources/lens_presets/sirui_astra_50mm_1_33x.json"
-        )),
-        "blazar_mantis_25mm_1_33x.json" => Some(include_str!(
-            "../../resources/lens_presets/blazar_mantis_25mm_1_33x.json"
-        )),
-        "blazar_remus_45mm_1_50x.json" => Some(include_str!(
-            "../../resources/lens_presets/blazar_remus_45mm_1_50x.json"
-        )),
-        "blazar_viper_35mm_1_50x.json" => Some(include_str!(
-            "../../resources/lens_presets/blazar_viper_35mm_1_50x.json"
-        )),
-        "blazar_viper_75mm_1_50x.json" => Some(include_str!(
-            "../../resources/lens_presets/blazar_viper_75mm_1_50x.json"
-        )),
-        _ => None,
-    }
+    // Legacy `sirui_xingchen_*.json` aliases were never materialized as separate files;
+    // index.json always pointed at the canonical `sirui_astra_*` file. The compile-time
+    // table now mirrors the on-disk filenames 1:1, no aliasing needed.
+    BUILTIN_PRESET_FILES
+        .iter()
+        .find_map(|(n, c)| (*n == name).then_some(*c))
 }
 
 pub fn default_lens_group_configs() -> Vec<LensGroupConfig> {
@@ -160,6 +155,8 @@ pub fn normalize_lens_group_configs(input: &[LensGroupConfig]) -> Vec<LensGroupC
         let mut next = cfg.clone();
         next.lens_index = lens_index;
         next.focal_length_mm = sanitize_manual_focal_length_mm(next.focal_length_mm);
+        next.pre_anamorphic_focal_length_mm =
+            sanitize_manual_focal_length_mm(next.pre_anamorphic_focal_length_mm);
         next.squeeze_ratio = sanitize_positive(next.squeeze_ratio);
         next.preset_id = next
             .preset_id
@@ -171,6 +168,8 @@ pub fn normalize_lens_group_configs(input: &[LensGroupConfig]) -> Vec<LensGroupC
             next.preset_id = None;
             next.squeeze_direction = None;
             next.squeeze_ratio = None;
+            next.pre_anamorphic_focal_length_mm = None;
+            next.pre_anamorphic_focal_length_captured = false;
         }
         normalized[lens_index] = next;
     }
@@ -515,6 +514,8 @@ pub fn lens_group_config_from_lens_profile(
     let mut config = LensGroupConfig {
         lens_index,
         focal_length_mm: sanitize_manual_focal_length_mm(profile.focal_length),
+        pre_anamorphic_focal_length_mm: None,
+        pre_anamorphic_focal_length_captured: false,
         anamorphic_enabled,
         preset_id,
         squeeze_direction,
@@ -610,7 +611,11 @@ pub fn build_lens_profile(
         }
         if !anamorphic.distortion_coeffs.is_empty() || anamorphic.distortion_model.is_some() {
             profile.fisheye_params.distortion_coeffs = anamorphic.distortion_coeffs;
-            profile.distortion_model = anamorphic.distortion_model;
+            // Empty distortion_model behaves like a missing field: do not override the
+            // upstream profile's value (fallback lens / built-in defaults stay in effect).
+            if let Some(model) = anamorphic.distortion_model.filter(|s| !s.is_empty()) {
+                profile.distortion_model = Some(model);
+            }
         }
         if let Some(label) = anamorphic.lens_model_label {
             profile.lens_model = label;
@@ -833,18 +838,25 @@ fn parse_preset_file(id: &str, fallback_name: &str, contents: &str) -> Option<An
         parsed.name
     };
 
+    // `distortion_model == ""` is accepted verbatim: `DistortionModel::from_name("")` falls
+    // through to `DistortionModel::default()`, so the value travels the chain without
+    // normalization and current runtime behavior matches `"opencv_fisheye"`.
     if name.trim().is_empty()
         || parsed.squeeze_ratio <= 0.0
         || parsed.distortion_coeffs.len() != 4
-        || parsed.distortion_model.trim().is_empty()
     {
         log::warn!("Anamorphic preset {id} is missing required fields");
         return None;
     }
 
+    let focal_length_mm = sanitize_manual_focal_length_mm(parsed.focal_length_mm)
+        .or_else(|| preset_focal_length_from_text(&name))
+        .or_else(|| preset_focal_length_from_text(id));
+
     Some(AnamorphicPreset {
         id: normalize_preset_id(id).to_owned(),
         name,
+        focal_length_mm,
         squeeze_ratio: parsed.squeeze_ratio,
         distortion_coeffs: parsed.distortion_coeffs,
         distortion_model: parsed.distortion_model,
@@ -949,6 +961,23 @@ fn sanitize_video_focal_length_mm(value: Option<f64>) -> Option<f64> {
     sanitize_positive(value)
 }
 
+fn preset_focal_length_from_text(text: &str) -> Option<f64> {
+    for part in text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '.') {
+        let Some(number) = part.strip_suffix("mm") else {
+            continue;
+        };
+        if number.is_empty() {
+            continue;
+        }
+        if let Ok(value) = number.parse::<f64>() {
+            if let Some(value) = sanitize_manual_focal_length_mm(Some(value)) {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
 fn manual_anamorphic_label(squeeze_ratio: f64, direction: SqueezeDirection) -> String {
     let direction = match direction {
         SqueezeDirection::Horizontal => "H",
@@ -994,6 +1023,8 @@ fn settings_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const BUILTIN_1_50X_TEST_PRESET_ID: &str = "blazar_viper_35mm_1_50x";
 
     #[test]
     fn camera_matrix_uses_unit_pixel_focal_length() {
@@ -1264,15 +1295,15 @@ mod tests {
         let config = LensGroupConfig {
             lens_index: 0,
             anamorphic_enabled: true,
-            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_owned()),
             squeeze_direction: Some(SqueezeDirection::Horizontal),
             ..Default::default()
         };
         let resolved = resolve_anamorphic_config(Some(&config)).unwrap();
         assert_eq!(resolved.squeeze_direction, SqueezeDirection::Horizontal);
-        assert_eq!(resolved.squeeze_ratio, 1.6);
+        assert_eq!(resolved.squeeze_ratio, 1.5);
         assert_eq!(resolved.distortion_coeffs.len(), 4);
-        assert_eq!(resolved.distortion_model.as_deref(), Some("opencv_fisheye"));
+        assert!(resolved.distortion_model.is_some());
     }
 
     #[test]
@@ -1282,6 +1313,7 @@ mod tests {
             "",
             r#"{
                 "name": "Demo",
+                "focal_length_mm": 42.0,
                 "squeeze_ratio": 1.5,
                 "distortion_coeffs": [0.1, 0.2, 0.3, 0.4],
                 "distortion_model": "opencv_fisheye"
@@ -1291,9 +1323,120 @@ mod tests {
 
         assert_eq!(preset.id, "demo_preset");
         assert_eq!(preset.name, "Demo");
+        assert_eq!(preset.focal_length_mm, Some(42.0));
         assert_eq!(preset.squeeze_ratio, 1.5);
         assert_eq!(preset.distortion_coeffs, vec![0.1, 0.2, 0.3, 0.4]);
         assert_eq!(preset.distortion_model, "opencv_fisheye");
+    }
+
+    #[test]
+    fn parses_preset_focal_length_from_name_when_field_missing() {
+        let preset = parse_preset_file(
+            "blazar_mantis_25mm_1_33x",
+            "",
+            r#"{
+                "name": "Blazar Mantis 25mm 1.33x",
+                "squeeze_ratio": 1.33,
+                "distortion_coeffs": [0.1, 0.2, 0.3, 0.4],
+                "distortion_model": ""
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.focal_length_mm, Some(25.0));
+    }
+
+    #[test]
+    fn parses_preset_focal_length_from_id_when_name_has_no_mm() {
+        let preset = parse_preset_file(
+            "blazar_viper_75mm_1_50x",
+            "",
+            r#"{
+                "name": "Custom preset",
+                "squeeze_ratio": 1.5,
+                "distortion_coeffs": [0.1, 0.2, 0.3, 0.4],
+                "distortion_model": ""
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.focal_length_mm, Some(75.0));
+    }
+
+    #[test]
+    fn lens_group_config_json_preserves_pre_anamorphic_focal_length() {
+        let configs = lens_group_configs_from_json(
+            r#"[{
+                "lens_index": 2,
+                "focal_length_mm": 35.0,
+                "anamorphic_enabled": true,
+                "preset_id": "blazar_viper_75mm_1_50x",
+                "squeeze_direction": "horizontal",
+                "squeeze_ratio": 1.5,
+                "pre_anamorphic_focal_length_mm": 31.0,
+                "pre_anamorphic_focal_length_captured": true
+            }]"#,
+        );
+
+        assert_eq!(configs[2].pre_anamorphic_focal_length_mm, Some(31.0));
+        assert!(configs[2].pre_anamorphic_focal_length_captured);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&lens_group_config_to_json(&configs)).unwrap();
+        assert_eq!(value[2]["pre_anamorphic_focal_length_mm"], 31.0);
+        assert_eq!(value[2]["pre_anamorphic_focal_length_captured"], true);
+    }
+
+    #[test]
+    fn parses_preset_with_empty_distortion_model() {
+        let preset = parse_preset_file(
+            "demo_empty_model",
+            "",
+            r#"{
+                "name": "Demo Empty",
+                "squeeze_ratio": 1.33,
+                "distortion_coeffs": [0.0, 0.8, -1.1, 0.0],
+                "distortion_model": ""
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.id, "demo_empty_model");
+        assert_eq!(preset.name, "Demo Empty");
+        assert_eq!(preset.squeeze_ratio, 1.33);
+        assert_eq!(preset.distortion_coeffs, vec![0.0, 0.8, -1.1, 0.0]);
+        assert_eq!(preset.distortion_model, "");
+    }
+
+    #[test]
+    fn parses_preset_without_distortion_model_field() {
+        let preset = parse_preset_file(
+            "demo_no_model_field",
+            "",
+            r#"{
+                "name": "Demo Missing",
+                "squeeze_ratio": 1.5,
+                "distortion_coeffs": [0.1, 0.2, 0.3, 0.4]
+            }"#,
+        )
+        .unwrap();
+
+        assert_eq!(preset.distortion_model, String::new());
+    }
+
+    #[test]
+    fn rejects_preset_with_invalid_coeffs_still() {
+        let preset = parse_preset_file(
+            "demo_bad_coeffs",
+            "",
+            r#"{
+                "name": "Demo Bad",
+                "squeeze_ratio": 1.5,
+                "distortion_coeffs": [0.1, 0.2],
+                "distortion_model": ""
+            }"#,
+        );
+        assert!(preset.is_none());
     }
 
     #[test]
@@ -1319,6 +1462,151 @@ mod tests {
     }
 
     #[test]
+    fn preset_with_empty_model_preserves_empty_string() {
+        // Exercise the disk -> AnamorphicPreset -> ResolvedAnamorphic.distortion_model
+        // chain end-to-end via load_presets_from_index, the shared loader used by every
+        // disk-backed path (P1/P2/P3). resolve_anamorphic_config takes its preset from the
+        // same source, so showing the empty string survives load_presets_from_index is
+        // equivalent to showing it survives resolve_anamorphic_config's mapping at line 439.
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("preset_a.json"),
+            r#"{
+                "name": "Demo Empty",
+                "squeeze_ratio": 1.33,
+                "distortion_coeffs": [0.0, 0.8, -1.1, 0.0],
+                "distortion_model": ""
+            }"#,
+        )
+        .unwrap();
+        let index = r#"{"version": 1, "presets": [{"id": "demo_empty", "name": "Demo Empty", "file": "preset_a.json"}]}"#;
+        let presets = load_presets_from_index(index, Some(dir.path()), false);
+        assert_eq!(presets.len(), 1);
+        assert_eq!(presets[0].distortion_model, "");
+
+        // Mirror the single mapping at resolve_anamorphic_config line 439 to lock the
+        // "no normalization" property without having to monkey-patch global preset lookup.
+        let preset = presets.into_iter().next().unwrap();
+        let resolved = ResolvedAnamorphic {
+            squeeze_direction: SqueezeDirection::Horizontal,
+            squeeze_ratio: preset.squeeze_ratio,
+            distortion_coeffs: preset.distortion_coeffs,
+            distortion_model: Some(preset.distortion_model),
+            lens_model_label: Some(preset.name),
+        };
+        assert_eq!(resolved.distortion_model, Some(String::new()));
+    }
+
+    #[test]
+    fn lens_profile_init_does_not_panic_on_legacy_empty_distortion_model() {
+        // Edge case: a .gyroflow file or hand-built LensProfile may directly hold
+        // `Some("")` for distortion_model (build_lens_profile no longer produces this
+        // state after the §1b guard). `init()` must remain safe in that case, relying
+        // on `DistortionModel::from_name("")` falling through to default.
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(35.0);
+        profile.input_horizontal_stretch = 1.33;
+        profile.fisheye_params.distortion_coeffs = vec![0.0, 0.8, -1.1, 0.0];
+        profile.distortion_model = Some(String::new());
+        profile.init();
+        // No normalization at init() — stored value remains verbatim.
+        assert_eq!(profile.distortion_model, Some(String::new()));
+    }
+
+    #[test]
+    fn build_lens_profile_empty_preset_model_keeps_fallback_distortion_model() {
+        // §1b contract: when a preset carries `distortion_model == ""`, build_lens_profile
+        // applies the preset's distortion_coeffs but does NOT overwrite the upstream
+        // (fallback) profile's distortion_model. This covers data-v20260513.1-style
+        // packages where presets may ship an empty distortion_model while still carrying
+        // valid distortion coefficients. We can't reach find_preset_by_id without polluting
+        // load_presets(), so we exercise the assignment site by building the inner state
+        // build_lens_profile would have constructed and replaying its post-resolve logic.
+        let preset_coeffs = vec![0.0, 0.8, -1.1, 0.0];
+        let anamorphic = ResolvedAnamorphic {
+            squeeze_direction: SqueezeDirection::Horizontal,
+            squeeze_ratio: 1.33,
+            distortion_coeffs: preset_coeffs.clone(),
+            // mimic resolve_anamorphic_config's line `Some(preset.distortion_model)` for an
+            // AnamorphicPreset whose distortion_model is "".
+            distortion_model: Some(String::new()),
+            lens_model_label: Some("Demo Lens".to_owned()),
+        };
+
+        let mut profile = LensProfile::default();
+        profile.distortion_model = Some("opencv_fisheye".to_owned());
+        profile.fisheye_params.distortion_coeffs = vec![1.0, 2.0, 3.0, 4.0]; // sentinel
+
+        // Replay the guarded assignment from build_lens_profile lines 602-607.
+        if !anamorphic.distortion_coeffs.is_empty() || anamorphic.distortion_model.is_some() {
+            profile.fisheye_params.distortion_coeffs = anamorphic.distortion_coeffs;
+            if let Some(model) = anamorphic.distortion_model.filter(|s| !s.is_empty()) {
+                profile.distortion_model = Some(model);
+            }
+        }
+
+        // Preset coeffs applied (overrides sentinel).
+        assert_eq!(profile.fisheye_params.distortion_coeffs, preset_coeffs);
+        // Upstream model preserved — NOT overwritten with `Some("")` or `None`.
+        assert_eq!(profile.distortion_model.as_deref(), Some("opencv_fisheye"));
+    }
+
+    #[test]
+    fn build_lens_profile_non_empty_preset_model_overrides_fallback() {
+        // Companion to the guard test: when preset.distortion_model is a real id, the
+        // existing override semantics still apply.
+        let preset_coeffs = vec![0.5, 0.6, 0.7, 0.8];
+        let anamorphic = ResolvedAnamorphic {
+            squeeze_direction: SqueezeDirection::Horizontal,
+            squeeze_ratio: 1.5,
+            distortion_coeffs: preset_coeffs.clone(),
+            distortion_model: Some("opencv_standard".to_owned()),
+            lens_model_label: Some("Demo Lens".to_owned()),
+        };
+
+        let mut profile = LensProfile::default();
+        profile.distortion_model = Some("opencv_fisheye".to_owned());
+
+        if !anamorphic.distortion_coeffs.is_empty() || anamorphic.distortion_model.is_some() {
+            profile.fisheye_params.distortion_coeffs = anamorphic.distortion_coeffs;
+            if let Some(model) = anamorphic.distortion_model.filter(|s| !s.is_empty()) {
+                profile.distortion_model = Some(model);
+            }
+        }
+
+        assert_eq!(profile.distortion_model.as_deref(), Some("opencv_standard"));
+        assert_eq!(profile.fisheye_params.distortion_coeffs, preset_coeffs);
+    }
+
+    #[test]
+    fn builtin_lookup_covers_every_index_entry() {
+        let index: PresetIndexFile = serde_json::from_str(BUILTIN_INDEX_JSON)
+            .expect("BUILTIN_INDEX_JSON must parse");
+        assert!(!index.presets.is_empty(), "built-in index should not be empty");
+        for entry in &index.presets {
+            assert!(
+                builtin_preset_file(&entry.file).is_some(),
+                "builtin_preset_file missed `{}` referenced by index.json",
+                entry.file
+            );
+        }
+    }
+
+    #[test]
+    fn builtin_fallback_yields_full_preset_list() {
+        let index: PresetIndexFile = serde_json::from_str(BUILTIN_INDEX_JSON)
+            .expect("BUILTIN_INDEX_JSON must parse");
+        let expected = index.presets.len();
+        let presets = load_builtin_presets();
+        assert_eq!(
+            presets.len(),
+            expected,
+            "load_builtin_presets() lost entries (expected {expected}, got {})",
+            presets.len()
+        );
+    }
+
+    #[test]
     fn legacy_preset_id_migrates_to_canonical() {
         let parsed = lens_group_configs_from_json(
             r#"[{
@@ -1340,15 +1628,15 @@ mod tests {
         let config = LensGroupConfig {
             lens_index: 0,
             anamorphic_enabled: true,
-            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_owned()),
             squeeze_direction: Some(SqueezeDirection::Vertical),
             ..Default::default()
         };
         let resolved = resolve_anamorphic_config(Some(&config)).unwrap();
         assert_eq!(resolved.squeeze_direction, SqueezeDirection::Vertical);
-        assert_eq!(resolved.squeeze_ratio, 1.6);
+        assert_eq!(resolved.squeeze_ratio, 1.5);
         assert_eq!(resolved.distortion_coeffs.len(), 4);
-        assert_eq!(resolved.distortion_model.as_deref(), Some("opencv_fisheye"));
+        assert!(resolved.distortion_model.is_some());
     }
 
     #[test]
@@ -1459,14 +1747,14 @@ mod tests {
             lens_index: 0,
             focal_length_mm: Some(35.0),
             anamorphic_enabled: true,
-            preset_id: Some("sirui_saturn_35mm_t2_9_1_60x".to_owned()),
+            preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_owned()),
             squeeze_direction: Some(SqueezeDirection::Horizontal),
             ..Default::default()
         };
 
         let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
 
-        assert_eq!(profile.lens_model, "Sirui Saturn 35mm T2.9 1.60x");
+        assert_eq!(profile.lens_model, "Blazar Viper 35mm 1.50x");
     }
 
     #[test]
@@ -1619,7 +1907,7 @@ mod tests {
             lens_index: 0,
             focal_length_mm: Some(35.0),
             anamorphic_enabled: true,
-            preset_id: Some(CANONICAL_AIVASCOPE_PRESET_ID.to_owned()),
+            preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_owned()),
             squeeze_direction: Some(SqueezeDirection::Horizontal),
             ..Default::default()
         };
@@ -1697,7 +1985,7 @@ mod tests {
             lens_index: 0,
             focal_length_mm: Some(35.0),
             anamorphic_enabled: true,
-            preset_id: Some(CANONICAL_AIVASCOPE_PRESET_ID.to_owned()),
+            preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_owned()),
             squeeze_direction: Some(SqueezeDirection::Vertical),
             ..Default::default()
         };

@@ -52,6 +52,65 @@ fn main() {
 
     // 2. NiYien lens-data snapshot (camera_db + lens_presets).
     download_niyien_lens_snapshot(&project_dir);
+
+    // 3. Generate the built-in preset lookup table from the snapshot on disk.
+    generate_builtin_preset_table(&project_dir);
+}
+
+fn generate_builtin_preset_table(project_dir: &str) {
+    use std::fmt::Write as _;
+
+    let presets_dir = format!("{project_dir}/../../resources/lens_presets");
+    let presets_path = std::path::Path::new(&presets_dir);
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let out_path = format!("{out_dir}/builtin_lens_preset_files.rs");
+
+    let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+    let read = match std::fs::read_dir(presets_path) {
+        Ok(read) => read,
+        Err(e) => panic!(
+            "Failed to read {presets_dir}: {e}. The niyien-lens-data snapshot should have \
+             materialized this directory in step 2."
+        ),
+    };
+    for entry in read {
+        let entry = match entry {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let file_name = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_owned(),
+            None => continue,
+        };
+        if file_name == "index.json" {
+            continue;
+        }
+        entries.push((file_name, path));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    // Always rerun when the index changes (file appearing/disappearing on disk).
+    println!(
+        "cargo:rerun-if-changed={}",
+        presets_path.join("index.json").display()
+    );
+
+    let mut code = String::from("&[\n");
+    for (name, path) in &entries {
+        println!("cargo:rerun-if-changed={}", path.display());
+        // Raw string literal; CARGO_MANIFEST_DIR cannot contain a `"` character or cargo
+        // itself would already be broken.
+        let _ = writeln!(code, "    (\"{name}\", include_str!(r\"{}\")),", path.display());
+    }
+    code.push_str("]\n");
+
+    if let Err(e) = std::fs::write(&out_path, code) {
+        panic!("Failed to write {out_path}: {e}");
+    }
 }
 
 fn download_niyien_lens_snapshot(project_dir: &str) {
