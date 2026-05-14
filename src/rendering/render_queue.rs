@@ -9408,6 +9408,11 @@ fn is_supported_drop_item_impl(url: &str, accepted_exts: &HashSet<String>) -> bo
     if is_gyro_mix_file_url_impl(url) {
         return true;
     }
+    // Real directories are accepted regardless of name (e.g. `Footage.2024`,
+    // `思瑞25_1.33`). The caller scans them for supported video files.
+    if filesystem::is_dir(url) {
+        return true;
+    }
     match file_extension(url) {
         Some(ext) => ext == "rdc" || ext == "rdm" || accepted_exts.contains(&ext),
         None => true,

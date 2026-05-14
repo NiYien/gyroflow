@@ -11,6 +11,15 @@ function acceptsUrl(url, extensions, acceptedFilenameSuffixes) {
     const filename = filenameFromUrl(url);
     if (!filename) return true;
 
+    // Native filesystem check: a real directory is accepted (even if its
+    // name contains dots like `Footage.2024`) ONLY when this drop target
+    // opts in to folders via acceptedFilenameSuffixes (the main drop area
+    // and render queue both list ".rdc"/".rdm"/"_mix.bin"). Single-file
+    // targets (lens profile, motion data, video info) keep the old
+    // file-only behavior.
+    const acceptsFolders = (acceptedFilenameSuffixes || []).length > 0;
+    if (acceptsFolders && typeof filesystem !== "undefined" && filesystem.is_dir(url)) return true;
+
     for (const suffix of acceptedFilenameSuffixes || []) {
         if (filename.endsWith(suffix.toLowerCase())) return true;
     }

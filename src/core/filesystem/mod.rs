@@ -380,6 +380,28 @@ pub fn exists(url: &str) -> bool {
     }
     result!(inner(url), url)
 }
+// True iff the URL points to an existing directory. Used by QML DropArea
+// hover/drop logic to distinguish folders from files without relying on a
+// "filename contains a dot" heuristic (which breaks for folders like
+// `Footage.2024` or `Clips.v1`).
+pub fn is_dir(url: &str) -> bool {
+    fn inner(url: &str) -> Result<bool> {
+        if url.is_empty() {
+            return Ok(false);
+        }
+
+        #[cfg(target_os = "android")]
+        if url.starts_with("content://") {
+            return Ok(android::is_dir_url(url));
+        }
+
+        start_accessing_url(url, true);
+        let is_dir = url_to_pathbuf(url).map(|x| x.is_dir());
+        stop_accessing_url(url, true);
+        is_dir
+    }
+    result!(inner(url), url)
+}
 pub fn exists_in_folder(folder_url: &str, filename: &str) -> bool {
     fn inner(folder_url: &str, filename: &str) -> bool {
         if folder_url.is_empty() || filename.is_empty() {

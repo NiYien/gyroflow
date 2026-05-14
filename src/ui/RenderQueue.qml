@@ -2140,11 +2140,14 @@ Item {
                     videoUrls.push(url);
                 } else if (fname.endsWith(".bin")) {
                     continue;
-                } else if (!fname.includes(".") || fname.endsWith(".rdc") || fname.endsWith(".rdm")) {
-                    // No extension or RED .RDC/.RDM: treat as folder. Let Rust recursively scan for
-                    // gyro _mix.bin files AND video files (max depth 3, max 600 videos,
-                    // filtered by fileDialog.extensions, excluding files whose stem
-                    // ends with the configured output suffix, e.g. _stabilized).
+                } else if (filesystem.is_dir(url)) {
+                    // Native directory check (covers folders with dots in their
+                    // name like `Footage.2024`, as well as RED `.RDC`/`.RDM`
+                    // bundles). Let Rust recursively scan for gyro _mix.bin
+                    // files AND video files (max depth 3, max 600 videos,
+                    // filtered by fileDialog.extensions, excluding files whose
+                    // stem ends with the configured output suffix, e.g.
+                    // _stabilized).
                     render_queue.add_gyro_folder(url.toString());
                     try {
                         const jsonStr = render_queue.list_video_files_in_folder(

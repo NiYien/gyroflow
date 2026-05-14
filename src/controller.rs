@@ -4801,6 +4801,7 @@ pub struct Filesystem {
     exists_in_folder: qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
     can_create_file: qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
     exists: qt_method!(fn(&self, url: QUrl) -> bool),
+    is_dir: qt_method!(fn(&self, url: QUrl) -> bool),
     get_filename: qt_method!(fn(&self, url: QUrl) -> QString),
     get_folder: qt_method!(fn(&self, url: QUrl) -> QString),
     filename_with_extension: qt_method!(fn(&self, filename: QString, ext: QString) -> QString),
@@ -4831,6 +4832,9 @@ impl Filesystem {
     }
     fn exists(&self, url: QUrl) -> bool {
         filesystem::exists(&util::qurl_to_encoded(url))
+    }
+    fn is_dir(&self, url: QUrl) -> bool {
+        filesystem::is_dir(&util::qurl_to_encoded(url))
     }
     fn get_filename(&self, url: QUrl) -> QString {
         QString::from(filesystem::get_filename(&util::qurl_to_encoded(url)))
