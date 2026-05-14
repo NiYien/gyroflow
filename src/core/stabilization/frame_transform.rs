@@ -249,6 +249,8 @@ impl FrameTransform {
         ) = Self::get_lens_data_at_timestamp(params, timestamp_ms, false);
         // ----------- Lens -----------
 
+        let lens_correction_amount = params.apply_anamorphic_decay(lens_correction_amount);
+
         let mut fov = Self::get_fov(params, frame, true, timestamp_ms, false);
         let mut ui_fov = Self::get_fov(params, frame, true, timestamp_ms, true);
         if let Some(adj) = params.lens.optimal_fov {

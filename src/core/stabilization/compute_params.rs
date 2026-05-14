@@ -11,6 +11,20 @@ use parking_lot::RwLock;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+// Anamorphic-aware decay factor for lens_correction_amount.
+// Applying the calibrated isotropic radial polynomial at full strength on an
+// anamorphic squeeze over-corrects (straight lines bow outward). Attenuate the
+// runtime strength so the UI 100% slider matches the visually correct render.
+// f(λ) = 2 / (1 + λ²),  λ = max(stretch_h, stretch_v)
+// Heuristic motivated by ⟨r_desqueezed² / r_sensor²⟩ averaging across axes.
+pub(crate) fn anamorphic_lens_correction_decay(stretch_h: f64, stretch_v: f64) -> f64 {
+    let lambda = stretch_h.max(stretch_v).max(1.0);
+    if lambda <= 1.01 {
+        return 1.0;
+    }
+    2.0 / (1.0 + lambda * lambda)
+}
+
 #[derive(Default, Clone)]
 pub struct ComputeParams {
     pub gyro: Arc<RwLock<GyroSource>>,
@@ -136,6 +150,24 @@ impl ComputeParams {
         }
     }
 
+    pub fn anamorphic_lens_correction_decay(&self) -> f64 {
+        let h = if self.lens.input_horizontal_stretch > 0.01 {
+            self.lens.input_horizontal_stretch
+        } else {
+            1.0
+        };
+        let v = if self.lens.input_vertical_stretch > 0.01 {
+            self.lens.input_vertical_stretch
+        } else {
+            1.0
+        };
+        anamorphic_lens_correction_decay(h, v)
+    }
+
+    pub fn apply_anamorphic_decay(&self, raw_lens_correction_amount: f64) -> f64 {
+        (raw_lens_correction_amount * self.anamorphic_lens_correction_decay()).clamp(0.0, 1.0)
+    }
+
     pub fn video_timestamp_for_gyro_timestamp(&self, timestamp_ms: f64) -> f64 {
         timestamp_ms + GyroSource::offset_at_timestamp(&self.gyro_offsets, timestamp_ms)
     }
@@ -226,5 +258,44 @@ impl std::fmt::Debug for ComputeParams {
                 &self.digital_lens.as_ref().map(|x| x.id()).unwrap_or("None"),
             )
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anamorphic_lens_correction_decay;
+
+    #[test]
+    fn anamorphic_decay_identity_when_no_stretch() {
+        assert_eq!(anamorphic_lens_correction_decay(1.0, 1.0), 1.0);
+    }
+
+    #[test]
+    fn anamorphic_decay_15x_matches_formula() {
+        let d = anamorphic_lens_correction_decay(1.0, 1.5);
+        assert!((d - 0.6153846).abs() < 1e-5, "got {d}");
+    }
+
+    #[test]
+    fn anamorphic_decay_uses_max_axis() {
+        // Horizontal-only stretch and vertical-only stretch produce identical decay.
+        let h = anamorphic_lens_correction_decay(1.5, 1.0);
+        let v = anamorphic_lens_correction_decay(1.0, 1.5);
+        assert!((h - v).abs() < 1e-9);
+    }
+
+    #[test]
+    fn anamorphic_decay_monotonic_in_lambda() {
+        let d133 = anamorphic_lens_correction_decay(1.33, 1.0);
+        let d150 = anamorphic_lens_correction_decay(1.5, 1.0);
+        let d200 = anamorphic_lens_correction_decay(2.0, 1.0);
+        assert!(d133 > d150 && d150 > d200);
+    }
+
+    #[test]
+    fn anamorphic_decay_clamp_below_epsilon() {
+        // Stretch values within tolerance of 1.0 should not trigger decay.
+        assert_eq!(anamorphic_lens_correction_decay(1.005, 1.005), 1.0);
+        assert_eq!(anamorphic_lens_correction_decay(0.5, 0.5), 1.0);
     }
 }

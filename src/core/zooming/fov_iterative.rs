@@ -60,6 +60,8 @@ impl FieldOfViewAlgorithm for FovIterative<'_> {
                         .keyframes
                         .value_at_video_timestamp(&KeyframeType::LensCorrectionStrength, ts)
                         .unwrap_or(self.compute_params.lens_correction_amount);
+                    let lens_correction_amount =
+                        self.compute_params.apply_anamorphic_decay(lens_correction_amount);
 
                     let kv = (
                         adaptive_zoom_center_x,
@@ -73,7 +75,8 @@ impl FieldOfViewAlgorithm for FovIterative<'_> {
             let kv = (
                 self.compute_params.adaptive_zoom_center_offset.0,
                 self.compute_params.adaptive_zoom_center_offset.1,
-                self.compute_params.lens_correction_amount,
+                self.compute_params
+                    .apply_anamorphic_decay(self.compute_params.lens_correction_amount),
             );
             timestamps
                 .into_par_iter()
