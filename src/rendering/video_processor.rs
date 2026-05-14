@@ -98,6 +98,16 @@ impl<'a> VideoProcessor<'a> {
             pollster::block_on(rx.receive());
             info.borrow_mut().rotation = mdk.mdk.getRotation();
 
+            // Nikon ZR .r3d is MP4 with NR3D codec; MDK's R3D plugin returns 0
+            // for rotation. Peek the tkhd.matrix via telemetry-parser as a
+            // fallback so the batch render path mirrors the QML preview.
+            if filename.to_lowercase().ends_with(".r3d") && info.borrow().rotation == 0 {
+                let peeked = crate::util::peek_container_rotation_from_url(url);
+                if peeked != 0 {
+                    info.borrow_mut().rotation = peeked;
+                }
+            }
+
             std::thread::sleep(std::time::Duration::from_millis(100));
             mdk.mdk.stopProcessing(0);
 

@@ -821,6 +821,52 @@ pub fn copy_insta360_metadata(
     Ok(())
 }
 
+// Probe the container rotation of an `.r3d` file via telemetry-parser's mp4parse
+// path. Returns the detected rotation (0/90/180/270) or 0 on any failure.
+//
+// Nikon ZR ships `.r3d` files as MP4 containers with NR3D codec — the MDK R3D
+// plugin does not parse `tkhd.matrix`, so we bypass via mp4parse to read the
+// real rotation. Real RED2-container R3D files fail `parse_mp4` and we return 0,
+// matching prior behavior.
+pub fn peek_container_rotation_from_url(url: &str) -> i32 {
+    let filename = gyroflow_core::filesystem::get_filename(url);
+    if !filename.to_ascii_lowercase().ends_with(".r3d") {
+        return 0;
+    }
+    let scheme = url.split("://").next().unwrap_or("");
+    match gyroflow_core::filesystem::open_file(url, false, false) {
+        Ok(mut file) => {
+            let filesize = file.size;
+            match gyroflow_core::util::get_video_metadata(file.get_file(), filesize, url) {
+                Ok(md) => {
+                    ::log::info!(
+                        target: "video.load",
+                        "peek_container_rotation: filename={} scheme={} rotation={}",
+                        filename, scheme, md.rotation,
+                    );
+                    md.rotation as i32
+                }
+                Err(e) => {
+                    ::log::warn!(
+                        target: "video.load",
+                        "peek_container_rotation: telemetry-parser failed for filename={} scheme={}: {}",
+                        filename, scheme, e,
+                    );
+                    0
+                }
+            }
+        }
+        Err(e) => {
+            ::log::warn!(
+                target: "video.load",
+                "peek_container_rotation: open_file failed for filename={} scheme={}: {}",
+                filename, scheme, e,
+            );
+            0
+        }
+    }
+}
+
 pub fn report_lens_profile_usage(checksum: Option<String>) {
     if let Some(checksum) = checksum {
         if !checksum.is_empty() {

@@ -95,6 +95,17 @@ MenuItem {
         root.pixelFormat = getPixelFormat(md) || "---";
 
         root.metadataRotation = (360 - (md["stream.video[0].rotation"] || 0)) % 360; // Constrain to 0-360
+        // Nikon ZR ships .r3d as MP4 container; MDK's R3D plugin doesn't read
+        // tkhd.matrix. Fall back to telemetry-parser when rotation is missing.
+        // peek returns the raw tkhd-derived rotation (same convention as MDK's
+        // getRotation()), so apply the same (360 - x) % 360 normalisation that
+        // line 97 applied to md["stream.video[0].rotation"].
+        if (root.metadataRotation == 0 && (root.filename || "").toLowerCase().endsWith(".r3d")) {
+            const peeked = controller.peek_container_rotation(window.videoArea.loadedFileUrl);
+            if (peeked != 0) {
+                root.metadataRotation = (360 - peeked) % 360;
+            }
+        }
         root.videoRotation = root.metadataRotation;
 
         list.model["Dimensions"]   = w && h? w + "x" + h : "---";
@@ -122,10 +133,8 @@ MenuItem {
 
         // Swap output dimensions for 90/270 metadata rotation so the export
         // and preview start with the correct portrait/landscape orientation.
-        // R3D files are excluded — rotation is not supported for this format.
-        const isR3D = (root.filename || "").toLowerCase().endsWith(".r3d");
         let exportW = w, exportH = h;
-        if (!isR3D && (root.metadataRotation == 90 || root.metadataRotation == 270)) {
+        if (root.metadataRotation == 90 || root.metadataRotation == 270) {
             exportW = h;
             exportH = w;
         }

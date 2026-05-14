@@ -74,6 +74,7 @@ pub struct Controller {
         )
     ),
     get_image_sequence_fps: qt_method!(fn(&self, url: QUrl) -> f64),
+    peek_container_rotation: qt_method!(fn(&self, url: QUrl) -> i32),
     load_lens_profile: qt_method!(fn(&mut self, url_or_id: QString)),
     get_preset_contents: qt_method!(fn(&mut self, url_or_id: QString) -> QString),
     lens_group_config: qt_property!(QString; READ get_lens_group_config NOTIFY lens_group_config_changed),
@@ -515,6 +516,11 @@ impl Controller {
             }
         }
         0.0
+    }
+
+    fn peek_container_rotation(&self, url: QUrl) -> i32 {
+        let url = util::qurl_to_encoded(url);
+        util::peek_container_rotation_from_url(&url)
     }
 
     fn load_video(&mut self, url: QUrl, player: QJSValue) {
