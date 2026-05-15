@@ -253,14 +253,31 @@ MenuItem {
                     const coeffs = obj.fisheye_params.distortion_coeffs;
                     root.distortionCoeffs = coeffs;
                     const mtrx = obj.fisheye_params.camera_matrix;
-                    // Populate k1..k4 from lens preset; D_mid / D_corner sliders
-                    // will be synced after Task 2 wires up deriveDFromK().
+                    // Populate k1..k4 from lens preset, then sync twin-bend sliders.
                     root._internalUpdate++;
                     k1.setInitialValue(coeffs[0] || 0.0);
                     k2.setInitialValue(coeffs[1] || 0.0);
                     k3.setInitialValue(coeffs[2] || 0.0);
                     k4.setInitialValue(coeffs[3] || 0.0);
                     root._internalUpdate--;
+                    // Reset anchor to default on every lens load so each preset
+                    // starts from a known viewpoint, then derive D under it.
+                    root.anchorR = 0.5;
+                    if (typeof anchorInput !== "undefined" && anchorInput) {
+                        anchorInput.text = "0.50";
+                    }
+                    if (root.distortionModel === "poly5") {
+                        root.deriveDFromK();
+                    } else {
+                        // Non-poly5 lens: k1..k4 have different meaning, clear D state
+                        // and zero the sliders so the (now-hidden) UI isn't stale.
+                        root._internalUpdate++;
+                        root.dMid = 0;
+                        root.dCorner = 0;
+                        if (typeof distortionMidSlider !== "undefined") distortionMidSlider.value = 0;
+                        if (typeof distortionCornerSlider !== "undefined") distortionCornerSlider.value = 0;
+                        root._internalUpdate--;
+                    }
                     fx.setInitialValue(mtrx[0][0]);
                     fy.setInitialValue(mtrx[1][1]);
                     cx.setInitialValue(mtrx[0][2]);
