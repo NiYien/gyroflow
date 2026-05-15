@@ -59,6 +59,10 @@ MenuItem {
         const ra2 = root.anchorR * root.anchorR;
         const ra4 = ra2 * ra2;
         const det = ra2 * (1.0 - ra2);
+        // Defensive: anchorR is expected in [0.4, 0.9], where det >= 0.1311.
+        // Bail out if a future input bypass produces a degenerate anchor (0 or 1)
+        // — better to leave k unchanged than write NaN into the preset.
+        if (det < 1e-6) return;
         const k1Val = (root.dMid - ra4 * root.dCorner) / det;
         const k2Val = (ra2 * root.dCorner - root.dMid) / det;
         root._internalUpdate = true;
@@ -75,11 +79,15 @@ MenuItem {
     // re-triggering deriveK. Guarded against being called before Task 2 wires up
     // the slider ids (typeof check returns "undefined" pre-Task-2).
     function deriveDFromK(): void {
-        if (typeof distortionMidSlider === "undefined" || typeof distortionCornerSlider === "undefined") return;
+        // State writes happen unconditionally so the SoT (dMid/dCorner) is
+        // correct even if the UI controls haven't been instantiated yet
+        // (e.g. menu not yet expanded when lens preset loads).
         const ra2 = root.anchorR * root.anchorR;
         const ra4 = ra2 * ra2;
         root.dMid    = k1.value * ra2 + k2.value * ra4;
         root.dCorner = k1.value + k2.value;
+        // TODO: remove typeof guards after Task 2 lands the slider UI.
+        if (typeof distortionMidSlider === "undefined" || typeof distortionCornerSlider === "undefined") return;
         root._internalUpdate = true;
         distortionMidSlider.value    = root.dMid * 100.0;
         distortionCornerSlider.value = root.dCorner * 100.0;
@@ -89,6 +97,7 @@ MenuItem {
     // Switch anchor position. Semantics B: D values stay, k recomputed.
     function setAnchor(newR: real): void {
         root.anchorR = newR;
+        // TODO: remove typeof guard after Task 2 lands anchorInput.
         if (typeof anchorInput !== "undefined") anchorInput.text = newR.toFixed(2);
         deriveK();
     }
@@ -99,6 +108,7 @@ MenuItem {
         root.dMid = 0.0;
         root.dCorner = 0.0;
         root.anchorR = 0.5;
+        // TODO: remove typeof guards after Task 2 lands the UI controls.
         if (typeof anchorInput !== "undefined") anchorInput.text = "0.50";
         if (typeof distortionMidSlider !== "undefined") distortionMidSlider.value = 0;
         if (typeof distortionCornerSlider !== "undefined") distortionCornerSlider.value = 0;
@@ -521,6 +531,7 @@ MenuItem {
                 // Only shown when the loaded lens uses the poly5 distortion model;
                 // other models map k1..k4 differently and the slider's Taylor
                 // mapping would not produce the intended visual effect.
+                // TODO(task-2): delete this whole Row — replaced by anchor + twin-bend UI.
                 Row {
                     spacing: 6 * dpiScale;
                     width: parent.width;
