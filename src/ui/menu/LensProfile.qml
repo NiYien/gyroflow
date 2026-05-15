@@ -140,6 +140,13 @@ MenuItem {
         if (typeof obj.light_refraction_coefficient !== "undefined") {
             isUnderwater.checked = Math.round(+obj.light_refraction_coefficient * 1000) == 1330;
         }
+        // After a .gyroflow load may have replaced k1..k4 directly, re-sync the
+        // twin-bend sliders. anchorR stays at whatever the user had (UI-only state).
+        // Qt.callLater defers until lens preset load + k1..k4 setInitialValue
+        // settle, avoiding race with onLens_profile_loaded path.
+        if (root.distortionModel === "poly5" && typeof root.deriveDFromK === "function") {
+            Qt.callLater(root.deriveDFromK);
+        }
     }
 
     Component.onCompleted: {
