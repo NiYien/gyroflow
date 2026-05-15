@@ -78,8 +78,7 @@ MenuItem {
 
     // External k1, k2 provided (e.g. from lens preset load or manual k field edit).
     // Recompute dMid / dCorner under current anchorR and push to sliders without
-    // re-triggering deriveK. Guarded against being called before Task 2 wires up
-    // the slider ids (typeof check returns "undefined" pre-Task-2).
+    // re-triggering deriveK.
     function deriveDFromK(): void {
         // State writes happen unconditionally so the SoT (dMid/dCorner) is
         // correct even if the UI controls haven't been instantiated yet
@@ -88,8 +87,6 @@ MenuItem {
         const ra4 = ra2 * ra2;
         root.dMid    = k1.value * ra2 + k2.value * ra4;
         root.dCorner = k1.value + k2.value;
-        // TODO: remove typeof guards after Task 2 lands the slider UI.
-        if (typeof distortionMidSlider === "undefined" || typeof distortionCornerSlider === "undefined") return;
         root._internalUpdate++;
         distortionMidSlider.value    = root.dMid * 100.0;
         distortionCornerSlider.value = root.dCorner * 100.0;
@@ -99,8 +96,7 @@ MenuItem {
     // Switch anchor position. Semantics B: D values stay, k recomputed.
     function setAnchor(newR: real): void {
         root.anchorR = newR;
-        // TODO: remove typeof guard after Task 2 lands anchorInput.
-        if (typeof anchorInput !== "undefined") anchorInput.text = newR.toFixed(2);
+        anchorInput.text = newR.toFixed(2);
         deriveK();
     }
 
@@ -110,10 +106,9 @@ MenuItem {
         root.dMid = 0.0;
         root.dCorner = 0.0;
         root.anchorR = 0.5;
-        // TODO: remove typeof guards after Task 2 lands the UI controls.
-        if (typeof anchorInput !== "undefined") anchorInput.text = "0.50";
-        if (typeof distortionMidSlider !== "undefined") distortionMidSlider.value = 0;
-        if (typeof distortionCornerSlider !== "undefined") distortionCornerSlider.value = 0;
+        anchorInput.text = "0.50";
+        distortionMidSlider.value = 0;
+        distortionCornerSlider.value = 0;
         k1.setInitialValue(0.0);
         k2.setInitialValue(0.0);
         k3.setInitialValue(0.0);
@@ -143,7 +138,9 @@ MenuItem {
         // After a .gyroflow load may have replaced k1..k4 directly, re-sync the
         // twin-bend sliders. anchorR stays at whatever the user had (UI-only state).
         // Qt.callLater defers until lens preset load + k1..k4 setInitialValue
-        // settle, avoiding race with onLens_profile_loaded path.
+        // settle, avoiding race with onLens_profile_loaded path. If both paths
+        // fire on the same load, the second deriveDFromK is idempotent (derives
+        // from current k1/k2 values, same result).
         if (root.distortionModel === "poly5" && typeof root.deriveDFromK === "function") {
             Qt.callLater(root.deriveDFromK);
         }
@@ -270,9 +267,7 @@ MenuItem {
                     // Reset anchor to default on every lens load so each preset
                     // starts from a known viewpoint, then derive D under it.
                     root.anchorR = 0.5;
-                    if (typeof anchorInput !== "undefined" && anchorInput) {
-                        anchorInput.text = "0.50";
-                    }
+                    anchorInput.text = "0.50";
                     if (root.distortionModel === "poly5") {
                         root.deriveDFromK();
                     } else {
@@ -281,8 +276,8 @@ MenuItem {
                         root._internalUpdate++;
                         root.dMid = 0;
                         root.dCorner = 0;
-                        if (typeof distortionMidSlider !== "undefined") distortionMidSlider.value = 0;
-                        if (typeof distortionCornerSlider !== "undefined") distortionCornerSlider.value = 0;
+                        distortionMidSlider.value = 0;
+                        distortionCornerSlider.value = 0;
                         root._internalUpdate--;
                     }
                     fx.setInitialValue(mtrx[0][0]);
@@ -508,7 +503,7 @@ MenuItem {
                     if (isDistortionCoeff && root._internalUpdate === 0) {
                         // User typed a new k1 / k2 by hand: recompute D_mid /
                         // D_corner under current anchorR so the twin sliders
-                        // stay in sync. deriveDFromK is wired up after Task 2.
+                        // stay in sync.
                         if (root.distortionModel === "poly5" && typeof root.deriveDFromK === "function") {
                             root.deriveDFromK();
                         }
@@ -568,53 +563,26 @@ MenuItem {
                             text: qsTr("Anchor:");
                             anchors.verticalCenter: parent.verticalCenter;
                         }
-                        Button {
-                            text: "0.4";
-                            font.pixelSize: 10 * dpiScale;
-                            leftPadding: 6 * dpiScale;
-                            rightPadding: 6 * dpiScale;
-                            topPadding: 2 * dpiScale;
-                            bottomPadding: 2 * dpiScale;
-                            onClicked: root.setAnchor(0.4);
-                            ToolTip.visible: hovered;
-                            ToolTip.delay: 400;
-                            ToolTip.text: qsTr("Inner ring — narrow / tele lenses");
-                        }
-                        Button {
-                            text: "0.5";
-                            font.pixelSize: 10 * dpiScale;
-                            leftPadding: 6 * dpiScale;
-                            rightPadding: 6 * dpiScale;
-                            topPadding: 2 * dpiScale;
-                            bottomPadding: 2 * dpiScale;
-                            onClicked: root.setAnchor(0.5);
-                            ToolTip.visible: hovered;
-                            ToolTip.delay: 400;
-                            ToolTip.text: qsTr("Default — normal lenses");
-                        }
-                        Button {
-                            text: "0.7";
-                            font.pixelSize: 10 * dpiScale;
-                            leftPadding: 6 * dpiScale;
-                            rightPadding: 6 * dpiScale;
-                            topPadding: 2 * dpiScale;
-                            bottomPadding: 2 * dpiScale;
-                            onClicked: root.setAnchor(0.7);
-                            ToolTip.visible: hovered;
-                            ToolTip.delay: 400;
-                            ToolTip.text: qsTr("Wider — ultra-wide / anamorphic");
-                        }
-                        Button {
-                            text: "0.85";
-                            font.pixelSize: 10 * dpiScale;
-                            leftPadding: 6 * dpiScale;
-                            rightPadding: 6 * dpiScale;
-                            topPadding: 2 * dpiScale;
-                            bottomPadding: 2 * dpiScale;
-                            onClicked: root.setAnchor(0.85);
-                            ToolTip.visible: hovered;
-                            ToolTip.delay: 400;
-                            ToolTip.text: qsTr("Ultra-wide / fisheye");
+                        Repeater {
+                            model: [
+                                { r: 0.4,  tip: qsTr("Inner ring — narrow / tele lenses") },
+                                { r: 0.5,  tip: qsTr("Default — normal lenses") },
+                                { r: 0.7,  tip: qsTr("Wider — ultra-wide / anamorphic") },
+                                { r: 0.85, tip: qsTr("Ultra-wide / fisheye") }
+                            ]
+                            delegate: Button {
+                                required property var modelData;
+                                text: modelData.r.toString();
+                                font.pixelSize: 10 * dpiScale;
+                                leftPadding: 6 * dpiScale;
+                                rightPadding: 6 * dpiScale;
+                                topPadding: 2 * dpiScale;
+                                bottomPadding: 2 * dpiScale;
+                                onClicked: root.setAnchor(modelData.r);
+                                ToolTip.visible: hovered;
+                                ToolTip.delay: 400;
+                                ToolTip.text: modelData.tip;
+                            }
                         }
                     }
 
@@ -628,6 +596,10 @@ MenuItem {
                         }
                         TextField {
                             id: anchorInput;
+                            // Hybrid binding: initial value tracks root.anchorR, but user
+                            // typing breaks the binding (intentional TextField behavior).
+                            // setAnchor / resetDistortion / onLens_profile_loaded all
+                            // imperatively write `anchorInput.text` to keep it in sync.
                             text: root.anchorR.toFixed(2);
                             width: 44 * dpiScale;
                             font.pixelSize: 11 * dpiScale;
