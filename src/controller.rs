@@ -227,6 +227,7 @@ pub struct Controller {
 
     lens_loaded: qt_property!(bool; NOTIFY lens_changed),
     set_lens_param: qt_method!(fn(&self, param: QString, value: f64)),
+    set_distortion_coeffs: qt_method!(fn(&self, k1: f64, k2: f64, k3: f64, k4: f64)),
     set_user_focal_length: qt_method!(fn(&self, focal_length_mm: f64)),
     lens_changed: qt_signal!(),
 
@@ -2778,6 +2779,10 @@ impl Controller {
     fn set_lens_param(&self, param: QString, value: f64) {
         self.stabilizer
             .set_lens_param(param.to_string().as_str(), value);
+        self.request_recompute();
+    }
+    fn set_distortion_coeffs(&self, k1: f64, k2: f64, k3: f64, k4: f64) {
+        self.stabilizer.set_distortion_coeffs(k1, k2, k3, k4);
         self.request_recompute();
     }
     fn set_user_focal_length(&mut self, focal_length_mm: f64) {

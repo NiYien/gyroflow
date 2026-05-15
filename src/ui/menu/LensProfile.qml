@@ -28,9 +28,45 @@ MenuItem {
     property string profileName;
     property string profileOriginalJson;
     property string profileChecksum;
+    // Tracks the currently loaded lens profile's distortion_model. Used to
+    // gate the distortion strength slider so it only appears for poly5 — the
+    // single model whose 2-coefficient forward equation matches the tan(r)
+    // Taylor mapping the slider uses.
+    property string distortionModel: "";
 
     property bool fetched_from_github: false;
     property bool selected_manually: false;
+
+    // Re-entrancy guard for the bidirectional binding between the distortion
+    // strength slider and the four k1..k4 number fields. Set to true around
+    // programmatic writes (slider drag, profile load, reset) so the SmallNumberField
+    // onValueChanged handlers below do not snap the slider back to 0.
+    property bool _distortionInternalUpdate: false;
+
+    // Designed for the Poly5 distortion_model (lens preset must be set to
+    // "poly5" externally for this slider to take effect). Poly5 forward is
+    //   r' = r * (1 + k1*r^2 + k2*r^4)
+    // We borrow the first two terms of the Taylor expansion of tan(r):
+    //   tan(r) = r + r^3/3 + 2*r^5/15 + 17*r^7/315 + ...
+    // and treat the slider value s in [-100, +100] as a strength scalar
+    // alpha = s/100 that linearly interpolates between identity (alpha=0)
+    // and "first-order fisheye -> rectilinear" (alpha=1). Mapping:
+    //   k1 = alpha / 3
+    //   k2 = 2 * alpha / 15
+    //   k3 = k4 = 0  (Poly5 ignores them but we clear the UI fields for
+    //                 visual consistency)
+    function applyDistortionSliderValue(s: real): void {
+        const alpha = s / 100.0;
+        const k1Val = alpha / 3.0;
+        const k2Val = 2.0 * alpha / 15.0;
+        root._distortionInternalUpdate = true;
+        k1.setInitialValue(k1Val);
+        k2.setInitialValue(k2Val);
+        k3.setInitialValue(0.0);
+        k4.setInitialValue(0.0);
+        controller.set_distortion_coeffs(k1Val, k2Val, 0.0, 0.0);
+        root._distortionInternalUpdate = false;
+    }
 
     FileDialog {
         id: fileDialog;
@@ -106,6 +142,7 @@ MenuItem {
                     if (+obj.focal_length > 0) lensInfo["Focal length"] = obj.focal_length.toFixed(2) + " mm";
                     if (+obj.crop_factor  > 0) lensInfo["Crop factor"]  = obj.crop_factor.toFixed(2) + "x";
                     if (obj.asymmetrical) lensInfo["Asymmetrical"] = qsTr("Yes");
+                    root.distortionModel = obj.distortion_model || "opencv_fisheye";
                     if (obj.distortion_model && obj.distortion_model != "opencv_fisheye") lensInfo["Distortion model"] = obj.distortion_model;
                     if (obj.digital_lens) lensInfo["Digital lens"] = obj.digital_lens;
 
@@ -162,10 +199,16 @@ MenuItem {
                     const coeffs = obj.fisheye_params.distortion_coeffs;
                     root.distortionCoeffs = coeffs;
                     const mtrx = obj.fisheye_params.camera_matrix;
+                    // Guard the slider while we populate the k inputs so the
+                    // loaded coefficients are not overwritten by the slider's
+                    // own onValueChanged path.
+                    root._distortionInternalUpdate = true;
+                    distortionStrength.value = 0;
                     k1.setInitialValue(coeffs[0] || 0.0);
                     k2.setInitialValue(coeffs[1] || 0.0);
                     k3.setInitialValue(coeffs[2] || 0.0);
                     k4.setInitialValue(coeffs[3] || 0.0);
+                    root._distortionInternalUpdate = false;
                     fx.setInitialValue(mtrx[0][0]);
                     fy.setInitialValue(mtrx[1][1]);
                     cx.setInitialValue(mtrx[0][2]);
@@ -375,13 +418,23 @@ MenuItem {
 
         component SmallNumberField: NumberField {
             property bool preventChange2: true;
+            // When true, a manual edit of this field will silently reset the
+            // distortion strength slider to 0 (used for k1..k4 only).
+            property bool isDistortionCoeff: false;
             width: parent.width / 2;
             precision: 12;
             property string param: "  ";
             tooltip: param[0] + "<font size=\"1\">" + param[1] + "</font>"
             font.pixelSize: 11 * dpiScale;
             onValueChanged: {
-                if (!preventChange2) controller.set_lens_param(param, value);
+                if (!preventChange2) {
+                    controller.set_lens_param(param, value);
+                    if (isDistortionCoeff && !root._distortionInternalUpdate) {
+                        root._distortionInternalUpdate = true;
+                        distortionStrength.value = 0;
+                        root._distortionInternalUpdate = false;
+                    }
+                }
             }
             function setInitialValue(v: real): void {
                 preventChange2 = true;
@@ -416,17 +469,79 @@ MenuItem {
             Column {
                 spacing: 4 * dpiScale;
                 width: parent.width;
+
+                // Single-parameter distortion strength control. Drags the four
+                // k coefficients along the tan(theta)/theta Taylor curve so the
+                // user can dial in barrel / pincushion correction with one slider
+                // instead of typing four polynomial coefficients by hand.
+                // Only shown when the loaded lens uses the poly5 distortion model;
+                // other models map k1..k4 differently and the slider's Taylor
+                // mapping would not produce the intended visual effect.
+                Row {
+                    spacing: 6 * dpiScale;
+                    width: parent.width;
+                    visible: root.distortionModel === "poly5";
+                    height: visible ? implicitHeight : 0;
+
+                    SliderWithField {
+                        id: distortionStrength;
+                        width: parent.width - resetDistortionBtn.width - 6 * dpiScale;
+                        from: -100;
+                        to: 100;
+                        precision: 1;
+                        defaultValue: 0;
+                        value: 0;
+                        unit: "";
+                        // Subdivide each integer step into 10 sub-steps so the
+                        // perceptually-sensitive [0, 1] region of the slider can
+                        // be dialled in finely instead of jumping a full unit per
+                        // mouse pixel.
+                        Component.onCompleted: distortionStrength.slider.stepSize = 0.1;
+                        onValueChanged: {
+                            if (root._distortionInternalUpdate) return;
+                            root.applyDistortionSliderValue(value);
+                        }
+                        HoverHandler { id: distortionHover; }
+                        ToolTip {
+                            visible: !isMobile && distortionHover.hovered && !distortionStrength.slider.pressed;
+                            delay: 400;
+                            text: qsTr("Drag to overwrite k1..k4 via tan(θ)/θ. Manually editing any k silently resets this slider to 0.");
+                        }
+                    }
+                    LinkButton {
+                        id: resetDistortionBtn;
+                        textColor: styleTextColor;
+                        iconName: "undo";
+                        leftPadding: 6 * dpiScale;
+                        rightPadding: 6 * dpiScale;
+                        topPadding: 6 * dpiScale;
+                        bottomPadding: 6 * dpiScale;
+                        anchors.verticalCenter: parent.verticalCenter;
+                        tooltip: qsTr("Drag the slider to overwrite k1..k4 via tan(θ)/θ. Manually editing a k silently resets the slider to 0. Click this button to clear slider and k1..k4 to 0.");
+                        onClicked: {
+                            root._distortionInternalUpdate = true;
+                            distortionStrength.value = 0;
+                            k1.setInitialValue(0.0);
+                            k2.setInitialValue(0.0);
+                            k3.setInitialValue(0.0);
+                            k4.setInitialValue(0.0);
+                            controller.set_distortion_coeffs(0.0, 0.0, 0.0, 0.0);
+                            root._distortionInternalUpdate = false;
+                        }
+                    }
+                }
+
                 Row {
                     spacing: 4 * dpiScale;
                     width: parent.width;
-                    SmallNumberField { id: k1; param: "k1"; precision: 16; }
-                    SmallNumberField { id: k2; param: "k2"; precision: 16; }
+                    SmallNumberField { id: k1; param: "k1"; precision: 16; isDistortionCoeff: true; }
+                    SmallNumberField { id: k2; param: "k2"; precision: 16; isDistortionCoeff: true; }
                 }
                 Row {
                     spacing: 4 * dpiScale;
                     width: parent.width;
-                    SmallNumberField { id: k3; param: "k3"; precision: 16; }
-                    SmallNumberField { id: k4; param: "k4"; precision: 16; }
+                    SmallNumberField { id: k3; param: "k3"; precision: 16; isDistortionCoeff: true; }
+                    SmallNumberField { id: k4; param: "k4"; precision: 16; isDistortionCoeff: true; }
                 }
             }
         }

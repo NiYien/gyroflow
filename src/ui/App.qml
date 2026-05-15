@@ -746,11 +746,13 @@ Rectangle {
                         // Gate on stable layout flags rather than dynamic `parent` reference,
                         // so the binding reliably re-evaluates after theme/mode toggles.
                         width: (window.isMobileLayout && window.isSimpleMode) ? mobileSimpleExportBtnCol.width : implicitWidth;
-                        // Queue path: when the render queue has pending jobs, run the
-                        // queue with export_project=2 so each job performs autosync and writes a
-                        // .gyroflow project file — no video encode. Uses the queue's built-in
-                        // parallel_renders for concurrency. Otherwise falls back to main-canvas sync.
-                        readonly property bool _queueMode: videoArea.queue && simpleExportBtnRow.queueRowCount > 0;
+                        // Queue path: only when the render queue panel is open AND has pending jobs,
+                        // run the queue with export_project=2 so each job performs autosync and writes
+                        // a .gyroflow project file — no video encode. Uses the queue's built-in
+                        // parallel_renders for concurrency. On the main canvas (panel collapsed, e.g.
+                        // after right-click Edit on a job) the button falls back to single-video sync,
+                        // matching simpleExportStabilizedBtn's batch-path predicate below.
+                        readonly property bool _queueMode: videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
                         readonly property int _queueMatchVersion: videoArea.queue ? videoArea.queue.matchVersion : -1;
                         readonly property bool _queueMotionReady: _queueMode && _queueMatchVersion >= 0 && render_queue.batch_motion_ready();
                         enabled: _queueMode

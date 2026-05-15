@@ -65,6 +65,26 @@ lazy_static::lazy_static! {
     static ref THREAD_POOL: rayon::ThreadPool = rayon::ThreadPoolBuilder::new().build().unwrap();
 }
 
+/// Reconcile a sensor-space (w, h) with the video's container-level rotation
+/// when the value is consumed as a render/output target. `LensProfile.output_dimension`
+/// is always stored in sensor space (the natural desqueezed shape of the recorded
+/// frame, ignoring rotation). For 90° / 270° rotations the displayed frame has
+/// width and height transposed relative to the sensor, so callers that derive a
+/// render target from sensor-space dimensions must swap (w, h). 0° / 180° (or any
+/// other rotation) passes through unchanged. Rotations come from container metadata
+/// and are integer-valued, so exact equality on `abs()` is sufficient.
+pub fn rotated_output_dim(
+    sensor: (usize, usize),
+    video_rotation: f64,
+) -> (usize, usize) {
+    let r = video_rotation.abs();
+    if r == 90.0 || r == 270.0 {
+        (sensor.1, sensor.0)
+    } else {
+        sensor
+    }
+}
+
 fn constrained_output_size(
     input_size: (usize, usize),
     requested_size: (usize, usize),
@@ -367,6 +387,25 @@ impl StabilizationManager {
         url: &str,
         preserve_existing_readout_if_missing: bool,
     ) {
+        self.apply_main_video_telemetry_impl(md, url, preserve_existing_readout_if_missing, true);
+    }
+
+    pub fn apply_main_video_telemetry_without_lens_group(
+        &self,
+        md: &mut gyro_source::FileMetadata,
+        url: &str,
+        preserve_existing_readout_if_missing: bool,
+    ) {
+        self.apply_main_video_telemetry_impl(md, url, preserve_existing_readout_if_missing, false);
+    }
+
+    fn apply_main_video_telemetry_impl(
+        &self,
+        md: &mut gyro_source::FileMetadata,
+        url: &str,
+        preserve_existing_readout_if_missing: bool,
+        apply_lens_group: bool,
+    ) {
         if md
             .detected_source
             .as_ref()
@@ -420,26 +459,28 @@ impl StabilizationManager {
         // Lens-group profile build. Pass the group config only when it should fill
         // missing focal length or apply manual-edit anamorphic; otherwise build from
         // telemetry auto focal only.
-        let manual_edit = self.lens_group_manual_edit.load(SeqCst);
-        if let Some(lens_index) = niyien_lens_presets::extract_lens_index(&md.additional_data) {
-            let group_cfg = self.lens_group_config.read().get(lens_index).cloned();
-            let cfg_for_build = group_cfg
-                .as_ref()
-                .and_then(|cfg| {
-                    niyien_lens_presets::effective_lens_group_config_for_build(
-                        manual_edit,
-                        cfg,
-                        md,
-                    )
-                });
-            let baseline = self.lens.read().clone();
-            if let Some(profile) = niyien_lens_presets::build_lens_profile(
-                md,
-                size,
-                cfg_for_build.as_ref(),
-                Some(&baseline),
-            ) {
-                *self.lens.write() = profile;
+        if apply_lens_group {
+            if let Some(lens_index) = niyien_lens_presets::extract_lens_index(&md.additional_data) {
+                let manual_edit = self.lens_group_manual_edit.load(SeqCst);
+                let group_cfg = self.lens_group_config.read().get(lens_index).cloned();
+                let cfg_for_build = group_cfg
+                    .as_ref()
+                    .and_then(|cfg| {
+                        niyien_lens_presets::effective_lens_group_config_for_build(
+                            manual_edit,
+                            cfg,
+                            md,
+                        )
+                    });
+                let baseline = self.lens.read().clone();
+                if let Some(profile) = niyien_lens_presets::build_lens_profile(
+                    md,
+                    size,
+                    cfg_for_build.as_ref(),
+                    Some(&baseline),
+                ) {
+                    *self.lens.write() = profile;
+                }
             }
         }
 
@@ -1854,6 +1895,27 @@ impl StabilizationManager {
         self.invalidate_smoothing();
     }
 
+    // Batched setter for the 4 OpenCV fisheye distortion coefficients.
+    // Acquires the lens lock once and invalidates smoothing once, so that the
+    // single-slider UI in LensProfile.qml triggers exactly one stabilization
+    // recompute per slider tick instead of four.
+    //
+    // If the lens profile starts with an empty distortion_coeffs vec (e.g. a
+    // camera-telemetry-driven workflow where no calibrated coefficients were
+    // populated), the vec is resized to length 4 with zeros before writing,
+    // so the slider always takes effect rather than silently no-oping.
+    pub fn set_distortion_coeffs(&self, k1: f64, k2: f64, k3: f64, k4: f64) {
+        let mut lens = self.lens.write();
+        if lens.fisheye_params.distortion_coeffs.len() < 4 {
+            lens.fisheye_params.distortion_coeffs.resize(4, 0.0);
+        }
+        lens.fisheye_params.distortion_coeffs[0] = k1;
+        lens.fisheye_params.distortion_coeffs[1] = k2;
+        lens.fisheye_params.distortion_coeffs[2] = k3;
+        lens.fisheye_params.distortion_coeffs[3] = k4;
+        self.invalidate_smoothing();
+    }
+
     pub fn set_user_focal_length(&self, focal_length_mm: f64) {
         let (w, h, frame_count, fps) = {
             let p = self.params.read();
@@ -1986,11 +2048,11 @@ impl StabilizationManager {
         cfg: &LensGroupConfig,
     ) -> Option<(usize, usize)> {
         let manual_edit = self.lens_group_manual_edit.load(SeqCst);
-        let (metadata_snapshot, size) = {
+        let (metadata_snapshot, size, video_rotation) = {
             let gyro = self.gyro.read();
             let md = gyro.file_metadata.read().clone();
             let p = self.params.read();
-            (md, (p.size.0, p.size.1))
+            (md, (p.size.0, p.size.1), p.video_rotation)
         };
         let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
             manual_edit,
@@ -2041,8 +2103,12 @@ impl StabilizationManager {
             self.set_lens_correction_amount(correction_percent / 100.0);
 
             if let Some(od) = out_dim {
-                self.set_output_size(od.w, od.h);
-                return Some((od.w, od.h));
+                // LensProfile.output_dimension is sensor-space; swap to display-space
+                // when video_rotation is 90/270 so the render target / Export panel
+                // dimensions reflect the displayed orientation.
+                let display_dim = rotated_output_dim((od.w, od.h), video_rotation);
+                self.set_output_size(display_dim.0, display_dim.1);
+                return Some(display_dim);
             } else {
                 // Revert to the source video's dimensions when the config has no
                 // anamorphic output dim.
@@ -3801,6 +3867,22 @@ mod tests {
     }
 
     #[test]
+    fn apply_main_video_telemetry_without_lens_group_does_not_mutate_shared_config() {
+        let source = include_str!("lib.rs");
+        let start = source
+            .find("pub fn apply_main_video_telemetry_without_lens_group")
+            .expect("helper function exists");
+        let end = source[start..]
+            .find("pub fn autoload_lens_from_camera_id")
+            .expect("next function exists");
+        let body = &source[start..start + end];
+
+        assert!(!body.contains("lens_group_config.write()"));
+        assert!(!body.contains("lens_group_manual_edit.swap"));
+        assert!(!body.contains("lens_group_manual_edit.store"));
+    }
+
+    #[test]
     fn set_user_focal_length_populates_empty_lens_identity_and_readout() {
         let manager = StabilizationManager::default();
         {
@@ -4942,6 +5024,226 @@ mod tests {
         assert_eq!(lens.fisheye_params.camera_matrix[0], [3100.0, 0.0, 960.0]);
         assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 3100.0, 540.0]);
         assert!(!lens.lens_group_override);
+    }
+
+    fn manager_with_sentinel_lens_group_baseline() -> StabilizationManager {
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = (1920, 1080);
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 0 }),
+                unit_pixel_focal_length: Some(100.0),
+                ..Default::default()
+            }
+            .into();
+        }
+        {
+            let mut lens = manager.lens.write();
+            lens.focal_length = Some(35.0);
+            lens.fisheye_params.distortion_coeffs = vec![0.1, 0.2, 0.3, 0.4];
+            lens.distortion_model = Some("poly5".to_owned());
+        }
+        manager.lens_group_manual_edit.store(true, SeqCst);
+        manager
+    }
+
+    fn lens_group_config_for_restore_test(
+        anamorphic_enabled: bool,
+        preset_id: Option<&str>,
+        squeeze_ratio: Option<f64>,
+    ) -> LensGroupConfig {
+        LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled,
+            preset_id: preset_id.map(str::to_owned),
+            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+            squeeze_ratio,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_restores_baseline_distortion_when_preset_switches_to_manual() {
+        let manager = manager_with_sentinel_lens_group_baseline();
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[0] = lens_group_config_for_restore_test(
+            true,
+            Some("blazar_viper_35mm_1_50x"),
+            None,
+        );
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
+        {
+            let lens = manager.lens.read();
+            assert_eq!(lens.distortion_model.as_deref(), Some("opencv_fisheye"));
+            assert_eq!(
+                lens.fisheye_params.distortion_coeffs,
+                vec![0.02, 0.26, -0.25, 0.0]
+            );
+        }
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[0] = lens_group_config_for_restore_test(true, None, Some(1.5));
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
+
+        let lens = manager.lens.read();
+        assert_eq!(lens.input_horizontal_stretch, 1.5);
+        assert_eq!(lens.input_vertical_stretch, 1.0);
+        assert_eq!(
+            lens.output_dimension.as_ref().map(|dim| (dim.w, dim.h)),
+            Some((2880, 1080))
+        );
+        assert_eq!(lens.distortion_model.as_deref(), Some("poly5"));
+        assert_eq!(
+            lens.fisheye_params.distortion_coeffs,
+            vec![0.1, 0.2, 0.3, 0.4]
+        );
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_restores_baseline_distortion_when_anamorphic_is_disabled() {
+        let manager = manager_with_sentinel_lens_group_baseline();
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[0] = lens_group_config_for_restore_test(
+            true,
+            Some("blazar_viper_35mm_1_50x"),
+            None,
+        );
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(0), Some((2880, 1080)));
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[0] = lens_group_config_for_restore_test(false, None, None);
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(0), Some((1920, 1080)));
+
+        let lens = manager.lens.read();
+        assert_eq!(lens.input_horizontal_stretch, 1.0);
+        assert_eq!(lens.input_vertical_stretch, 1.0);
+        assert!(lens.output_dimension.is_none());
+        assert_eq!(lens.distortion_model.as_deref(), Some("poly5"));
+        assert_eq!(
+            lens.fisheye_params.distortion_coeffs,
+            vec![0.1, 0.2, 0.3, 0.4]
+        );
+        assert!(manager.pre_anamorphic_backup.read().is_none());
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_swaps_output_for_rotated_vertical_anamorphic() {
+        // 1920x1080 source with metadata rotation 90° displays as 1080x1920.
+        // Vertical anamorphic 1.5x => sensor-space output_dimension = (1920, 1620),
+        // which must be returned to QML / written into params.output_size as the
+        // display-space swapped value (1620, 1920). The LensProfile itself stays
+        // sensor-space so .gyroflow round-trips are preserved.
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = (1920, 1080);
+            params.video_rotation = 90.0;
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 1 }),
+                unit_pixel_focal_length: Some(100.0),
+                lens_params: BTreeMap::from([(
+                    0,
+                    gyro_source::LensParams {
+                        focal_length: Some(31.0),
+                        pixel_focal_length: Some(3100.0),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            }
+            .into();
+        }
+        manager.lens_group_manual_edit.store(true, SeqCst);
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[1].focal_length_mm = Some(50.0);
+        configs[1].anamorphic_enabled = true;
+        configs[1].squeeze_direction = Some(niyien_lens_presets::SqueezeDirection::Vertical);
+        configs[1].squeeze_ratio = Some(1.5);
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((1620, 1920)));
+        assert_eq!(manager.params.read().output_size, (1620, 1920));
+
+        let lens = manager.lens.read();
+        assert_eq!(
+            lens.output_dimension.as_ref().map(|d| (d.w, d.h)),
+            Some((1920, 1620))
+        );
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_swaps_output_for_270_rotation_horizontal_anamorphic() {
+        // 1920x1080 source with metadata rotation 270° + horizontal anamorphic 1.33x.
+        // Sensor-space output_dimension = (2554, 1080), display-space = (1080, 2554).
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = (1920, 1080);
+            params.video_rotation = 270.0;
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 1 }),
+                unit_pixel_focal_length: Some(100.0),
+                lens_params: BTreeMap::from([(
+                    0,
+                    gyro_source::LensParams {
+                        focal_length: Some(31.0),
+                        pixel_focal_length: Some(3100.0),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            }
+            .into();
+        }
+        manager.lens_group_manual_edit.store(true, SeqCst);
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[1].focal_length_mm = Some(50.0);
+        configs[1].anamorphic_enabled = true;
+        configs[1].squeeze_direction = Some(niyien_lens_presets::SqueezeDirection::Horizontal);
+        configs[1].squeeze_ratio = Some(1.33);
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((1080, 2554)));
+        assert_eq!(manager.params.read().output_size, (1080, 2554));
+
+        let lens = manager.lens.read();
+        assert_eq!(
+            lens.output_dimension.as_ref().map(|d| (d.w, d.h)),
+            Some((2554, 1080))
+        );
+    }
+
+    #[test]
+    fn rotated_output_dim_swaps_at_90_and_270_only() {
+        assert_eq!(rotated_output_dim((1920, 1620), 0.0), (1920, 1620));
+        assert_eq!(rotated_output_dim((1920, 1620), 90.0), (1620, 1920));
+        assert_eq!(rotated_output_dim((1920, 1620), -90.0), (1620, 1920));
+        assert_eq!(rotated_output_dim((1920, 1620), 180.0), (1920, 1620));
+        assert_eq!(rotated_output_dim((2554, 1080), 270.0), (1080, 2554));
+        assert_eq!(rotated_output_dim((2554, 1080), -270.0), (1080, 2554));
     }
 
     #[test]

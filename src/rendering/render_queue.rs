@@ -217,6 +217,7 @@ struct JobLensMetadataBackup {
     lens_params: BTreeMap<i64, core::gyro_source::LensParams>,
     lens_positions: BTreeMap<i64, f64>,
     lens_profile: Option<serde_json::Value>,
+    clean_lens_profile: Option<core::lens_profile::LensProfile>,
     unit_pixel_focal_length: Option<f64>,
     camera_identifier: Option<CameraIdentifier>,
     detected_source: Option<String>,
@@ -229,12 +230,26 @@ impl JobLensMetadataBackup {
             lens_params: md.lens_params.clone(),
             lens_positions: md.lens_positions.clone(),
             lens_profile: md.lens_profile.clone(),
+            clean_lens_profile: None,
             unit_pixel_focal_length: md.unit_pixel_focal_length,
             camera_identifier: md.camera_identifier.clone(),
             detected_source: md.detected_source.clone(),
             frame_readout_time: md.frame_readout_time,
             frame_readout_direction: md.frame_readout_direction,
         }
+    }
+
+    fn from_metadata_and_lens(
+        md: &core::gyro_source::FileMetadata,
+        lens: &core::lens_profile::LensProfile,
+    ) -> Self {
+        let mut backup = Self::from_metadata(md);
+        backup.clean_lens_profile = Some(lens.clone());
+        backup
+    }
+
+    fn clean_lens_profile(&self) -> Option<&core::lens_profile::LensProfile> {
+        self.clean_lens_profile.as_ref()
     }
 
     fn apply_missing_to_metadata(&self, md: &mut core::gyro_source::FileMetadata) {
@@ -2105,7 +2120,8 @@ impl RenderQueue {
         let base_lens_metadata = {
             let gyro = stab.gyro.read();
             let md = gyro.file_metadata.read();
-            Some(JobLensMetadataBackup::from_metadata(&md))
+            let lens = stab.lens.read();
+            Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &lens))
         };
         let base_render_output_size = (render_options.output_width, render_options.output_height);
         let lens_group_index = {
@@ -4628,11 +4644,19 @@ impl RenderQueue {
                                 }
                                 if let Some(output_dim) = stab.lens.read().output_dimension.clone()
                                 {
+                                    // LensProfile.output_dimension is sensor-space; swap to
+                                    // display-space using the per-job video_rotation so the
+                                    // queue's render target matches the displayed orientation.
+                                    let video_rotation = stab.params.read().video_rotation;
+                                    let (display_w, display_h) = gyroflow_core::rotated_output_dim(
+                                        (output_dim.w, output_dim.h),
+                                        video_rotation,
+                                    );
                                     if !has_output_width {
-                                        render_options.output_width = output_dim.w;
+                                        render_options.output_width = display_w;
                                     }
                                     if !has_output_height {
-                                        render_options.output_height = output_dim.h;
+                                        render_options.output_height = display_h;
                                     }
                                 }
 
@@ -6429,7 +6453,8 @@ impl RenderQueue {
                 let base_lens_metadata = job.base_lens_metadata.clone().or_else(|| {
                     let gyro = stab.gyro.read();
                     let md = gyro.file_metadata.read();
-                    Some(JobLensMetadataBackup::from_metadata(&md))
+                    let lens = stab.lens.read();
+                    Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &lens))
                 })?;
                 let gyro_file_url = {
                     let gyro = stab.gyro.read();
@@ -6533,10 +6558,12 @@ impl RenderQueue {
                             let saved_sync_settings = stab.lens.read().sync_settings.clone();
                             let manual_edit =
                                 core::settings::get_bool("lens_group_manual_edit", false);
-                            *stab.lens_group_config.write() = effective_configs.clone();
-                            stab.lens_group_manual_edit.store(manual_edit, SeqCst);
 
-                            stab.apply_main_video_telemetry(&mut base_metadata, gyro_file_url, true);
+                            stab.apply_main_video_telemetry_without_lens_group(
+                                &mut base_metadata,
+                                gyro_file_url,
+                                true,
+                            );
                             *stab.camera_id.write() = base_metadata.camera_identifier.clone();
                             if let Err(err) = stab.autoload_lens_from_camera_id() {
                                 ::log::warn!(
@@ -6547,11 +6574,6 @@ impl RenderQueue {
                             }
                             sync_readout_params_from_lens(stab.as_ref());
 
-                            // Restore sync_settings that may have been lost during lens replacement
-                            if let Some(ss) = saved_sync_settings {
-                                stab.lens.write().sync_settings = Some(ss);
-                            }
-
                             if let Some(lens_index) = lens_index {
                                 if let Some(group_config) = effective_configs.get(lens_index) {
                                     let cfg_for_build =
@@ -6560,17 +6582,31 @@ impl RenderQueue {
                                             group_config,
                                             &base_metadata,
                                         );
-                                    let existing_lens = stab.lens.read().clone();
+                                    let clean_lens = base_lens_metadata
+                                        .clean_lens_profile()
+                                        .cloned()
+                                        .unwrap_or_else(|| stab.lens.read().clone());
                                     let profile = niyien_lens_presets::build_lens_profile(
                                         &base_metadata,
                                         size,
                                         cfg_for_build.as_ref(),
-                                        Some(&existing_lens),
+                                        Some(&clean_lens),
                                     );
                                     if let Some(profile) = profile {
                                         if let Some(output_dim) = profile.output_dimension.clone() {
-                                            updated_render_options.output_width = output_dim.w;
-                                            updated_render_options.output_height = output_dim.h;
+                                            // LensProfile.output_dimension is sensor-space;
+                                            // swap to display-space using the per-job
+                                            // video_rotation so the queue render target
+                                            // matches the displayed orientation.
+                                            let video_rotation =
+                                                stab.params.read().video_rotation;
+                                            let (display_w, display_h) =
+                                                gyroflow_core::rotated_output_dim(
+                                                    (output_dim.w, output_dim.h),
+                                                    video_rotation,
+                                                );
+                                            updated_render_options.output_width = display_w;
+                                            updated_render_options.output_height = display_h;
                                         }
                                         *stab.lens.write() = profile;
                                     }
@@ -6590,6 +6626,16 @@ impl RenderQueue {
                                         );
                                     stab.set_lens_correction_amount(correction_percent / 100.0);
                                 }
+                            }
+
+                            // Restore sync_settings that the lens replacements above
+                            // (apply_main_video_telemetry_without_lens_group, autoload_lens_from_camera_id,
+                            // build_lens_profile -> *stab.lens.write() = profile) repeatedly clear.
+                            // sync_settings holds RenderQueue's per-clip batch_match overrides
+                            // (initial_offset, search_size, do_autosync); losing it makes the next
+                            // batch sync skip work and emit 0-offset yellow status.
+                            if let Some(ss) = saved_sync_settings {
+                                stab.lens.write().sync_settings = Some(ss);
                             }
 
                             stab.set_output_size(
@@ -6731,7 +6777,8 @@ impl RenderQueue {
                         job.base_lens_metadata.clone().or_else(|| {
                             let gyro = stab.gyro.read();
                             let md = gyro.file_metadata.read();
-                            Some(JobLensMetadataBackup::from_metadata(&md))
+                            let lens = stab.lens.read();
+                            Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &lens))
                         }),
                         effective_lens_group_configs(job, &global_lens_group_config),
                     ),
@@ -7324,7 +7371,6 @@ impl RenderQueue {
                         if let Some(base_lens_metadata) = item.base_lens_metadata.as_ref() {
                             base_lens_metadata.apply_missing_to_metadata(&mut md);
                         }
-                        item.base_lens_metadata = Some(JobLensMetadataBackup::from_metadata(&md));
                         {
                             let mut statuses = lens_group_status.lock();
                             niyien_lens_presets::update_status_from_metadata(&mut statuses, &md);
@@ -7338,9 +7384,6 @@ impl RenderQueue {
                             .cloned();
                         let manual_edit =
                             core::settings::get_bool("lens_group_manual_edit", false);
-                        *item.stab.lens_group_config.write() =
-                            item.effective_lens_group_configs.clone();
-                        item.stab.lens_group_manual_edit.store(manual_edit, SeqCst);
                         let cfg_for_build = group_config
                             .as_ref()
                             .and_then(|cfg| {
@@ -7350,8 +7393,11 @@ impl RenderQueue {
                                     &md,
                                 )
                             });
-                        item.stab
-                            .apply_main_video_telemetry(&mut md, &item.gyro_path, true);
+                        item.stab.apply_main_video_telemetry_without_lens_group(
+                            &mut md,
+                            &item.gyro_path,
+                            true,
+                        );
                         let camera_id = md.camera_identifier.clone();
                         let lens_profile_metadata = lens_profile_metadata_for_group_build(&md);
 
@@ -7452,7 +7498,7 @@ impl RenderQueue {
                                 );
                                 gyro.file_metadata = Default::default();
                                 drop(params);
-                                gyro.load_from_telemetry(md);
+                                gyro.load_from_telemetry(md.clone());
                                 gyro.file_load_options = Default::default();
                             }
                             *item.stab.camera_id.write() = camera_id;
@@ -7473,6 +7519,9 @@ impl RenderQueue {
                                 );
                             }
                         }
+                        let clean_lens = item.stab.lens.read().clone();
+                        item.base_lens_metadata =
+                            Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &clean_lens));
 
                         if let Some(rotation) = auto_rotation {
                             ::log::info!(
@@ -7523,18 +7572,33 @@ impl RenderQueue {
                                 .map(|cfg| cfg.anamorphic_enabled)
                                 .unwrap_or(false);
                             let custom_lens_profile = group_config.as_ref().and_then(|_| {
-                                let existing_lens = item.stab.lens.read().clone();
+                                let clean_lens = item
+                                    .base_lens_metadata
+                                    .as_ref()
+                                    .and_then(JobLensMetadataBackup::clean_lens_profile)
+                                    .cloned()
+                                    .unwrap_or_else(|| item.stab.lens.read().clone());
                                 niyien_lens_presets::build_lens_profile(
                                     &lens_profile_metadata,
                                     size,
                                     cfg_for_build.as_ref(),
-                                    Some(&existing_lens),
+                                    Some(&clean_lens),
                                 )
                             });
                             if let Some(profile) = custom_lens_profile {
                                 if let Some(output_dim) = profile.output_dimension.clone() {
-                                    item.render_options.output_width = output_dim.w;
-                                    item.render_options.output_height = output_dim.h;
+                                    // LensProfile.output_dimension is sensor-space; swap to
+                                    // display-space using the per-job video_rotation so the
+                                    // queue render target matches the displayed orientation.
+                                    let video_rotation =
+                                        item.stab.params.read().video_rotation;
+                                    let (display_w, display_h) =
+                                        gyroflow_core::rotated_output_dim(
+                                            (output_dim.w, output_dim.h),
+                                            video_rotation,
+                                        );
+                                    item.render_options.output_width = display_w;
+                                    item.render_options.output_height = display_h;
                                 } else {
                                     item.render_options.output_width = item.base_render_output_size.0;
                                     item.render_options.output_height = item.base_render_output_size.1;
@@ -11431,11 +11495,17 @@ mod tests {
             group_config,
             &metadata,
         );
+        let clean_lens = job
+            .base_lens_metadata
+            .as_ref()
+            .and_then(JobLensMetadataBackup::clean_lens_profile)
+            .cloned()
+            .unwrap_or_else(|| stab.lens.read().clone());
         let profile = niyien_lens_presets::build_lens_profile(
             &metadata,
             stab.params.read().size,
             cfg_for_build.as_ref(),
-            Some(&stab.lens.read()),
+            Some(&clean_lens),
         )
         .unwrap();
         *stab.lens.write() = profile;
@@ -11448,6 +11518,208 @@ mod tests {
             false,
         )
         .unwrap()
+    }
+
+    fn job_with_sentinel_lens_group_baseline(
+        config: niyien_lens_presets::LensGroupConfig,
+    ) -> Job {
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.size = (1920, 1080);
+            params.frame_count = 1;
+            params.fps = 30.0;
+        }
+        {
+            let mut lens = stab.lens.write();
+            lens.focal_length = Some(35.0);
+            lens.fisheye_params.distortion_coeffs = vec![0.1, 0.2, 0.3, 0.4];
+            lens.distortion_model = Some("poly5".to_owned());
+        }
+
+        let metadata = core::gyro_source::FileMetadata {
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        {
+            let mut gyro = stab.gyro.write();
+            gyro.file_metadata = metadata.clone().into();
+        }
+        let base_lens_metadata = {
+            let lens = stab.lens.read();
+            JobLensMetadataBackup::from_metadata_and_lens(&metadata, &lens)
+        };
+        let mut local_configs = niyien_lens_presets::default_lens_group_configs();
+        local_configs[0] = config;
+
+        Job {
+            queue_index: 0,
+            render_options: RenderOptions {
+                output_width: 1920,
+                output_height: 1080,
+                ..Default::default()
+            },
+            base_render_output_size: Some((1920, 1080)),
+            original_output_size: (0, 0),
+            auto_rotate: false,
+            additional_data: String::new(),
+            cancel_flag: Default::default(),
+            render_epoch: Default::default(),
+            project_data: None,
+            last_finished_export_project: None,
+            last_written_offsets: None,
+            stab: Some(stab),
+            base_lens_metadata: Some(base_lens_metadata),
+            lens_group_config_override: Some(JobLensGroupOverride {
+                configs: local_configs,
+                enabled_groups: vec![true, false, false, false, false, false],
+            }),
+            lens_group_index: Some(0),
+            video_created_at: None,
+            original_video_rotation: 0.0,
+        }
+    }
+
+    fn lens_group_config_for_restore_test(
+        anamorphic_enabled: bool,
+        preset_id: Option<&str>,
+        squeeze_ratio: Option<f64>,
+    ) -> niyien_lens_presets::LensGroupConfig {
+        niyien_lens_presets::LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            anamorphic_enabled,
+            preset_id: preset_id.map(str::to_owned),
+            squeeze_direction: Some(niyien_lens_presets::SqueezeDirection::Horizontal),
+            squeeze_ratio,
+            ..Default::default()
+        }
+    }
+
+    fn replace_job_lens_group_config(job: &mut Job, config: niyien_lens_presets::LensGroupConfig) {
+        let override_config = job
+            .lens_group_config_override
+            .as_mut()
+            .expect("local override");
+        override_config.configs[0] = config;
+    }
+
+    #[test]
+    fn selected_job_lens_group_manual_anamorphic_restores_baseline_distortion_after_preset() {
+        let mut job = job_with_sentinel_lens_group_baseline(lens_group_config_for_restore_test(
+            true,
+            Some("blazar_viper_35mm_1_50x"),
+            None,
+        ));
+
+        let preset_data = export_project_data_with_effective_job_lens_group(&job, true);
+        let preset_project: serde_json::Value = serde_json::from_str(&preset_data).unwrap();
+        assert_eq!(
+            preset_project["calibration_data"]["distortion_model"],
+            "opencv_fisheye"
+        );
+
+        replace_job_lens_group_config(
+            &mut job,
+            lens_group_config_for_restore_test(true, None, Some(1.5)),
+        );
+
+        let project_data = export_project_data_with_effective_job_lens_group(&job, true);
+        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+        let calibration = &project["calibration_data"];
+
+        assert_eq!(calibration["input_horizontal_stretch"], 1.5);
+        assert_eq!(
+            calibration["output_dimension"],
+            serde_json::json!({ "w": 2880, "h": 1080 })
+        );
+        assert_eq!(calibration["distortion_model"], "poly5");
+        assert_eq!(
+            calibration["fisheye_params"]["distortion_coeffs"],
+            serde_json::json!([0.1, 0.2, 0.3, 0.4])
+        );
+    }
+
+    #[test]
+    fn selected_job_lens_group_disabled_anamorphic_restores_baseline_distortion_after_preset() {
+        let mut job = job_with_sentinel_lens_group_baseline(lens_group_config_for_restore_test(
+            true,
+            Some("blazar_viper_35mm_1_50x"),
+            None,
+        ));
+
+        let preset_data = export_project_data_with_effective_job_lens_group(&job, true);
+        let preset_project: serde_json::Value = serde_json::from_str(&preset_data).unwrap();
+        assert_eq!(
+            preset_project["calibration_data"]["distortion_model"],
+            "opencv_fisheye"
+        );
+
+        replace_job_lens_group_config(
+            &mut job,
+            lens_group_config_for_restore_test(false, None, None),
+        );
+
+        let project_data = export_project_data_with_effective_job_lens_group(&job, true);
+        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+        let calibration = &project["calibration_data"];
+
+        assert_eq!(calibration["input_horizontal_stretch"], 1.0);
+        assert_eq!(calibration["input_vertical_stretch"], 1.0);
+        assert!(calibration["output_dimension"].is_null());
+        assert_ne!(
+            calibration["output_dimension"],
+            serde_json::json!({ "w": 2880, "h": 1080 })
+        );
+        assert_eq!(calibration["distortion_model"], "poly5");
+        assert_eq!(
+            calibration["fisheye_params"]["distortion_coeffs"],
+            serde_json::json!([0.1, 0.2, 0.3, 0.4])
+        );
+    }
+
+    #[test]
+    fn matched_gyro_backup_uses_fresh_lens_as_clean_baseline() {
+        let fresh_lens = {
+            let mut lens = core::lens_profile::LensProfile::default();
+            lens.distortion_model = Some("fresh_model".to_owned());
+            lens.fisheye_params.distortion_coeffs = vec![0.5, 0.6, 0.7, 0.8];
+            lens
+        };
+        let matched_metadata = core::gyro_source::FileMetadata {
+            detected_source: Some("matched".to_owned()),
+            ..Default::default()
+        };
+
+        let backup = JobLensMetadataBackup::from_metadata_and_lens(&matched_metadata, &fresh_lens);
+        let clean_lens = backup.clean_lens_profile().expect("fresh clean lens");
+
+        assert_eq!(backup.detected_source.as_deref(), Some("matched"));
+        assert_eq!(clean_lens.distortion_model.as_deref(), Some("fresh_model"));
+        assert_eq!(
+            clean_lens.fisheye_params.distortion_coeffs,
+            vec![0.5, 0.6, 0.7, 0.8]
+        );
+    }
+
+    #[test]
+    fn queue_lens_group_reapply_paths_do_not_mutate_shared_lens_group_state() {
+        let source = include_str!("render_queue.rs");
+        for (start_marker, end_marker) in [
+            (
+                "fn reapply_lens_group_config_filtered",
+                "fn apply_match_results_filtered",
+            ),
+            ("fn apply_match_results_filtered", "fn sort_jobs_by_created_at"),
+        ] {
+            let start = source.find(start_marker).expect(start_marker);
+            let end = source[start..].find(end_marker).expect(end_marker);
+            let body = &source[start..start + end];
+
+            assert!(!body.contains(".lens_group_config.write()"));
+            assert!(!body.contains(".lens_group_manual_edit.store"));
+        }
     }
 
     #[test]

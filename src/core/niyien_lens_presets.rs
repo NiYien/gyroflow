@@ -695,10 +695,16 @@ fn load_from_lens_package() -> Option<Vec<AnamorphicPreset>> {
     }
     match std::fs::read_to_string(&index_path) {
         Ok(index_json) => {
-            log::info!(
-                "loading lens presets from lens package at {}",
-                dir.display()
-            );
+            // Logged once per process — this function is called per-frame from
+            // lens-group reapply paths, so repeated emission was the single
+            // noisiest line in the log. Subsequent calls are completely silent.
+            static LOGGED_DIR: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            if LOGGED_DIR.set(()).is_ok() {
+                log::info!(
+                    "loading lens presets from lens package at {}",
+                    dir.display()
+                );
+            }
             let presets = load_presets_from_index(&index_json, Some(&dir), false);
             if presets.is_empty() {
                 log::warn!(
