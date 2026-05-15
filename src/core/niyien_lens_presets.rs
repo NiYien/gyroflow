@@ -546,11 +546,33 @@ pub fn build_lens_profile(
     else {
         return None;
     };
-    let Some(base_focal_px) =
-        sanitize_positive(metadata.unit_pixel_focal_length).map(|upfl| focal_length_mm * upfl)
-    else {
+
+    // Fallback chain for unit_pixel_focal_length:
+    //   1. metadata.unit_pixel_focal_length (telemetry-parser path)
+    //   2. derive from fallback_lens.fisheye_params.camera_matrix[0][0] / fallback_lens.focal_length
+    //      (recovers .gyroflow load path where the embedded file_metadata cbor lacks upfl)
+    let metadata_upfl = sanitize_positive(metadata.unit_pixel_focal_length);
+    let derived_upfl = if metadata_upfl.is_none() {
+        fallback_lens.and_then(|fb| {
+            let fx = fb.fisheye_params.camera_matrix.first()
+                .and_then(|row| row.first())
+                .copied()?;
+            let focal = fb.focal_length?;
+            // Anamorphic squeeze does not affect the relationship fx_sensor = focal * upfl
+            // because LensProfile.fisheye_params.camera_matrix stores sensor-space fx
+            // (build_lens_profile writes fx = focal * upfl regardless of stretch).
+            sanitize_positive(Some(fx / focal))
+        })
+    } else {
+        None
+    };
+    let Some(upfl) = metadata_upfl.or(derived_upfl) else {
         return None;
     };
+    if metadata_upfl.is_none() {
+        log::info!(target: "lens", "lens-group: upfl fallback-derived from fallback_lens (metadata had None): {upfl}");
+    }
+    let base_focal_px = focal_length_mm * upfl;
 
     let mut profile = fallback_lens.cloned().unwrap_or_default();
     populate_profile_metadata(&mut profile, metadata, fallback_lens, size);

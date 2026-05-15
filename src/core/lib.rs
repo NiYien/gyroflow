@@ -1060,9 +1060,6 @@ impl StabilizationManager {
                             .min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
                     }
                 }
-                log::debug!(
-                    "Max zoom iteration {iter}/{max_zoom_iters}, any above limit: {any_above_limit}"
-                );
                 if !any_above_limit {
                     if iter == 0 {
                         params.smoothing_fov_limit_per_frame.clear();
@@ -1315,7 +1312,6 @@ impl StabilizationManager {
                                 params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit).min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
                             }
                         }
-                        log::debug!("Max zoom iteration {iter}/{max_zoom_iters}, any above limit: {any_above_limit}");
                         if !any_above_limit {
                             if iter == 0 {
                                 params.smoothing_fov_limit_per_frame.clear();
