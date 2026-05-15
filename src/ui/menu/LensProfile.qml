@@ -40,7 +40,9 @@ MenuItem {
     // Unified reentrancy guard for any code path that programmatically updates
     // k1..k4 fields, D_mid / D_corner sliders, or the anchor input — so the
     // bidirectional bindings between D <-> k don't ping-pong on every keystroke.
-    property bool _internalUpdate: false;
+    // Counter (not boolean) so nested helper calls compose correctly: increment
+    // on entry, decrement on exit, treat > 0 as "update in progress".
+    property int _internalUpdate: 0;
 
     // Twin-bend distortion controls (poly5 only).
     //   anchorR  in [0.4, 0.9]: which on-screen ring D_mid refers to (r=1.0 is fixed for D_corner)
@@ -65,13 +67,13 @@ MenuItem {
         if (det < 1e-6) return;
         const k1Val = (root.dMid - ra4 * root.dCorner) / det;
         const k2Val = (ra2 * root.dCorner - root.dMid) / det;
-        root._internalUpdate = true;
+        root._internalUpdate++;
         k1.setInitialValue(k1Val);
         k2.setInitialValue(k2Val);
         k3.setInitialValue(0.0);
         k4.setInitialValue(0.0);
         controller.set_distortion_coeffs(k1Val, k2Val, 0.0, 0.0);
-        root._internalUpdate = false;
+        root._internalUpdate--;
     }
 
     // External k1, k2 provided (e.g. from lens preset load or manual k field edit).
@@ -88,10 +90,10 @@ MenuItem {
         root.dCorner = k1.value + k2.value;
         // TODO: remove typeof guards after Task 2 lands the slider UI.
         if (typeof distortionMidSlider === "undefined" || typeof distortionCornerSlider === "undefined") return;
-        root._internalUpdate = true;
+        root._internalUpdate++;
         distortionMidSlider.value    = root.dMid * 100.0;
         distortionCornerSlider.value = root.dCorner * 100.0;
-        root._internalUpdate = false;
+        root._internalUpdate--;
     }
 
     // Switch anchor position. Semantics B: D values stay, k recomputed.
@@ -104,7 +106,7 @@ MenuItem {
 
     // One-button reset for the entire distortion block.
     function resetDistortion(): void {
-        root._internalUpdate = true;
+        root._internalUpdate++;
         root.dMid = 0.0;
         root.dCorner = 0.0;
         root.anchorR = 0.5;
@@ -117,7 +119,7 @@ MenuItem {
         k3.setInitialValue(0.0);
         k4.setInitialValue(0.0);
         controller.set_distortion_coeffs(0.0, 0.0, 0.0, 0.0);
-        root._internalUpdate = false;
+        root._internalUpdate--;
     }
 
     FileDialog {
@@ -253,13 +255,12 @@ MenuItem {
                     const mtrx = obj.fisheye_params.camera_matrix;
                     // Populate k1..k4 from lens preset; D_mid / D_corner sliders
                     // will be synced after Task 2 wires up deriveDFromK().
-                    root._internalUpdate = true;
-                    distortionStrength.value = 0;
+                    root._internalUpdate++;
                     k1.setInitialValue(coeffs[0] || 0.0);
                     k2.setInitialValue(coeffs[1] || 0.0);
                     k3.setInitialValue(coeffs[2] || 0.0);
                     k4.setInitialValue(coeffs[3] || 0.0);
-                    root._internalUpdate = false;
+                    root._internalUpdate--;
                     fx.setInitialValue(mtrx[0][0]);
                     fy.setInitialValue(mtrx[1][1]);
                     cx.setInitialValue(mtrx[0][2]);
@@ -480,7 +481,7 @@ MenuItem {
             onValueChanged: {
                 if (!preventChange2) {
                     controller.set_lens_param(param, value);
-                    if (isDistortionCoeff && !root._internalUpdate) {
+                    if (isDistortionCoeff && root._internalUpdate === 0) {
                         // User typed a new k1 / k2 by hand: recompute D_mid /
                         // D_corner under current anchorR so the twin sliders
                         // stay in sync. deriveDFromK is wired up after Task 2.
@@ -524,65 +525,156 @@ MenuItem {
                 spacing: 4 * dpiScale;
                 width: parent.width;
 
-                // Single-parameter distortion strength control. Drags the four
-                // k coefficients along the tan(theta)/theta Taylor curve so the
-                // user can dial in barrel / pincushion correction with one slider
-                // instead of typing four polynomial coefficients by hand.
-                // Only shown when the loaded lens uses the poly5 distortion model;
-                // other models map k1..k4 differently and the slider's Taylor
-                // mapping would not produce the intended visual effect.
-                // TODO(task-2): delete this whole Row — replaced by anchor + twin-bend UI.
-                Row {
-                    spacing: 6 * dpiScale;
+                // Twin-bend control (poly5 only). Two physical knobs:
+                //   - "Bend @ r=[X]": warp ratio at user-chosen ring (anchorR)
+                //   - "Corner bend @ r=1.0": warp ratio at frame corners
+                // Plus a small anchor input + 4 anchor presets (inner/default/wide/ultrawide).
+                // Math: D = k1*r^2 + k2*r^4. Solve 2x2 for k1, k2 each time D or anchor changes.
+                Column {
+                    spacing: 4 * dpiScale;
                     width: parent.width;
                     visible: root.distortionModel === "poly5";
                     height: visible ? implicitHeight : 0;
 
-                    SliderWithField {
-                        id: distortionStrength;
-                        width: parent.width - resetDistortionBtn.width - 6 * dpiScale;
-                        from: -100;
-                        to: 100;
-                        precision: 1;
-                        defaultValue: 0;
-                        value: 0;
-                        unit: "";
-                        // Subdivide each integer step into 10 sub-steps so the
-                        // perceptually-sensitive [0, 1] region of the slider can
-                        // be dialled in finely instead of jumping a full unit per
-                        // mouse pixel.
-                        Component.onCompleted: distortionStrength.slider.stepSize = 0.1;
-                        onValueChanged: {
-                            if (root._internalUpdate) return;
-                            // Disabled in Task 1: function removed, slider replaced in Task 2.
-                            // root.applyDistortionSliderValue(value);
+                    // Anchor preset buttons (inner / default / wide / ultra-wide)
+                    Row {
+                        spacing: 4 * dpiScale;
+                        width: parent.width;
+                        BasicText {
+                            text: qsTr("Anchor:");
+                            anchors.verticalCenter: parent.verticalCenter;
                         }
-                        HoverHandler { id: distortionHover; }
-                        ToolTip {
-                            visible: !isMobile && distortionHover.hovered && !distortionStrength.slider.pressed;
-                            delay: 400;
-                            text: qsTr("Drag to overwrite k1..k4 via tan(θ)/θ. Manually editing any k silently resets this slider to 0.");
+                        Button {
+                            text: "0.4";
+                            font.pixelSize: 10 * dpiScale;
+                            leftPadding: 6 * dpiScale;
+                            rightPadding: 6 * dpiScale;
+                            topPadding: 2 * dpiScale;
+                            bottomPadding: 2 * dpiScale;
+                            onClicked: root.setAnchor(0.4);
+                            ToolTip.visible: hovered;
+                            ToolTip.delay: 400;
+                            ToolTip.text: qsTr("Inner ring — narrow / tele lenses");
+                        }
+                        Button {
+                            text: "0.5";
+                            font.pixelSize: 10 * dpiScale;
+                            leftPadding: 6 * dpiScale;
+                            rightPadding: 6 * dpiScale;
+                            topPadding: 2 * dpiScale;
+                            bottomPadding: 2 * dpiScale;
+                            onClicked: root.setAnchor(0.5);
+                            ToolTip.visible: hovered;
+                            ToolTip.delay: 400;
+                            ToolTip.text: qsTr("Default — normal lenses");
+                        }
+                        Button {
+                            text: "0.7";
+                            font.pixelSize: 10 * dpiScale;
+                            leftPadding: 6 * dpiScale;
+                            rightPadding: 6 * dpiScale;
+                            topPadding: 2 * dpiScale;
+                            bottomPadding: 2 * dpiScale;
+                            onClicked: root.setAnchor(0.7);
+                            ToolTip.visible: hovered;
+                            ToolTip.delay: 400;
+                            ToolTip.text: qsTr("Wider — ultra-wide / anamorphic");
+                        }
+                        Button {
+                            text: "0.85";
+                            font.pixelSize: 10 * dpiScale;
+                            leftPadding: 6 * dpiScale;
+                            rightPadding: 6 * dpiScale;
+                            topPadding: 2 * dpiScale;
+                            bottomPadding: 2 * dpiScale;
+                            onClicked: root.setAnchor(0.85);
+                            ToolTip.visible: hovered;
+                            ToolTip.delay: 400;
+                            ToolTip.text: qsTr("Ultra-wide / fisheye");
                         }
                     }
-                    LinkButton {
-                        id: resetDistortionBtn;
-                        textColor: styleTextColor;
-                        iconName: "undo";
-                        leftPadding: 6 * dpiScale;
-                        rightPadding: 6 * dpiScale;
-                        topPadding: 6 * dpiScale;
-                        bottomPadding: 6 * dpiScale;
-                        anchors.verticalCenter: parent.verticalCenter;
-                        tooltip: qsTr("Drag the slider to overwrite k1..k4 via tan(θ)/θ. Manually editing a k silently resets the slider to 0. Click this button to clear slider and k1..k4 to 0.");
-                        onClicked: {
-                            root._internalUpdate = true;
-                            distortionStrength.value = 0;
-                            k1.setInitialValue(0.0);
-                            k2.setInitialValue(0.0);
-                            k3.setInitialValue(0.0);
-                            k4.setInitialValue(0.0);
-                            controller.set_distortion_coeffs(0.0, 0.0, 0.0, 0.0);
-                            root._internalUpdate = false;
+
+                    // Anchor numeric input + D_mid slider + reset button
+                    Row {
+                        spacing: 4 * dpiScale;
+                        width: parent.width;
+                        BasicText {
+                            text: qsTr("Bend @ r=");
+                            anchors.verticalCenter: parent.verticalCenter;
+                        }
+                        TextField {
+                            id: anchorInput;
+                            text: root.anchorR.toFixed(2);
+                            width: 44 * dpiScale;
+                            font.pixelSize: 11 * dpiScale;
+                            horizontalAlignment: TextInput.AlignHCenter;
+                            anchors.verticalCenter: parent.verticalCenter;
+                            validator: DoubleValidator { bottom: 0.4; top: 0.9; decimals: 2; notation: DoubleValidator.StandardNotation; }
+                            onEditingFinished: {
+                                const v = Math.max(0.4, Math.min(0.9, parseFloat(text) || 0.5));
+                                if (Math.abs(v - root.anchorR) > 1e-6) {
+                                    root.setAnchor(v);
+                                } else {
+                                    text = root.anchorR.toFixed(2);
+                                }
+                            }
+                            ToolTip.visible: hovered;
+                            ToolTip.delay: 400;
+                            ToolTip.text: qsTr("Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.");
+                        }
+                        SliderWithField {
+                            id: distortionMidSlider;
+                            width: parent.width - x - resetDistortionBtn.width - 6 * dpiScale;
+                            from: -30;
+                            to: 30;
+                            precision: 1;
+                            defaultValue: 0;
+                            value: 0;
+                            unit: "%";
+                            Component.onCompleted: distortionMidSlider.slider.stepSize = 0.1;
+                            onValueChanged: {
+                                if (root._internalUpdate > 0) return;
+                                root.dMid = value / 100.0;
+                                root.deriveK();
+                            }
+                        }
+                        LinkButton {
+                            id: resetDistortionBtn;
+                            textColor: styleTextColor;
+                            iconName: "undo";
+                            leftPadding: 6 * dpiScale;
+                            rightPadding: 6 * dpiScale;
+                            topPadding: 6 * dpiScale;
+                            bottomPadding: 6 * dpiScale;
+                            anchors.verticalCenter: parent.verticalCenter;
+                            tooltip: qsTr("Reset bend / corner / anchor and clear k1..k4.");
+                            onClicked: root.resetDistortion();
+                        }
+                    }
+
+                    // D_corner slider (corner always at r=1.0)
+                    Row {
+                        spacing: 4 * dpiScale;
+                        width: parent.width;
+                        BasicText {
+                            text: qsTr("Corner bend @ r=1.0");
+                            anchors.verticalCenter: parent.verticalCenter;
+                        }
+                        SliderWithField {
+                            id: distortionCornerSlider;
+                            width: parent.width - x;
+                            from: -50;
+                            to: 50;
+                            precision: 1;
+                            defaultValue: 0;
+                            value: 0;
+                            unit: "%";
+                            Component.onCompleted: distortionCornerSlider.slider.stepSize = 0.1;
+                            onValueChanged: {
+                                if (root._internalUpdate > 0) return;
+                                root.dCorner = value / 100.0;
+                                root.deriveK();
+                            }
                         }
                     }
                 }
