@@ -37,35 +37,77 @@ MenuItem {
     property bool fetched_from_github: false;
     property bool selected_manually: false;
 
-    // Re-entrancy guard for the bidirectional binding between the distortion
-    // strength slider and the four k1..k4 number fields. Set to true around
-    // programmatic writes (slider drag, profile load, reset) so the SmallNumberField
-    // onValueChanged handlers below do not snap the slider back to 0.
-    property bool _distortionInternalUpdate: false;
+    // Unified reentrancy guard for any code path that programmatically updates
+    // k1..k4 fields, D_mid / D_corner sliders, or the anchor input — so the
+    // bidirectional bindings between D <-> k don't ping-pong on every keystroke.
+    property bool _internalUpdate: false;
 
-    // Designed for the Poly5 distortion_model (lens preset must be set to
-    // "poly5" externally for this slider to take effect). Poly5 forward is
-    //   r' = r * (1 + k1*r^2 + k2*r^4)
-    // We borrow the first two terms of the Taylor expansion of tan(r):
-    //   tan(r) = r + r^3/3 + 2*r^5/15 + 17*r^7/315 + ...
-    // and treat the slider value s in [-100, +100] as a strength scalar
-    // alpha = s/100 that linearly interpolates between identity (alpha=0)
-    // and "first-order fisheye -> rectilinear" (alpha=1). Mapping:
-    //   k1 = alpha / 3
-    //   k2 = 2 * alpha / 15
-    //   k3 = k4 = 0  (Poly5 ignores them but we clear the UI fields for
-    //                 visual consistency)
-    function applyDistortionSliderValue(s: real): void {
-        const alpha = s / 100.0;
-        const k1Val = alpha / 3.0;
-        const k2Val = 2.0 * alpha / 15.0;
-        root._distortionInternalUpdate = true;
+    // Twin-bend distortion controls (poly5 only).
+    //   anchorR  in [0.4, 0.9]: which on-screen ring D_mid refers to (r=1.0 is fixed for D_corner)
+    //   dMid     in fraction (e.g. -0.056 = -5.6%): bend ratio at r=anchorR
+    //   dCorner  in fraction: bend ratio at r=1.0
+    // Source of truth: dMid, dCorner, anchorR. Derived: k1, k2 = solve linear system.
+    // See docs/superpowers/specs/2026-05-15-poly5-anchored-twin-bend-design.md.
+    property real anchorR: 0.5;
+    property real dMid: 0.0;
+    property real dCorner: 0.0;
+
+    // Derive k1, k2 from current state and push to controller + k1/k2 fields.
+    // Math: k1 = (dMid - r_a^4 * dCorner) / det,  k2 = (r_a^2 * dCorner - dMid) / det,
+    //       det = r_a^2 * (1 - r_a^2).
+    function deriveK(): void {
+        const ra2 = root.anchorR * root.anchorR;
+        const ra4 = ra2 * ra2;
+        const det = ra2 * (1.0 - ra2);
+        const k1Val = (root.dMid - ra4 * root.dCorner) / det;
+        const k2Val = (ra2 * root.dCorner - root.dMid) / det;
+        root._internalUpdate = true;
         k1.setInitialValue(k1Val);
         k2.setInitialValue(k2Val);
         k3.setInitialValue(0.0);
         k4.setInitialValue(0.0);
         controller.set_distortion_coeffs(k1Val, k2Val, 0.0, 0.0);
-        root._distortionInternalUpdate = false;
+        root._internalUpdate = false;
+    }
+
+    // External k1, k2 provided (e.g. from lens preset load or manual k field edit).
+    // Recompute dMid / dCorner under current anchorR and push to sliders without
+    // re-triggering deriveK. Guarded against being called before Task 2 wires up
+    // the slider ids (typeof check returns "undefined" pre-Task-2).
+    function deriveDFromK(): void {
+        if (typeof distortionMidSlider === "undefined" || typeof distortionCornerSlider === "undefined") return;
+        const ra2 = root.anchorR * root.anchorR;
+        const ra4 = ra2 * ra2;
+        root.dMid    = k1.value * ra2 + k2.value * ra4;
+        root.dCorner = k1.value + k2.value;
+        root._internalUpdate = true;
+        distortionMidSlider.value    = root.dMid * 100.0;
+        distortionCornerSlider.value = root.dCorner * 100.0;
+        root._internalUpdate = false;
+    }
+
+    // Switch anchor position. Semantics B: D values stay, k recomputed.
+    function setAnchor(newR: real): void {
+        root.anchorR = newR;
+        if (typeof anchorInput !== "undefined") anchorInput.text = newR.toFixed(2);
+        deriveK();
+    }
+
+    // One-button reset for the entire distortion block.
+    function resetDistortion(): void {
+        root._internalUpdate = true;
+        root.dMid = 0.0;
+        root.dCorner = 0.0;
+        root.anchorR = 0.5;
+        if (typeof anchorInput !== "undefined") anchorInput.text = "0.50";
+        if (typeof distortionMidSlider !== "undefined") distortionMidSlider.value = 0;
+        if (typeof distortionCornerSlider !== "undefined") distortionCornerSlider.value = 0;
+        k1.setInitialValue(0.0);
+        k2.setInitialValue(0.0);
+        k3.setInitialValue(0.0);
+        k4.setInitialValue(0.0);
+        controller.set_distortion_coeffs(0.0, 0.0, 0.0, 0.0);
+        root._internalUpdate = false;
     }
 
     FileDialog {
@@ -199,16 +241,15 @@ MenuItem {
                     const coeffs = obj.fisheye_params.distortion_coeffs;
                     root.distortionCoeffs = coeffs;
                     const mtrx = obj.fisheye_params.camera_matrix;
-                    // Guard the slider while we populate the k inputs so the
-                    // loaded coefficients are not overwritten by the slider's
-                    // own onValueChanged path.
-                    root._distortionInternalUpdate = true;
+                    // Populate k1..k4 from lens preset; D_mid / D_corner sliders
+                    // will be synced after Task 2 wires up deriveDFromK().
+                    root._internalUpdate = true;
                     distortionStrength.value = 0;
                     k1.setInitialValue(coeffs[0] || 0.0);
                     k2.setInitialValue(coeffs[1] || 0.0);
                     k3.setInitialValue(coeffs[2] || 0.0);
                     k4.setInitialValue(coeffs[3] || 0.0);
-                    root._distortionInternalUpdate = false;
+                    root._internalUpdate = false;
                     fx.setInitialValue(mtrx[0][0]);
                     fy.setInitialValue(mtrx[1][1]);
                     cx.setInitialValue(mtrx[0][2]);
@@ -429,10 +470,13 @@ MenuItem {
             onValueChanged: {
                 if (!preventChange2) {
                     controller.set_lens_param(param, value);
-                    if (isDistortionCoeff && !root._distortionInternalUpdate) {
-                        root._distortionInternalUpdate = true;
-                        distortionStrength.value = 0;
-                        root._distortionInternalUpdate = false;
+                    if (isDistortionCoeff && !root._internalUpdate) {
+                        // User typed a new k1 / k2 by hand: recompute D_mid /
+                        // D_corner under current anchorR so the twin sliders
+                        // stay in sync. deriveDFromK is wired up after Task 2.
+                        if (root.distortionModel === "poly5" && typeof root.deriveDFromK === "function") {
+                            root.deriveDFromK();
+                        }
                     }
                 }
             }
@@ -498,8 +542,9 @@ MenuItem {
                         // mouse pixel.
                         Component.onCompleted: distortionStrength.slider.stepSize = 0.1;
                         onValueChanged: {
-                            if (root._distortionInternalUpdate) return;
-                            root.applyDistortionSliderValue(value);
+                            if (root._internalUpdate) return;
+                            // Disabled in Task 1: function removed, slider replaced in Task 2.
+                            // root.applyDistortionSliderValue(value);
                         }
                         HoverHandler { id: distortionHover; }
                         ToolTip {
@@ -519,14 +564,14 @@ MenuItem {
                         anchors.verticalCenter: parent.verticalCenter;
                         tooltip: qsTr("Drag the slider to overwrite k1..k4 via tan(θ)/θ. Manually editing a k silently resets the slider to 0. Click this button to clear slider and k1..k4 to 0.");
                         onClicked: {
-                            root._distortionInternalUpdate = true;
+                            root._internalUpdate = true;
                             distortionStrength.value = 0;
                             k1.setInitialValue(0.0);
                             k2.setInitialValue(0.0);
                             k3.setInitialValue(0.0);
                             k4.setInitialValue(0.0);
                             controller.set_distortion_coeffs(0.0, 0.0, 0.0, 0.0);
-                            root._distortionInternalUpdate = false;
+                            root._internalUpdate = false;
                         }
                     }
                 }
