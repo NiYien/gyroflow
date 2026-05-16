@@ -19,12 +19,21 @@ Rectangle {
     // ---- public API ----
     property bool crashMode: false;
     property int  pendingCrashCount: 0;
+    // Paths of the crash zips this dialog instance is "covering". The Cancel
+    // / Esc / outside-click paths persist `.dismissed` sidecars for each so
+    // the startup auto-prompt does not return on next launch. Manual menu
+    // entry leaves this empty — no dismiss markers written.
+    property var  pendingCrashPaths: [];
+    // Latch so a successful Submit doesn't also write dismiss markers when
+    // the dialog closes from the FeedbackCompleted handler.
+    property bool _submitting: false;
 
     function open(): void {
         opacity = 0; visible = true; opAnim.start();
         statusLabel.text = "";
         progressBar.visible = false;
         submitBtn.enabled = true;
+        _submitting = false;
         if (root.crashMode) {
             descArea.text = "";
         } else {
@@ -33,6 +42,12 @@ Rectangle {
         emailField.text = "";
     }
     function close(): void {
+        // Dismiss = user did not submit. In crash mode, mark each covered
+        // zip so the auto-prompt does not re-trigger on next launch. Manual
+        // menu entry has pendingCrashPaths === [] → no-op.
+        if (root.crashMode && !_submitting && root.pendingCrashPaths && root.pendingCrashPaths.length > 0) {
+            controller.dismissCrashZips(root.pendingCrashPaths);
+        }
         opacityAnim2.start();
     }
     NumberAnimation { id: opAnim;       target: root; property: "opacity"; from: 0; to: 1; duration: 150 }
@@ -152,6 +167,7 @@ Rectangle {
                     enabled: root.isValidEmail(emailField.text);
                     onClicked: {
                         submitBtn.enabled = false;
+                        root._submitting = true;
                         statusLabel.text = qsTr("Packaging…");
                         // Empty options JSON — Rust side defaults all toggles to true.
                         controller.submitFeedback(descArea.text, emailField.text, "{}");

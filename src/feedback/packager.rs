@@ -144,6 +144,21 @@ struct ManifestJson<'a> {
     ts:              String,
     files:           Vec<String>,
     sha256_per_file: BTreeMap<String, String>,
+    // `<zip_entry_name> -> N` when the local `<base>.repeats` sidecar
+    // existed at packaging time. Omitted entirely when no sidecar is
+    // present (consumers MUST treat absence as count = 1, never default
+    // a literal — see feedback-submission spec).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    crash_repeats:   BTreeMap<String, u64>,
+}
+
+/// Read `<zip>.repeats` and parse the integer, returning `None` when the
+/// sidecar is missing or unparseable. Used at packaging time to attach the
+/// repeats count to the manifest.
+fn read_repeats_sidecar(zip_path: &Path) -> Option<u64> {
+    let sidecar = zip_path.with_extension("repeats");
+    let raw = std::fs::read_to_string(&sidecar).ok()?;
+    raw.trim().parse::<u64>().ok()
 }
 
 /// Pack the selected inputs into an in-memory zip. Returns `(bytes, sha256_hex)`.
@@ -204,6 +219,19 @@ pub fn pack(
     let mut buf: Vec<u8> = Vec::with_capacity(512 * 1024);
     let mut sha256_per_file: BTreeMap<String, String> = BTreeMap::new();
     let mut file_list: Vec<String> = Vec::new();
+    let mut crash_repeats: BTreeMap<String, u64> = BTreeMap::new();
+
+    // Pre-scan crash zips for `.repeats` sidecars so the manifest can
+    // surface "this bug actually triggered N times" without requiring the
+    // receiver to inspect raw filesystem state.
+    if options.include_crashes {
+        for p in &inputs.crash_zips {
+            if let Some(n) = read_repeats_sidecar(p) {
+                let name = p.file_name().and_then(|s| s.to_str()).unwrap_or("crash.zip");
+                crash_repeats.insert(format!("crashes/{name}"), n);
+            }
+        }
+    }
     {
         let cursor = std::io::Cursor::new(&mut buf);
         let mut zw = zip::ZipWriter::new(cursor);
@@ -237,6 +265,7 @@ pub fn pack(
             ts:              chrono::Utc::now().to_rfc3339(),
             files:           file_list,
             sha256_per_file,
+            crash_repeats,
         };
         let manifest_bytes = serde_json::to_vec_pretty(&manifest)?;
         zw.start_file("manifest.json", opts)?;
@@ -348,6 +377,96 @@ mod tests {
         // 1024 + 2048 + manifest overhead
         assert!(est >= 3072);
         assert!(est < 8192);
+    }
+
+    #[test]
+    fn manifest_includes_repeats_when_sidecar_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let crash_zip = make_file(tmp.path(), "20260516T174801-30a5d1f9.zip", b"PK\x03\x04stub");
+        // Write the sibling .repeats sidecar with content "5".
+        std::fs::write(tmp.path().join("20260516T174801-30a5d1f9.repeats"), b"5").unwrap();
+
+        let inputs = PackageInputs { crash_zips: vec![crash_zip], ..Default::default() };
+        let mut opts = PackageOptions::default();
+        opts.include_current_log = false;
+        opts.include_history_logs = false;
+        opts.include_incidents = false;
+        opts.include_project = false;
+        opts.include_lens = false;
+        opts.include_queue_settings = false;
+        opts.include_system_info = false;
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+
+        // Extract manifest.json and verify the crash_repeats field.
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut manifest_str = String::new();
+        {
+            let mut f = zr.by_name("manifest.json").unwrap();
+            std::io::Read::read_to_string(&mut f, &mut manifest_str).unwrap();
+        }
+        let v: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+        let repeats = v.get("crash_repeats").expect("crash_repeats field present");
+        assert_eq!(repeats["crashes/20260516T174801-30a5d1f9.zip"], 5);
+    }
+
+    #[test]
+    fn manifest_omits_repeats_when_no_sidecar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let crash_zip = make_file(tmp.path(), "20260516T180000-abcd.zip", b"PK\x03\x04stub");
+        // Intentionally NO .repeats sidecar.
+        let inputs = PackageInputs { crash_zips: vec![crash_zip], ..Default::default() };
+        let opts = PackageOptions {
+            include_current_log:    false,
+            include_history_logs:   false,
+            include_incidents:      false,
+            include_project:        false,
+            include_video_meta:     false,
+            include_lens:           false,
+            include_queue_settings: false,
+            include_system_info:    false,
+            include_crashes:        true,
+        };
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut manifest_str = String::new();
+        {
+            let mut f = zr.by_name("manifest.json").unwrap();
+            std::io::Read::read_to_string(&mut f, &mut manifest_str).unwrap();
+        }
+        let v: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+        // Empty map skipped by `skip_serializing_if`: field must be absent.
+        assert!(v.get("crash_repeats").is_none(),
+                "crash_repeats must be omitted when no sidecar — found: {:?}",
+                v.get("crash_repeats"));
+    }
+
+    #[test]
+    fn manifest_omits_repeats_on_parse_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let crash_zip = make_file(tmp.path(), "20260516T190000-efgh.zip", b"PK\x03\x04");
+        std::fs::write(tmp.path().join("20260516T190000-efgh.repeats"), b"not a number").unwrap();
+
+        let inputs = PackageInputs { crash_zips: vec![crash_zip], ..Default::default() };
+        let opts = PackageOptions {
+            include_current_log:    false,
+            include_history_logs:   false,
+            include_incidents:      false,
+            include_project:        false,
+            include_video_meta:     false,
+            include_lens:           false,
+            include_queue_settings: false,
+            include_system_info:    false,
+            include_crashes:        true,
+        };
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut manifest_str = String::new();
+        {
+            let mut f = zr.by_name("manifest.json").unwrap();
+            std::io::Read::read_to_string(&mut f, &mut manifest_str).unwrap();
+        }
+        let v: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+        assert!(v.get("crash_repeats").is_none());
     }
 
     #[test]

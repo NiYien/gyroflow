@@ -2005,6 +2005,10 @@ Rectangle {
     Connections {
         target: controller;
         function onCrashCheckpointFound(count) {
+            // Crash-mode entry: pass the exact zip list the controller saw so
+            // a Cancel / Esc / outside-click can write `.dismissed` markers
+            // for only those zips. The auto-prompt won't reopen for them.
+            feedbackDialog.pendingCrashPaths = controller.pendingCrashPaths();
             feedbackDialog.crashMode = true;
             feedbackDialog.pendingCrashCount = count;
             feedbackDialog.open();

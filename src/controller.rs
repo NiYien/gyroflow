@@ -425,6 +425,10 @@ pub struct Controller {
     #[allow(non_snake_case)]
     scanCrashCheckpoints: qt_method!(fn(&mut self)),
     #[allow(non_snake_case)]
+    pendingCrashPaths: qt_method!(fn(&self) -> QVariantList),
+    #[allow(non_snake_case)]
+    dismissCrashZips: qt_method!(fn(&mut self, paths: QVariantList)),
+    #[allow(non_snake_case)]
     feedbackProgress: qt_signal!(stage: QString, pct: i32),
     #[allow(non_snake_case)]
     feedbackCompleted: qt_signal!(success: bool, id: QString, error: QString),
@@ -1991,8 +1995,21 @@ impl Controller {
                       ptr4,
                       ptr5|
                       -> bool {
+                    // Panic firewall: a panic anywhere inside the GPU dispatch
+                    // (e.g., ocl-core treating an unknown OpenCL error code as
+                    // `unreachable!`) would otherwise unwind across the C++
+                    // FFI back into Qt's render thread and cascade to DEVICE_REMOVED.
+                    // Catch it locally, log to target `video.render`, return
+                    // `false` so MDK schedules the next frame normally.
+                    // The chained panic hook in `crash.rs` still runs first and
+                    // writes (or merges into) the crash zip.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> bool {
                     if width < 4 || height < 4 || backend_id == 0 {
                         return false;
+                    }
+
+                    if std::env::var("GYROFLOW_RENDER_PANIC_TEST").as_deref() == Ok("1") {
+                        panic!("GYROFLOW_RENDER_PANIC_TEST=1: deliberate render-thread panic");
                     }
 
                     if !stab.params.read().stab_enabled {
@@ -2196,6 +2213,28 @@ impl Controller {
 
                     update_info2((1.0, 1.0, None, QString::from("---")));
                     false
+                    })); // end catch_unwind(AssertUnwindSafe(|| { ... }))
+
+                    match result {
+                        Ok(b) => b,
+                        Err(payload) => {
+                            let msg = payload
+                                .downcast_ref::<&str>()
+                                .copied()
+                                .map(|s| s.to_string())
+                                .or_else(|| payload.downcast_ref::<String>().cloned())
+                                .unwrap_or_else(|| "<non-string panic payload>".to_string());
+                            // The chained panic hook in `crash.rs` already
+                            // captured the source location into the zip;
+                            // here we only need to flag the catch for log
+                            // readers that don't open the zip.
+                            ::log::error!(target: "video.render", "render callback panic caught: {msg}");
+                            // Do NOT call update_info2 on the panic path:
+                            // those setters may themselves be in inconsistent
+                            // state right after a panic. UI keeps last frame's info.
+                            false
+                        }
+                    }
                 },
             ));
 
@@ -4752,6 +4791,41 @@ impl Controller {
         let count = crate::feedback::crash_pickup::scan().len() as i32;
         if count > 0 {
             self.crashCheckpointFound(count);
+        }
+    }
+
+    #[allow(non_snake_case)]
+    fn pendingCrashPaths(&self) -> QVariantList {
+        // Returns the same filtered list `scan()` used to decide whether to
+        // emit `crashCheckpointFound`, so the dialog can write `.dismissed`
+        // sidecars for exactly those zips on Cancel.
+        let mut list = QVariantList::default();
+        for p in crate::feedback::crash_pickup::scan() {
+            list.push(QString::from(p.to_string_lossy().to_string()).into());
+        }
+        list
+    }
+
+    #[allow(non_snake_case)]
+    fn dismissCrashZips(&mut self, paths: QVariantList) {
+        // For each path the dialog displayed, drop an empty `.dismissed`
+        // sidecar so `scan_and_notify` skips it on next launch. Manual menu
+        // entry stays unfiltered, so the user can reverse the decision.
+        for v in paths.into_iter() {
+            let s = v.to_qbytearray().to_string();
+            if s.is_empty() {
+                continue;
+            }
+            let zip_path = std::path::PathBuf::from(&s);
+            let marker = zip_path.with_extension("dismissed");
+            let base = zip_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("<unknown>");
+            match std::fs::File::create(&marker) {
+                Ok(_)  => ::log::info!(target: "feedback", "crash dismissed: {base}"),
+                Err(e) => ::log::warn!(target: "feedback", "crash dismiss failed for {base}: {e}"),
+            }
         }
     }
 }

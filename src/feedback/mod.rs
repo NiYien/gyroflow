@@ -47,6 +47,26 @@ pub fn pending_crash_zips() -> Vec<PathBuf> {
 /// Same as `pending_crash_zips` but takes the directory explicitly. Useful
 /// for unit tests and for callers that don't go through `logger::init`.
 pub fn pending_crash_zips_in(dir: &std::path::Path) -> Vec<PathBuf> {
+    pending_crash_zips_in_filtered(dir, false)
+}
+
+/// Variant that additionally drops any zip with a sibling `<base>.dismissed`
+/// marker. Used by the startup auto-prompt so a user who chose Cancel doesn't
+/// get re-prompted on next launch. The unfiltered `pending_crash_zips()` is
+/// still used by manual menu entry so the user can reverse the decision.
+pub fn pending_crash_zips_excluding_dismissed() -> Vec<PathBuf> {
+    let dir = match crate::logger::log_dir() {
+        Some(p) => p.join("crashes"),
+        None    => return Vec::new(),
+    };
+    pending_crash_zips_in_filtered(&dir, true)
+}
+
+pub fn pending_crash_zips_excluding_dismissed_in(dir: &std::path::Path) -> Vec<PathBuf> {
+    pending_crash_zips_in_filtered(dir, true)
+}
+
+fn pending_crash_zips_in_filtered(dir: &std::path::Path, exclude_dismissed: bool) -> Vec<PathBuf> {
     let entries = match std::fs::read_dir(dir) {
         Ok(it) => it,
         Err(_) => return Vec::new(),
@@ -61,6 +81,13 @@ pub fn pending_crash_zips_in(dir: &std::path::Path) -> Vec<PathBuf> {
         marker.set_extension("uploaded");
         if marker.exists() {
             continue;
+        }
+        if exclude_dismissed {
+            let mut dismissed = path.clone();
+            dismissed.set_extension("dismissed");
+            if dismissed.exists() {
+                continue;
+            }
         }
         zips.push(path);
     }
@@ -117,5 +144,54 @@ mod tests {
         let pending = pending_crash_zips_in(dir);
         assert_eq!(pending.len(), 1);
         assert!(pending[0].ends_with("bar.zip"));
+    }
+
+    #[test]
+    fn excluding_dismissed_drops_dismissed_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let z1 = dir.join("20260516T100000-aaaa.zip");
+        let z2 = dir.join("20260516T110000-bbbb.zip");
+        let z3 = dir.join("20260516T120000-cccc.zip");
+        touch(&z1);
+        touch(&z2);
+        touch(&z3);
+        // z2 dismissed; z3 uploaded; only z1 remains pending under the strict filter.
+        touch(&dir.join("20260516T110000-bbbb.dismissed"));
+        touch(&dir.join("20260516T120000-cccc.uploaded"));
+
+        let manual = pending_crash_zips_in(dir);
+        // Manual entry still sees the dismissed zip but not the uploaded one.
+        assert_eq!(manual, vec![z1.clone(), z2.clone()]);
+
+        let auto = pending_crash_zips_excluding_dismissed_in(dir);
+        assert_eq!(auto, vec![z1]);
+    }
+
+    #[test]
+    fn dismissed_plus_uploaded_uploaded_wins() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let z = dir.join("20260516T130000-dddd.zip");
+        touch(&z);
+        touch(&dir.join("20260516T130000-dddd.dismissed"));
+        touch(&dir.join("20260516T130000-dddd.uploaded"));
+        // Uploaded > dismissed in both functions: not pending in either.
+        assert!(pending_crash_zips_in(dir).is_empty());
+        assert!(pending_crash_zips_excluding_dismissed_in(dir).is_empty());
+    }
+
+    #[test]
+    fn no_dismissed_markers_means_both_filters_agree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        let z1 = dir.join("20260516T140000-eeee.zip");
+        let z2 = dir.join("20260516T150000-ffff.zip");
+        touch(&z1);
+        touch(&z2);
+        assert_eq!(
+            pending_crash_zips_in(dir),
+            pending_crash_zips_excluding_dismissed_in(dir),
+        );
     }
 }

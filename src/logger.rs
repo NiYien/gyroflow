@@ -298,6 +298,10 @@ pub fn init() {
     let _ = std::fs::create_dir_all(&crashes);
     let _ = LOG_DIR.set(dir.clone());
 
+    // 1a. Sweep orphan crash sidecars (`.repeats`/`.dismissed`/`.uploaded`
+    // whose sibling `<base>.zip` no longer exists). Silent + best-effort.
+    sweep_orphan_crash_sidecars(&crashes);
+
     // 2. Generate session id and seed LogContext.
     let sid = short_session_id();
     let _ = SESSION_ID.set(sid.clone());
@@ -333,5 +337,31 @@ pub fn init() {
     log::info!(target: "app", "Gyroflow session start: sid={sid} version={}", env!("CARGO_PKG_VERSION"));
     if let Some(e) = rotation_err {
         log::error!(target: "app", "Log rotation failed: {e}");
+    }
+}
+
+// Sweep stale `.repeats`/`.dismissed`/`.uploaded` sidecars whose
+// sibling zip has been manually deleted by the user. Silent on errors —
+// failure here is purely cosmetic and must not block startup.
+fn sweep_orphan_crash_sidecars(crashes: &Path) {
+    let entries = match std::fs::read_dir(crashes) {
+        Ok(it) => it,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ext = match path.extension().and_then(|s| s.to_str()) {
+            Some(e) => e,
+            None    => continue,
+        };
+        if !matches!(ext, "repeats" | "dismissed" | "uploaded") {
+            continue;
+        }
+        let zip = path.with_extension("zip");
+        if !zip.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                log::debug!(target: "app", "sweep_orphan_crash_sidecars: remove {path:?} failed: {e}");
+            }
+        }
     }
 }
