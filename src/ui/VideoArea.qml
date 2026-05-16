@@ -840,7 +840,13 @@ Item {
                         const focal_length = controller.current_focal_length;
                         const crop_factor = window.lensProfile?.cropFactor || 1.0;
                         // const ratio = controller.get_scaling_ratio(); // this shouldn't be called every frame because it locks the params mutex
-                        currentFovText.text = qsTr("Zoom: %1").arg(fov > 0? (100 / fov).toFixed(2) + "%" : "---");
+                        // Normalize per-frame fov so the displayed zoom % matches the panel's "Max zoom"
+                        // value for anamorphic clips (where render-side fov was *= width/output_width
+                        // and would otherwise inflate the displayed percentage). Mirrors the effective
+                        // input width used by StabilizationParams::set_fovs.
+                        const hStretch = Math.max(1.0, window.lensProfile?.input_horizontal_stretch || 1.0);
+                        const displayFov = fov * hStretch;
+                        currentFovText.text = qsTr("Zoom: %1").arg(displayFov > 0? (100 / displayFov).toFixed(2) + "%" : "---");
 
                         if (+focal_length > 0) {
                             const fl = +focal_length / fov;

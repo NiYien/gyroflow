@@ -217,9 +217,14 @@ impl StabilizationParams {
         }
     }
 
-    pub fn set_fovs(&mut self, fovs: Vec<f64>, mut lens_fov_adjustment: f64) {
+    pub fn set_fovs(&mut self, fovs: Vec<f64>, mut lens_fov_adjustment: f64, horizontal_stretch: f64) {
         if let Some(mut min_fov) = fovs.iter().copied().reduce(f64::min) {
-            min_fov *= self.size.0 as f64 / self.output_size.0.max(1) as f64;
+            // Use effective input width so anamorphic desqueezed outputs
+            // (output.0 > size.0 because squeezed pixels were stretched, not
+            // super-sampled) do not shrink min_fov. .max(1.0) keeps the physical
+            // floor: stretch < 1 (horizontal expansion) is not meaningful here.
+            let effective_input_w = self.size.0 as f64 * horizontal_stretch.max(1.0);
+            min_fov *= effective_input_w / self.output_size.0.max(1) as f64;
             if lens_fov_adjustment <= 0.0001 {
                 lens_fov_adjustment = 1.0
             };
@@ -330,5 +335,65 @@ impl StabilizationParams {
             max_zoom_iterations: self.max_zoom_iterations,
             ..Self::default()
         };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StabilizationParams;
+
+    fn make(size: (usize, usize), output_size: (usize, usize)) -> StabilizationParams {
+        let mut p = StabilizationParams::default();
+        p.size = size;
+        p.output_size = output_size;
+        p
+    }
+
+    #[test]
+    fn set_fovs_plain_1to1_leaves_min_fov_unchanged() {
+        let mut p = make((1920, 1080), (1920, 1080));
+        p.set_fovs(vec![0.9, 0.92, 0.95], 1.0, 1.0);
+        assert!((p.min_fov - 0.9).abs() < 1e-9, "got {}", p.min_fov);
+    }
+
+    #[test]
+    fn set_fovs_super_sample_preserves_legacy_scaling() {
+        let mut p = make((1920, 1080), (3840, 2160));
+        p.set_fovs(vec![0.9, 0.92, 0.95], 1.0, 1.0);
+        // effective_input_w = 1920 * max(1.0, 1.0) = 1920; ratio = 1920/3840 = 0.5
+        assert!((p.min_fov - 0.45).abs() < 1e-9, "got {}", p.min_fov);
+    }
+
+    #[test]
+    fn set_fovs_anamorphic_15x_desqueezed_keeps_min_fov() {
+        let mut p = make((1920, 1080), (2880, 1080));
+        p.set_fovs(vec![0.9, 0.92, 0.95], 1.0, 1.5);
+        // effective_input_w = 1920 * 1.5 = 2880; ratio = 2880/2880 = 1.0
+        assert!((p.min_fov - 0.9).abs() < 1e-9, "got {}", p.min_fov);
+    }
+
+    #[test]
+    fn set_fovs_anamorphic_133x_desqueezed_keeps_min_fov() {
+        let mut p = make((1920, 1080), (2554, 1080));
+        p.set_fovs(vec![0.9, 0.92, 0.95], 1.0, 1.33);
+        // Within 0.5% tolerance of 0.9
+        let rel = (p.min_fov - 0.9).abs() / 0.9;
+        assert!(rel < 0.005, "got {}, rel diff {}", p.min_fov, rel);
+    }
+
+    #[test]
+    fn set_fovs_h_stretch_zero_falls_back_to_one() {
+        // h_stretch = 0.0 is sub-threshold; .max(1.0) clamps it to 1.0
+        // so the ratio collapses to size.0/output_size.0 with plain 1:1 dims.
+        let mut p = make((1920, 1080), (1920, 1080));
+        p.set_fovs(vec![0.9], 1.0, 0.0);
+        assert!((p.min_fov - 0.9).abs() < 1e-9, "got {}", p.min_fov);
+    }
+
+    #[test]
+    fn set_fovs_empty_fovs_leaves_sentinel_min_fov() {
+        let mut p = make((1920, 1080), (2880, 1080));
+        p.set_fovs(vec![], 1.0, 1.5);
+        assert_eq!(p.min_fov, 1.0);
     }
 }

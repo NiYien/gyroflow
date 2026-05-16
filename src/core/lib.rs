@@ -1004,7 +1004,7 @@ impl StabilizationManager {
 
         let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor) = {
             let mut stab_params = self.params.write();
-            stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment);
+            stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment, params.lens.horizontal_stretch_normalized());
             stab_params.minimal_fovs = params.minimal_fovs.clone();
             stab_params.zooming_debug_points = debug_points;
             (
@@ -1020,7 +1020,9 @@ impl StabilizationManager {
                     })
                     .unwrap_or(stab_params.max_zoom.unwrap_or(0.0)),
                 stab_params.max_zoom_iterations,
-                stab_params.size.0 as f64 / stab_params.output_size.0 as f64,
+                // Effective input width: matches set_fovs above so the Max-Zoom
+                // limiter's fov_limit threshold tracks the same display crop.
+                (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0)) / stab_params.output_size.0.max(1) as f64,
             )
         };
 
@@ -1090,7 +1092,7 @@ impl StabilizationManager {
                 params.minimal_fovs = minimal_fovs;
                 {
                     let mut stab_params = self.params.write();
-                    stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment);
+                    stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment, params.lens.horizontal_stretch_normalized());
                     stab_params.minimal_fovs = params.minimal_fovs.clone();
                     stab_params.zooming_debug_points = debug_points;
                 }
@@ -1276,7 +1278,7 @@ impl StabilizationManager {
 
                 let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor) = {
                     let mut stab_params = stabilization_params.write();
-                    stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0));
+                    stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0), params.lens.horizontal_stretch_normalized());
                     stab_params.minimal_fovs = params.minimal_fovs.clone();
                     stab_params.zooming_debug_points = debug_points;
                     zooming_checksum.store(zooming::get_checksum(&params), SeqCst);
@@ -1284,7 +1286,9 @@ impl StabilizationManager {
                         stab_params.max_zoom.unwrap_or(0.0),
                         params.keyframes.get_keyframes(&KeyframeType::MaxZoom).map(|x| x.iter().map(|x| x.1.value).max_by(|a, b| a.total_cmp(b)).unwrap_or(stab_params.max_zoom.unwrap_or(0.0))).unwrap_or(stab_params.max_zoom.unwrap_or(0.0)),
                         stab_params.max_zoom_iterations,
-                        stab_params.size.0 as f64 / stab_params.output_size.0 as f64
+                        // Effective input width: matches set_fovs above so the Max-Zoom
+                        // limiter's fov_limit threshold tracks the same display crop.
+                        (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0)) / stab_params.output_size.0.max(1) as f64
                     )
                 };
 
@@ -1346,7 +1350,7 @@ impl StabilizationManager {
 
                         {
                             let mut stab_params = stabilization_params.write();
-                            stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0));
+                            stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0), params.lens.horizontal_stretch_normalized());
                             stab_params.minimal_fovs = params.minimal_fovs.clone();
                             stab_params.zooming_debug_points = debug_points;
                             zooming_checksum.store(zooming::get_checksum(&params), SeqCst);

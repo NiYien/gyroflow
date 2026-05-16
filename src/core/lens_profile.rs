@@ -103,6 +103,16 @@ impl LensProfile {
         }
     }
 
+    // Normalized stretch accessors: treat values <= 0.01 (uninitialized) as 1.0
+    // so consumers don't have to re-implement the guard. Threshold matches
+    // compute_params.rs:153 and set_from_calibrator above.
+    pub fn horizontal_stretch_normalized(&self) -> f64 {
+        if self.input_horizontal_stretch > 0.01 { self.input_horizontal_stretch } else { 1.0 }
+    }
+    pub fn vertical_stretch_normalized(&self) -> f64 {
+        if self.input_vertical_stretch > 0.01 { self.input_vertical_stretch } else { 1.0 }
+    }
+
     pub fn from_value(json: serde_json::Value) -> Result<Self, serde_json::Error> {
         let mut lens: Result<Self, serde_json::Error> = serde_json::from_value(json);
         if let Ok(ref mut lens) = lens {
