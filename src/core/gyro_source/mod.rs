@@ -1525,9 +1525,44 @@ impl GyroSource {
         }
     }
     pub fn integrate(&mut self) {
+        // Entry guard: degenerate state from a concurrent project load (e.g.
+        // duration_ms reset to 0 by init_from_params) MUST NOT trigger
+        // integrator math (vqf.rs asserts gyr_ts > 0). Preserve existing
+        // quaternions so downstream `recompute_smoothness` / rendering keep
+        // operating on the last good state.
+        if self.duration_ms <= 0.0 || !self.duration_ms.is_finite() {
+            // No-video-loaded is a *normal* state during app startup and
+            // between video loads, so the entry-guard hit is only worth a
+            // Warn when we previously had quaternions (race-with-load case).
+            // Empty-quaternions + degenerate duration is the expected
+            // pre-load state — log at Debug to keep the noise out.
+            if self.quaternions.is_empty() {
+                log::debug!(
+                    target: "lifecycle",
+                    "GyroSource::integrate skipped: no video loaded yet (duration_ms={})",
+                    self.duration_ms
+                );
+            } else {
+                log::warn!(
+                    target: "lifecycle",
+                    "GyroSource::integrate skipped (degenerate state, preserving {} quaternions): duration_ms={}",
+                    self.quaternions.len(),
+                    self.duration_ms
+                );
+            }
+            return;
+        }
         let file_metadata = self.file_metadata.read();
         match self.integration_method {
             0 => {
+                // Arm 0 (GoPro path) does NOT use the intermediate+conditional
+                // pattern: the outer `if` already requires
+                // `!file_metadata.quaternions.is_empty()` before invoking
+                // QuaternionConverter::convert, and convert iterates over
+                // org_quaternions producing one entry per input (falling back
+                // to UnitQuaternion::identity() when integrated_quats is empty).
+                // So the result is always non-empty for valid input — direct
+                // assignment is safe here.
                 self.quaternions = if file_metadata
                     .detected_source
                     .as_deref()
@@ -1570,32 +1605,80 @@ impl GyroSource {
                 }
             }
             1 => {
-                self.quaternions = ComplementaryIntegrator::integrate(
+                let q = ComplementaryIntegrator::integrate(
                     self.raw_imu(&file_metadata),
                     self.duration_ms,
-                )
+                );
+                if !q.is_empty() {
+                    self.quaternions = q;
+                } else {
+                    log::warn!(
+                        target: "lifecycle",
+                        "ComplementaryIntegrator returned empty, preserving existing quaternions"
+                    );
+                }
             }
             2 => {
-                self.quaternions =
-                    VQFIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms)
+                let q = VQFIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms);
+                if !q.is_empty() {
+                    self.quaternions = q;
+                } else {
+                    log::warn!(
+                        target: "lifecycle",
+                        "VQFIntegrator returned empty, preserving existing quaternions"
+                    );
+                }
             }
             3 => {
-                self.quaternions =
-                    SimpleGyroIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms)
-            }
-            4 => {
-                self.quaternions = SimpleGyroAccelIntegrator::integrate(
+                let q = SimpleGyroIntegrator::integrate(
                     self.raw_imu(&file_metadata),
                     self.duration_ms,
-                )
+                );
+                if !q.is_empty() {
+                    self.quaternions = q;
+                } else {
+                    log::warn!(
+                        target: "lifecycle",
+                        "SimpleGyroIntegrator returned empty, preserving existing quaternions"
+                    );
+                }
+            }
+            4 => {
+                let q = SimpleGyroAccelIntegrator::integrate(
+                    self.raw_imu(&file_metadata),
+                    self.duration_ms,
+                );
+                if !q.is_empty() {
+                    self.quaternions = q;
+                } else {
+                    log::warn!(
+                        target: "lifecycle",
+                        "SimpleGyroAccelIntegrator returned empty, preserving existing quaternions"
+                    );
+                }
             }
             5 => {
-                self.quaternions =
-                    MahonyIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms)
+                let q = MahonyIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms);
+                if !q.is_empty() {
+                    self.quaternions = q;
+                } else {
+                    log::warn!(
+                        target: "lifecycle",
+                        "MahonyIntegrator returned empty, preserving existing quaternions"
+                    );
+                }
             }
             6 => {
-                self.quaternions =
-                    MadgwickIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms)
+                let q =
+                    MadgwickIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms);
+                if !q.is_empty() {
+                    self.quaternions = q;
+                } else {
+                    log::warn!(
+                        target: "lifecycle",
+                        "MadgwickIntegrator returned empty, preserving existing quaternions"
+                    );
+                }
             }
             _ => log::error!("Unknown integrator"),
         }
@@ -2661,5 +2744,75 @@ mod tests {
             scale_sony_frame_readout_time(Some(40.0), 1000.0, 500.0),
             Some(20.0)
         );
+    }
+
+    // §6 GyroSource::integrate two-layer guard tests.
+
+    fn nonempty_raw_imu_blob() -> Vec<TimeIMU> {
+        (0..16)
+            .map(|i| TimeIMU {
+                timestamp_ms: i as f64 * 10.0,
+                gyro: Some([0.1, 0.2, 0.3]),
+                accl: Some([0.0, 0.0, 9.81]),
+                magn: None,
+            })
+            .collect()
+    }
+
+    fn sentinel_quaternions() -> TimeQuat {
+        let mut q = TimeQuat::new();
+        q.insert(0, Quat64::from_euler_angles(0.1, 0.2, 0.3));
+        q.insert(1_000_000, Quat64::from_euler_angles(0.4, 0.5, 0.6));
+        q
+    }
+
+    #[test]
+    fn integrate_with_zero_duration_preserves_quaternions() {
+        let mut gs = GyroSource::new();
+        let mut md = FileMetadata::default();
+        md.raw_imu = nonempty_raw_imu_blob();
+        *gs.file_metadata.write() = md;
+        gs.integration_method = 2; // VQF
+        gs.duration_ms = 0.0;
+        let baseline = sentinel_quaternions();
+        gs.quaternions = baseline.clone();
+
+        gs.integrate();
+
+        assert_eq!(gs.quaternions, baseline);
+    }
+
+    #[test]
+    fn integrate_with_nan_duration_preserves_quaternions() {
+        let mut gs = GyroSource::new();
+        let mut md = FileMetadata::default();
+        md.raw_imu = nonempty_raw_imu_blob();
+        *gs.file_metadata.write() = md;
+        gs.integration_method = 2;
+        gs.duration_ms = f64::NAN;
+        let baseline = sentinel_quaternions();
+        gs.quaternions = baseline.clone();
+
+        gs.integrate();
+
+        assert_eq!(gs.quaternions, baseline);
+    }
+
+    #[test]
+    fn integrate_preserves_quaternions_when_integrator_returns_empty() {
+        // raw_imu is empty so VQFIntegrator returns empty (existing
+        // is_empty guard), but duration_ms is valid so the outer entry
+        // guard doesn't fire. The match arm conditional MUST preserve
+        // the pre-existing quaternions.
+        let mut gs = GyroSource::new();
+        *gs.file_metadata.write() = FileMetadata::default();
+        gs.integration_method = 2;
+        gs.duration_ms = 1000.0;
+        let baseline = sentinel_quaternions();
+        gs.quaternions = baseline.clone();
+
+        gs.integrate();
+
+        assert_eq!(gs.quaternions, baseline);
     }
 }

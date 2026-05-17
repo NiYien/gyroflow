@@ -226,6 +226,16 @@ impl PoseEstimator {
                         // optical_flow_to 内部的 NeuFlow preprocess/grid/infer 各阶段在 Task 4 单独插桩
                         let of_result = curr_of.optical_flow_to(&next_of);
 
+                        // §5.10 second cancel check between OF and pose estimation.
+                        // A cancel arriving during the OF compute must skip the
+                        // pose estimate so the pair is left in a clearly-incomplete
+                        // state (rotation=None) and the caller can detect+skip.
+                        if let Some(ref flag) = cancel_flag {
+                            if flag.load(SeqCst) {
+                                return;
+                            }
+                        }
+
                         let rot_opt = {
                             let _g = crate::synchronization::sync_perf::StageGuard::new(
                                 crate::synchronization::sync_perf::Stage::EstimatePose,
@@ -398,13 +408,21 @@ impl PoseEstimator {
         }
     }
 
-    pub fn cache_optical_flow(&self, num_frames: usize) {
+    pub fn cache_optical_flow(&self, num_frames: usize, cancel_flag: Arc<AtomicBool>) {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
             crate::synchronization::sync_perf::Stage::CacheOpticalFlow,
         );
         let l = self.sync_results.read();
         let keys: Vec<i64> = l.keys().copied().collect();
         for (i, k) in keys.iter().enumerate() {
+            if cancel_flag.load(SeqCst) {
+                log::info!(
+                    target: "lifecycle",
+                    "autosync canceled inside cache_optical_flow (key index {})",
+                    i
+                );
+                break;
+            }
             if let Some(from_fr) = l.get(k) {
                 if from_fr
                     .optical_flow

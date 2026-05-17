@@ -3527,7 +3527,12 @@ impl RenderQueue {
                     this.record_batch_sync_result(job_id, points, attempted_timestamps_ms);
                 },
             );
+            let in_flight_count = stab.in_flight_count.clone();
             core::run_threaded(move || {
+                // §4.10 OpGuard: render queue item worker runs autosync,
+                // recompute, encoding — all heavy shared-state work that must
+                // gate concurrent project-load.
+                let _g = crate::core::OpGuard::enter(&in_flight_count);
                 let sync_start = std::time::Instant::now();
                 let sync_stats = Self::do_autosync(
                     stab.clone(),

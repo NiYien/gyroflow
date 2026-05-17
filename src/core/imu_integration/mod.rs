@@ -84,6 +84,15 @@ impl GyroIntegrator for ComplementaryIntegrator {
         if imu_data.is_empty() {
             return BTreeMap::new();
         }
+        if duration_ms <= 0.0 || !duration_ms.is_finite() {
+            log::warn!(
+                target: "lifecycle",
+                "ComplementaryIntegrator::integrate skipped: duration_ms={} imu_len={}",
+                duration_ms,
+                imu_data.len()
+            );
+            return BTreeMap::new();
+        }
         let mut quats = BTreeMap::new();
         let sample_time_ms = duration_ms / imu_data.len() as f64;
 
@@ -149,6 +158,15 @@ impl GyroIntegrator for ComplementaryIntegrator {
 impl GyroIntegrator for VQFIntegrator {
     fn integrate(imu_data: &[TimeIMU], duration_ms: f64) -> TimeQuat {
         if imu_data.is_empty() {
+            return BTreeMap::new();
+        }
+        if duration_ms <= 0.0 || !duration_ms.is_finite() {
+            log::warn!(
+                target: "lifecycle",
+                "VQFIntegrator::integrate skipped: duration_ms={} imu_len={}",
+                duration_ms,
+                imu_data.len()
+            );
             return BTreeMap::new();
         }
         let mut out_quats = BTreeMap::new();
@@ -217,6 +235,15 @@ impl GyroIntegrator for SimpleGyroIntegrator {
         if imu_data.is_empty() {
             return BTreeMap::new();
         }
+        if duration_ms <= 0.0 || !duration_ms.is_finite() {
+            log::warn!(
+                target: "lifecycle",
+                "SimpleGyroIntegrator::integrate skipped: duration_ms={} imu_len={}",
+                duration_ms,
+                imu_data.len()
+            );
+            return BTreeMap::new();
+        }
         let mut quats = BTreeMap::new();
         let mut orientation =
             UnitQuaternion::from_euler_angles(std::f64::consts::FRAC_PI_2, 0.0, 0.0);
@@ -253,6 +280,15 @@ impl GyroIntegrator for SimpleGyroIntegrator {
 impl GyroIntegrator for SimpleGyroAccelIntegrator {
     fn integrate(imu_data: &[TimeIMU], duration_ms: f64) -> TimeQuat {
         if imu_data.is_empty() {
+            return BTreeMap::new();
+        }
+        if duration_ms <= 0.0 || !duration_ms.is_finite() {
+            log::warn!(
+                target: "lifecycle",
+                "SimpleGyroAccelIntegrator::integrate skipped: duration_ms={} imu_len={}",
+                duration_ms,
+                imu_data.len()
+            );
             return BTreeMap::new();
         }
         let mut quats = BTreeMap::new();
@@ -311,6 +347,15 @@ impl GyroIntegrator for SimpleGyroAccelIntegrator {
 impl GyroIntegrator for MahonyIntegrator {
     fn integrate(imu_data: &[TimeIMU], duration_ms: f64) -> TimeQuat {
         if imu_data.is_empty() {
+            return BTreeMap::new();
+        }
+        if duration_ms <= 0.0 || !duration_ms.is_finite() {
+            log::warn!(
+                target: "lifecycle",
+                "MahonyIntegrator::integrate skipped: duration_ms={} imu_len={}",
+                duration_ms,
+                imu_data.len()
+            );
             return BTreeMap::new();
         }
 
@@ -386,6 +431,15 @@ impl GyroIntegrator for MadgwickIntegrator {
         if imu_data.is_empty() {
             return BTreeMap::new();
         }
+        if duration_ms <= 0.0 || !duration_ms.is_finite() {
+            log::warn!(
+                target: "lifecycle",
+                "MadgwickIntegrator::integrate skipped: duration_ms={} imu_len={}",
+                duration_ms,
+                imu_data.len()
+            );
+            return BTreeMap::new();
+        }
 
         let mut quats = BTreeMap::new();
         let init_pos = UnitQuaternion::from_euler_angles(std::f64::consts::FRAC_PI_2, 0.0, 0.0);
@@ -447,5 +501,43 @@ impl GyroIntegrator for MadgwickIntegrator {
         }
 
         quats
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nonempty_imu() -> Vec<TimeIMU> {
+        // Three samples of arbitrary but non-degenerate IMU data.
+        (0..3)
+            .map(|i| TimeIMU {
+                timestamp_ms: i as f64 * 10.0,
+                gyro: Some([0.1, 0.2, 0.3]),
+                accl: Some([0.0, 0.0, 9.81]),
+                magn: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn vqf_integrate_zero_duration_returns_empty() {
+        let imu = nonempty_imu();
+        let result = VQFIntegrator::integrate(&imu, 0.0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn vqf_integrate_negative_duration_returns_empty() {
+        let imu = nonempty_imu();
+        let result = VQFIntegrator::integrate(&imu, -5.0);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn vqf_integrate_nan_duration_returns_empty() {
+        let imu = nonempty_imu();
+        let result = VQFIntegrator::integrate(&imu, f64::NAN);
+        assert!(result.is_empty());
     }
 }

@@ -63,3 +63,4 @@ distribution/log_center/log_center.config.json
 /distribution/log_center/tests/__pycache__
 /_runlogs
 /distribution/control_center/tests/__pycache__
+/_deployment/sdk

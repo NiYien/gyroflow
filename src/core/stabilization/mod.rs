@@ -67,6 +67,16 @@ thread_local! {
     static CACHED_OPENCL: RefCell<lru::LruCache<u32, opencl::OclWrapper>> = RefCell::new(lru::LruCache::new(std::num::NonZeroUsize::new(15).unwrap()));
 }
 
+// §8b cross-thread cache clear: thread_local!s can only be touched from the
+// thread that owns them, so the controller's onProcessTexture closure must
+// call this function (from within the render thread) when it observes a
+// gpu_epoch change.
+pub fn clear_caller_thread_gpu_caches() {
+    #[cfg(feature = "use-opencl")]
+    CACHED_OPENCL.with(|x| x.borrow_mut().clear());
+    CACHED_WGPU.with(|x| x.0.borrow_mut().clear());
+}
+
 bitflags::bitflags! {
     #[derive(Default, Clone)]
     pub struct KernelParamsFlags: i32 {
@@ -200,6 +210,22 @@ impl Stabilization {
     pub fn set_compute_params(&mut self, params: ComputeParams) {
         self.stab_data.clear();
         self.compute_params = params;
+    }
+
+    // §8a Layer A — drop GPU resource wrappers held on this struct. Render
+    // threads (which own their own thread_local CACHED_* LRUs) self-clear via
+    // the gpu_epoch counter on `StabilizationManager` once `gpu_epoch` ticks.
+    // See `StabilizationManager::invalidate_gpu_bindings`.
+    pub fn invalidate_gpu_bindings(&mut self) {
+        #[cfg(feature = "use-opencl")]
+        {
+            self.cl = None;
+        }
+        self.wgpu = None;
+        self.initialized_backend = BackendType::None;
+        self.next_backend = None;
+        self.stab_data.clear();
+        log::info!(target: "lifecycle", "Stabilization GPU bindings invalidated");
     }
 
     fn get_rect(desc: &BufferDescription) -> [i32; 4] {

@@ -51,8 +51,9 @@ use stabilization_params::{ReadoutDirection, StabilizationParams};
 use std::collections::BTreeMap;
 use std::sync::{
     Arc,
-    atomic::{AtomicBool, AtomicU64, Ordering::SeqCst},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
 };
+use std::time::{Duration, Instant};
 pub use wgpu::TextureFormat as WgpuTextureFormat;
 
 use std::io::{Read, Seek};
@@ -63,6 +64,35 @@ use calibration::LensCalibrator;
 
 lazy_static::lazy_static! {
     static ref THREAD_POOL: rayon::ThreadPool = rayon::ThreadPoolBuilder::new().build().unwrap();
+}
+
+// Operation lifecycle: in-flight ops counter primitive.
+//
+// Long-running operations enter `OpGuard::enter` on start; the RAII Drop
+// decrements the counter on every exit path including panic unwind. The
+// decrement uses saturating-sub semantics so a stray double-drop cannot wrap
+// the counter to `usize::MAX`.
+pub struct OpGuard(Arc<AtomicUsize>);
+impl OpGuard {
+    pub fn enter(counter: &Arc<AtomicUsize>) -> Self {
+        counter.fetch_add(1, SeqCst);
+        Self(counter.clone())
+    }
+}
+impl Drop for OpGuard {
+    fn drop(&mut self) {
+        self.0
+            .fetch_update(SeqCst, SeqCst, |v| if v == 0 { None } else { Some(v - 1) })
+            .ok();
+    }
+}
+
+// Outcome of `StabilizationManager::wait_until_idle`. Callers MUST match on
+// this — a `Timeout` variant means shared state mutation is unsafe.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WaitOutcome {
+    Idle,
+    Timeout { remaining: usize },
 }
 
 /// Reconcile a sensor-space (w, h) with the video's container-level rotation
@@ -206,6 +236,17 @@ pub struct StabilizationManager {
     pub params: Arc<RwLock<StabilizationParams>>,
 
     pub sync_data: Arc<RwLock<SyncData>>,
+
+    // Operation lifecycle: tracks the number of long-running operations
+    // currently executing. New state-mutating ops MUST call `wait_until_idle`
+    // before mutating shared state. Each long op holds an `OpGuard` so the
+    // counter self-decrements on every exit (including panic).
+    pub in_flight_count: Arc<AtomicUsize>,
+    // Bumped whenever cached GPU bindings (OpenCL D3D11 shares / wgpu wrappers
+    // / per-render-thread thread_locals) become stale because the underlying
+    // video URL changed. Render threads compare per-thread last-seen epoch and
+    // self-clear their thread_local caches when they diverge.
+    pub gpu_epoch: Arc<AtomicU64>,
 }
 
 impl Default for StabilizationManager {
@@ -263,6 +304,9 @@ impl Default for StabilizationManager {
             camera_id: Arc::new(RwLock::new(None)),
 
             sync_data: Arc::new(RwLock::new(SyncData::default())),
+
+            in_flight_count: Arc::new(AtomicUsize::new(0)),
+            gpu_epoch: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -371,6 +415,65 @@ fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f
 }
 
 impl StabilizationManager {
+    // §8a Layer A + epoch bump. Clears the GPU wrappers held on the
+    // Stabilization struct AND increments `gpu_epoch` so render threads see
+    // the change on their next frame and self-clear their thread_local
+    // CACHED_OPENCL / CACHED_WGPU LRUs. MUST be called after MDK setUrl, so
+    // the render thread sees the new texture handle when it re-initializes.
+    pub fn invalidate_gpu_bindings(&self) {
+        self.stabilization.write().invalidate_gpu_bindings();
+        let prev = self.gpu_epoch.fetch_add(1, SeqCst);
+        log::info!(
+            target: "lifecycle",
+            "StabilizationManager::invalidate_gpu_bindings — epoch {} → {}",
+            prev,
+            prev + 1
+        );
+    }
+
+    // Signal cancellation to in-flight long ops, then block (polling, 20 ms
+    // grain) until `in_flight_count` reaches 0 or the deadline passes. Returns
+    // `WaitOutcome::Idle` on success and `WaitOutcome::Timeout { remaining }`
+    // on deadline. The cancel_flag is NOT cleared on timeout — callers MUST
+    // refuse to mutate shared state and surface the timeout to the user.
+    //
+    // The OpGuard for the calling op MUST be entered AFTER this returns
+    // `Idle`, not before. Self-counting before the wait would force
+    // `in_flight_count >= 1` and trigger a timeout every call.
+    //
+    // The default timeout is 2000 ms; callers may override via env var
+    // `GYROFLOW_WAIT_IDLE_TIMEOUT_MS` (parsed at call time; parse failure or
+    // absent → use the timeout passed in).
+    pub fn wait_until_idle(
+        &self,
+        cancel_flag: &Arc<AtomicBool>,
+        timeout: Duration,
+    ) -> WaitOutcome {
+        let effective_timeout = std::env::var("GYROFLOW_WAIT_IDLE_TIMEOUT_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(timeout);
+        cancel_flag.store(true, SeqCst);
+        let deadline = Instant::now() + effective_timeout;
+        loop {
+            let c = self.in_flight_count.load(SeqCst);
+            if c == 0 {
+                return WaitOutcome::Idle;
+            }
+            if Instant::now() >= deadline {
+                log::warn!(
+                    target: "lifecycle",
+                    "wait_until_idle timeout ({:?}) with {} ops still running",
+                    effective_timeout,
+                    c
+                );
+                return WaitOutcome::Timeout { remaining: c };
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn apply_effective_video_fps(&self, effective_fps: f64) -> bool {
         let mut params = self.params.write();
         if !apply_effective_frame_rate(&mut params, effective_fps) {
@@ -1241,7 +1344,11 @@ impl StabilizationManager {
         let zooming_checksum = self.zooming_checksum.clone();
 
         let stabilization = self.stabilization.clone();
+        let in_flight_count = self.in_flight_count.clone();
         THREAD_POOL.spawn(move || {
+            // §4.4 OpGuard: recompute mutates smoothing/zooming/stabilization
+            // state; account for it so concurrent project-load waits.
+            let _g = OpGuard::enter(&in_flight_count);
             // std::thread::sleep(std::time::Duration::from_millis(20));
             if prevent_recompute.load(SeqCst) { return cb((compute_id, true)); } // we're still loading, don't recompute
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
@@ -3814,12 +3921,106 @@ pub enum GyroflowCoreError {
 
     #[error("Unknown error")]
     Unknown,
+
+    #[error("Previous operation still running ({0} ops in flight)")]
+    LifecycleBusy(usize),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    // Operation lifecycle primitive tests (§1.9-1.13).
+
+    #[test]
+    fn wait_until_idle_returns_idle_when_counter_zero() {
+        let manager = StabilizationManager::default();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let start = Instant::now();
+        let outcome = manager.wait_until_idle(&cancel_flag, Duration::from_millis(2000));
+        let elapsed = start.elapsed();
+        assert_eq!(outcome, WaitOutcome::Idle);
+        // Should return within roughly one poll cycle (~20 ms); allow 200 ms slack.
+        assert!(elapsed < Duration::from_millis(200), "took {:?}", elapsed);
+        assert!(cancel_flag.load(SeqCst));
+    }
+
+    #[test]
+    fn op_guard_decrements_on_drop_through_panic_unwind() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_for_panic = counter.clone();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = OpGuard::enter(&counter_for_panic);
+            assert_eq!(counter_for_panic.load(SeqCst), 1);
+            panic!("simulated mid-op failure");
+        }));
+        assert!(result.is_err());
+        assert_eq!(counter.load(SeqCst), 0);
+    }
+
+    #[test]
+    fn op_guard_concurrent_enter_three_threads() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let mid_barrier = Arc::new(std::sync::Barrier::new(4));
+        let mut handles = Vec::new();
+        for _ in 0..3 {
+            let counter = counter.clone();
+            let barrier = barrier.clone();
+            let mid_barrier = mid_barrier.clone();
+            handles.push(std::thread::spawn(move || {
+                let _g = OpGuard::enter(&counter);
+                barrier.wait();
+                mid_barrier.wait();
+            }));
+        }
+        barrier.wait();
+        assert_eq!(counter.load(SeqCst), 3);
+        mid_barrier.wait();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(counter.load(SeqCst), 0);
+    }
+
+    #[test]
+    fn op_guard_double_drop_saturates_at_zero() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        {
+            let _g = OpGuard::enter(&counter);
+            assert_eq!(counter.load(SeqCst), 1);
+        }
+        assert_eq!(counter.load(SeqCst), 0);
+        // Construct a guard pointing at the already-zero counter and drop it
+        // without a corresponding enter. fetch_update with None on zero is a
+        // no-op; the counter MUST NOT wrap to usize::MAX.
+        let stray = OpGuard(counter.clone());
+        drop(stray);
+        assert_eq!(counter.load(SeqCst), 0);
+        let stray2 = OpGuard(counter.clone());
+        drop(stray2);
+        assert_eq!(counter.load(SeqCst), 0);
+    }
+
+    #[test]
+    fn wait_until_idle_times_out_and_keeps_cancel_flag_set() {
+        let manager = StabilizationManager::default();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let _g = OpGuard::enter(&manager.in_flight_count);
+        assert_eq!(manager.in_flight_count.load(SeqCst), 1);
+        let start = Instant::now();
+        let outcome = manager.wait_until_idle(&cancel_flag, Duration::from_millis(100));
+        let elapsed = start.elapsed();
+        match outcome {
+            WaitOutcome::Timeout { remaining } => assert_eq!(remaining, 1),
+            other => panic!("expected Timeout, got {:?}", other),
+        }
+        // Slept at least the timeout duration (with the 20 ms grain slack).
+        assert!(elapsed >= Duration::from_millis(80), "elapsed={:?}", elapsed);
+        // cancel_flag MUST remain set on timeout.
+        assert!(cancel_flag.load(SeqCst));
+    }
 
     #[test]
     fn apply_main_video_telemetry_falls_back_to_synthetic_when_lens_id_is_missing() {

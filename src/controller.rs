@@ -15,7 +15,7 @@ use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use qml_video_rs::video_item::MDKVideoItem;
 
 use crate::core;
-use crate::core::StabilizationManager;
+use crate::core::{OpGuard, StabilizationManager, WaitOutcome};
 use crate::log_context;
 #[cfg(feature = "opencv")]
 use crate::core::calibration::LensCalibrator;
@@ -529,11 +529,11 @@ impl Controller {
     }
 
     fn load_video(&mut self, url: QUrl, player: QJSValue) {
-        self.stabilizer.clear();
-        *self.stabilizer.lens.write() = Default::default();
-        self.lens_loaded = false;
-        self.gyro_loaded = false;
-        self.gyro_changed();
+        // Synchronous preamble: only UI-only flag resets, signal emits, log
+        // context, and per-call argument extraction. MUST NOT touch
+        // self.stabilizer state — that is gated behind wait_until_idle in the
+        // threaded body below to avoid the 2026-05-16 race (concurrent
+        // autosync mutating stab state while load_video resets it).
         let url = util::qurl_to_encoded(url.clone());
         let filename = filesystem::get_filename(&url);
         let url_scheme = video_log_scheme(&url);
@@ -565,43 +565,25 @@ impl Controller {
             );
         }
 
-        // Load current (clean) state to the UI
-        if self.stabilizer.lens_calibrator.read().is_none() {
-            if let Ok(current_state) =
-                self.stabilizer
-                    .export_gyroflow_data(core::GyroflowProjectType::Simple, "{}", None)
-            {
-                if let Ok(current_state) = serde_json::from_str(current_state.as_str())
-                    as serde_json::Result<serde_json::Value>
-                {
-                    self.gyroflow_file_loaded(util::serde_json_to_qt_object(&current_state));
-                }
-            }
-        }
-
+        // UI-only flag resets — fire immediately so QML shows "loading"
+        // before the worker takes over.
+        self.lens_loaded = false;
+        self.gyro_loaded = false;
+        self.gyro_changed();
         self.chart_data_changed();
         self.keyframes_changed();
         self.update_offset_model();
 
-        *self.stabilizer.input_file.write() = gyroflow_core::InputFile {
-            url: url.clone(),
-            project_file_url: None,
-            image_sequence_start: self.image_sequence_start,
-            image_sequence_fps: self.image_sequence_fps,
-            preset_name: None,
-            preset_output_size: None,
-        };
-        self.input_file_url_changed();
-        self.project_file_url_changed();
-
-        let mut custom_decoder = String::new(); // eg. BRAW:format=rgba64le
+        // Build the MDK custom decoder string deterministically from the URL
+        // so the worker can hand it to MDK without re-reading any
+        // self.* state.
+        let mut custom_decoder = String::new();
         if self.image_sequence_start > 0 {
             custom_decoder = format!(
                 "FFmpeg:avformat_options=start_number={}",
                 self.image_sequence_start
             );
         }
-
         let options = {
             let target_height = self.preview_resolution;
             if target_height > 0 {
@@ -610,13 +592,12 @@ impl Controller {
                 "".to_owned()
             }
         };
-
         if filename.to_ascii_lowercase().ends_with("braw") {
             let gpu = if self.stabilizer.gpu_decoding.load(SeqCst) {
                 "auto"
             } else {
                 "no"
-            }; // Disable GPU decoding for BRAW
+            };
             custom_decoder = format!("BRAW:gpu={}{}", gpu, options);
         }
         if filename.to_ascii_lowercase().ends_with("r3d")
@@ -628,22 +609,138 @@ impl Controller {
             ::log::debug!(target: "video.load", "Custom decoder: {custom_decoder}");
         }
 
-        if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
-            let vid = unsafe { &mut *vid.as_ptr() }; // vid.borrow_mut()
-            filesystem::stop_accessing_url(&util::qurl_to_encoded(vid.url.clone()), false);
-            filesystem::start_accessing_url(&url, false);
-            ::log::info!(
-                target: "video.load",
-                "MDK setUrl: filename={} scheme={} decoder={}",
-                filename,
-                url_scheme,
-                video_log_decoder_label(&custom_decoder),
-            );
-            vid.setUrl(
-                QUrl::from(QString::from(url)),
-                QString::from(custom_decoder),
-            );
-        }
+        let image_sequence_start = self.image_sequence_start;
+        let image_sequence_fps = self.image_sequence_fps;
+
+        // Two queued callbacks bounce control back to the QML thread once
+        // the worker has confirmed all in-flight long ops drained:
+        //   do_load  — Idle path: clears stab state, then MDK setUrl, then
+        //              invalidate_gpu_bindings. ALL mutations stay on QML
+        //              thread so the render thread never sees the partially-
+        //              cleared state (params.size=0 etc.) — the original
+        //              sync-on-QML invariant is preserved.
+        //   do_toast — Timeout path: surfaces a "retry shortly" toast.
+        let do_load = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this,
+                  payload: (String, String, String, &'static str, i32, f64)| {
+                let (
+                    encoded_url,
+                    filename,
+                    custom_decoder,
+                    scheme,
+                    image_sequence_start,
+                    image_sequence_fps,
+                ) = payload;
+                // OpGuard held only across the mutation window. Re-entry from
+                // the QML thread itself can't race because Qt's event loop is
+                // single-threaded — a second load_video call queues and runs
+                // strictly after this returns.
+                let _g = OpGuard::enter(&this.stabilizer.in_flight_count);
+                this.stabilizer.clear();
+                *this.stabilizer.lens.write() = Default::default();
+                *this.stabilizer.input_file.write() = gyroflow_core::InputFile {
+                    url: encoded_url.clone(),
+                    project_file_url: None,
+                    image_sequence_start,
+                    image_sequence_fps,
+                    preset_name: None,
+                    preset_output_size: None,
+                };
+                if this.stabilizer.lens_calibrator.read().is_none() {
+                    if let Ok(current_state) = this.stabilizer.export_gyroflow_data(
+                        core::GyroflowProjectType::Simple,
+                        "{}",
+                        None,
+                    ) {
+                        if let Ok(current_state) =
+                            serde_json::from_str(current_state.as_str())
+                                as serde_json::Result<serde_json::Value>
+                        {
+                            this.gyroflow_file_loaded(util::serde_json_to_qt_object(
+                                &current_state,
+                            ));
+                        }
+                    }
+                }
+                this.input_file_url_changed();
+                this.project_file_url_changed();
+                if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
+                    let vid = unsafe { &mut *vid.as_ptr() };
+                    filesystem::stop_accessing_url(
+                        &util::qurl_to_encoded(vid.url.clone()),
+                        false,
+                    );
+                    filesystem::start_accessing_url(&encoded_url, false);
+                    ::log::info!(
+                        target: "video.load",
+                        "MDK setUrl: filename={} scheme={} decoder={}",
+                        filename,
+                        scheme,
+                        video_log_decoder_label(&custom_decoder),
+                    );
+                    vid.setUrl(
+                        QUrl::from(QString::from(encoded_url)),
+                        QString::from(custom_decoder),
+                    );
+                    // §8c.1 / 8c.4: invalidate GPU bindings AFTER MDK setUrl
+                    // so the render thread sees the new texture handle on
+                    // its next frame (epoch bump triggers thread_local LRU
+                    // clear inside the onProcessTexture closure).
+                    ::log::info!(
+                        target: "lifecycle",
+                        "GPU bindings invalidated (video URL changed via load_video)"
+                    );
+                    this.stabilizer.invalidate_gpu_bindings();
+                }
+            },
+        );
+
+        let do_toast = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, remaining: usize| {
+                this.error(
+                    QString::from(
+                        "前一项操作未结束，请稍后重试 / Previous operation still running, retry shortly (in_flight=%1)",
+                    ),
+                    QString::from(remaining.to_string()),
+                    QString::default(),
+                );
+            },
+        );
+
+        let stab = self.stabilizer.clone();
+        let cancel_flag = self.cancel_flag.clone();
+        let filename_for_worker = filename.clone();
+        let url_for_worker = url.clone();
+        let custom_decoder_for_worker = custom_decoder.clone();
+        core::run_threaded(move || {
+            // The worker ONLY waits for the in-flight counter to drain. State
+            // mutations live in `do_load` on the QML thread to keep the
+            // render thread's view of `stab` atomic w.r.t. the clear-and-
+            // swap sequence.
+            match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
+                WaitOutcome::Idle => {
+                    cancel_flag.store(false, SeqCst);
+                    do_load((
+                        url_for_worker,
+                        filename_for_worker,
+                        custom_decoder_for_worker,
+                        url_scheme,
+                        image_sequence_start,
+                        image_sequence_fps,
+                    ));
+                }
+                WaitOutcome::Timeout { remaining } => {
+                    ::log::warn!(
+                        target: "lifecycle",
+                        "load_video refused: {} ops still running after wait_until_idle",
+                        remaining
+                    );
+                    do_toast(remaining);
+                }
+            }
+        });
     }
 
     fn log_video_file_dialog(
@@ -877,7 +974,12 @@ impl Controller {
             let input_file = self.stabilizer.input_file.read().clone();
             let proc_height = self.processing_resolution;
             let gpu_decoding = self.stabilizer.gpu_decoding.load(SeqCst);
+            let in_flight_count = self.stabilizer.in_flight_count.clone();
             core::run_threaded(move || {
+                // §4.7 OpGuard: autosync rayon worker holds the in_flight
+                // counter for its lifetime so a concurrent project-load /
+                // load_video sees the op and waits in wait_until_idle.
+                let _g = OpGuard::enter(&in_flight_count);
                 // Probe codec signature so we can consult the GPU blocklist
                 // before attempting decode and record on failure. Probe only
                 // when GPU is even a candidate; if the user has GPU disabled,
@@ -1433,7 +1535,12 @@ impl Controller {
 
                 self.loading_gyro_in_progress = true;
                 self.loading_gyro_in_progress_changed();
+                let in_flight_count = self.stabilizer.in_flight_count.clone();
                 core::run_threaded(move || {
+                    // §4.2 OpGuard: load_gyro_data mutates stab.gyro,
+                    // stab.params (video_display_anchor_us), and triggers
+                    // recompute_smoothness — all shared state.
+                    let _g = OpGuard::enter(&in_flight_count);
                     let mut additional_data = serde_json::Value::Object(serde_json::Map::new());
                     let additional_obj = additional_data.as_object_mut().unwrap();
 
@@ -1886,6 +1993,8 @@ impl Controller {
         }
 
         core::run_threaded(move || {
+            // §4.3 OpGuard: integrator mutation is shared-state work.
+            let _g = OpGuard::enter(&stab.in_flight_count);
             {
                 stab.invalidate_ongoing_computations();
 
@@ -1981,6 +2090,13 @@ impl Controller {
                     },
                 );
             let update_info2 = update_info.clone();
+            // §8b: render-thread epoch self-clear. Declared OUTSIDE the
+            // closure so the Cell is captured by move and survives across
+            // frames (declaring it inside would reset every frame).
+            // Cell<u64> is Send because u64: Send, satisfying the
+            // `Box<dyn FnMut + Send>` bound on onProcessTexture.
+            let last_seen_epoch = std::cell::Cell::new(0u64);
+            let gpu_epoch_for_render = self.stabilizer.gpu_epoch.clone();
 
             #[allow(unused_variables)]
             vid.onProcessTexture(Box::new(
@@ -2010,6 +2126,23 @@ impl Controller {
 
                     if std::env::var("GYROFLOW_RENDER_PANIC_TEST").as_deref() == Ok("1") {
                         panic!("GYROFLOW_RENDER_PANIC_TEST=1: deliberate render-thread panic");
+                    }
+
+                    // §8b epoch check: when invalidate_gpu_bindings bumps
+                    // gpu_epoch, the next frame in each render thread sees
+                    // the divergence and self-clears its thread_local
+                    // CACHED_OPENCL / CACHED_WGPU LRUs so the next init path
+                    // builds fresh handles for the new MDK texture.
+                    let current_epoch = gpu_epoch_for_render.load(SeqCst);
+                    if current_epoch != last_seen_epoch.get() {
+                        gyroflow_core::stabilization::clear_caller_thread_gpu_caches();
+                        let old = last_seen_epoch.replace(current_epoch);
+                        ::log::info!(
+                            target: "lifecycle",
+                            "render thread cleared GPU caches (epoch {} → {})",
+                            old,
+                            current_epoch
+                        );
                     }
 
                     if !stab.params.read().stab_enabled {
@@ -2565,14 +2698,34 @@ impl Controller {
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
-        cancel_flag.store(true, SeqCst);
+        // §D1: signal in-flight ops to cancel; the worker below waits for them
+        // to exit before mutating shared state.
         core::run_threaded(move || {
-            if Arc::strong_count(&cancel_flag) > 2 {
-                // Wait for other tasks to finish
-                std::thread::sleep(std::time::Duration::from_millis(200));
+            // OpGuard MUST be entered AFTER wait_until_idle returns Idle,
+            // never before. Self-counting before the wait pins
+            // in_flight_count >= 1 and forces every wait to timeout (codex N1).
+            match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
+                WaitOutcome::Idle => {
+                    cancel_flag.store(false, SeqCst);
+                    let _g = OpGuard::enter(&stab.in_flight_count);
+                    finished(stab.import_gyroflow_file(
+                        &url,
+                        false,
+                        progress,
+                        cancel_flag,
+                        false,
+                    ));
+                }
+                WaitOutcome::Timeout { remaining } => {
+                    ::log::warn!(
+                        target: "lifecycle",
+                        "import_gyroflow_file refused: {} ops still running after wait_until_idle",
+                        remaining
+                    );
+                    // Do NOT clear cancel_flag: stuck ops keep trying to exit.
+                    finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)));
+                }
             }
-            cancel_flag.store(false, SeqCst);
-            finished(stab.import_gyroflow_file(&url, false, progress, cancel_flag, false));
         });
     }
     fn import_gyroflow_data(&mut self, data: QString) {
@@ -2598,23 +2751,47 @@ impl Controller {
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
-        cancel_flag.store(true, SeqCst);
         core::run_threaded(move || {
-            if Arc::strong_count(&cancel_flag) > 2 {
-                // Wait for other tasks to finish
-                std::thread::sleep(std::time::Duration::from_millis(200));
+            match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
+                WaitOutcome::Idle => {
+                    cancel_flag.store(false, SeqCst);
+                    let _g = OpGuard::enter(&stab.in_flight_count);
+                    let prev_video_url = stab.gyro.read().file_url.clone();
+                    let mut is_preset = false;
+                    let result = stab.import_gyroflow_data(
+                        data.to_string().as_bytes(),
+                        false,
+                        None,
+                        progress,
+                        cancel_flag,
+                        &mut is_preset,
+                        false,
+                    );
+                    // §8c.2 / 8c.4: invalidate GPU bindings when the project
+                    // brought in a different video URL. Same-URL imports
+                    // (e.g., preset loads, offset-only changes) MUST NOT
+                    // invalidate to avoid needless re-init cost.
+                    if result.is_ok() {
+                        let new_video_url = stab.gyro.read().file_url.clone();
+                        if !prev_video_url.is_empty() && prev_video_url != new_video_url {
+                            ::log::info!(
+                                target: "lifecycle",
+                                "GPU bindings invalidated (video URL changed via import_gyroflow_data)"
+                            );
+                            stab.invalidate_gpu_bindings();
+                        }
+                    }
+                    finished(result);
+                }
+                WaitOutcome::Timeout { remaining } => {
+                    ::log::warn!(
+                        target: "lifecycle",
+                        "import_gyroflow_data refused: {} ops still running after wait_until_idle",
+                        remaining
+                    );
+                    finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)));
+                }
             }
-            cancel_flag.store(false, SeqCst);
-            let mut is_preset = false;
-            finished(stab.import_gyroflow_data(
-                data.to_string().as_bytes(),
-                false,
-                None,
-                progress,
-                cancel_flag,
-                &mut is_preset,
-                false,
-            ));
         });
     }
     fn import_gyroflow_internal(
@@ -2646,6 +2823,16 @@ impl Controller {
                 self.chart_data_changed();
                 self.keyframes_changed();
                 util::serde_json_to_qt_object(&thin_obj)
+            }
+            Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)) => {
+                self.error(
+                    QString::from(
+                        "前一项操作未结束，请稍后重试 / Previous operation still running, retry shortly (in_flight=%1)",
+                    ),
+                    QString::from(remaining.to_string()),
+                    QString::default(),
+                );
+                QJsonObject::default()
             }
             Err(e) => {
                 self.error(
@@ -4519,7 +4706,11 @@ impl Controller {
             }
         }
 
+        let in_flight_count = stab.in_flight_count.clone();
         core::run_threaded(move || {
+            // §4.9 OpGuard: STMAP generation reads stab params and may be
+            // long-running. Account for it so concurrent project-load waits.
+            let _g = OpGuard::enter(&in_flight_count);
             progress((0, total));
             for (fname_base, frame, dist, undist) in
                 gyroflow_core::stmap::generate_stmaps(&stab, per_frame)

@@ -351,10 +351,17 @@ impl AutosyncProcess {
                         estimator.recalculate_gyro_data(org_fps, false);
                     }
 
+                    // Suppress stale progress fires on cancel: tasks that
+                    // were already in-flight when cancel arrived can outlive
+                    // `finished_feeding_frames`'s emit_canceled_progress and
+                    // queue a fresh `progress(0.X, ...)` AFTER the 1.0 fire,
+                    // resetting `sync_in_progress` to true on the QML side.
                     if let Some(cb) = &progress_cb {
-                        let d = total_detected_frames.load(SeqCst);
-                        let t = total_read_frames.load(SeqCst).max(frame_count);
-                        cb((d as f64 / t.max(1) as f64) * 0.58, d, t);
+                        if !cancel_flag.load(Relaxed) {
+                            let d = total_detected_frames.load(SeqCst);
+                            let t = total_read_frames.load(SeqCst).max(frame_count);
+                            cb((d as f64 / t.max(1) as f64) * 0.58, d, t);
+                        }
                     }
                 } else {
                     log::warn!("Failed to get image {:?}", img);
@@ -363,7 +370,42 @@ impl AutosyncProcess {
         }
     }
 
+    // §5 helper: fire progress(1.0, n, n) so the controller side clears
+    // `sync_in_progress` and re-enables the autosync UI on every cancel path.
+    // Without this, lifecycle-canceled autosync leaves the button greyed out.
+    fn emit_canceled_progress(&self) {
+        if let Some(cb) = &self.progress_cb {
+            let d = self.total_detected_frames.load(SeqCst);
+            let t = self.total_read_frames.load(SeqCst);
+            // Force ready==total so the QML-side condition
+            // `ready < total || percent < 1.0` evaluates to false.
+            let total = d.max(t);
+            log::info!(
+                target: "lifecycle",
+                "emit_canceled_progress: cb(1.0, {}, {}) — clearing sync_in_progress",
+                total,
+                total
+            );
+            cb(1.0, total, total);
+        } else {
+            log::warn!(
+                target: "lifecycle",
+                "emit_canceled_progress called but progress_cb is None — sync_in_progress will NOT clear"
+            );
+        }
+    }
+
     pub fn finished_feeding_frames(&self) {
+        // §5.1/§5.2 were once early-return cancel checks but they leaked
+        // stale rayon-pool tasks: the run_threaded OpGuard would drop while
+        // tasks remained queued, wait_until_idle in the racing load_video
+        // would observe count=0 and reset cancel_flag to false, the tasks
+        // would then see cancel_flag=false at the line ~360 progress guard
+        // and fire stale `progress(<1.0, …)` events AFTER the 1.0 emit —
+        // re-greying the sync button on the QML side. The spin-wait below
+        // is now the single drain point; under cancel each task fast-exits
+        // via the line 326 cancel check (~ms) and the counter catches up
+        // within one ~100ms sleep cycle.
         {
             let _g = crate::synchronization::sync_perf::StageGuard::new(
                 crate::synchronization::sync_perf::Stage::SpinWait,
@@ -373,6 +415,15 @@ impl AutosyncProcess {
                 std::thread::sleep(std::time::Duration::from_millis(100));
             }
         }
+        // Drain done. NOW honor cancel — at this point all in-flight tasks
+        // have completed and their progress events are already queued ahead
+        // of our emit on the QML thread, so emit_canceled_progress is the
+        // last progress event the QML side processes.
+        if self.cancel_flag.load(SeqCst) {
+            log::info!(target: "lifecycle", "autosync canceled after spin-wait drain");
+            self.emit_canceled_progress();
+            return;
+        }
 
         let offset_method = self.sync_params.offset_method;
 
@@ -380,7 +431,24 @@ impl AutosyncProcess {
 
         // Wait for any in-progress NeuFlow drain loop to finish before final sweep
         while self.estimator.neuflow_processing.load(SeqCst) {
+            if self.cancel_flag.load(SeqCst) {
+                log::info!(
+                    target: "lifecycle",
+                    "autosync canceled during neuflow drain spin-wait"
+                );
+                self.emit_canceled_progress();
+                return;
+            }
             std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        // §5.3 before process_detected_frames
+        if self.cancel_flag.load(SeqCst) {
+            log::info!(
+                target: "lifecycle",
+                "autosync canceled before final process_detected_frames"
+            );
+            self.emit_canceled_progress();
+            return;
         }
         let t_final = std::time::Instant::now();
         log::info!(
@@ -397,6 +465,12 @@ impl AutosyncProcess {
             "[autosync timing] finished_feeding_frames: process_detected_frames done in {:.1}ms",
             t_final.elapsed().as_secs_f64() * 1000.0
         );
+        // §5.4 before recalculate_gyro_data
+        if self.cancel_flag.load(SeqCst) {
+            log::info!(target: "lifecycle", "autosync canceled before recalculate_gyro_data");
+            self.emit_canceled_progress();
+            return;
+        }
         let t_recalc = std::time::Instant::now();
         {
             let _g = crate::synchronization::sync_perf::StageGuard::new(
@@ -408,9 +482,15 @@ impl AutosyncProcess {
             "[autosync timing] finished_feeding_frames: recalculate_gyro_data done in {:.1}ms",
             t_recalc.elapsed().as_secs_f64() * 1000.0
         );
+        // §5.5 before cache_optical_flow
+        if self.cancel_flag.load(SeqCst) {
+            log::info!(target: "lifecycle", "autosync canceled before cache_optical_flow");
+            self.emit_canceled_progress();
+            return;
+        }
         let t_cache = std::time::Instant::now();
         self.estimator
-            .cache_optical_flow(if offset_method == 1 { 2 } else { 1 });
+            .cache_optical_flow(if offset_method == 1 { 2 } else { 1 }, self.cancel_flag.clone());
         log::info!(
             "[autosync timing] finished_feeding_frames: cache_optical_flow done in {:.1}ms",
             t_cache.elapsed().as_secs_f64() * 1000.0
@@ -420,6 +500,15 @@ impl AutosyncProcess {
         let mut scaled_ranges_us = Cow::Borrowed(&self.scaled_ranges_us);
 
         if self.mode == "synchronize" && !self.compute_params.read().gyro.read().has_motion() {
+            // §5.6 no-motion fallback entry
+            if self.cancel_flag.load(SeqCst) {
+                log::info!(
+                    target: "lifecycle",
+                    "autosync canceled at no-motion fallback entry"
+                );
+                self.emit_canceled_progress();
+                return;
+            }
             // If no gyro data in file, set the computed optical flow as gyro data
             let compute_params = self.compute_params.write();
             let mut gyro = compute_params.gyro.write();
@@ -432,6 +521,17 @@ impl AutosyncProcess {
                     .cloned()
                     .collect::<Vec<_>>(),
             );
+            // §5.7 before apply_transforms (the vqf.rs:1120 panic site)
+            if self.cancel_flag.load(SeqCst) {
+                log::info!(
+                    target: "lifecycle",
+                    "autosync canceled before apply_transforms in no-motion fallback"
+                );
+                drop(gyro);
+                drop(compute_params);
+                self.emit_canceled_progress();
+                return;
+            }
             gyro.apply_transforms();
 
             let timestamps_fract = [0.5];
@@ -485,6 +585,15 @@ impl AutosyncProcess {
             crate::synchronization::sync_perf::Stage::FindOffsetsTotal,
         );
         if let Some(cb) = &self.finished_cb {
+            // §5.8 before find_offsets entry
+            if self.cancel_flag.load(SeqCst) {
+                log::info!(
+                    target: "lifecycle",
+                    "autosync canceled before find_offsets dispatch"
+                );
+                self.emit_canceled_progress();
+                return;
+            }
             if self.mode == "estimate_rolling_shutter" {
                 use super::find_offset::visual_features::find_offsets;
                 cb(Either::Left(find_offsets(
@@ -519,6 +628,15 @@ impl AutosyncProcess {
                     self.cancel_flag.clone(),
                 );
                 if check_negative {
+                    // §5.8 before second find_offsets retry pass
+                    if self.cancel_flag.load(SeqCst) {
+                        log::info!(
+                            target: "lifecycle",
+                            "autosync canceled before negative-offset find_offsets retry"
+                        );
+                        self.emit_canceled_progress();
+                        return;
+                    }
                     for_negative.store(true, SeqCst);
                     // Try also negative rough offset
                     let mut sync_params = self.sync_params.clone();
