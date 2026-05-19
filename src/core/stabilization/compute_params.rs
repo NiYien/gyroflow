@@ -361,11 +361,63 @@ mod tests {
     }
 
     #[test]
-    fn apply_anamorphic_decay_legacy_path_without_raw_mirror_matches_pre_fix_value() {
-        // Legacy profile with raw mirror unset — read should fall back to
-        // mutating, identical to behavior before §10.
+    fn apply_anamorphic_decay_raw_unset_falls_back_to_mutating() {
+        // Defensive fallback for code paths that construct a LensProfile
+        // without going through `set_input_stretch*` helpers AND without
+        // calling `LensProfile::init()`. In production all entry points
+        // (serde load, helper writes, calibrator) backfill or set raw, so
+        // this branch is a safety net rather than a supported workflow.
+        // See `lens_profile_init_backfills_raw_*` in lens_profile.rs tests
+        // for the production-path coverage.
         let cp = build_compute_params_with_stretch(2.0, 1.0, false);
         let d = cp.apply_anamorphic_decay(0.5);
         assert!((d - 0.2).abs() < f64::EPSILON, "got {d}");
+    }
+
+    // D.1 end-to-end coverage: production lens-load entry points (.gyroflow /
+    // lens.json serde) MUST backfill raw via `LensProfile::init()` so that
+    // any subsequent `disable_lens_stretch(adjust_size=true)` keeps decay
+    // invariant. Pre-§10/§A.0 this test would fail because `init()` did not
+    // populate raw and the decay would silently drop to α=1.0 after disable.
+    #[test]
+    fn lens_json_load_then_disable_lens_stretch_preserves_decay() {
+        // Synthetic anamorphic 1.5× lens profile JSON. raw_* fields are
+        // NOT serialized (#[serde(skip)]), so the loaded profile starts
+        // with raw=None and the init() backfill is the only path that can
+        // populate it before decay reads it.
+        let json = r#"{
+            "name": "test-1.5x",
+            "calib_dimension": { "w": 1920, "h": 1080 },
+            "orig_dimension": { "w": 1920, "h": 1080 },
+            "input_horizontal_stretch": 1.5,
+            "input_vertical_stretch": 1.0,
+            "fisheye_params": {
+                "RMS_error": 0.0,
+                "camera_matrix": [[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]],
+                "distortion_coeffs": [0.0, 0.0, 0.0, 0.0]
+            }
+        }"#;
+        let lens = LensProfile::from_json(json).expect("json parse");
+        // init() (called by from_json) must have backfilled raw from mutating.
+        assert_eq!(lens.input_horizontal_stretch_raw(), Some(1.5));
+        assert_eq!(lens.input_vertical_stretch_raw(), Some(1.0));
+
+        let mut cp = ComputeParams::default();
+        cp.lens = lens;
+        let pre = cp.apply_anamorphic_decay(1.0);
+        // α = 2/(1+λ²) for λ=max(1.5, 1.0)=1.5 → 2/(1+2.25) = 0.6153846...
+        assert!(
+            (pre - 0.61538461538461542).abs() < 1e-12,
+            "pre decay should reflect raw stretch λ=1.5; got {pre}",
+        );
+
+        // Mimic disable_lens_stretch(adjust_size=true): mutating fields to
+        // 1.0, raw left alone. decay must remain 0.6154.
+        simulate_disable_lens_stretch(&mut cp);
+        let post = cp.apply_anamorphic_decay(1.0);
+        assert!(
+            (pre - post).abs() < f64::EPSILON,
+            "post-disable decay drifted: pre={pre} post={post}",
+        );
     }
 }

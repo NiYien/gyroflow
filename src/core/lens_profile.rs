@@ -110,6 +110,22 @@ impl LensProfile {
             self.fisheye_params.radial_distortion_limit =
                 distortion_model.radial_distortion_limit(&self.get_distortion_coeffs());
         }
+        // Backfill raw stretch mirror so .gyroflow / lens.json serde paths
+        // (load_from_data / from_json / load_from_json_value) get the same
+        // anamorphic-decay coherence as code paths that go through the
+        // `set_input_stretch*` helpers. `#[serde(skip)]` on the raw fields
+        // strips them during deserialize, so without this fill any later
+        // `disable_lens_stretch(adjust_size=true)` would clear the mutating
+        // fields and `apply_anamorphic_decay` would fall back to reading the
+        // now-1.0 mutating value — defeating the §10 fix on the most common
+        // entry path. Only fills when raw is unset, so an already-populated
+        // mirror (from a helper-driven write) is preserved verbatim.
+        if self.input_horizontal_stretch_raw.is_none() {
+            self.input_horizontal_stretch_raw = Some(self.input_horizontal_stretch);
+        }
+        if self.input_vertical_stretch_raw.is_none() {
+            self.input_vertical_stretch_raw = Some(self.input_vertical_stretch);
+        }
     }
 
     // Normalized stretch accessors: treat values <= 0.01 (uninitialized) as 1.0
