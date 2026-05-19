@@ -11,7 +11,7 @@
 // well under the ±20% size estimate tolerance the design accepts.
 
 use std::collections::BTreeMap;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -19,11 +19,18 @@ use zip::write::SimpleFileOptions;
 
 use super::meta::Meta;
 
+// Tail-cap for OFX / Adobe plugin logs (design §D1). Files at or below the
+// cap are embedded whole; files above it contribute only their last cap-bytes
+// (advanced forward past the first `\n` so the first line is well-formed).
+const PLUGIN_LOG_TAIL_CAP: u64 = 5 * 1024 * 1024;
+
 #[derive(Clone, Debug)]
 pub struct PackageInputs {
     pub current_log:   Option<PathBuf>,
     pub history_logs:  Vec<PathBuf>,    // .log.1 .. .log.4 in order
     pub incidents_log: Option<PathBuf>,
+    pub openfx_log:    Option<PathBuf>, // <data_dir>/gyroflow-openfx.log
+    pub adobe_log:     Option<PathBuf>, // <data_dir>/gyroflow-adobe.log
     pub project_file:  Option<PathBuf>, // current .gyroflow snapshot
     pub lens_file:     Option<PathBuf>, // lens.json from data_dir
     pub queue_file:    Option<PathBuf>, // render_queue.json
@@ -37,6 +44,8 @@ impl Default for PackageInputs {
             current_log:   None,
             history_logs:  Vec::new(),
             incidents_log: None,
+            openfx_log:    None,
+            adobe_log:     None,
             project_file:  None,
             lens_file:     None,
             queue_file:    None,
@@ -98,8 +107,47 @@ pub fn estimate_size(inputs: &PackageInputs, options: &PackageOptions) -> u64 {
             total = total.saturating_add(meta.len());
         }
     }
+    // Plugin logs are always counted (no PackageOptions toggle) and capped to
+    // PLUGIN_LOG_TAIL_CAP each so a 70 MiB OFX log does not inflate the UI's
+    // pre-submit size hint to scary numbers (design §D7).
+    if let Some(p) = &inputs.openfx_log {
+        total = total.saturating_add(capped_metadata_len(p, PLUGIN_LOG_TAIL_CAP));
+    }
+    if let Some(p) = &inputs.adobe_log {
+        total = total.saturating_add(capped_metadata_len(p, PLUGIN_LOG_TAIL_CAP));
+    }
     // manifest + per-zip overhead approximation
     total.saturating_add(2_048)
+}
+
+/// Returns `min(metadata.len(), cap)`, or 0 when metadata cannot be read
+/// (e.g., the file was deleted between discovery and packaging).
+fn capped_metadata_len(path: &Path, cap: u64) -> u64 {
+    match std::fs::metadata(path) {
+        Ok(m) => m.len().min(cap),
+        Err(_) => 0,
+    }
+}
+
+/// Read up to `PLUGIN_LOG_TAIL_CAP` bytes from the end of the file. Files at
+/// or below the cap are returned whole. When the file exceeds the cap, the
+/// returned bytes are advanced past the first `\n` so the first line is
+/// well-formed; if no `\n` is present, the slice is returned unchanged.
+fn read_plugin_log_tail(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut f = std::fs::File::open(path)?;
+    let len = f.metadata()?.len();
+    let cap = PLUGIN_LOG_TAIL_CAP;
+    let mut buf = Vec::new();
+    if len <= cap {
+        f.read_to_end(&mut buf)?;
+        return Ok(buf);
+    }
+    f.seek(SeekFrom::End(-(cap as i64)))?;
+    f.read_to_end(&mut buf)?;
+    if let Some(idx) = buf.iter().position(|&b| b == b'\n') {
+        buf.drain(..=idx);
+    }
+    Ok(buf)
 }
 
 fn iter_paths<'a>(inputs: &'a PackageInputs, options: &'a PackageOptions) -> Vec<(bool, &'a Path)> {
@@ -214,6 +262,15 @@ pub fn pack(
             entries.push((format!("crashes/{name}"), p.clone()));
         }
     }
+    // Plugin logs (OFX / Adobe). Always included when present — no
+    // matching PackageOptions toggle today; stable `-tail` zip names
+    // regardless of whether truncation actually fired (design §D3, §D6).
+    if let Some(p) = &inputs.openfx_log {
+        entries.push(("logs/openfx-tail.log".into(), p.clone()));
+    }
+    if let Some(p) = &inputs.adobe_log {
+        entries.push(("logs/adobe-tail.log".into(), p.clone()));
+    }
 
     // Build zip in memory.
     let mut buf: Vec<u8> = Vec::with_capacity(512 * 1024);
@@ -242,7 +299,16 @@ pub fn pack(
         // Stream each entry. Files that fail to open are skipped silently
         // (consistent with the "missing source = no-op" rule above).
         for (zip_name, src) in &entries {
-            let bytes = match std::fs::read(src) {
+            // Plugin-log entries get the tail-cap reader; everything else
+            // reads the whole file.
+            let bytes_result = if zip_name == "logs/openfx-tail.log"
+                || zip_name == "logs/adobe-tail.log"
+            {
+                read_plugin_log_tail(src)
+            } else {
+                std::fs::read(src)
+            };
+            let bytes = match bytes_result {
                 Ok(b) => b,
                 Err(_) => continue,
             };
@@ -470,12 +536,138 @@ mod tests {
     }
 
     #[test]
+    fn openfx_log_under_cap_embedded_whole() {
+        let tmp = tempfile::tempdir().unwrap();
+        let content = vec![b'X'; 1024];
+        let p = make_file(tmp.path(), "gyroflow-openfx.log", &content);
+        let inputs = PackageInputs { openfx_log: Some(p), ..Default::default() };
+        let opts = PackageOptions::default();
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut entry = zr.by_name("logs/openfx-tail.log").expect("entry present");
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut buf).unwrap();
+        assert_eq!(buf, content);
+    }
+
+    #[test]
+    fn openfx_log_over_cap_tail_truncated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("gyroflow-openfx.log");
+        {
+            let mut f = std::fs::File::create(&p).unwrap();
+            // Head: a partial line without a trailing newline. Far enough
+            // from the tail window that it cannot affect the result.
+            f.write_all(b"PARTIAL_HEAD_FRAGMENT").unwrap();
+            // Body: many "AAAAAAA\n" lines (8 bytes each), total > 6 MiB so
+            // the source comfortably exceeds the 5 MiB cap.
+            let line = b"AAAAAAA\n";
+            let target = 6 * 1024 * 1024;
+            let mut written: usize = 0;
+            while written < target {
+                f.write_all(line).unwrap();
+                written += line.len();
+            }
+        }
+        let inputs = PackageInputs { openfx_log: Some(p), ..Default::default() };
+        let opts = PackageOptions::default();
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut entry = zr.by_name("logs/openfx-tail.log").expect("entry present");
+        let mut buf = Vec::new();
+        std::io::Read::read_to_end(&mut entry, &mut buf).unwrap();
+        assert!((buf.len() as u64) <= PLUGIN_LOG_TAIL_CAP,
+            "entry exceeded cap: {} bytes", buf.len());
+        // After advancing past the first '\n' in the last 5 MiB, the entry
+        // must start at a line boundary — i.e., with 'A' (the first byte of
+        // "AAAAAAA\n").
+        assert_eq!(buf.first().copied(), Some(b'A'),
+            "first byte should be the start of a line, got {:?}", buf.first());
+    }
+
+    #[test]
+    fn plugin_log_absent_silently_omitted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let inputs = PackageInputs {
+            openfx_log: Some(tmp.path().join("missing-openfx.log")),
+            adobe_log:  Some(tmp.path().join("missing-adobe.log")),
+            ..Default::default()
+        };
+        let opts = PackageOptions::default();
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let names: Vec<_> = zr.file_names().map(|s| s.to_string()).collect();
+        assert!(!names.iter().any(|n| n == "logs/openfx-tail.log"));
+        assert!(!names.iter().any(|n| n == "logs/adobe-tail.log"));
+        let mut manifest_str = String::new();
+        {
+            let mut f = zr.by_name("manifest.json").unwrap();
+            std::io::Read::read_to_string(&mut f, &mut manifest_str).unwrap();
+        }
+        let v: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+        let files = v.get("files").and_then(|x| x.as_array()).unwrap();
+        assert!(!files.iter().any(|x| x.as_str() == Some("logs/openfx-tail.log")));
+        assert!(!files.iter().any(|x| x.as_str() == Some("logs/adobe-tail.log")));
+        let sha = v.get("sha256_per_file").and_then(|x| x.as_object()).unwrap();
+        assert!(!sha.contains_key("logs/openfx-tail.log"));
+        assert!(!sha.contains_key("logs/adobe-tail.log"));
+    }
+
+    #[test]
+    fn estimate_size_caps_plugin_logs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("gyroflow-openfx.log");
+        std::fs::write(&p, vec![b'x'; 7 * 1024 * 1024]).unwrap();
+        let inputs = PackageInputs { openfx_log: Some(p), ..Default::default() };
+        let opts = PackageOptions::default();
+        let est = estimate_size(&inputs, &opts);
+        assert!(est <= 5 * 1024 * 1024 + 2_048,
+            "estimate must be capped: got {} bytes", est);
+    }
+
+    #[test]
+    fn adobe_log_packed_alongside_openfx() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ofx = make_file(tmp.path(), "gyroflow-openfx.log",
+            b"OFX line one\nOFX line two\n");
+        let adb = make_file(tmp.path(), "gyroflow-adobe.log",
+            b"Adobe line one\nAdobe line two\n");
+        let inputs = PackageInputs {
+            openfx_log: Some(ofx),
+            adobe_log:  Some(adb),
+            ..Default::default()
+        };
+        let opts = PackageOptions::default();
+        let (bytes, _) = pack(&inputs, &opts, "", "", &dummy_meta()).unwrap();
+        let mut zr = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let names: Vec<_> = zr.file_names().map(|s| s.to_string()).collect();
+        assert!(names.contains(&"logs/openfx-tail.log".to_string()));
+        assert!(names.contains(&"logs/adobe-tail.log".to_string()));
+        let mut manifest_str = String::new();
+        {
+            let mut f = zr.by_name("manifest.json").unwrap();
+            std::io::Read::read_to_string(&mut f, &mut manifest_str).unwrap();
+        }
+        let v: serde_json::Value = serde_json::from_str(&manifest_str).unwrap();
+        let sha = v.get("sha256_per_file").and_then(|x| x.as_object()).unwrap();
+        let ofx_sha = sha.get("logs/openfx-tail.log")
+            .and_then(|x| x.as_str()).expect("ofx sha present");
+        let adb_sha = sha.get("logs/adobe-tail.log")
+            .and_then(|x| x.as_str()).expect("adobe sha present");
+        assert_eq!(ofx_sha.len(), 64);
+        assert_eq!(adb_sha.len(), 64);
+        assert_ne!(ofx_sha, adb_sha, "distinct content must hash differently");
+    }
+
+    #[test]
     fn full_roundtrip_with_all_kinds() {
         let tmp = tempfile::tempdir().unwrap();
         let inputs = PackageInputs {
             current_log:   Some(make_file(tmp.path(), "cur.log", b"current")),
             history_logs:  vec![make_file(tmp.path(), "h1.log", b"hist1")],
             incidents_log: Some(make_file(tmp.path(), "inc.log", b"warn line")),
+            openfx_log:    None,
+            adobe_log:     None,
             project_file:  Some(make_file(tmp.path(), "p.gyroflow", b"{}")),
             lens_file:     Some(make_file(tmp.path(), "l.json", b"[]")),
             queue_file:    Some(make_file(tmp.path(), "q.json", b"[]")),

@@ -4906,6 +4906,13 @@ impl Controller {
         if queue.exists() { inputs.queue_file = Some(queue); }
         let settings = data_dir.join("settings.json");
         if settings.exists() { inputs.settings_file = Some(settings); }
+        // Plugin logs are siblings of lens.json in data_dir (not under logs/).
+        // Captured tail-only by the packager; truncated by uploader::cleanup
+        // after a successful confirm, mirroring incidents.log.
+        let openfx = data_dir.join("gyroflow-openfx.log");
+        if openfx.exists() { inputs.openfx_log = Some(openfx); }
+        let adobe = data_dir.join("gyroflow-adobe.log");
+        if adobe.exists() { inputs.adobe_log = Some(adobe); }
         // project_file: omitted in Phase 4 baseline; controller exposes a
         // hook later if user wants the current .gyroflow snapshot wired.
         inputs

@@ -404,6 +404,17 @@ fn cleanup(inputs: &PackageInputs) {
         let _ = std::fs::OpenOptions::new()
             .write(true).truncate(true).open(p);
     }
+    // Truncate OFX / Adobe plugin logs after a successful confirm
+    // (feedback-include-plugin-logs §D4). Best-effort: a locked file is
+    // tolerated, the rest of cleanup still runs.
+    if let Some(p) = &inputs.openfx_log {
+        let _ = std::fs::OpenOptions::new()
+            .write(true).truncate(true).open(p);
+    }
+    if let Some(p) = &inputs.adobe_log {
+        let _ = std::fs::OpenOptions::new()
+            .write(true).truncate(true).open(p);
+    }
     // Mark each crash zip uploaded.
     for crash in &inputs.crash_zips {
         let mut marker = crash.clone();
