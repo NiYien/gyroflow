@@ -50,6 +50,15 @@ pub struct LensProfile {
 
     pub input_horizontal_stretch: f64,
     pub input_vertical_stretch: f64,
+    // Non-mutating mirror of the import-time stretch values. Used ONLY by
+    // `apply_anamorphic_decay` to keep `α = 2/(1+λ²)` invariant under
+    // `disable_lens_stretch(adjust_size=true)`. Other read sites SHALL keep
+    // using the mutating fields above so `scaling_factor`, `set_fovs`, and
+    // rendering math are unaffected.
+    #[serde(skip)]
+    pub(crate) input_horizontal_stretch_raw: Option<f64>,
+    #[serde(skip)]
+    pub(crate) input_vertical_stretch_raw: Option<f64>,
     pub num_images: usize,
 
     pub fps: f64,
@@ -112,6 +121,36 @@ impl LensProfile {
     pub fn vertical_stretch_normalized(&self) -> f64 {
         if self.input_vertical_stretch > 0.01 { self.input_vertical_stretch } else { 1.0 }
     }
+    // Read-only access to the raw stretch mirror for cross-crate diagnostics
+    // (e.g. gyroflow-plugins ComputeInputsSnapshot). Most call sites should
+    // continue using the mutating fields above — see the field doc-comment.
+    pub fn input_horizontal_stretch_raw(&self) -> Option<f64> {
+        self.input_horizontal_stretch_raw
+    }
+    pub fn input_vertical_stretch_raw(&self) -> Option<f64> {
+        self.input_vertical_stretch_raw
+    }
+
+    // Sets both axes of input stretch and mirrors to the non-mutating raw
+    // fields used by `apply_anamorphic_decay`. Call from every site that
+    // defines the lens' stretch (profile load, preset, merge, interp, public
+    // setter) so the raw mirror stays accurate. Do NOT call from
+    // `disable_lens_stretch` — that path resets the mutating fields to 1.0
+    // while raw must keep the original λ for decay coherence.
+    pub(crate) fn set_input_stretch(&mut self, h: f64, v: f64) {
+        self.input_horizontal_stretch = h;
+        self.input_vertical_stretch = v;
+        self.input_horizontal_stretch_raw = Some(h);
+        self.input_vertical_stretch_raw = Some(v);
+    }
+    pub(crate) fn set_input_horizontal_stretch_mirrored(&mut self, h: f64) {
+        self.input_horizontal_stretch = h;
+        self.input_horizontal_stretch_raw = Some(h);
+    }
+    pub(crate) fn set_input_vertical_stretch_mirrored(&mut self, v: f64) {
+        self.input_vertical_stretch = v;
+        self.input_vertical_stretch_raw = Some(v);
+    }
 
     pub fn from_value(json: serde_json::Value) -> Result<Self, serde_json::Error> {
         let mut lens: Result<Self, serde_json::Error> = serde_json::from_value(json);
@@ -164,10 +203,10 @@ impl LensProfile {
     #[cfg(feature = "opencv")]
     pub fn set_from_calibrator(&mut self, cal: &LensCalibrator) {
         if self.input_horizontal_stretch <= 0.01 {
-            self.input_horizontal_stretch = 1.0;
+            self.set_input_horizontal_stretch_mirrored(1.0);
         }
         if self.input_vertical_stretch <= 0.01 {
-            self.input_vertical_stretch = 1.0;
+            self.set_input_vertical_stretch_mirrored(1.0);
         }
 
         self.calib_dimension = Dimensions {
@@ -324,6 +363,10 @@ impl LensProfile {
         std::mem::swap(
             &mut ret.input_horizontal_stretch,
             &mut ret.input_vertical_stretch,
+        );
+        std::mem::swap(
+            &mut ret.input_horizontal_stretch_raw,
+            &mut ret.input_vertical_stretch_raw,
         );
 
         if ret.fisheye_params.camera_matrix.len() == 3 {
@@ -497,10 +540,10 @@ impl LensProfile {
                     cpy.crop_factor = x.get("crop_factor").and_then(|x| x.as_f64());
                 }
                 if let Some(v) = x.get("input_horizontal_stretch").and_then(|x| x.as_f64()) {
-                    cpy.input_horizontal_stretch = v;
+                    cpy.set_input_horizontal_stretch_mirrored(v);
                 }
                 if let Some(v) = x.get("input_vertical_stretch").and_then(|x| x.as_f64()) {
-                    cpy.input_vertical_stretch = v;
+                    cpy.set_input_vertical_stretch_mirrored(v);
                 }
                 if let Some(v) = x.get("lens_model").and_then(|x| x.as_str()) {
                     cpy.lens_model = v.to_owned();
@@ -719,11 +762,11 @@ impl LensProfile {
                                 .round()
                                 as usize;
 
-                            cpy.input_horizontal_stretch = l1.input_horizontal_stretch
-                                * (1.0 - fract)
+                            let interp_h = l1.input_horizontal_stretch * (1.0 - fract)
                                 + (l2.input_horizontal_stretch * fract);
-                            cpy.input_vertical_stretch = l1.input_vertical_stretch * (1.0 - fract)
+                            let interp_v = l1.input_vertical_stretch * (1.0 - fract)
                                 + (l2.input_vertical_stretch * fract);
+                            cpy.set_input_stretch(interp_h, interp_v);
 
                             // TODO: digital lens interpolation?
                         }

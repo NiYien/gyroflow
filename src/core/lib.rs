@@ -32,6 +32,7 @@ pub mod neuflow_burn;
 pub mod stabilization_params;
 pub mod util;
 pub mod log_context;
+pub mod log_throttle;
 pub mod smooth_diag;
 
 use camera_identifier::CameraIdentifier;
@@ -85,6 +86,91 @@ impl Drop for OpGuard {
             .fetch_update(SeqCst, SeqCst, |v| if v == 0 { None } else { Some(v - 1) })
             .ok();
     }
+}
+
+// Monotonic counter incremented on each entry into the Max-Zoom limiter block
+// (sync + async). Emitted as `seq` in the per-invocation `stab.load` snapshot
+// so a reader correlates consecutive invocations within one plugin load.
+static MAX_ZOOM_INVOKE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+// Returns true when no frame can possibly trigger the limiter under the
+// current configuration, so the whole iteration loop (and its
+// `smoothing_fov_limit_per_frame` allocation) can be skipped.
+//
+// The check uses the LEAST permissive per-frame zoom_limit (smallest keyframe
+// value if any, else the static `max_zoom_param`), which yields the LARGEST
+// per-frame fov_limit. If `min_fov >= largest_fov_limit`, then every per-frame
+// `fov[i] >= fov_limit[i]` and no frame would trigger.
+//
+// This deviates from the optimize-stab-load-pipeline spec §4.1 wording (which
+// uses the LARGEST keyframe value); the spec's direction is unsafe for clips
+// where MaxZoom is keyframed across a wide range (a frame with a smaller per-
+// frame zoom_limit could still trigger even when min_fov passes the largest-
+// keyframe check). For non-keyframed clips — including the original Canon MXF
+// bug — both forms produce the same answer. The implementation chooses the
+// safe form so a keyframed clip can't silently get the wrong crop.
+fn max_zoom_preskip_allows_skip(
+    fovs: &[f64],
+    max_zoom_param: f64,
+    max_zoom_keyframes: Option<&std::collections::BTreeMap<i64, crate::keyframes::Keyframe>>,
+    scaling_factor: f64,
+) -> bool {
+    if fovs.is_empty() || scaling_factor <= 0.0 {
+        return false;
+    }
+    let smallest_keyframe = max_zoom_keyframes
+        .and_then(|m| m.values().map(|k| k.value).reduce(f64::min))
+        .filter(|v| *v > 0.0);
+    let least_permissive_zoom_limit = match smallest_keyframe {
+        Some(v) => v.min(max_zoom_param) / 100.0,
+        None => max_zoom_param / 100.0,
+    };
+    if least_permissive_zoom_limit <= 0.0 {
+        return false;
+    }
+    let largest_fov_limit = 1.0 / (least_permissive_zoom_limit * scaling_factor);
+    let min_fov = fovs.iter().copied().fold(f64::INFINITY, f64::min);
+    min_fov >= largest_fov_limit
+}
+
+// Single-call diagnostic snapshot emitted on each Max-Zoom limiter entry. The
+// numbers reflect the limiter's own scaling_factor/fov_limit formula; the field
+// list is governed by the `plugin-stab-load-coherence` spec. A reader correlates
+// consecutive invocations within one plugin load by comparing `seq` values.
+fn emit_max_zoom_load_snapshot(
+    params: &ComputeParams,
+    size: (usize, usize),
+    output_size: (usize, usize),
+    max_zoom_param: f64,
+    scaling_factor: f64,
+    max_zoom_iters: usize,
+) {
+    let seq = MAX_ZOOM_INVOKE_SEQ.fetch_add(1, SeqCst) + 1;
+    let h_stretch = params.lens.horizontal_stretch_normalized();
+    let zoom_limit = max_zoom_param / 100.0;
+    let fov_limit = if zoom_limit > 0.0 && scaling_factor > 0.0 {
+        1.0 / (zoom_limit * scaling_factor)
+    } else {
+        f64::INFINITY
+    };
+    let total = params.fovs.len();
+    let (mut min_fov, mut max_fov, mut above_count) =
+        (f64::INFINITY, f64::NEG_INFINITY, 0usize);
+    for fov in &params.fovs {
+        if *fov < min_fov {
+            min_fov = *fov;
+        }
+        if *fov > max_fov {
+            max_fov = *fov;
+        }
+        if *fov < fov_limit {
+            above_count += 1;
+        }
+    }
+    log::info!(
+        target: "stab.load",
+        "max_zoom_entry seq={seq} size={size:?} output_size={output_size:?} h_stretch={h_stretch:.4} zoom_limit={zoom_limit:.4} scaling_factor={scaling_factor:.6} fov_limit={fov_limit:.6} min_fov={min_fov:.6} max_fov={max_fov:.6} above_count={above_count}/{total} iters_cap={max_zoom_iters}",
+    );
 }
 
 // Outcome of `StabilizationManager::wait_until_idle`. Callers MUST match on
@@ -1105,7 +1191,7 @@ impl StabilizationManager {
         params.fovs = fovs;
         params.minimal_fovs = minimal_fovs;
 
-        let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor) = {
+        let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor, size, output_size) = {
             let mut stab_params = self.params.write();
             stab_params.set_fovs(params.fovs.clone(), lens_fov_adjustment, params.lens.horizontal_stretch_normalized());
             stab_params.minimal_fovs = params.minimal_fovs.clone();
@@ -1126,18 +1212,54 @@ impl StabilizationManager {
                 // Effective input width: matches set_fovs above so the Max-Zoom
                 // limiter's fov_limit threshold tracks the same display crop.
                 (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0)) / stab_params.output_size.0.max(1) as f64,
+                stab_params.size,
+                stab_params.output_size,
             )
         };
 
         // Max zoom
         if max_zoom_max > 50.0 && max_zoom_iters > 0 {
+            emit_max_zoom_load_snapshot(
+                &params,
+                size,
+                output_size,
+                max_zoom_param,
+                scaling_factor,
+                max_zoom_iters,
+            );
+            // §4 pre-skip: avoid the per-frame Vec allocation, the smoothness
+            // pass, and the adaptive-zoom recompute if no frame would ever
+            // trigger the limiter. Falls through to the loop body when even a
+            // single frame is below the largest per-frame fov_limit. The diag
+            // dump below still runs so GYROFLOW_SMOOTH_DIAG users see the pass.
+            let do_max_zoom_loop = !max_zoom_preskip_allows_skip(
+                &params.fovs,
+                max_zoom_param,
+                params.keyframes.get_keyframes(&KeyframeType::MaxZoom),
+                scaling_factor,
+            );
+            if !do_max_zoom_loop {
+                log::debug!(
+                    target: "stab",
+                    "Max Zoom pre-skip: no frame exceeds per-frame fov_limit (zoom_param={max_zoom_param} scaling_factor={scaling_factor}), skipping loop"
+                );
+            }
+            if do_max_zoom_loop {
             params.smoothing_fov_limit_per_frame.clear();
             for _ in params.fovs.iter() {
                 params.smoothing_fov_limit_per_frame.push(1.0);
             }
             let thresholds = [0.95, 0.9, 0.85, 0.8];
+            // §5 non-convergence stall detect: 3-iter ring of `above_count`.
+            // When the count stays strictly constant across 3 iterations and
+            // the loop hasn't converged (count > 0), the limiter is making
+            // zero progress — break out with one warn line so users get a
+            // hint to raise max_zoom. Note `any_above_limit = false` (line
+            // below) takes precedence so a converged loop never warns.
+            let mut above_count_ring: [u32; 3] = [u32::MAX, u32::MAX, u32::MAX];
             for iter in 0..max_zoom_iters {
                 let mut any_above_limit = false;
+                let mut above_count: u32 = 0;
                 for (i, fov) in params.fovs.iter().enumerate() {
                     let ts = crate::timestamp_at_frame(i as i32, params.scaled_fps);
                     let mut zoom_limit = params
@@ -1161,6 +1283,7 @@ impl StabilizationManager {
                     let fov_limit = 1.0 / (zoom_limit * scaling_factor);
                     if *fov < fov_limit {
                         any_above_limit = true;
+                        above_count = above_count.saturating_add(1);
                         params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit)
                             .min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
                     }
@@ -1169,6 +1292,18 @@ impl StabilizationManager {
                     if iter == 0 {
                         params.smoothing_fov_limit_per_frame.clear();
                     }
+                    break;
+                }
+                above_count_ring[iter % 3] = above_count;
+                if iter >= 2
+                    && above_count > 0
+                    && above_count_ring.iter().min() == above_count_ring.iter().max()
+                {
+                    log::warn!(
+                        target: "stab",
+                        "Max Zoom limit unreachable: {above_count} frames remain above limit after {} iterations; consider raising max_zoom",
+                        iter + 1
+                    );
                     break;
                 }
 
@@ -1200,6 +1335,7 @@ impl StabilizationManager {
                     stab_params.zooming_debug_points = debug_points;
                 }
             }
+            } // end §4 pre-skip guard
         }
 
         // Smoothing diagnostics dump (gated by GYROFLOW_SMOOTH_DIAG=1).
@@ -1383,7 +1519,7 @@ impl StabilizationManager {
 
                 if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
-                let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor) = {
+                let (max_zoom_param, max_zoom_max, max_zoom_iters, scaling_factor, size, output_size) = {
                     let mut stab_params = stabilization_params.write();
                     stab_params.set_fovs(params.fovs.clone(), params.lens.optimal_fov.unwrap_or(1.0), params.lens.horizontal_stretch_normalized());
                     stab_params.minimal_fovs = params.minimal_fovs.clone();
@@ -1395,19 +1531,45 @@ impl StabilizationManager {
                         stab_params.max_zoom_iterations,
                         // Effective input width: matches set_fovs above so the Max-Zoom
                         // limiter's fov_limit threshold tracks the same display crop.
-                        (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0)) / stab_params.output_size.0.max(1) as f64
+                        (stab_params.size.0 as f64 * params.lens.horizontal_stretch_normalized().max(1.0)) / stab_params.output_size.0.max(1) as f64,
+                        stab_params.size,
+                        stab_params.output_size,
                     )
                 };
 
                 // Max zoom
                 if max_zoom_max > 50.0 && max_zoom_iters > 0 {
+                    emit_max_zoom_load_snapshot(
+                        &params,
+                        size,
+                        output_size,
+                        max_zoom_param,
+                        scaling_factor,
+                        max_zoom_iters,
+                    );
+                    // §4 pre-skip (async path mirror of recompute_adaptive_zoom).
+                    let do_max_zoom_loop = !max_zoom_preskip_allows_skip(
+                        &params.fovs,
+                        max_zoom_param,
+                        params.keyframes.get_keyframes(&KeyframeType::MaxZoom),
+                        scaling_factor,
+                    );
+                    if !do_max_zoom_loop {
+                        log::debug!(
+                            target: "stab",
+                            "Max Zoom pre-skip (async): no frame exceeds per-frame fov_limit (zoom_param={max_zoom_param} scaling_factor={scaling_factor}), skipping loop"
+                        );
+                    }
+                    if do_max_zoom_loop {
                     params.smoothing_fov_limit_per_frame.clear();
                     for _ in params.fovs.iter() {
                         params.smoothing_fov_limit_per_frame.push(1.0);
                     }
                     let thresholds = [0.95, 0.9, 0.85, 0.8];
+                    let mut above_count_ring: [u32; 3] = [u32::MAX, u32::MAX, u32::MAX];
                     for iter in 0..max_zoom_iters {
                         let mut any_above_limit = false;
+                        let mut above_count: u32 = 0;
                         for (i, fov) in params.fovs.iter().enumerate() {
                             let ts = crate::timestamp_at_frame(i as i32, params.scaled_fps);
                             let mut zoom_limit = params.keyframes.value_at_video_timestamp(&KeyframeType::MaxZoom, ts).unwrap_or(max_zoom_param) / 100.0;
@@ -1420,6 +1582,7 @@ impl StabilizationManager {
                             let fov_limit = 1.0 / (zoom_limit * scaling_factor);
                             if *fov < fov_limit {
                                 any_above_limit = true;
+                                above_count = above_count.saturating_add(1);
                                 params.smoothing_fov_limit_per_frame[i] *= (*fov / fov_limit).min(*thresholds.get(iter).unwrap_or(thresholds.last().unwrap()));
                             }
                         }
@@ -1427,6 +1590,18 @@ impl StabilizationManager {
                             if iter == 0 {
                                 params.smoothing_fov_limit_per_frame.clear();
                             }
+                            break;
+                        }
+                        above_count_ring[iter % 3] = above_count;
+                        if iter >= 2
+                            && above_count > 0
+                            && above_count_ring.iter().min() == above_count_ring.iter().max()
+                        {
+                            log::warn!(
+                                target: "stab",
+                                "Max Zoom limit unreachable (async): {above_count} frames remain above limit after {} iterations; consider raising max_zoom",
+                                iter + 1
+                            );
                             break;
                         }
 
@@ -1463,6 +1638,7 @@ impl StabilizationManager {
                             zooming_checksum.store(zooming::get_checksum(&params), SeqCst);
                         }
                     }
+                    } // end §4 pre-skip guard (async)
                 }
             }
 
@@ -1814,11 +1990,11 @@ impl StabilizationManager {
         self.params.write().background_margin_feather = v;
     }
     pub fn set_input_horizontal_stretch(&self, v: f64) {
-        self.lens.write().input_horizontal_stretch = v;
+        self.lens.write().set_input_horizontal_stretch_mirrored(v);
         self.invalidate_zooming();
     }
     pub fn set_input_vertical_stretch(&self, v: f64) {
-        self.lens.write().input_vertical_stretch = v;
+        self.lens.write().set_input_vertical_stretch_mirrored(v);
         self.invalidate_zooming();
     }
     pub fn set_max_zoom(&self, v: f64, iters: usize) {
@@ -5513,5 +5689,22 @@ mod tests {
         // the new sites bit-identical with reload_lens (Design D1).
         let lens = LensProfile::default();
         assert!(lens_profile_emit_guard_passes(true, &lens));
+    }
+
+    // §9.6: two consecutive Max-Zoom snapshots get consecutive seq numbers.
+    // Log-content correctness (format string, min_fov field) is verified at
+    // §8.4 / §12.2 by reading a fresh gyroflow.log; the unit test scope is the
+    // process-global counter invariant that gyroflow-core can test cleanly
+    // without standing up a tests-only log sink.
+    #[test]
+    #[serial]
+    fn max_zoom_load_snapshot_seq_advances_by_two() {
+        let mut params = stabilization::ComputeParams::default();
+        params.fovs = vec![0.9, 0.85, 0.8, 0.75, 0.7];
+        let before = MAX_ZOOM_INVOKE_SEQ.load(SeqCst);
+        emit_max_zoom_load_snapshot(&params, (1920, 1080), (1920, 1080), 180.0, 1.0, 5);
+        emit_max_zoom_load_snapshot(&params, (1920, 1080), (1920, 1080), 180.0, 1.0, 5);
+        let after = MAX_ZOOM_INVOKE_SEQ.load(SeqCst);
+        assert_eq!(after, before + 2);
     }
 }

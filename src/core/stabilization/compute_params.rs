@@ -151,16 +151,16 @@ impl ComputeParams {
     }
 
     pub fn anamorphic_lens_correction_decay(&self) -> f64 {
-        let h = if self.lens.input_horizontal_stretch > 0.01 {
-            self.lens.input_horizontal_stretch
-        } else {
-            1.0
-        };
-        let v = if self.lens.input_vertical_stretch > 0.01 {
-            self.lens.input_vertical_stretch
-        } else {
-            1.0
-        };
+        // Read the raw stretch mirror when present so the decay factor
+        // `α = 2/(1+λ²)` stays invariant under `disable_lens_stretch(adjust_size=true)`
+        // (which resets the mutating fields to 1.0 but leaves the raw mirror
+        // untouched). Fall back to the mutating field for legacy lens profiles
+        // / call sites that pre-date the raw mirror; this preserves the pre-§10
+        // numerical result whenever the raw fields are unset.
+        let h_raw = self.lens.input_horizontal_stretch_raw.unwrap_or(self.lens.input_horizontal_stretch);
+        let v_raw = self.lens.input_vertical_stretch_raw.unwrap_or(self.lens.input_vertical_stretch);
+        let h = if h_raw > 0.01 { h_raw } else { 1.0 };
+        let v = if v_raw > 0.01 { v_raw } else { 1.0 };
         anamorphic_lens_correction_decay(h, v)
     }
 
@@ -297,5 +297,75 @@ mod tests {
         // Stretch values within tolerance of 1.0 should not trigger decay.
         assert_eq!(anamorphic_lens_correction_decay(1.005, 1.005), 1.0);
         assert_eq!(anamorphic_lens_correction_decay(0.5, 0.5), 1.0);
+    }
+
+    // §10.4/§10.5: decay must stay invariant when the mutating stretch fields
+    // are reset to 1.0 by `disable_lens_stretch(adjust_size=true)`. We
+    // construct a ComputeParams by hand (without a full StabilizationManager)
+    // since the decay reads `self.lens` only.
+    use super::ComputeParams;
+    use crate::lens_profile::LensProfile;
+
+    fn build_compute_params_with_stretch(h: f64, v: f64, raw: bool) -> ComputeParams {
+        let mut lens = LensProfile::default();
+        if raw {
+            lens.set_input_stretch(h, v);
+        } else {
+            lens.input_horizontal_stretch = h;
+            lens.input_vertical_stretch = v;
+        }
+        let mut cp = ComputeParams::default();
+        cp.lens = lens;
+        cp
+    }
+
+    fn simulate_disable_lens_stretch(cp: &mut ComputeParams) {
+        // Mirror what `StabilizationManager::disable_lens_stretch(adjust_size=true)`
+        // does to the LensProfile: clear the mutating stretch fields but
+        // leave the raw mirror untouched. Width/height changes on size are
+        // not relevant to `apply_anamorphic_decay`.
+        cp.lens.input_horizontal_stretch = 1.0;
+        cp.lens.input_vertical_stretch = 1.0;
+    }
+
+    #[test]
+    fn apply_anamorphic_decay_invariant_under_disable_lens_stretch_lambda_2_0() {
+        let mut cp = build_compute_params_with_stretch(2.0, 1.0, true);
+        let pre = cp.apply_anamorphic_decay(0.5);
+        // Pre: α = 2/(1+4) = 0.4, decay = 0.5 * 0.4 = 0.2 (clamped). All good.
+        assert!((pre - 0.2).abs() < f64::EPSILON, "got pre={pre}");
+        simulate_disable_lens_stretch(&mut cp);
+        let post = cp.apply_anamorphic_decay(0.5);
+        assert!((pre - post).abs() < f64::EPSILON, "pre={pre} post={post}");
+    }
+
+    #[test]
+    fn apply_anamorphic_decay_invariant_under_disable_lens_stretch_lambda_1_5() {
+        let mut cp = build_compute_params_with_stretch(1.5, 1.0, true);
+        let pre = cp.apply_anamorphic_decay(1.0);
+        // Pre: α = 2/(1+2.25) = 0.6153846..., decay = 0.6153846 (clamped).
+        assert!((pre - 0.61538461538461542).abs() < 1e-12, "got pre={pre}");
+        simulate_disable_lens_stretch(&mut cp);
+        let post = cp.apply_anamorphic_decay(1.0);
+        assert!((pre - post).abs() < f64::EPSILON, "pre={pre} post={post}");
+    }
+
+    #[test]
+    fn apply_anamorphic_decay_invariant_under_disable_lens_stretch_vertical_1_5() {
+        let mut cp = build_compute_params_with_stretch(1.0, 1.5, true);
+        let pre = cp.apply_anamorphic_decay(1.0);
+        assert!((pre - 0.61538461538461542).abs() < 1e-12, "got pre={pre}");
+        simulate_disable_lens_stretch(&mut cp);
+        let post = cp.apply_anamorphic_decay(1.0);
+        assert!((pre - post).abs() < f64::EPSILON, "pre={pre} post={post}");
+    }
+
+    #[test]
+    fn apply_anamorphic_decay_legacy_path_without_raw_mirror_matches_pre_fix_value() {
+        // Legacy profile with raw mirror unset — read should fall back to
+        // mutating, identical to behavior before §10.
+        let cp = build_compute_params_with_stretch(2.0, 1.0, false);
+        let d = cp.apply_anamorphic_decay(0.5);
+        assert!((d - 0.2).abs() < f64::EPSILON, "got {d}");
     }
 }

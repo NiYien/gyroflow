@@ -154,7 +154,12 @@ impl Default for StabilizationParams {
 
             video_rotation: 0.0,
 
-            max_zoom: Some(150.0),
+            // §6: default raised 150 → 180 to match the UI slider's `to:` ceiling
+            // in Stabilization.qml and the user's reported expectation. Existing
+            // `.gyroflow` files with an explicit `max_zoom` field load that
+            // value via `import_gyroflow_data` (the explicit-value path runs
+            // before any default fill), so saved projects are unaffected.
+            max_zoom: Some(180.0),
             max_zoom_iterations: 5,
 
             lens_correction_amount: 1.0,
@@ -395,5 +400,13 @@ mod tests {
         let mut p = make((1920, 1080), (2880, 1080));
         p.set_fovs(vec![], 1.0, 1.5);
         assert_eq!(p.min_fov, 1.0);
+    }
+
+    // §6.3: default ceiling raised 150 → 180; iters stays at 5.
+    #[test]
+    fn default_max_zoom_is_180_and_iters_is_5() {
+        let p = StabilizationParams::default();
+        assert_eq!(p.max_zoom, Some(180.0));
+        assert_eq!(p.max_zoom_iterations, 5);
     }
 }

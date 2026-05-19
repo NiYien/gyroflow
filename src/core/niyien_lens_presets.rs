@@ -578,8 +578,7 @@ pub fn build_lens_profile(
     populate_profile_metadata(&mut profile, metadata, fallback_lens, size);
     profile.lens_group_override = config.is_some();
     profile.focal_length = Some(focal_length_mm);
-    profile.input_horizontal_stretch = 1.0;
-    profile.input_vertical_stretch = 1.0;
+    profile.set_input_stretch(1.0, 1.0);
     if fallback_lens.is_none() {
         profile.fisheye_params = CameraParams {
             RMS_error: 0.0,
@@ -607,7 +606,7 @@ pub fn build_lens_profile(
     if let Some(anamorphic) = resolve_anamorphic_config(config) {
         match anamorphic.squeeze_direction {
             SqueezeDirection::Horizontal => {
-                profile.input_horizontal_stretch = anamorphic.squeeze_ratio;
+                profile.set_input_horizontal_stretch_mirrored(anamorphic.squeeze_ratio);
                 let stretched_w = even_dimension(size.0 as f64 * anamorphic.squeeze_ratio);
                 calib_dimension.w = stretched_w;
                 orig_dimension.w = stretched_w;
@@ -619,7 +618,7 @@ pub fn build_lens_profile(
                 cy = size.1 as f64 / 2.0;
             }
             SqueezeDirection::Vertical => {
-                profile.input_vertical_stretch = anamorphic.squeeze_ratio;
+                profile.set_input_vertical_stretch_mirrored(anamorphic.squeeze_ratio);
                 let stretched_h = even_dimension(size.1 as f64 * anamorphic.squeeze_ratio);
                 calib_dimension.h = stretched_h;
                 orig_dimension.h = stretched_h;
@@ -1533,7 +1532,7 @@ mod tests {
         // on `DistortionModel::from_name("")` falling through to default.
         let mut profile = LensProfile::default();
         profile.focal_length = Some(35.0);
-        profile.input_horizontal_stretch = 1.33;
+        profile.set_input_horizontal_stretch_mirrored(1.33);
         profile.fisheye_params.distortion_coeffs = vec![0.0, 0.8, -1.1, 0.0];
         profile.distortion_model = Some(String::new());
         profile.init();
@@ -1870,8 +1869,7 @@ mod tests {
         let mut profile = LensProfile::default();
         profile.lens_model = "Sirui star 50mm 1.33x".to_owned();
         profile.focal_length = Some(16.0);
-        profile.input_horizontal_stretch = 1.33;
-        profile.input_vertical_stretch = 1.0;
+        profile.set_input_stretch(1.33, 1.0);
 
         let config = lens_group_config_from_lens_profile(&profile, 0).unwrap();
 
@@ -1891,8 +1889,7 @@ mod tests {
         let mut profile = LensProfile::default();
         profile.lens_model = "Ordinary lens".to_owned();
         profile.focal_length = Some(35.0);
-        profile.input_horizontal_stretch = 1.0;
-        profile.input_vertical_stretch = 1.0;
+        profile.set_input_stretch(1.0, 1.0);
 
         assert!(lens_group_config_from_lens_profile(&profile, 0).is_none());
     }
@@ -1902,8 +1899,7 @@ mod tests {
         let mut profile = LensProfile::default();
         profile.lens_model = "Manual anamorphic 1.50x H".to_owned();
         profile.focal_length = Some(35.0);
-        profile.input_horizontal_stretch = 1.5;
-        profile.input_vertical_stretch = 1.0;
+        profile.set_input_stretch(1.5, 1.0);
 
         let config = lens_group_config_from_lens_profile(&profile, 0).unwrap();
 
@@ -1920,8 +1916,7 @@ mod tests {
         let mut profile = LensProfile::default();
         profile.lens_model = "Ordinary stretched lens".to_owned();
         profile.focal_length = Some(35.0);
-        profile.input_horizontal_stretch = 1.5;
-        profile.input_vertical_stretch = 1.0;
+        profile.set_input_stretch(1.5, 1.0);
 
         assert!(lens_group_config_from_lens_profile(&profile, 0).is_none());
     }
@@ -2007,8 +2002,7 @@ mod tests {
         metadata.unit_pixel_focal_length = Some(100.0);
 
         let mut fallback = LensProfile::default();
-        fallback.input_horizontal_stretch = 1.5;
-        fallback.input_vertical_stretch = 1.0;
+        fallback.set_input_stretch(1.5, 1.0);
         let config = LensGroupConfig {
             lens_index: 0,
             focal_length_mm: Some(35.0),

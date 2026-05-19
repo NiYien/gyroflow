@@ -169,6 +169,74 @@ impl BackendType {
     pub fn is_wgpu(&self) -> bool {
         matches!(self, Self::Wgpu(_))
     }
+    // Stable `&'static str` label for telemetry keys; matches the strings in
+    // `stab.timing` log lines so a `grep backend=opencl` works end-to-end.
+    pub fn name(&self) -> &'static str {
+        match self {
+            BackendType::None      => "none",
+            BackendType::OpenCL(_) => "opencl",
+            BackendType::Wgpu(_)   => "wgpu",
+            BackendType::Cpu(_)    => "cpu",
+        }
+    }
+}
+
+// Per-backend accumulator of render timings flushed at most once per
+// `GYROFLOW_STAB_TIMING_MS` (default 1 s) by `add_and_maybe_emit`. The
+// `stab_data_ms` / `gpu_ms` / `backend_init_ms` axes mirror the three cost
+// centers identified in the optimize-stab-load-pipeline change. All adds use
+// saturating arithmetic so a long-running session can't overflow `u64`.
+#[derive(Default, Copy, Clone)]
+pub struct StabTimingAccumulator {
+    pub frames: u64,
+    pub stab_data_ms: u64,
+    pub gpu_ms: u64,
+    pub backend_init_ms: u64,
+}
+
+fn timing_accumulators() -> &'static parking_lot::Mutex<std::collections::HashMap<&'static str, StabTimingAccumulator>> {
+    static MAP: std::sync::OnceLock<parking_lot::Mutex<std::collections::HashMap<&'static str, StabTimingAccumulator>>> = std::sync::OnceLock::new();
+    MAP.get_or_init(|| parking_lot::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Add the timings to the per-backend accumulator and emit one `stab.timing`
+/// line if the throttle allows. Caller is responsible for measuring each
+/// component; pass `0` for any axis that does not apply on this call.
+pub(crate) fn add_and_maybe_emit(
+    backend: &'static str,
+    stab_data_ms: u64,
+    gpu_ms: u64,
+    backend_init_ms: u64,
+) {
+    let snapshot = {
+        let mut map = timing_accumulators().lock();
+        let entry = map.entry(backend).or_default();
+        entry.frames = entry.frames.saturating_add(1);
+        entry.stab_data_ms = entry.stab_data_ms.saturating_add(stab_data_ms);
+        entry.gpu_ms = entry.gpu_ms.saturating_add(gpu_ms);
+        entry.backend_init_ms = entry.backend_init_ms.saturating_add(backend_init_ms);
+        let interval_ms = crate::log_throttle::min_interval_ms_from_env(1000);
+        if crate::log_throttle::try_emit(("stab.timing", backend), interval_ms) {
+            let out = *entry;
+            *entry = StabTimingAccumulator::default();
+            Some(out)
+        } else {
+            None
+        }
+    };
+    if let Some(s) = snapshot {
+        log::info!(
+            target: "stab.timing",
+            "backend={backend} frames={} stab_data_ms={} gpu_ms={} backend_init_ms={}",
+            s.frames, s.stab_data_ms, s.gpu_ms, s.backend_init_ms,
+        );
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_timing_accumulators_for_test() {
+    timing_accumulators().lock().clear();
+    crate::log_throttle::reset_for_test();
 }
 
 #[derive(Default)]
@@ -410,6 +478,19 @@ impl Stabilization {
         buffers: &mut Buffers,
         is_pixel_normalized: bool,
     ) {
+        self.ensure_stab_data_at_timestamp_timed::<T>(timestamp_us, frame, buffers, is_pixel_normalized).0
+    }
+    // Variant exposed for the `stab.timing` instrumentation: returns
+    // (was_inserted, elapsed_ms_of_insert). When `was_inserted` is false the
+    // elapsed value is 0 (we skipped the expensive `get_frame_transform_at` /
+    // map insert path).
+    pub fn ensure_stab_data_at_timestamp_timed<T: PixelType>(
+        &mut self,
+        timestamp_us: i64,
+        frame: Option<usize>,
+        buffers: &mut Buffers,
+        is_pixel_normalized: bool,
+    ) -> ((), u64) {
         let mut insert = true;
         if let Some(itm) = self.stab_data.get(&timestamp_us) {
             insert = false;
@@ -434,14 +515,18 @@ impl Stabilization {
                 insert = true;
             }
         }
+        let mut stab_data_ms: u64 = 0;
         if insert {
+            let t0 = std::time::Instant::now();
             let mut transform = self.get_frame_transform_at::<T>(timestamp_us, frame, buffers);
             if is_pixel_normalized {
                 transform.kernel_params.max_pixel_value = 1.0;
                 transform.kernel_params.pixel_value_limit = 1.0;
             }
             self.stab_data.insert(timestamp_us, transform);
+            stab_data_ms = t0.elapsed().as_millis() as u64;
         }
+        ((), stab_data_ms)
     }
 
     pub fn get_current_key(&self, buffers: &Buffers) -> String {
@@ -598,6 +683,10 @@ impl Stabilization {
         let current_hash = self.initialized_backend.get_hash();
 
         if current_hash != hash {
+            // §3.3: measure wall time of the (re-)init path and emit it under
+            // the chosen backend's bucket. Lazy `add_and_maybe_emit` at the
+            // end of this function so we know which backend won the init.
+            let init_t0 = std::time::Instant::now();
             self.initialized_backend = BackendType::None;
             let canvas_len = self.drawing.get_buffer_len();
             #[allow(unused_mut)]
@@ -731,6 +820,10 @@ impl Stabilization {
                     }
                 }
             }
+            // §3.3: backend init wall time, attributed to whichever backend
+            // we ended up settling on. Throttled to ≤1 emit/sec/backend.
+            let init_ms = init_t0.elapsed().as_millis() as u64;
+            add_and_maybe_emit(self.initialized_backend.name(), 0, 0, init_ms);
         }
     }
 
@@ -800,6 +893,25 @@ impl Stabilization {
         buffers: &mut Buffers,
         frame_transform: Option<&FrameTransform>,
     ) -> Result<ProcessedInfo, GyroflowCoreError> {
+        // §3.2 / §3.4: per-call render timing. The Drop guard fires on every
+        // exit (Ok, Err, panic) and accumulates `gpu_ms` against the chosen
+        // backend's `stab.timing` bucket. Throttle in `add_and_maybe_emit`
+        // collapses 60×/sec calls to ≤1 emit/sec/backend.
+        struct TimingGuard {
+            backend: &'static str,
+            start: std::time::Instant,
+        }
+        impl Drop for TimingGuard {
+            fn drop(&mut self) {
+                let gpu_ms = self.start.elapsed().as_millis() as u64;
+                add_and_maybe_emit(self.backend, 0, gpu_ms, 0);
+            }
+        }
+        let _timing_guard = TimingGuard {
+            backend: self.initialized_backend.name(),
+            start: std::time::Instant::now(),
+        };
+
         if buffers.input.size.1 < 4 || buffers.output.size.1 < 4 {
             return Err(GyroflowCoreError::SizeTooSmall);
         }
