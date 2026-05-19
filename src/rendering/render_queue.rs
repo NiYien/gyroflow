@@ -8144,7 +8144,11 @@ impl RenderQueue {
         if let Some(ref results) = self.match_results {
             for result in &results.results {
                 if result.gyro_index.is_none()
-                    || !matches!(result.status, core::gyro_match::MatchStatus::Matched)
+                    || !matches!(
+                        result.status,
+                        core::gyro_match::MatchStatus::Matched
+                            | core::gyro_match::MatchStatus::MatchedFallback
+                    )
                 {
                     continue;
                 }

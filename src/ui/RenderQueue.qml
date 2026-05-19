@@ -189,12 +189,22 @@ Item {
     property real gyroColumnWidth: hasGyroFiles ? 65 * dpiScale : 0
     Ease on gyroColumnWidth { }
 
-    // [queue-gyro-column] 格式化陀螺仪文件创建时间
+    // [queue-gyro-column] Time span across all gyro files, cached on
+    // onGyro_files_changed. Used to switch the formatGyroTime format between
+    // intraday (HH:mm:ss) and multi-day (MM-dd HH:mm). 0 means single item or
+    // missing data; treated as intraday.
+    property real gyroTimeSpanMs: 0
+
+    // [queue-gyro-column] Format gyro file creation time. Switches to
+    // MM-dd HH:mm when the gyro pool spans more than 12 hours.
     function formatGyroTime(gyroIndex) {
         if (gyroIndex < 0 || gyroIndex >= gyroFilesInfo.length) return "";
         var ms = gyroFilesInfo[gyroIndex].created_at_ms;
         if (ms === null || ms === undefined) return "??:??:??";
         var d = new Date(ms);
+        if (gyroTimeSpanMs > 12 * 3600000) {
+            return Qt.formatDateTime(d, "MM-dd HH:mm");
+        }
         return Qt.formatTime(d, "HH:mm:ss");
     }
     function withAlpha(color, alpha) {
@@ -233,6 +243,20 @@ Item {
             root.hasGyroFiles = render_queue.has_gyro_files();
             // [T14] Reset matchExecuted when gyro files are cleared.
             if (!root.hasGyroFiles) root.matchExecuted = false;
+            // Recompute gyro time span (max - min of created_at_ms). Items
+            // without created_at are skipped; if fewer than 2 valid items
+            // remain, span stays 0 (intraday format applies).
+            let minMs = Number.POSITIVE_INFINITY;
+            let maxMs = Number.NEGATIVE_INFINITY;
+            let validCount = 0;
+            for (let j = 0; j < infos.length; j++) {
+                let ms = infos[j].created_at_ms;
+                if (ms === null || ms === undefined) continue;
+                if (ms < minMs) minMs = ms;
+                if (ms > maxMs) maxMs = ms;
+                validCount++;
+            }
+            root.gyroTimeSpanMs = validCount >= 2 ? (maxMs - minMs) : 0;
             // Gyro file changes don't reorder the video queue — only video
             // batch loads (sort_jobs_by_filename) and match (sort_jobs_by_created_at) do.
             root.requestQueueLayout();
