@@ -1013,7 +1013,11 @@ impl Stabilization {
                 return Ok(ret);
             }
         } else {
-            log::warn!("No stab data at {timestamp_us}");
+            // Transient state during project/video load — ensure_ready_for_processing
+            // may not have populated stab_data[ts] yet, or another writer cleared
+            // it between ensure (write lock released) and process_pixels (read lock).
+            // Next frame typically self-heals; documented behavior, not an incident.
+            log::info!("No stab data at {timestamp_us}");
             return Err(GyroflowCoreError::NoStabilizationData(timestamp_us));
         }
         Err(GyroflowCoreError::Unknown)

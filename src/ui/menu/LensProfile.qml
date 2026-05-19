@@ -280,19 +280,26 @@ MenuItem {
                         distortionCornerSlider.value = 0;
                         root._internalUpdate--;
                     }
-                    fx.setInitialValue(mtrx[0][0]);
-                    fy.setInitialValue(mtrx[1][1]);
-                    cx.setInitialValue(mtrx[0][2]);
-                    cy.setInitialValue(mtrx[1][2]);
+                    // Shape guard: defend against partial/empty camera_matrix
+                    // arriving from upstream (e.g. brand-only calibration_data).
+                    // Without this, mtrx[0][0] on an empty matrix throws
+                    // TypeError and skips Qt.callLater(recompute_threaded) too.
+                    if (Array.isArray(mtrx) && mtrx.length >= 2
+                            && Array.isArray(mtrx[0]) && Array.isArray(mtrx[1])) {
+                        fx.setInitialValue(mtrx[0][0]);
+                        fy.setInitialValue(mtrx[1][1]);
+                        cx.setInitialValue(mtrx[0][2]);
+                        cy.setInitialValue(mtrx[1][2]);
 
-                    // Set asymmetrical lens center bias
-                    /*if (obj.asymmetrical) {
-                        console.log(-((mtrx[0][2] / (obj.calib_dimension.w / 2.0)) - 1.0));
-                        console.log(-((mtrx[1][2] / (obj.calib_dimension.h / 2.0)) - 1.0));
-                    }*/
-                    // If focal length in pixels is large, it's more likely that Almeida pose estimator will yield better results
-                    if (mtrx[0][0] > 10000) {
-                        window.sync.poseMethod.currentIndex = 1; // Almeida
+                        // Set asymmetrical lens center bias
+                        /*if (obj.asymmetrical) {
+                            console.log(-((mtrx[0][2] / (obj.calib_dimension.w / 2.0)) - 1.0));
+                            console.log(-((mtrx[1][2] / (obj.calib_dimension.h / 2.0)) - 1.0));
+                        }*/
+                        // If focal length in pixels is large, it's more likely that Almeida pose estimator will yield better results
+                        if (mtrx[0][0] > 10000) {
+                            window.sync.poseMethod.currentIndex = 1; // Almeida
+                        }
                     }
                 }
                 Qt.callLater(controller.recompute_threaded);

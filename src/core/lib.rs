@@ -5462,4 +5462,56 @@ mod tests {
             Some((2554, 1080))
         );
     }
+
+    // Tests for the lens-profile-empty-emit-guard change. The 4-OR guard
+    // literal lives at 5 Controller emit sites; here we exercise the rule
+    // shape against LensProfile state. Controller-level emit counting is not
+    // covered (qmetaobject requires a Qt event loop) — manual test scenarios
+    // in the change's tasks.md §5 cover the runtime side.
+
+    fn lens_profile_emit_guard_passes(lens_loaded: bool, lens: &LensProfile) -> bool {
+        lens_loaded
+            || !lens.path_to_file.is_empty()
+            || !lens.fisheye_params.camera_matrix.is_empty()
+            || !lens.camera_brand.is_empty()
+    }
+
+    #[test]
+    fn lens_profile_default_fails_emit_guard() {
+        let lens = LensProfile::default();
+        assert!(
+            !lens_profile_emit_guard_passes(false, &lens),
+            "default LensProfile + lens_loaded=false MUST fail the guard so a \
+             calibration_data:{{}} import does not emit empty to QML",
+        );
+    }
+
+    #[test]
+    fn lens_profile_with_brand_passes_emit_guard() {
+        let mut lens = LensProfile::default();
+        lens.camera_brand = "Sony".to_string();
+        assert!(
+            lens_profile_emit_guard_passes(false, &lens),
+            "partial-data lens (brand only, matrix empty) MUST pass the guard \
+             so the QML side gets at least the brand label; QML's own shape \
+             guard at LensProfile.qml:283 then protects against mtrx[0][0]",
+        );
+    }
+
+    #[test]
+    fn lens_profile_with_matrix_passes_emit_guard() {
+        let mut lens = LensProfile::default();
+        lens.fisheye_params.camera_matrix =
+            vec![[1000.0, 0.0, 960.0], [0.0, 1000.0, 540.0], [0.0, 0.0, 1.0]];
+        assert!(lens_profile_emit_guard_passes(false, &lens));
+    }
+
+    #[test]
+    fn lens_profile_with_lens_loaded_passes_emit_guard() {
+        // Edge case for reload_lens semantics: lens_loaded flag is treated as
+        // intent-of-load even when fields are still empty. Preserved to keep
+        // the new sites bit-identical with reload_lens (Design D1).
+        let lens = LensProfile::default();
+        assert!(lens_profile_emit_guard_passes(true, &lens));
+    }
 }

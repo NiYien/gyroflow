@@ -1611,10 +1611,16 @@ impl GyroSource {
                 );
                 if !q.is_empty() {
                     self.quaternions = q;
+                } else if self.quaternions.is_empty() {
+                    log::info!(
+                        target: "lifecycle",
+                        "ComplementaryIntegrator returned empty (cold start, no quaternions to preserve)"
+                    );
                 } else {
                     log::warn!(
                         target: "lifecycle",
-                        "ComplementaryIntegrator returned empty, preserving existing quaternions"
+                        "ComplementaryIntegrator returned empty, preserving existing {} quaternions",
+                        self.quaternions.len()
                     );
                 }
             }
@@ -1622,10 +1628,16 @@ impl GyroSource {
                 let q = VQFIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms);
                 if !q.is_empty() {
                     self.quaternions = q;
+                } else if self.quaternions.is_empty() {
+                    log::info!(
+                        target: "lifecycle",
+                        "VQFIntegrator returned empty (cold start, no quaternions to preserve)"
+                    );
                 } else {
                     log::warn!(
                         target: "lifecycle",
-                        "VQFIntegrator returned empty, preserving existing quaternions"
+                        "VQFIntegrator returned empty, preserving existing {} quaternions",
+                        self.quaternions.len()
                     );
                 }
             }
@@ -1636,10 +1648,16 @@ impl GyroSource {
                 );
                 if !q.is_empty() {
                     self.quaternions = q;
+                } else if self.quaternions.is_empty() {
+                    log::info!(
+                        target: "lifecycle",
+                        "SimpleGyroIntegrator returned empty (cold start, no quaternions to preserve)"
+                    );
                 } else {
                     log::warn!(
                         target: "lifecycle",
-                        "SimpleGyroIntegrator returned empty, preserving existing quaternions"
+                        "SimpleGyroIntegrator returned empty, preserving existing {} quaternions",
+                        self.quaternions.len()
                     );
                 }
             }
@@ -1650,10 +1668,16 @@ impl GyroSource {
                 );
                 if !q.is_empty() {
                     self.quaternions = q;
+                } else if self.quaternions.is_empty() {
+                    log::info!(
+                        target: "lifecycle",
+                        "SimpleGyroAccelIntegrator returned empty (cold start, no quaternions to preserve)"
+                    );
                 } else {
                     log::warn!(
                         target: "lifecycle",
-                        "SimpleGyroAccelIntegrator returned empty, preserving existing quaternions"
+                        "SimpleGyroAccelIntegrator returned empty, preserving existing {} quaternions",
+                        self.quaternions.len()
                     );
                 }
             }
@@ -1661,10 +1685,16 @@ impl GyroSource {
                 let q = MahonyIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms);
                 if !q.is_empty() {
                     self.quaternions = q;
+                } else if self.quaternions.is_empty() {
+                    log::info!(
+                        target: "lifecycle",
+                        "MahonyIntegrator returned empty (cold start, no quaternions to preserve)"
+                    );
                 } else {
                     log::warn!(
                         target: "lifecycle",
-                        "MahonyIntegrator returned empty, preserving existing quaternions"
+                        "MahonyIntegrator returned empty, preserving existing {} quaternions",
+                        self.quaternions.len()
                     );
                 }
             }
@@ -1673,10 +1703,16 @@ impl GyroSource {
                     MadgwickIntegrator::integrate(self.raw_imu(&file_metadata), self.duration_ms);
                 if !q.is_empty() {
                     self.quaternions = q;
+                } else if self.quaternions.is_empty() {
+                    log::info!(
+                        target: "lifecycle",
+                        "MadgwickIntegrator returned empty (cold start, no quaternions to preserve)"
+                    );
                 } else {
                     log::warn!(
                         target: "lifecycle",
-                        "MadgwickIntegrator returned empty, preserving existing quaternions"
+                        "MadgwickIntegrator returned empty, preserving existing {} quaternions",
+                        self.quaternions.len()
                     );
                 }
             }

@@ -1870,14 +1870,25 @@ impl Controller {
         let out_dim = self.stabilizer.apply_lens_group_to_main(lens_index);
         self.lens_group_config_changed();
         self.chart_data_changed();
-        // Emit lens_profile_loaded so Full-mode LensProfile.qml re-reads k1-k4 / camera
-        // matrix from the rebuilt lens profile.
-        let lens_json = self.stabilizer.lens.read().get_json().unwrap_or_default();
-        self.lens_profile_loaded(
-            QString::from(lens_json),
-            QString::default(),
-            QString::default(),
-        );
+        // Emit lens_profile_loaded only when the rebuilt lens has at least one
+        // identifying field populated. Mirrors the reload_lens guard (1514-1518)
+        // to keep QML LensProfile.qml from receiving a default/empty profile.
+        let lens = self.stabilizer.lens.read();
+        if self.lens_loaded
+            || !lens.path_to_file.is_empty()
+            || !lens.fisheye_params.camera_matrix.is_empty()
+            || !lens.camera_brand.is_empty()
+        {
+            let lens_json = lens.get_json().unwrap_or_default();
+            drop(lens);
+            self.lens_profile_loaded(
+                QString::from(lens_json),
+                QString::default(),
+                QString::default(),
+            );
+        } else {
+            drop(lens);
+        }
         self.lens_changed();
         self.request_recompute();
         match out_dim {
@@ -1893,12 +1904,25 @@ impl Controller {
             return false;
         };
 
-        let lens_json = self.stabilizer.lens.read().get_json().unwrap_or_default();
-        self.lens_profile_loaded(
-            QString::from(lens_json),
-            QString::default(),
-            QString::default(),
-        );
+        // Same 4-OR guard as reload_lens (1514-1518): skip emitting when the
+        // freshly previewed lens is still default/empty so QML doesn't trip on
+        // an empty camera_matrix.
+        let lens = self.stabilizer.lens.read();
+        if self.lens_loaded
+            || !lens.path_to_file.is_empty()
+            || !lens.fisheye_params.camera_matrix.is_empty()
+            || !lens.camera_brand.is_empty()
+        {
+            let lens_json = lens.get_json().unwrap_or_default();
+            drop(lens);
+            self.lens_profile_loaded(
+                QString::from(lens_json),
+                QString::default(),
+                QString::default(),
+            );
+        } else {
+            drop(lens);
+        }
         self.lens_changed();
         self.chart_data_changed();
         self.request_recompute();
@@ -2339,7 +2363,16 @@ impl Controller {
                                 return true;
                             }
                             Err(e) => {
-                                ::log::error!("Failed to process pixels: {e:?}");
+                                // NoStabilizationData is a transient race during
+                                // load (recompute hasn't filled stab_data for ts
+                                // yet, or another writer cleared between ensure
+                                // and read). Next frame self-heals; downgrade so
+                                // it doesn't pollute the incident log.
+                                if matches!(e, gyroflow_core::GyroflowCoreError::NoStabilizationData(_)) {
+                                    ::log::info!("Failed to process pixels: {e:?}");
+                                } else {
+                                    ::log::error!("Failed to process pixels: {e:?}");
+                                }
                             }
                         }
                     }
@@ -2805,14 +2838,28 @@ impl Controller {
                     .unwrap()
                     .contains_key("calibration_data")
                 {
+                    // 4-OR guard mirroring reload_lens (1514-1518). Evaluated
+                    // BEFORE setting lens_loaded so a calibration_data:{} import
+                    // (which leaves stabilizer.lens at default) does not emit an
+                    // empty lens_profile_loaded that trips LensProfile.qml.
+                    let lens = self.stabilizer.lens.read();
+                    let should_emit = self.lens_loaded
+                        || !lens.path_to_file.is_empty()
+                        || !lens.fisheye_params.camera_matrix.is_empty()
+                        || !lens.camera_brand.is_empty();
                     self.lens_loaded = true;
                     self.lens_changed();
-                    let lens_json = self.stabilizer.lens.read().get_json().unwrap_or_default();
-                    self.lens_profile_loaded(
-                        QString::from(lens_json),
-                        QString::default(),
-                        QString::default(),
-                    );
+                    if should_emit {
+                        let lens_json = lens.get_json().unwrap_or_default();
+                        drop(lens);
+                        self.lens_profile_loaded(
+                            QString::from(lens_json),
+                            QString::default(),
+                            QString::default(),
+                        );
+                    } else {
+                        drop(lens);
+                    }
                     self.lens_group_config_changed();
                     self.lens_group_manual_edit_changed();
                 }
@@ -3013,19 +3060,28 @@ impl Controller {
     }
     fn set_user_focal_length(&mut self, focal_length_mm: f64) {
         self.stabilizer.set_user_focal_length(focal_length_mm);
-        // Update UI with new lens data
+        // 4-OR guard mirroring reload_lens (1514-1518). Evaluated BEFORE
+        // setting lens_loaded so a focal-length edit on a still-default lens
+        // (rare edge case if the QML input is not disabled in that state)
+        // does not emit an empty lens_profile_loaded.
         let lens = self.stabilizer.lens.read();
+        let should_emit = self.lens_loaded
+            || !lens.path_to_file.is_empty()
+            || !lens.fisheye_params.camera_matrix.is_empty()
+            || !lens.camera_brand.is_empty();
         let json = lens.get_json().unwrap_or_default();
         let filepath = lens.path_to_file.clone();
         let checksum = lens.checksum.clone().unwrap_or_default();
         drop(lens);
         self.lens_loaded = true;
         self.lens_changed();
-        self.lens_profile_loaded(
-            QString::from(json),
-            QString::from(filepath),
-            QString::from(checksum),
-        );
+        if should_emit {
+            self.lens_profile_loaded(
+                QString::from(json),
+                QString::from(filepath),
+                QString::from(checksum),
+            );
+        }
         self.request_recompute();
     }
 
@@ -5046,6 +5102,51 @@ mod tests {
         assert_eq!(video_log_decoder_label("FFmpeg:avformat_options=start_number=1"), "FFmpeg");
         assert_eq!(video_log_decoder_label("BRAW:gpu=no:scale=1920x1080"), "BRAW");
         assert_eq!(video_log_decoder_label("R3D:gpu=auto:scale=1920x1080"), "R3D");
+    }
+
+    #[test]
+    fn lens_profile_emit_guard_4or_appears_exactly_5_times() {
+        // Sentinel for lens-profile-empty-emit-guard change: every
+        // lens_profile_loaded emit site MUST share the same 4-OR literal so
+        // future drift trips this test. Expected 5 sites:
+        //   - reload_lens (pre-existing, 1514-1518)
+        //   - apply_lens_group_to_main
+        //   - preview_lens_group_config
+        //   - import_gyroflow_internal
+        //   - set_user_focal_length
+        // The other two emit sites (load_lens_profile via stabilizer
+        // validation, and the lens_profile_loaded qt_signal declaration) do
+        // NOT carry the guard so are not counted.
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join("controller.rs");
+        let src = std::fs::read_to_string(&path).expect("read controller.rs");
+
+        // Split-concat to avoid this test's own source contributing a false
+        // positive match: the file contains these as separate quoted strings
+        // joined at runtime, not as one contiguous literal.
+        let matrix_needle: String =
+            ["|| !lens", ".fisheye_params.", "camera_matrix.is_empty()"].concat();
+        let brand_needle: String = ["|| !lens", ".camera_brand.is_empty()"].concat();
+        let path_needle: String = ["|| !lens", ".path_to_file.is_empty()"].concat();
+
+        assert_eq!(
+            src.matches(&matrix_needle).count(),
+            5,
+            "expected 4-OR camera_matrix clause in 5 emit sites; rerun \
+             grep -n 'self.lens_profile_loaded(' to locate any added or \
+             refactored site",
+        );
+        assert_eq!(
+            src.matches(&brand_needle).count(),
+            5,
+            "camera_brand clause count drifted from camera_matrix clause",
+        );
+        assert_eq!(
+            src.matches(&path_needle).count(),
+            5,
+            "path_to_file clause count drifted from camera_matrix clause",
+        );
     }
 
     #[test]
