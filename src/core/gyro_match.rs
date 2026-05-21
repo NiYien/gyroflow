@@ -194,16 +194,17 @@ const ADJACENT_GYRO_GAP_MAX: i64 = 60_000;
 
 // --- Multi-session constants ---
 
-// Anchor time difference upper bound when pairing a V cluster with a G cluster.
-// 30 minutes gives ~5x slack over typical user workflow (start cal IMU, take
-// a series of cal shots over a few minutes), while staying well below the
-// spec's 18h ceiling so "different shooting day" V clusters still reject.
-// Spec.md §session pairing originally wrote 18h - that is the absolute upper
-// bound; the 30-min practical bound prevents orphan content V clusters that
-// happen to fall within the same day from polluting the cal offset estimate.
-// A V cluster outside this window orphans and its videos rely on the +/- 24h
-// fallback to borrow the nearest reliable session's offset.
-const SESSION_PAIR_ANCHOR_GAP_MAX_MS: i64 = 30 * 60_000;
+// Multi-session pairing tolerance: how far apart two sessions' measured
+// camera<->IMU offsets may be and still be considered "consistent" (i.e.
+// caused by clock drift rather than by a mis-pairing of V and G clusters).
+//
+// 15s covers physical drift ~3.5s/day plus measurement noise (a month-long
+// shoot accumulates ~30s of drift but each pair_sessions invocation operates
+// on a single batch, where drift is bounded by hours). A mis-pairing (e.g. V
+// from day-1 cal paired with G from day-2 cal) by contrast produces an
+// offset that differs by hours/days, so 15s tightly rejects cross-day
+// mis-pairs without ever rejecting legit clock-drift.
+const MULTI_SESSION_OFFSET_TOLERANCE_MS: i64 = 15_000;
 // Per-video coverage tolerance (matches legacy behaviour).
 const COVERAGE_TOLERANCE_MS: i64 = 1000;
 // When two sessions both cover the same video and the depth difference is
@@ -472,16 +473,74 @@ fn compute_session_offset(
     Some((median_offset, delay, spread, cal_video_indices))
 }
 
-/// Pair V/G clusters into sessions. Each V cluster forms ONE candidate
-/// session with its nearest G cluster, IF the anchor gap is within
-/// SESSION_PAIR_ANCHOR_GAP_MAX_MS (10 min - tight enough to require the V/G
-/// pair to be from the same calibration moment) AND the duration check
-/// passes. Multiple sessions may share the same G cluster (real users do
-/// several cal moments in a day, each with their own short videos but only
-/// one IMU recording).
+/// Mini-RANSAC anchor pool: collects measured offsets from locked-in sessions
+/// and gates new candidates against the running median.
 ///
-/// V clusters that don't pair stay as orphans - their videos fall through to
-/// the fallback path and borrow the nearest reliable session's offset.
+/// `is_inlier(candidate)` semantics:
+///   - empty pool -> true (no reference; refuse to reject and rely on the
+///     Layer-3 clip bounds gate as a downstream safety net);
+///   - non-empty -> |candidate - median| <= MULTI_SESSION_OFFSET_TOLERANCE_MS.
+///
+/// Median uses `select_nth_unstable` (O(n)) rather than a full sort because
+/// `pair_sessions` is on the batch_match hot path and the pool can grow with
+/// V cluster count.
+struct AnchorPool {
+    offsets: Vec<i64>,
+}
+
+impl AnchorPool {
+    fn new() -> Self {
+        Self { offsets: Vec::new() }
+    }
+
+    fn push(&mut self, offset: i64) {
+        self.offsets.push(offset);
+    }
+
+    fn median(&self) -> Option<i64> {
+        if self.offsets.is_empty() {
+            return None;
+        }
+        let mut v = self.offsets.clone();
+        let mid = v.len() / 2;
+        v.select_nth_unstable(mid);
+        Some(v[mid])
+    }
+
+    fn is_inlier(&self, candidate: i64) -> bool {
+        match self.median() {
+            None => true,
+            Some(m) => (candidate - m).abs() <= MULTI_SESSION_OFFSET_TOLERANCE_MS,
+        }
+    }
+}
+
+/// Pair V/G clusters into sessions.
+///
+/// Two-clock principle: V anchors live in camera clock, G anchors in IMU
+/// clock; the absolute offset between the two clocks is *what calibration is
+/// measuring*, so we MUST NOT pre-assume it is small.
+///
+/// - Single V + single G: pair unconditionally (Branch A).
+/// - Multi V or multi G: enumerate all (V, G) candidates where
+///   `duration_ok` + `compute_session_offset` succeed (Branch B). Each V
+///   cluster is then assigned to exactly one of its candidates:
+///     Pass 1: V clusters with a single candidate are auto-locked; their
+///       measured offset seeds the anchor pool.
+///     Pass 2: V clusters with multiple candidates pick the candidate
+///       whose offset is closest to `median(anchor_pool)`, accepted only
+///       if the gap is within `MULTI_SESSION_OFFSET_TOLERANCE_MS` (i.e.
+///       consistent with clock drift, not a mis-pair across cal events).
+///
+/// Both branches rely on:
+///   - `duration_ok` (|g_dur - 0.5 + pre - v_dur| <= 1.5s) to weed out
+///     unrelated V/G pairs.
+///   - `compute_session_offset`'s internal RANSAC + |offset0 - offset1|
+///     <= 3s check to validate intra-session offset consistency.
+///
+/// V clusters with no surviving candidate (or whose only candidate is
+/// inconsistent with the anchor pool) orphan; their videos fall through
+/// to `assign_fallback` and borrow the nearest reliable session's offset.
 fn pair_sessions(
     v_clusters: Vec<Vec<usize>>,
     g_clusters: Vec<Vec<usize>>,
@@ -507,32 +566,8 @@ fn pair_sessions(
         })
         .collect();
 
-    let mut sessions: Vec<Session> = Vec::new();
-
-    for (v_cluster, v_anchor) in &v_with_anchor {
-        // Find the nearest G cluster.
-        let nearest = (0..g_with_anchor.len())
-            .min_by_key(|&gi| (g_with_anchor[gi].1 - v_anchor).abs());
-        let gi = match nearest {
-            Some(gi) => gi,
-            None => continue,
-        };
-        let (g_cluster, g_anchor) = &g_with_anchor[gi];
-        let gap = (g_anchor - v_anchor).abs();
-
-        if gap > SESSION_PAIR_ANCHOR_GAP_MAX_MS {
-            log::info!(
-                "[batch_match_diag] session_rejected v_anchor={} nearest_g_anchor={} gap_ms={} reason=anchor_gap_too_large",
-                v_anchor,
-                g_anchor,
-                gap
-            );
-            continue;
-        }
-
-        // Duration cross-check: at least one (v, g) pair within the candidate
-        // clusters must satisfy |g_dur - 0.5 + pre - v_dur| <= 1.5.
-        let duration_ok = v_cluster.iter().any(|&vi| {
+    let duration_ok = |v_cluster: &[usize], g_cluster: &[usize]| -> bool {
+        v_cluster.iter().any(|&vi| {
             g_cluster.iter().any(|&gj| {
                 let v = &videos[vi];
                 let g = &gyros[gj];
@@ -541,39 +576,232 @@ fn pair_sessions(
                 let g_dur_s = g.duration_ms / 1000.0;
                 (g_dur_s - 0.5 + pre_s - v_dur_s).abs() <= SYNC_DURATION_OFFSET_MAX
             })
-        });
+        })
+    };
 
-        if !duration_ok {
+    let make_session = |v_anchor: i64, v_cluster: &[usize], g_cluster: &[usize]| Session {
+        v_cluster: v_cluster.to_vec(),
+        cal_video_indices: Vec::new(),
+        g_cluster: g_cluster.to_vec(),
+        // Anchor = V anchor: each session's "centre" is where the cal videos
+        // were taken (camera clock). Used by assign_gyro_ownership (gyros snap
+        // to nearest session by anchor distance - cross-frame, see TODO in
+        // that function) and assign_fallback (intra-camera-clock distance).
+        anchor_ms: v_anchor,
+        offset: 0,
+        delay: 0,
+        reliable: false,
+    };
+
+    let mut sessions: Vec<Session> = Vec::new();
+
+    // Branch A: single V + single G. Pair unconditionally - the absolute gap
+    // IS the unknown camera<->IMU offset and may be arbitrarily large.
+    if v_with_anchor.len() == 1 && g_with_anchor.len() == 1 {
+        let (v_cluster, v_anchor) = &v_with_anchor[0];
+        let (g_cluster, g_anchor) = &g_with_anchor[0];
+        let gap = (g_anchor - v_anchor).abs();
+        if !duration_ok(v_cluster, g_cluster) {
             log::info!(
-                "[batch_match_diag] session_rejected v_anchor={} g_anchor={} gap_ms={} reason=duration_mismatch",
+                "[batch_match_diag] session_rejected_single v_anchor={} g_anchor={} gap_ms={} reason=duration_mismatch",
                 v_anchor,
                 g_anchor,
                 gap
             );
-            continue;
+            return sessions;
         }
-
+        if gap > 30 * 60_000 {
+            log::info!(
+                "[batch_match_diag] anchor_gap_large gap_ms={} hint=cross_frame_offset_detected",
+                gap
+            );
+        }
         log::info!(
-            "[batch_match_diag] session_paired v_anchor={} g_anchor={} gap_ms={} v_size={} g_size={}",
+            "[batch_match_diag] session_paired_single v_anchor={} g_anchor={} gap_ms={} v_size={} g_size={}",
             v_anchor,
             g_anchor,
             gap,
             v_cluster.len(),
             g_cluster.len()
         );
-        sessions.push(Session {
-            v_cluster: v_cluster.clone(),
-            cal_video_indices: Vec::new(), // populated by compute_session_offset
-            g_cluster: g_cluster.clone(),
-            // Anchor = V anchor: each session's "centre" is where the cal
-            // videos were taken. Used for assign_gyro_ownership (gyros snap
-            // to nearest session by recording time) and fallback (videos
-            // borrow from temporally nearest session).
-            anchor_ms: *v_anchor,
-            offset: 0,
-            delay: 0,
-            reliable: false,
-        });
+        sessions.push(make_session(*v_anchor, v_cluster, g_cluster));
+        for s in &sessions {
+            log::info!(
+                "[batch_match_diag] session_built anchor={} v_size={} g_size={}",
+                s.anchor_ms,
+                s.v_cluster.len(),
+                s.g_cluster.len()
+            );
+        }
+        return sessions;
+    }
+
+    // Branch B: multi-cluster - enumerate every (V, G) pair where duration_ok
+    // AND compute_session_offset both pass. Then resolve V <-> G assignment
+    // via offset-consistency (sessions on the same camera/IMU pair should
+    // produce nearly identical offsets, modulo drift).
+    #[derive(Clone)]
+    struct Cand {
+        v_idx: usize,
+        g_idx: usize,
+        offset: i64,
+        spread: i64,
+    }
+    let mut cands: Vec<Cand> = Vec::new();
+    for v_idx in 0..v_with_anchor.len() {
+        for g_idx in 0..g_with_anchor.len() {
+            let (v_cluster, v_anchor) = &v_with_anchor[v_idx];
+            let (g_cluster, g_anchor) = &g_with_anchor[g_idx];
+            if !duration_ok(v_cluster, g_cluster) {
+                continue;
+            }
+            match compute_session_offset(videos, gyros, v_cluster, g_cluster) {
+                Some((offset, _delay, spread, _cal_v)) => {
+                    log::info!(
+                        "[batch_match_diag] candidate_session v_idx={} g_idx={} v_anchor={} g_anchor={} offset={} spread={}",
+                        v_idx,
+                        g_idx,
+                        v_anchor,
+                        g_anchor,
+                        offset,
+                        spread
+                    );
+                    cands.push(Cand { v_idx, g_idx, offset, spread });
+                }
+                None => {
+                    log::info!(
+                        "[batch_match_diag] candidate_rejected v_idx={} g_idx={} reason=no_offset_candidate",
+                        v_idx,
+                        g_idx
+                    );
+                }
+            }
+        }
+    }
+
+    // Group candidate indices by v_idx, BTreeMap for deterministic order.
+    let mut per_v: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (ci, c) in cands.iter().enumerate() {
+        per_v.entry(c.v_idx).or_default().push(ci);
+    }
+
+    // chosen: v_idx -> candidate index. anchor_pool: locked-in offsets used
+    // as the running consistency reference for both Pass 2 (multi-candidate
+    // RANSAC) and Pass 1 (single-candidate gated).
+    let mut chosen: std::collections::BTreeMap<usize, usize> =
+        std::collections::BTreeMap::new();
+    let mut anchor_pool = AnchorPool::new();
+
+    // Pass 1 (runs first): V clusters with exactly one candidate G cluster.
+    // Single-candidate clusters carry no within-V ambiguity (only one G can
+    // possibly match by duration), so their RANSAC-derived offsets are the
+    // strongest seeds for the anchor pool. The FIRST single-candidate V
+    // bootstraps the pool unconditionally; subsequent single-candidate V's
+    // are gated by `is_inlier` against the running pool median. This is
+    // the core defence against cross-day mis-pair scenarios where a day-2
+    // V cluster's only G candidate is the wrong day's gyro (reproducer sid
+    // 45b144da: day-1 V × day-1 G ≈ -194500, day-2 V × day-1 G ≈ -48h ->
+    // outlier, orphan).
+    //
+    // Empty-pool degenerate behaviour: first cluster passes through
+    // `is_inlier == true` (no reference) and seeds the pool. Downstream
+    // Layer-3 clip bounds gate catches false-positives that slip through
+    // the empty-pool start.
+    for (v_idx, cis) in &per_v {
+        if cis.len() != 1 {
+            continue;
+        }
+        let ci = cis[0];
+        let candidate_offset = cands[ci].offset;
+        if anchor_pool.is_inlier(candidate_offset) {
+            chosen.insert(*v_idx, ci);
+            let median_str = match anchor_pool.median() {
+                Some(m) => m.to_string(),
+                None => "none".to_string(),
+            };
+            log::info!(
+                "[batch_match_diag] session_locked_pass1 v_idx={} g_idx={} offset={} median={}",
+                v_idx,
+                cands[ci].g_idx,
+                candidate_offset,
+                median_str
+            );
+            anchor_pool.push(candidate_offset);
+        } else {
+            let median = anchor_pool.median().unwrap_or(0);
+            let delta = (candidate_offset - median).abs();
+            log::info!(
+                "[batch_match_diag] session_rejected v_idx={} g_idx={} candidate_offset={} median={} delta_ms={} reason=anchor_pool_outlier",
+                v_idx,
+                cands[ci].g_idx,
+                candidate_offset,
+                median,
+                delta
+            );
+        }
+    }
+
+    // Pass 2 (runs second): V clusters with multiple candidate G clusters.
+    // The cluster ambiguity (which G is correct?) is resolved by the
+    // anchor pool seeded from Pass 1. Selection rule:
+    //   - Pool empty: pick smallest measurement spread (tie-break g_idx
+    //     ascending). This bootstraps when no single-candidate V exists.
+    //   - Pool non-empty: pick the candidate whose offset is closest to
+    //     the running pool median. Then gate by is_inlier; if even the
+    //     closest candidate is outside MULTI_SESSION_OFFSET_TOLERANCE_MS,
+    //     orphan the whole V cluster.
+    for (v_idx, cis) in &per_v {
+        if cis.len() <= 1 {
+            continue;
+        }
+        let pick = if anchor_pool.median().is_none() {
+            *cis.iter()
+                .min_by_key(|&&ci| (cands[ci].spread, cands[ci].g_idx))
+                .unwrap()
+        } else {
+            let median = anchor_pool.median().unwrap();
+            *cis.iter()
+                .min_by_key(|&&ci| (cands[ci].offset - median).abs())
+                .unwrap()
+        };
+        let pick_offset = cands[pick].offset;
+        if anchor_pool.is_inlier(pick_offset) {
+            chosen.insert(*v_idx, pick);
+            let median_str = match anchor_pool.median() {
+                Some(m) => m.to_string(),
+                None => "none".to_string(),
+            };
+            log::info!(
+                "[batch_match_diag] session_locked_pass2 v_idx={} g_idx={} offset={} spread={} median={} cand_count={}",
+                v_idx,
+                cands[pick].g_idx,
+                pick_offset,
+                cands[pick].spread,
+                median_str,
+                cis.len()
+            );
+            anchor_pool.push(pick_offset);
+        } else {
+            let median = anchor_pool.median().unwrap_or(0);
+            let delta = (pick_offset - median).abs();
+            log::info!(
+                "[batch_match_diag] session_rejected v_idx={} best_offset={} median={} delta_ms={} cand_count={} reason=anchor_pool_outlier_pass2",
+                v_idx,
+                pick_offset,
+                median,
+                delta,
+                cis.len()
+            );
+        }
+    }
+
+    // Build sessions in v_idx order (BTreeMap preserves ascending key order).
+    for (&_v_idx, &ci) in &chosen {
+        let c = &cands[ci];
+        let (v_cluster, v_anchor) = &v_with_anchor[c.v_idx];
+        let (g_cluster, _g_anchor) = &g_with_anchor[c.g_idx];
+        sessions.push(make_session(*v_anchor, v_cluster, g_cluster));
     }
 
     for s in &sessions {
@@ -621,11 +849,70 @@ fn compute_clip_window(
     (gyro_start_ms, gyro_end_ms, front_comp, calib_anchor_ms)
 }
 
+/// Layer-3 gate: does the video-content portion of the clip window actually
+/// land inside `[0, gyro_duration_ms]` enough to extract usable IMU samples?
+///
+/// `gyro_start_ms` / `gyro_end_ms` are `compute_clip_window`'s output (already
+/// padded by `front_comp` / `back_comp`). The video content portion is
+/// `[gyro_start_ms + front_comp, gyro_end_ms - back_comp]`. Required coverage
+/// is `max(video_duration * COVERAGE_RATIO, video_duration -
+/// COVERAGE_HEAD_TOL_MS)` (short videos rate-bounded, long videos
+/// absolute-bounded - `max` satisfies both).
+fn clip_bounds_ok(
+    gyro_start_ms: f64,
+    gyro_end_ms: f64,
+    front_comp: f64,
+    back_comp: f64,
+    video_duration_ms: f64,
+    gyro_duration_ms: f64,
+) -> bool {
+    let video_window_start = gyro_start_ms + front_comp;
+    let video_window_end = gyro_end_ms - back_comp;
+    let intersect_start = video_window_start.max(0.0);
+    let intersect_end = video_window_end.min(gyro_duration_ms);
+    let covered_ms = (intersect_end - intersect_start).max(0.0);
+
+    let required = (video_duration_ms * COVERAGE_RATIO)
+        .max(video_duration_ms - COVERAGE_HEAD_TOL_MS);
+    covered_ms >= required
+}
+
+/// Compute coverage diagnostics (covered_ms, required_ms) using the same
+/// formula as `clip_bounds_ok`. Used for log messages on the reject path.
+fn clip_bounds_coverage(
+    gyro_start_ms: f64,
+    gyro_end_ms: f64,
+    front_comp: f64,
+    back_comp: f64,
+    video_duration_ms: f64,
+    gyro_duration_ms: f64,
+) -> (f64, f64) {
+    let video_window_start = gyro_start_ms + front_comp;
+    let video_window_end = gyro_end_ms - back_comp;
+    let intersect_start = video_window_start.max(0.0);
+    let intersect_end = video_window_end.min(gyro_duration_ms);
+    let covered_ms = (intersect_end - intersect_start).max(0.0);
+    let required = (video_duration_ms * COVERAGE_RATIO)
+        .max(video_duration_ms - COVERAGE_HEAD_TOL_MS);
+    (covered_ms, required)
+}
+
 /// For every gyro, assign it to the reliable session whose anchor is closest.
 /// This partitions the gyro pool so each session's coverage check only sees
 /// gyros that physically belong to its shooting day - even when sessions are
 /// exactly one day apart (where a symmetric +/- 24h window would let day-1
 /// gyros leak into a day-2 session check).
+///
+/// TODO(cross-frame): `g.created_at_ms` is in IMU clock; `session.anchor_ms`
+/// is in camera clock. Distance comparison only behaves correctly when the
+/// camera<->IMU offsets across all sessions are similar (which is typical
+/// when one camera + one IMU are used over a shoot). Multi-session shoots
+/// where the user re-synced the IMU mid-way - producing very different
+/// per-session offsets - can mis-snap long content IMUs to the wrong session.
+/// Single-session (the common case) is not affected because `min_by_key`
+/// trivially picks the lone reliable session. Future fix: partition by
+/// explicit G cluster membership from `pair_sessions`, then apply each
+/// session's measured offset before comparing.
 fn assign_gyro_ownership(gyros: &[GyroMatchInfo], sessions: &[Session]) -> Vec<Vec<usize>> {
     let mut owned: Vec<Vec<usize>> = vec![Vec::new(); sessions.len()];
     for (gi, g) in gyros.iter().enumerate() {
@@ -761,6 +1048,54 @@ fn assign_videos_by_coverage(
         let (gyro_start_ms, gyro_end_ms, front_comp, calib_anchor_ms) =
             compute_clip_window(v, g, v_created, video_offset, &s.cal_video_indices, videos);
 
+        // Layer-3 clip bounds gate. Even though the session's offset passed
+        // anchor-pool consistency, the per-video clip window may still fall
+        // outside [0, gyro_duration_ms] when the session was a false-positive
+        // pair (e.g. anchor-pool seeded by mis-pair before the cross-day
+        // outlier was discovered, or a legit session whose gyro just doesn't
+        // cover this particular video). Reject -> push to pending so the
+        // fallback path gets a chance to find a different gyro.
+        let back_comp = front_comp; // compute_clip_window: front_comp == back_comp
+        if !clip_bounds_ok(
+            gyro_start_ms,
+            gyro_end_ms,
+            front_comp,
+            back_comp,
+            v.duration_ms,
+            g.duration_ms,
+        ) {
+            let (covered_ms, required_ms) = clip_bounds_coverage(
+                gyro_start_ms,
+                gyro_end_ms,
+                front_comp,
+                back_comp,
+                v.duration_ms,
+                g.duration_ms,
+            );
+            log::info!(
+                "[batch_match_diag] clip_bounds_reject vi={} sid={} gi={} video_dur={:.1} gyro_dur={:.1} covered_ms={:.1} required_ms={:.1} path=coverage reason=below_threshold",
+                vi,
+                sid,
+                gi,
+                v.duration_ms,
+                g.duration_ms,
+                covered_ms,
+                required_ms
+            );
+            results.push(MatchResult {
+                video_index: vi,
+                job_id: None,
+                gyro_index: None,
+                status: MatchStatus::Unmatched,
+                global_offset_ms: None,
+                gyro_start_ms: None,
+                gyro_end_ms: None,
+                init_offset_ms: None,
+            });
+            pending.push(vi);
+            continue;
+        }
+
         // A video is treated as a calibration pair only if it actually
         // contributed to the winning offset bucket (i.e. appeared in a
         // (v, g) pair whose offset landed in the chosen cluster). Videos in
@@ -812,14 +1147,21 @@ fn assign_videos_by_coverage(
     (results, pending)
 }
 
-/// Phase 5: for every pending video, try to borrow the nearest reliable
-/// session's offset (within +/- 24h of v.created_at). Hits become
-/// MatchedFallback; misses remain Unmatched.
+/// Phase 5: for every pending video, borrow the nearest reliable session's
+/// OFFSET SCALAR (within FALLBACK_MAX_GAP_MS of v.created_at) and then search
+/// the FULL gyro pool for a gyro that, when projected via the borrowed offset,
+/// physically covers this video. Successful matches become MatchedFallback;
+/// videos with no covering gyro stay Unmatched.
+///
+/// Key semantic change vs. the legacy "borrow from owned_gyros[sid]" approach:
+/// fallback now borrows offset only, never the gyro file. This eliminates the
+/// "user didn't shoot mix.bin today" mis-pair where borrowing yesterday's
+/// session's gyro projected today's video to yesterday's time range.
 fn assign_fallback(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     sessions: &[Session],
-    owned_gyros: &[Vec<usize>],
+    gyros_by_time: &[usize],
     pending: &[usize],
     results: &mut [MatchResult],
 ) {
@@ -853,7 +1195,7 @@ fn assign_fallback(
 
         if gap > FALLBACK_MAX_GAP_MS {
             log::info!(
-                "[batch_match_diag] fallback_skipped vi={} nearest_session={} gap_ms={} reason=over_24h",
+                "[batch_match_diag] fallback_skipped vi={} nearest_session={} gap_ms={} reason=over_36h",
                 vi,
                 sid,
                 gap
@@ -864,44 +1206,92 @@ fn assign_fallback(
         let s = &sessions[sid];
         let video_offset = s.offset - s.delay;
 
-        // Find the gyro inside the borrowed session whose [v_start, v_end]
-        // covers (or is closest to) the video. Restrict to gyros owned by the
-        // borrowed session (nearest-anchor partition) so we don't pick a gyro
-        // from another day.
-        let mut best_gyro: Option<(usize, i64)> = None; // (gyro_index, abs_distance_outside_window)
-        for &gi in &owned_gyros[sid] {
+        // Search the FULL gyro pool (not owned_gyros[sid]) for a gyro that
+        // physically covers v_created using the borrowed offset. Anchor
+        // around the nearest gyro by created_at (binary_search_by_key),
+        // then scan ±5 neighbours and pick the one with min
+        // |g.created_at - v.created_at| that actually covers v.
+        let scan_start_idx = match gyros_by_time
+            .binary_search_by_key(&v_created, |&i| gyros[i].created_at_ms)
+        {
+            Ok(idx) => idx,
+            Err(idx) => idx,
+        };
+        let window = 5usize;
+        let lo = scan_start_idx.saturating_sub(window);
+        let hi = (scan_start_idx + window).min(gyros_by_time.len());
+
+        let mut candidate: Option<(usize, i64)> = None; // (gyro_index, |g.created - v.created|)
+        for &gi in &gyros_by_time[lo..hi] {
             let g = &gyros[gi];
             let video_start = g.created_at_ms - video_offset;
             let video_end = video_start + (g.duration_ms as i64);
-            let inside = v_created >= video_start - COVERAGE_TOLERANCE_MS
-                && v_created <= video_end + COVERAGE_TOLERANCE_MS;
-            let dist = if v_created < video_start {
-                (video_start - v_created).abs()
-            } else if v_created > video_end {
-                (v_created - video_end).abs()
-            } else {
-                0
-            };
-            let cur_best_dist = best_gyro.map(|p| p.1).unwrap_or(i64::MAX);
-            if (inside && cur_best_dist > 0) || dist < cur_best_dist {
-                best_gyro = Some((gi, dist));
+            if v_created >= video_start - COVERAGE_TOLERANCE_MS
+                && v_created <= video_end + COVERAGE_TOLERANCE_MS
+            {
+                let abs_dist = (g.created_at_ms - v_created).abs();
+                if candidate.map(|c| abs_dist < c.1).unwrap_or(true) {
+                    candidate = Some((gi, abs_dist));
+                }
             }
         }
 
-        let gi = match best_gyro {
+        let gi = match candidate {
             Some((g, _)) => g,
-            None => continue,
+            None => {
+                log::info!(
+                    "[batch_match_diag] fallback_no_gyro vi={} borrowed_session={} reason=no_covering_gyro",
+                    vi,
+                    sid
+                );
+                continue;
+            }
         };
         let g = &gyros[gi];
         let (gyro_start_ms, gyro_end_ms, front_comp, calib_anchor_ms) =
             compute_clip_window(v, g, v_created, video_offset, &s.cal_video_indices, videos);
 
+        // Layer-3 clip bounds gate on the fallback exit. Even if the borrowed
+        // offset projects v_created inside [video_start, video_end], the clip
+        // window may still extend past the gyro's physical [0, duration_ms]
+        // range. Reject and leave Unmatched.
+        let back_comp = front_comp;
+        if !clip_bounds_ok(
+            gyro_start_ms,
+            gyro_end_ms,
+            front_comp,
+            back_comp,
+            v.duration_ms,
+            g.duration_ms,
+        ) {
+            let (covered_ms, required_ms) = clip_bounds_coverage(
+                gyro_start_ms,
+                gyro_end_ms,
+                front_comp,
+                back_comp,
+                v.duration_ms,
+                g.duration_ms,
+            );
+            log::info!(
+                "[batch_match_diag] fallback_clip_bounds_reject vi={} borrow_session={} gi={} video_dur={:.1} gyro_dur={:.1} covered_ms={:.1} required_ms={:.1} path=fallback reason=below_threshold",
+                vi,
+                sid,
+                gi,
+                v.duration_ms,
+                g.duration_ms,
+                covered_ms,
+                required_ms
+            );
+            continue;
+        }
+
         log::info!(
-            "[batch_match_diag] fallback_used vi={} borrow_session={} gap_ms={} gyro_index={} calib_anchor={} raw_range=[{:.1},{:.1}]",
+            "[batch_match_diag] fallback_used vi={} borrow_session={} gap_ms={} gyro_index={} gyro_created_at={} calib_anchor={} raw_range=[{:.1},{:.1}]",
             vi,
             sid,
             gap,
             gi,
+            g.created_at_ms,
             calib_anchor_ms,
             gyro_start_ms,
             gyro_end_ms
@@ -930,6 +1320,24 @@ const COMP_TIME_MS: f64 = 1500.0;
 const MAX_DAILY_DRIFT_MS: f64 = 1000.0;
 // Milliseconds in a day.
 const MS_PER_DAY: f64 = 86_400_000.0;
+
+// Clip bounds gate thresholds. Applied at the assign_* exits to enforce that
+// the computed `[gyro_start_ms, gyro_end_ms]` clip window actually has the
+// video content portion physically covered by the gyro file. Mis-pairings
+// (cross-day, cross-clock, fallback-borrowed offset that misses real gyro
+// coverage) all manifest as a clip window that falls outside `[0,
+// gyro_duration_ms]` and are rejected here as Unmatched regardless of which
+// upstream branch produced them.
+//
+// COVERAGE_RATIO: minimum fraction of the video content window that must be
+// physically covered by the gyro file.
+// COVERAGE_HEAD_TOL_MS: absolute end-point loss tolerance (covers
+// "camera-on-before-gyro" / "camera-off-after-gyro" legit cases).
+// Required coverage = max(video_duration * COVERAGE_RATIO,
+//                         video_duration - COVERAGE_HEAD_TOL_MS), so short
+// clips are rate-bounded and long clips are absolute-bounded.
+const COVERAGE_RATIO: f64 = 0.70;
+const COVERAGE_HEAD_TOL_MS: f64 = 3000.0;
 
 /// Legacy single-session assigner kept for the manual_pairs path. The auto
 /// path now flows through assign_videos_by_coverage + assign_fallback.
@@ -987,6 +1395,51 @@ fn assign_gyro_to_videos(
 
                     let gyro_start_ms = (v_created - video_start) as f64 - front_comp;
                     let gyro_end_ms = gyro_start_ms + v.duration_ms + front_comp + back_comp;
+
+                    // Layer-3 clip bounds gate also on the manual_pairs path.
+                    // Diagnostic role: if the user manually paired a v with a
+                    // g whose physical durations and timestamps don't actually
+                    // line up, slicing still produces an out-of-range clip
+                    // window; tagging this as Unmatched + log message lets
+                    // the user see the mis-pair instead of silently failing
+                    // downstream.
+                    if !clip_bounds_ok(
+                        gyro_start_ms,
+                        gyro_end_ms,
+                        front_comp,
+                        back_comp,
+                        v.duration_ms,
+                        g.duration_ms,
+                    ) {
+                        let (covered_ms, required_ms) = clip_bounds_coverage(
+                            gyro_start_ms,
+                            gyro_end_ms,
+                            front_comp,
+                            back_comp,
+                            v.duration_ms,
+                            g.duration_ms,
+                        );
+                        log::info!(
+                            "[batch_match_diag] clip_bounds_reject vi={} gi={} video_dur={:.1} gyro_dur={:.1} covered_ms={:.1} required_ms={:.1} path=manual_pairs reason=below_threshold",
+                            vi,
+                            gi,
+                            v.duration_ms,
+                            g.duration_ms,
+                            covered_ms,
+                            required_ms
+                        );
+                        return MatchResult {
+                            video_index: vi,
+                            job_id: None,
+                            gyro_index: None,
+                            status: MatchStatus::Unmatched,
+                            global_offset_ms: None,
+                            gyro_start_ms: None,
+                            gyro_end_ms: None,
+                            init_offset_ms: None,
+                        };
+                    }
+
                     log::info!(
                         "[batch_match_diag] assign video_index={} gyro_index={} status={} global_offset={}ms delay={}ms video_created={} gyro_created={} current_video_start={} current_video_end={} legacy_video_start={} legacy_video_end={} calib_anchor={} time_from_anchor={:.1}ms drift={:.1}ms front={:.1}ms back={:.1}ms legacy_front={:.1}ms legacy_back={:.1}ms raw_range=[{:.1},{:.1}] duration={:.1}ms pre_recording={:.1}ms v_path='{}' g_path='{}'",
                         vi,
@@ -1257,9 +1710,24 @@ fn auto_match(videos: &[VideoMatchInfo], gyros: &[GyroMatchInfo]) -> BatchMatchR
     }
 
     let owned_gyros = assign_gyro_ownership(gyros, &sessions);
+
+    // Sort gyros by created_at once at the top of auto_match. assign_fallback
+    // borrows the offset from the nearest session and then searches the FULL
+    // gyro pool (not owned_gyros[sid]) for a gyro that physically covers the
+    // video using that offset. O(log G) per fallback lookup via binary_search.
+    let mut gyros_by_time: Vec<usize> = (0..gyros.len()).collect();
+    gyros_by_time.sort_by_key(|&i| gyros[i].created_at_ms);
+
     let (mut results, pending) =
         assign_videos_by_coverage(videos, gyros, &sessions, &owned_gyros);
-    assign_fallback(videos, gyros, &sessions, &owned_gyros, &pending, &mut results);
+    assign_fallback(
+        videos,
+        gyros,
+        &sessions,
+        &gyros_by_time,
+        &pending,
+        &mut results,
+    );
 
     let global_offset_ms = if reliable_count == 1 {
         sessions
@@ -1378,29 +1846,32 @@ mod tests {
     }
 
     #[test]
-    fn pair_accepts_29min_rejects_31min_boundary() {
-        // SESSION_PAIR_ANCHOR_GAP_MAX_MS = 30 minutes. Verify the boundary.
+    fn pair_single_v_single_g_8h_gap_pairs_unconditionally() {
+        // Regression for the "camera vs IMU clock with timezone offset" case
+        // (Canon CreationDateUtc treating camera local-wall-clock as UTC vs.
+        // SenseFlow .mix.bin's correctly UTC-normalized timestamps). The
+        // absolute V/G anchor gap IS the unknown camera<->IMU clock offset;
+        // it must not be used as a pre-filter.
+        //
+        // V anchor = 0, G anchor = 8h 6min ahead (≈ user's real 29_178_000ms
+        // gap). Durations match within 1.5s. Must form 1 session.
+        let v_anchor_offset: i64 = 8 * 3_600_000 + 360_000; // 29_160_000 ms
         let videos = vec![
             v(0, 5_000.0, Some(0)),
             v(1, 5_000.0, Some(30_000)),
         ];
-        // 29-min gap: should pair.
-        let gyros_29 = vec![
-            g(0, 5_500.0, 29 * 60_000),
-            g(1, 5_500.0, 29 * 60_000 + 30_000),
+        let gyros = vec![
+            g(0, 5_500.0, v_anchor_offset),
+            g(1, 5_500.0, v_anchor_offset + 30_000),
         ];
-        let sessions_29 =
-            pair_sessions(vec![vec![0, 1]], vec![vec![0, 1]], &videos, &gyros_29);
-        assert_eq!(sessions_29.len(), 1, "29-min anchor gap must pair within 30-min threshold");
-
-        // 31-min gap: should reject.
-        let gyros_31 = vec![
-            g(0, 5_500.0, 31 * 60_000),
-            g(1, 5_500.0, 31 * 60_000 + 30_000),
-        ];
-        let sessions_31 =
-            pair_sessions(vec![vec![0, 1]], vec![vec![0, 1]], &videos, &gyros_31);
-        assert!(sessions_31.is_empty(), "31-min anchor gap must reject (above 30-min threshold)");
+        let sessions =
+            pair_sessions(vec![vec![0, 1]], vec![vec![0, 1]], &videos, &gyros);
+        assert_eq!(
+            sessions.len(),
+            1,
+            "single V + single G must pair regardless of absolute anchor gap"
+        );
+        assert_eq!(sessions[0].anchor_ms, 0);
     }
 
     #[test]
@@ -1455,21 +1926,6 @@ mod tests {
     }
 
     #[test]
-    fn pair_reject_22h_gap() {
-        // V anchor = 1000, G anchor = 1000 + 22h = 79_201_000. Gap = 22h > 18h.
-        let videos = vec![
-            v(0, 5_000.0, Some(1_000)),
-            v(1, 5_000.0, Some(31_000)),
-        ];
-        let gyros = vec![
-            g(0, 5_500.0, 1_000 + 22 * 3_600_000),
-            g(1, 5_500.0, 31_000 + 22 * 3_600_000),
-        ];
-        let sessions = pair_sessions(vec![vec![0, 1]], vec![vec![0, 1]], &videos, &gyros);
-        assert!(sessions.is_empty());
-    }
-
-    #[test]
     fn pair_three_v_two_g() {
         // 3 V clusters at day1 / day2 / day3, 2 G clusters at day1 / day2.
         // Expect 2 sessions; day3 V cluster left orphan.
@@ -1501,9 +1957,8 @@ mod tests {
 
     #[test]
     fn pair_reject_duration_mismatch() {
-        // V anchor and G anchor are 60s apart (within 10-min threshold), so
-        // anchor check passes. V dur 9s vs G dur 2s -> |2 - 0.5 + 0 - 9| =
-        // 7.5 >> 1.5 -> duration check rejects.
+        // Branch A single-cluster pair runs duration cross-check. V dur 9s vs
+        // G dur 2s -> |2 - 0.5 + 0 - 9| = 7.5 >> 1.5 -> reject (no session).
         let videos = vec![
             v(0, 9_000.0, Some(18 * 3_600_000)),
             v(1, 9_000.0, Some(18 * 3_600_000 + 30_000)),
@@ -1514,6 +1969,102 @@ mod tests {
         ];
         let sessions = pair_sessions(vec![vec![0, 1]], vec![vec![0, 1]], &videos, &gyros);
         assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn pair_two_v_two_g_with_8h_timezone_shift() {
+        // Multi-cluster equivalent of the timezone bug: 2 V clusters and 2 G
+        // clusters; G anchors are uniformly shifted +8h vs. V anchors (Canon
+        // local-as-UTC vs. SenseFlow true-UTC). Intervals on each side equal
+        // 1h, so interval_match should pair V[0]<->G[0], V[1]<->G[1].
+        let hour: i64 = 3_600_000;
+        let videos = vec![
+            v(0, 5_000.0, Some(0)),
+            v(1, 5_000.0, Some(30_000)),
+            v(2, 5_000.0, Some(hour)),
+            v(3, 5_000.0, Some(hour + 30_000)),
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 8 * hour),
+            g(1, 5_500.0, 8 * hour + 30_000),
+            g(2, 5_500.0, 9 * hour),
+            g(3, 5_500.0, 9 * hour + 30_000),
+        ];
+        let sessions = pair_sessions(
+            vec![vec![0, 1], vec![2, 3]],
+            vec![vec![0, 1], vec![2, 3]],
+            &videos,
+            &gyros,
+        );
+        assert_eq!(sessions.len(), 2, "two V + two G with matching intervals must form 2 sessions");
+        assert_eq!(sessions[0].v_cluster, vec![0, 1]);
+        assert_eq!(sessions[1].v_cluster, vec![2, 3]);
+        assert_eq!(sessions[0].g_cluster, vec![0, 1]);
+        assert_eq!(sessions[1].g_cluster, vec![2, 3]);
+    }
+
+    #[test]
+    fn pair_two_v_two_g_interval_mismatch_returns_empty() {
+        // V intervals 1h, G intervals 12h - no alignment matches within
+        // tolerance. Combined with duration mismatch in Branch C fallback,
+        // expect 0 sessions (rather than mis-pairing).
+        let hour: i64 = 3_600_000;
+        let videos = vec![
+            v(0, 9_000.0, Some(0)),
+            v(1, 9_000.0, Some(30_000)),
+            v(2, 9_000.0, Some(hour)),
+            v(3, 9_000.0, Some(hour + 30_000)),
+        ];
+        // Gyro durations completely mismatched (2s vs video 9s) so Branch C
+        // also rejects on duration_ok.
+        let gyros = vec![
+            g(0, 2_000.0, 0),
+            g(1, 2_000.0, 30_000),
+            g(2, 2_000.0, 12 * hour),
+            g(3, 2_000.0, 12 * hour + 30_000),
+        ];
+        let sessions = pair_sessions(
+            vec![vec![0, 1], vec![2, 3]],
+            vec![vec![0, 1], vec![2, 3]],
+            &videos,
+            &gyros,
+        );
+        assert!(
+            sessions.is_empty(),
+            "mismatched intervals + mismatched durations must not produce sessions"
+        );
+    }
+
+    #[test]
+    fn pair_three_v_two_g_k_offset_alignment() {
+        // 3 V clusters, 2 G clusters, V intervals = [1h, 1h], G intervals = [1h].
+        // alignments k=0 and k=1 both match 1 interval with same penalty (0).
+        // tie-break by |k| smallest -> k=0 wins, pairing V[0]<->G[0], V[1]<->G[1].
+        // V[2] orphans. duration_ok must still pass for actually formed sessions.
+        let hour: i64 = 3_600_000;
+        let videos = vec![
+            v(0, 5_000.0, Some(0)),
+            v(1, 5_000.0, Some(30_000)),
+            v(2, 5_000.0, Some(hour)),
+            v(3, 5_000.0, Some(hour + 30_000)),
+            v(4, 5_000.0, Some(2 * hour)),
+            v(5, 5_000.0, Some(2 * hour + 30_000)),
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 5 * hour),
+            g(1, 5_500.0, 5 * hour + 30_000),
+            g(2, 5_500.0, 6 * hour),
+            g(3, 5_500.0, 6 * hour + 30_000),
+        ];
+        let sessions = pair_sessions(
+            vec![vec![0, 1], vec![2, 3], vec![4, 5]],
+            vec![vec![0, 1], vec![2, 3]],
+            &videos,
+            &gyros,
+        );
+        assert_eq!(sessions.len(), 2);
+        assert_eq!(sessions[0].v_cluster, vec![0, 1]);
+        assert_eq!(sessions[1].v_cluster, vec![2, 3]);
     }
 
     // --- Phase 3 tests ---
@@ -1705,12 +2256,21 @@ mod tests {
 
     #[test]
     fn fallback_borrow_neighbor_day() {
-        // Session A covers day1; video on day2 has no covering gyro on its own
-        // day; the only reliable session is day1, anchor < 24h away.
-        let videos = vec![v(0, 5_000.0, Some(20 * 3_600_000))]; // 20h after day1 anchor
-        let gyros = vec![g(0, 1_000.0, 1_000)]; // tiny gyro, doesn't cover v
+        // Session A covers day1 (cal pair); video on day2 has no own cal pair
+        // but a long IMU file g1 covers it. Fallback borrows A's offset and
+        // finds g1 in the FULL gyro pool (not owned by A) -> MatchedFallback.
+        let v_t: i64 = 20 * 3_600_000;
+        let videos = vec![v(0, 5_000.0, Some(v_t))]; // 20h after day1 anchor
+        let gyros = vec![
+            g(0, 1_000.0, 1_000), // day1 cal gyro (small)
+            // day2 long IMU covering v at v_t. With borrowed offset=1000,
+            // video_start = g1.created_at - 1000, so set g1.created_at = v_t+1000
+            // and dur = 10000 to fully cover.
+            g(1, 10_000.0, v_t + 1_000),
+        ];
         let sessions = vec![make_session(1_000, 0, vec![], vec![0])];
-        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let mut gyros_by_time: Vec<usize> = (0..gyros.len()).collect();
+        gyros_by_time.sort_by_key(|&i| gyros[i].created_at_ms);
         let mut results = vec![MatchResult {
             video_index: 0,
             job_id: None,
@@ -1721,9 +2281,11 @@ mod tests {
             gyro_end_ms: None,
             init_offset_ms: None,
         }];
-        assign_fallback(&videos, &gyros, &sessions, &owned, &[0], &mut results);
+        assign_fallback(&videos, &gyros, &sessions, &gyros_by_time, &[0], &mut results);
         assert_eq!(results[0].status, MatchStatus::MatchedFallback);
         assert_eq!(results[0].global_offset_ms, Some(1_000));
+        // Should have picked g1 (the actually covering gyro), not g0.
+        assert_eq!(results[0].gyro_index, Some(1));
     }
 
     #[test]
@@ -1732,7 +2294,8 @@ mod tests {
         let videos = vec![v(0, 5_000.0, Some(40 * 3_600_000))];
         let gyros = vec![g(0, 1_000.0, 1_000)];
         let sessions = vec![make_session(1_000, 0, vec![], vec![0])];
-        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let mut gyros_by_time: Vec<usize> = (0..gyros.len()).collect();
+        gyros_by_time.sort_by_key(|&i| gyros[i].created_at_ms);
         let mut results = vec![MatchResult {
             video_index: 0,
             job_id: None,
@@ -1743,7 +2306,7 @@ mod tests {
             gyro_end_ms: None,
             init_offset_ms: None,
         }];
-        assign_fallback(&videos, &gyros, &sessions, &owned, &[0], &mut results);
+        assign_fallback(&videos, &gyros, &sessions, &gyros_by_time, &[0], &mut results);
         assert_eq!(results[0].status, MatchStatus::Unmatched);
     }
 
@@ -1751,9 +2314,15 @@ mod tests {
     fn fallback_unreliable_session_internal_video() {
         // Two sessions: A reliable but far, B unreliable and close to v.
         // v ends up pending (Phase 4 won't pick B because B is unreliable; A
-        // doesn't cover v in its gyros), then fallback picks A.
-        let videos = vec![v(0, 5_000.0, Some(20 * 3_600_000))];
-        let gyros = vec![g(0, 1_000.0, 1_000), g(1, 1_000.0, 18 * 3_600_000)];
+        // doesn't cover v with its OWN gyro g0), so fallback borrows A's offset
+        // and searches the full gyro pool. With borrowed offset=2000 and g1 at
+        // 20h+2000, v_t=20h falls inside g1's projected range -> MatchedFallback.
+        let v_t: i64 = 20 * 3_600_000;
+        let videos = vec![v(0, 5_000.0, Some(v_t))];
+        let gyros = vec![
+            g(0, 1_000.0, 1_000),
+            g(1, 10_000.0, v_t + 2_000), // covers v_t when offset=2000 is applied
+        ];
         let sessions = vec![
             Session {
                 v_cluster: vec![],
@@ -1774,7 +2343,8 @@ mod tests {
                 reliable: true, // A reliable, anchor 20h from v
             },
         ];
-        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let mut gyros_by_time: Vec<usize> = (0..gyros.len()).collect();
+        gyros_by_time.sort_by_key(|&i| gyros[i].created_at_ms);
         let mut results = vec![MatchResult {
             video_index: 0,
             job_id: None,
@@ -1785,10 +2355,11 @@ mod tests {
             gyro_end_ms: None,
             init_offset_ms: None,
         }];
-        assign_fallback(&videos, &gyros, &sessions, &owned, &[0], &mut results);
+        assign_fallback(&videos, &gyros, &sessions, &gyros_by_time, &[0], &mut results);
         assert_eq!(results[0].status, MatchStatus::MatchedFallback);
         // borrowed offset is A's = 2000
         assert_eq!(results[0].global_offset_ms, Some(2_000));
+        assert_eq!(results[0].gyro_index, Some(1));
     }
 
     // --- Phase 6 tests ---
@@ -1798,6 +2369,11 @@ mod tests {
         // Single-day calibration + one normal video. Probe video and long
         // gyro must be longer than the cal thresholds (10s for video, 12s for
         // gyro) so they are NOT classified as calibration candidates.
+        //
+        // Long gyro (g2) duration is 70s to ensure the 60s content video v2
+        // is fully covered including the front_comp+back_comp padding (Layer-3
+        // clip bounds gate requires the video content portion to land inside
+        // [0, gyro_duration_ms]).
         let videos = vec![
             v(0, 5_000.0, Some(1_000)),
             v(1, 5_000.0, Some(31_000)),
@@ -1806,7 +2382,7 @@ mod tests {
         let gyros = vec![
             g(0, 5_500.0, 2_000),
             g(1, 5_500.0, 32_000),
-            g(2, 60_000.0, 2_000),
+            g(2, 70_000.0, 2_000),
         ];
         let result = batch_match(&videos, &gyros, None);
         assert!(result.global_offset_ms.is_some());
@@ -1831,14 +2407,16 @@ mod tests {
             v(5, 60_000.0, Some(5_000 + day)),
         ];
         let gyros = vec![
-            // Day 1 with offset = 1000ms
+            // Day 1 with offset = 1000ms. Long IMU (g2) 70s to fully cover
+            // 60s v2 including front+back padding (Layer-3 clip bounds gate).
             g(0, 5_500.0, 2_000),
             g(1, 5_500.0, 32_000),
-            g(2, 60_000.0, 2_000),
-            // Day 2 with offset = 5000ms (different drift from day 1)
+            g(2, 70_000.0, 2_000),
+            // Day 2 with offset = 5000ms (different drift from day 1, within
+            // anchor-pool 15s tolerance).
             g(3, 5_500.0, 6_000 + day),
             g(4, 5_500.0, 36_000 + day),
-            g(5, 60_000.0, 6_000 + day),
+            g(5, 70_000.0, 6_000 + day),
         ];
         let result = batch_match(&videos, &gyros, None);
         // Two reliable sessions -> top-level global_offset_ms is None.
@@ -1993,17 +2571,24 @@ mod tests {
     }
 
     #[test]
-    fn one_day_missing_cal_falls_back_within_36h_unmatched_beyond() {
+    fn one_day_missing_cal_direct_coverage_within_36h_unmatched_beyond() {
         // Scenario: day 1 has full cal (2 short cal videos + 2 cal gyros +
-        // long IMU). Subsequent blocks have NO cal videos and NO cal gyros -
-        // only long content videos + a long IMU.
+        // long IMU). Subsequent shooting blocks have NO cal videos and NO
+        // cal gyros - only long content videos + their own long IMUs.
         //
-        // Algorithm should:
-        //   - Form 1 reliable session (day 1)
-        //   - Content videos WITHIN 36h of day-1 session anchor:
-        //     borrow day-1 offset -> MatchedFallback
-        //   - Content videos BEYOND 36h: Unmatched (per spec
-        //     "宁可 Unmatched 也不错配")
+        // Algorithm post-clip-bounds-gate:
+        //   - Form 1 reliable session (day 1).
+        //   - Content videos at 23h/35h: their respective long IMUs are in
+        //     the gyro pool, owned by session A (single-session). assign_*
+        //     finds direct coverage -> Matched (NOT MatchedFallback - that
+        //     path only triggers when assign_videos_by_coverage misses).
+        //   - Content video at 37h: long IMU at 37h is also in pool/owned
+        //     by A, direct coverage hits as long as offset projection holds.
+        //     The 36h fallback gap check no longer applies here because the
+        //     coverage path matched first.
+        //   - To test "no covering gyro -> Unmatched" we omit g5 (37h IMU),
+        //     leaving v6/v7 with no physical gyro coverage; fallback then
+        //     runs, finds no covering gyro within ±5 window -> Unmatched.
         let hour: i64 = 3_600_000;
         let day1_anchor = 0_i64;
         let day1_offset: i64 = -180_000;
@@ -2014,12 +2599,12 @@ mod tests {
             v(1, 2_000.0, Some(day1_anchor + 30_000)),
             // Day-1 content
             v(2, 60_000.0, Some(day1_anchor + 5 * 60_000)),
-            // Content 23h after day-1 (within 36h)
+            // Content 23h after day-1 (covered by g3)
             v(3, 60_000.0, Some(day1_anchor + 23 * hour)),
             v(4, 30_000.0, Some(day1_anchor + 23 * hour + 60_000)),
-            // Content 35h after day-1 (within 36h, just below boundary)
+            // Content 35h after day-1 (covered by g4)
             v(5, 60_000.0, Some(day1_anchor + 35 * hour)),
-            // Content 37h after day-1 (beyond 36h, Unmatched)
+            // Content 37h after day-1 - NO covering gyro -> Unmatched
             v(6, 60_000.0, Some(day1_anchor + 37 * hour)),
             v(7, 30_000.0, Some(day1_anchor + 37 * hour + 60_000)),
         ];
@@ -2027,10 +2612,12 @@ mod tests {
             g(0, 1_500.0, day1_anchor + day1_offset),
             g(1, 2_000.0, day1_anchor + day1_offset + 30_000),
             g(2, 1_800_000.0, day1_anchor + day1_offset + 10_000),
-            // Long IMUs for the post-cal content blocks (no cal in them).
-            g(3, 5_400_000.0, day1_anchor + 23 * hour - 60_000),
-            g(4, 5_400_000.0, day1_anchor + 35 * hour - 60_000),
-            g(5, 5_400_000.0, day1_anchor + 37 * hour - 60_000),
+            // Long IMUs cover the 23h/35h content blocks. created_at is
+            // shifted by day1_offset so that, when projected via session A's
+            // offset (-180_000), v_created falls inside the gyro window.
+            g(3, 5_400_000.0, day1_anchor + 23 * hour - 60_000 + day1_offset),
+            g(4, 5_400_000.0, day1_anchor + 35 * hour - 60_000 + day1_offset),
+            // g5 deliberately omitted: v6/v7 have no covering gyro at 37h.
         ];
 
         let result = batch_match(&videos, &gyros, None);
@@ -2048,28 +2635,28 @@ mod tests {
         // Day-1 content matched via day-1 long IMU.
         assert_eq!(result.results[2].status, MatchStatus::Matched);
 
-        // 23h and 35h content: MatchedFallback (borrows day-1 offset).
+        // 23h/35h content: Matched via direct coverage (long IMUs in pool).
         for vi in [3usize, 4, 5] {
             assert_eq!(
                 result.results[vi].status,
-                MatchStatus::MatchedFallback,
-                "v{} (within 36h) expected MatchedFallback, got {:?}",
+                MatchStatus::Matched,
+                "v{} expected Matched (direct coverage), got {:?}",
                 vi, result.results[vi].status
             );
             assert_eq!(
                 result.results[vi].global_offset_ms,
                 Some(day1_offset),
-                "v{} should borrow day-1 offset",
+                "v{} should use day-1 offset",
                 vi
             );
         }
 
-        // 37h content: Unmatched (beyond 36h).
+        // 37h content: no covering gyro (g5 omitted) -> Unmatched.
         for vi in [6usize, 7] {
             assert_eq!(
                 result.results[vi].status,
                 MatchStatus::Unmatched,
-                "v{} (37h from day-1 anchor) expected Unmatched (beyond 36h fallback), got {:?}",
+                "v{} (no covering gyro at 37h) expected Unmatched, got {:?}",
                 vi, result.results[vi].status
             );
             assert_eq!(
@@ -2406,19 +2993,26 @@ mod tests {
             v(10, 6906.9, Some(day + 7 * 3_600_000 + 66_000)),
             v(11, 7307.3, Some(day + 7 * 3_600_000 + 89_000)),
         ];
+        // Note: per anchor-pool RANSAC, day1/day2 offsets must agree within
+        // MULTI_SESSION_OFFSET_TOLERANCE_MS (15s) to both lock as reliable
+        // sessions. Real clock drift is ~3.5s/day, so 5s diff between
+        // adjacent days is physically realistic. (The earlier fixture used
+        // 20s diff which is implausible drift and is rejected as a
+        // mis-pair by the anchor pool.)
         let gyros = vec![
-            // G0: 2 day-1 cal gyros (3 minutes before V0)
+            // G0: 2 day-1 cal gyros (3 minutes before V0). offset = -180_000.
             g(0, 951.0, -180_000),
             g(1, 1901.9, -176_000),
             // Day-1 long IMU
             g(2, 1_800_000.0, -175_000),
-            // G1: 2 day-2 cal gyros
-            g(3, 2202.2, day - 200_000),
-            g(4, 3153.2, day - 196_000),
+            // G1: 2 day-2 cal gyros. offset = -185_000 (5s drift from day1,
+            // within the 15s anchor-pool tolerance).
+            g(3, 2202.2, day - 185_000),
+            g(4, 3153.2, day - 181_000),
             // Day-2 long IMU
-            g(5, 1_800_000.0, day - 195_000),
+            g(5, 1_800_000.0, day - 180_000),
             // Day-2 night IMU covering V8
-            g(6, 1_800_000.0, day + 7 * 3_600_000 - 200_000),
+            g(6, 1_800_000.0, day + 7 * 3_600_000 - 185_000),
         ];
 
         let result = batch_match(&videos, &gyros, None);
@@ -2488,10 +3082,13 @@ mod tests {
     #[test]
     fn batch_match_manual_pairs_unchanged() {
         // Manual pair path must behave exactly like the legacy single-session.
+        // v2 dur=1500 chosen so the clip window (v_dur + front_comp + back_comp
+        // = 1500 + 1500 + 1500 = 4500ms) fits inside the first covering gyro
+        // g0 (5500ms), satisfying the Layer-3 clip bounds gate on this path.
         let videos = vec![
             v(0, 5_000.0, Some(1_000)),
             v(1, 5_000.0, Some(31_000)),
-            v(2, 3_000.0, Some(5_000)),
+            v(2, 1_500.0, Some(5_000)),
         ];
         let gyros = vec![
             g(0, 5_500.0, 2_000),
@@ -2516,5 +3113,477 @@ mod tests {
         assert_eq!(result.results[0].status, MatchStatus::CalibrationPair);
         assert_eq!(result.results[1].status, MatchStatus::CalibrationPair);
         assert_eq!(result.results[2].status, MatchStatus::Matched);
+    }
+
+    // --- clip_bounds_ok tests ---
+
+    #[test]
+    fn clip_bounds_ok_full_coverage() {
+        // 30s video, content window [3500, 32500] entirely inside [0, 120000].
+        let ok = clip_bounds_ok(2000.0, 34000.0, 1500.0, 1500.0, 30000.0, 120000.0);
+        assert!(ok, "video content fully covered must pass");
+    }
+
+    #[test]
+    fn clip_bounds_ok_completely_out_of_bounds_rejects() {
+        // Cross-day mis-pair: gyro_start_ms projected to -48h.
+        let ok = clip_bounds_ok(
+            -48.0 * 3_600_000.0,
+            -48.0 * 3_600_000.0 + 33_000.0,
+            1500.0,
+            1500.0,
+            30_000.0,
+            600_000.0,
+        );
+        assert!(!ok, "fully out-of-bounds clip must reject");
+    }
+
+    #[test]
+    fn clip_bounds_ok_short_video_at_70pct_boundary_passes() {
+        // 10s video, content window [0, 10000], gyro 7000ms.
+        // covered = 7000, required = max(7000, 7000) = 7000.
+        let ok = clip_bounds_ok(-1500.0, 11500.0, 1500.0, 1500.0, 10_000.0, 7000.0);
+        assert!(ok, "10s video with 70% coverage must pass at boundary");
+    }
+
+    #[test]
+    fn clip_bounds_ok_short_video_below_70pct_rejects() {
+        // 10s video, content window [0, 10000], gyro 6900ms (69%).
+        let ok = clip_bounds_ok(-1500.0, 11500.0, 1500.0, 1500.0, 10_000.0, 6900.0);
+        assert!(!ok, "10s video at 69% coverage must reject");
+    }
+
+    #[test]
+    fn clip_bounds_ok_short_video_loses_3s_passes() {
+        // 10s video losing 3s tail. content_window=[0,10000], gyro 7000.
+        // covered=7000, required=max(7000, 7000)=7000 -> pass.
+        let ok = clip_bounds_ok(-1500.0, 11500.0, 1500.0, 1500.0, 10_000.0, 7000.0);
+        assert!(ok, "short video losing exactly 3s must pass");
+    }
+
+    #[test]
+    fn clip_bounds_ok_short_video_loses_4s_rejects() {
+        // 10s video losing 4s tail. covered=6000, required=max(7000, 6000)=7000 -> reject.
+        let ok = clip_bounds_ok(-1500.0, 11500.0, 1500.0, 1500.0, 10_000.0, 6000.0);
+        assert!(!ok, "short video losing 4s must reject");
+    }
+
+    #[test]
+    fn clip_bounds_ok_long_video_loses_3s_passes() {
+        // 300s video losing 3s tail. content_window=[0, 300000], gyro=297000.
+        // covered=297000, required=max(210000, 297000)=297000 -> pass.
+        let ok = clip_bounds_ok(-1500.0, 301500.0, 1500.0, 1500.0, 300_000.0, 297_000.0);
+        assert!(ok, "long video losing exactly 3s must pass");
+    }
+
+    #[test]
+    fn clip_bounds_ok_long_video_loses_4s_rejects() {
+        // 300s video losing 4s tail. covered=296000, required=max(210000, 297000)=297000.
+        let ok = clip_bounds_ok(-1500.0, 301500.0, 1500.0, 1500.0, 300_000.0, 296_000.0);
+        assert!(!ok, "long video losing 4s must reject");
+    }
+
+    #[test]
+    fn clip_bounds_ok_gyro_duration_zero_rejects() {
+        // Corrupted / empty gyro file.
+        let ok = clip_bounds_ok(-1500.0, 11500.0, 1500.0, 1500.0, 10_000.0, 0.0);
+        assert!(!ok, "gyro_duration=0 must reject");
+    }
+
+    // --- AnchorPool tests ---
+
+    #[test]
+    fn anchor_pool_empty_is_inlier_returns_true() {
+        let pool = AnchorPool::new();
+        assert!(pool.is_inlier(0));
+        assert!(pool.is_inlier(i64::MAX / 2));
+    }
+
+    #[test]
+    fn anchor_pool_single_element_boundary() {
+        let mut pool = AnchorPool::new();
+        pool.push(100);
+        // median = 100, tolerance = 15_000 ms.
+        assert!(pool.is_inlier(100 - 15_000));
+        assert!(pool.is_inlier(100 + 15_000));
+        assert!(!pool.is_inlier(100 - 15_001));
+        assert!(!pool.is_inlier(100 + 15_001));
+    }
+
+    #[test]
+    fn anchor_pool_5_element_median() {
+        let mut pool = AnchorPool::new();
+        for off in [100, 200, 300, 5000, 800] {
+            pool.push(off);
+        }
+        // Sorted: [100, 200, 300, 800, 5000]; median (index 2) = 300.
+        assert_eq!(pool.median(), Some(300));
+        assert!(pool.is_inlier(350));
+        assert!(pool.is_inlier(300 + 15_000));
+        assert!(!pool.is_inlier(300 + 15_001));
+    }
+
+    #[test]
+    fn anchor_pool_outlier_push_does_not_corrupt_median() {
+        let mut pool = AnchorPool::new();
+        pool.push(100);
+        pool.push(110);
+        pool.push(120);
+        // Pre-outlier median = 110.
+        assert_eq!(pool.median(), Some(110));
+        // Push outlier - median moves but stays anchored to bulk.
+        pool.push(50_000_000);
+        // Sorted: [100, 110, 120, 50_000_000]; median (index 2) = 120.
+        assert_eq!(pool.median(), Some(120));
+        // 120 + 15_000 = 15_120 still passes; 30_000 ~within 15s of 120 fails.
+        assert!(pool.is_inlier(120 + 15_000));
+        assert!(!pool.is_inlier(120 + 15_001));
+    }
+
+    // --- Layer 3 (clip_bounds_ok) integration tests ---
+
+    // --- Section 6 fallback integration tests ---
+
+    #[test]
+    fn manual_pairs_mismatched_clip_bounds_unmatched() {
+        // User specifies a manual cal pair where v and g durations + times
+        // don't actually line up. The manual_pairs path runs slicing anyway
+        // but Layer-3 clip bounds gate catches the mis-pair and flags it as
+        // Unmatched (rather than silently emitting a broken clip window).
+        let videos = vec![
+            v(0, 5_000.0, Some(1_000)),
+            v(1, 5_000.0, Some(31_000)),
+            // Wildly mis-timed video - user accidentally mapped it to g2.
+            v(2, 60_000.0, Some(50_000_000)),
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 2_000),
+            g(1, 5_500.0, 32_000),
+            // Short gyro (10s) - cannot physically cover the 60s v2 with any
+            // sensible offset; only present so the manual pair lookup finds
+            // something in the coverage window.
+            g(2, 10_000.0, 50_000_000),
+        ];
+        let pairs = vec![
+            ManualCalibrationPair { job_id: 0, video_index: 0, gyro_index: 0 },
+            ManualCalibrationPair { job_id: 1, video_index: 1, gyro_index: 1 },
+        ];
+        let result = batch_match(&videos, &gyros, Some(&pairs));
+        // v0/v1 cal pair, fine.
+        assert_eq!(result.results[0].status, MatchStatus::CalibrationPair);
+        assert_eq!(result.results[1].status, MatchStatus::CalibrationPair);
+        // v2: short gyro g2 doesn't cover 60s video content -> Layer 3 rejects.
+        assert_eq!(
+            result.results[2].status,
+            MatchStatus::Unmatched,
+            "manual_pairs path must reject when clip bounds out of range"
+        );
+        assert!(result.results[2].gyro_index.is_none());
+    }
+
+    #[test]
+    fn fallback_borrow_offset_not_gyro_finds_day_of_video_imu() {
+        // Day-1 cal session forms; day-2 content video has no day-2 cal pair
+        // but a day-2 long IMU sits in the pool. Fallback should borrow day-1
+        // offset and locate the day-2 IMU via the full-pool binary search.
+        let day: i64 = 86_400_000;
+        let day1_offset: i64 = -180_000;
+        let videos = vec![
+            // Day-1 cal pair
+            v(0, 1_500.0, Some(0)),
+            v(1, 2_000.0, Some(30_000)),
+            // Day-2 content (no own cal pair, but covered by day-2 long IMU)
+            v(2, 60_000.0, Some(day + 5 * 60_000)),
+        ];
+        let gyros = vec![
+            // Day-1 cal pair
+            g(0, 1_500.0, day1_offset),
+            g(1, 2_000.0, day1_offset + 30_000),
+            // Day-1 cal long IMU
+            g(2, 1_800_000.0, day1_offset + 10_000),
+            // Day-2 long IMU - offset-compensated so it covers v2.
+            g(3, 5_400_000.0, day + 5 * 60_000 - 60_000 + day1_offset),
+        ];
+        let result = batch_match(&videos, &gyros, None);
+        // 1 reliable session (day-1).
+        assert_eq!(result.global_offset_ms, Some(day1_offset));
+        // v2 day-2 content matched via day-2 IMU (g3) - either Matched (single
+        // reliable session owns g3 via assign_gyro_ownership and coverage path
+        // hits) or MatchedFallback (g3 not owned/not covered directly, fallback
+        // path borrows day1 offset and searches full pool).
+        let v2 = &result.results[2];
+        assert!(
+            matches!(v2.status, MatchStatus::Matched | MatchStatus::MatchedFallback),
+            "v2 (day-2 content) expected Matched|MatchedFallback, got {:?}",
+            v2.status
+        );
+        assert_eq!(v2.global_offset_ms, Some(day1_offset));
+        assert_eq!(v2.gyro_index, Some(3), "v2 must use day-2 long IMU g3");
+    }
+
+    #[test]
+    fn fallback_no_covering_gyro_stays_unmatched() {
+        // Day-1 cal session forms; day-2 video has no covering gyro at all.
+        // Fallback runs (within 36h fallback gap) but the full-pool search
+        // returns no gyro that physically covers v with the borrowed offset.
+        let day1_offset: i64 = -180_000;
+        let videos = vec![
+            v(0, 1_500.0, Some(0)),
+            v(1, 2_000.0, Some(30_000)),
+            // 12h content video - no day-2 IMU exists.
+            v(2, 60_000.0, Some(12 * 3_600_000)),
+        ];
+        let gyros = vec![
+            g(0, 1_500.0, day1_offset),
+            g(1, 2_000.0, day1_offset + 30_000),
+            // Day-1 long IMU - only 30 minutes long, doesn't reach 12h.
+            g(2, 1_800_000.0, day1_offset + 10_000),
+        ];
+        let result = batch_match(&videos, &gyros, None);
+        assert_eq!(result.global_offset_ms, Some(day1_offset));
+        let v2 = &result.results[2];
+        assert_eq!(
+            v2.status,
+            MatchStatus::Unmatched,
+            "v2 (no covering gyro) must be Unmatched"
+        );
+        assert_eq!(v2.gyro_index, None);
+    }
+
+    #[test]
+    fn assign_coverage_layer3_rejects_out_of_bounds_clip() {
+        // Construct a session whose offset is internally consistent (passes
+        // pair_sessions) but the assigned gyro physically cannot cover the
+        // video content. Direct call to assign_videos_by_coverage with a
+        // hand-built fixture so we control offset and gyro duration.
+        let videos = vec![v(0, 30_000.0, Some(0))];
+        // Short gyro at t=0, dur=5000. Video content [0, 30000] would need
+        // gyro to cover most of it; only 5s available.
+        let gyros = vec![g(0, 5_000.0, 0)];
+        let sessions = vec![Session {
+            v_cluster: vec![],
+            cal_video_indices: vec![],
+            g_cluster: vec![0],
+            anchor_ms: 0,
+            offset: 0,
+            delay: 0,
+            reliable: true,
+        }];
+        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned);
+        assert_eq!(results[0].status, MatchStatus::Unmatched);
+        assert!(results[0].gyro_index.is_none());
+        assert_eq!(pending, vec![0], "rejected video must be in pending for fallback");
+    }
+
+    // --- pair_sessions anchor-pool regression: cross-day mis-pair rejection ---
+
+    #[test]
+    fn pair_two_v_cluster_one_g_cluster_cross_day_outlier_rejected() {
+        // Reproducer for user sid 45b144da: 2 V clusters + 1 G cluster, with
+        // day2 V cluster anchor ~48h after G cluster. Both V clusters are
+        // single-candidate (only one G exists). Pass 1 processes day1 first
+        // (seeds the anchor pool with day1's plausible offset), then day2
+        // (its offset differs by ~48h - rejected as outlier).
+        let day: i64 = 86_400_000;
+        let videos = vec![
+            // Day1 V cluster (cal)
+            v(0, 5_000.0, Some(0)),
+            v(1, 5_000.0, Some(30_000)),
+            // Day3 V cluster (cal) - mis-aligned by 2 days.
+            v(2, 5_000.0, Some(2 * day)),
+            v(3, 5_000.0, Some(2 * day + 30_000)),
+        ];
+        let gyros = vec![
+            // Single G cluster on day1 (matches V0/V1 offsets).
+            g(0, 5_500.0, 100),
+            g(1, 5_500.0, 30_100),
+        ];
+        // 2 V clusters, both single-candidate against the lone G cluster.
+        let sessions = pair_sessions(
+            vec![vec![0, 1], vec![2, 3]],
+            vec![vec![0, 1]],
+            &videos,
+            &gyros,
+        );
+        // Expectation: day1 V cluster locks; day2 V cluster orphans because
+        // its offset (~+2*86400000 ms) is wildly inconsistent with day1's
+        // (~+100 ms).
+        assert_eq!(
+            sessions.len(),
+            1,
+            "day2 V cluster must orphan via anchor-pool RANSAC rejection"
+        );
+        // The surviving session must be the day1 one (anchor close to 0).
+        assert!(sessions[0].anchor_ms.abs() < day, "surviving session must be day1");
+    }
+
+    // --- User reproducer sid 20260520-e7834212 ---
+    //
+    // Real user data: 89 videos + 26 gyros across 2026-05-12..2026-05-16 (mix.bin
+    // available for those days) plus 21 Canon content videos shot on 2026-05-17
+    // with NO 2026-05-17 mix.bin file dragged in. Per spec: 5/17 videos must be
+    // Unmatched because no day-of gyro exists, the older fallback ("borrow gyro
+    // from owned set") would mis-pair them to a 5/16 long IMU and produce a clip
+    // window 91M+ ms out of the gyro's [0, dur] range.
+
+    #[test]
+    fn user_repro_e7834212_canon_5_17_videos_stay_unmatched() {
+        // Setup: 4 cal sessions (5/12, 5/13, 5/15, 5/16) + 21 Canon content
+        // videos shot on 5/17 (no 5/17 gyro in pool). New code must keep all
+        // 21 videos Unmatched (no covering gyro within ±5 binary-search window).
+        //
+        // V cluster anchors (from log line 14807-14812):
+        //   V0=[6,7]   anchor=1778591766340  (5/12 anchor)
+        //   V1=[12,13] anchor=1778654049300  (5/13 anchor)
+        //   V3=[42,43] anchor=1778826450750  (5/15 anchor)
+        //   V5=[53,54] anchor=1778897422640  (5/16 anchor)
+        // Gyro cluster anchors:
+        //   G0=[2,3]   anchor=1778591379000  -> session 0 offset=-387195
+        //   G1=[4,5]   anchor=1778653661000  -> session 1 offset=-388370
+        //   G2=[13,14] anchor=1778826060000  -> session 2 offset=-390700
+        //   G3=[20,21] anchor=1778897030000  -> session 3 offset=-392290
+        // 21 Canon 5/17 video timestamps (from log line 14956-14976 fallback_used):
+        //   v_created = session_3.anchor + gap_ms
+
+        // 8 cal videos forming 4 V clusters (2 each) - timestamps and
+        // durations reverse-engineered from log lines 14827/14830/14833/14836
+        // (candidate dur_diff + offset0/offset1) so cluster spacing exactly
+        // matches gyro spacing (|delta_v - delta_g| ≤ SYNC_CREATE_OFFSET_MAX).
+        let videos = vec![
+            // V0 cal pair @ 5/12 (anchor=1778591766340, offsets -387340/-387050).
+            v(0, 2570.0, Some(1778591766340)), // = g0_t + 387340
+            v(1, 4471.0, Some(1778591772050)), // = g1_t + 387050
+            // V1 cal pair @ 5/13 (anchor=1778654049300, offsets -388300/-388440).
+            v(2, 2002.0, Some(1778654049300)), // = g2_t + 388300
+            v(3, 2870.0, Some(1778654053440)), // = g3_t + 388440
+            // V3 cal pair @ 5/15 (anchor=1778826450750, offsets -390750/-390650).
+            v(4, 2102.0, Some(1778826450750)), // = g4_t + 390750
+            v(5, 2202.0, Some(1778826455650)), // = g5_t + 390650
+            // V5 cal pair @ 5/16 (anchor=1778897422640, offsets -392640/-391940).
+            v(6, 2169.0, Some(1778897422640)), // = g6_t + 392640
+            v(7, 2602.0, Some(1778897426940)), // = g7_t + 391940
+        ];
+
+        // 21 Canon 5/17 content videos (v_idx=8..28). Timestamps computed from
+        // fallback_used gap_ms entries in the log relative to session 3 anchor.
+        let mut videos = videos;
+        let session3_anchor: i64 = 1778897422640;
+        let canon_5_17: &[(i64, f64)] = &[
+            // (gap_ms_from_session3_anchor, video_dur_ms_approx)
+            (115579540, 16450.0), // vi=68
+            (116689510, 9676.0),  // vi=69
+            (116707030, 12546.0), // vi=70
+            (116854680, 21722.0), // vi=71
+            (117496120, 7808.0),  // vi=72
+            (117908620, 23724.0), // vi=73
+            (117980790, 30230.0), // vi=74
+            (118036750, 26226.0), // vi=75
+            (118093300, 64631.0), // vi=76 (1 min content)
+            (118194270, 12913.0), // vi=77
+            (118210620, 6206.0),  // vi=78
+            (118561480, 23924.0), // vi=79
+            (119265040, 16016.0), // vi=80
+            (119288660, 27995.0), // vi=81
+            (121041460, 14548.0), // vi=82
+            (121120470, 14915.0), // vi=83
+            (121153500, 72739.0), // vi=84 (1.2 min content)
+            (121235720, 15449.0), // vi=85
+            (121327060, 32633.0), // vi=86
+            (122390050, 25492.0), // vi=87
+            (122419740, 10177.0), // vi=88
+        ];
+        for (i, &(gap, dur)) in canon_5_17.iter().enumerate() {
+            let v_t = session3_anchor + gap;
+            videos.push(v(8 + i, dur, Some(v_t)));
+        }
+
+        // Gyro files. 4 cal pairs (2 gyros each = 8 total) form 4 G clusters.
+        // Plus a 5/16 long IMU (mimicking the user's gyro_index=25 = 540s mix
+        // that OLD code mistakenly matched the 5/17 videos against).
+        // No 5/17 gyro is added: this is the whole point of the test.
+        let gyros = vec![
+            // G0 cal pair @ 5/12 (anchor=1778591379000).
+            g(0, 3453.0, 1778591379000),
+            g(1, 5179.0, 1778591385000),
+            // G1 cal pair @ 5/13 (anchor=1778653661000).
+            g(2, 2302.0, 1778653661000),
+            g(3, 3453.0, 1778653665000),
+            // G2 cal pair @ 5/15 (anchor=1778826060000).
+            g(4, 2302.0, 1778826060000),
+            g(5, 2877.0, 1778826065000),
+            // G3 cal pair @ 5/16 (anchor=1778897030000).
+            g(6, 2302.0, 1778897030000),
+            g(7, 2877.0, 1778897035000),
+            // 5/16 long IMU 17:11 = the gyro_index=25 from log
+            // (created_at=1778921503000, dur=540324). This is what OLD code
+            // would project the 5/17 videos onto (91M+ms out of range).
+            g(8, 540324.0, 1778921503000),
+        ];
+
+        let result = batch_match(&videos, &gyros, None);
+
+        // 4 reliable sessions expected -> global_offset is None (multi-session).
+        assert!(
+            result.global_offset_ms.is_none(),
+            "expected multi-session run (4 sessions), got global_offset={:?}",
+            result.global_offset_ms
+        );
+
+        // V cluster cal videos (v_idx 0..7) should all be CalibrationPair.
+        for vi in 0..8 {
+            let r = &result.results[vi];
+            assert_eq!(
+                r.status,
+                MatchStatus::CalibrationPair,
+                "cal v{} expected CalibrationPair, got {:?}",
+                vi,
+                r.status
+            );
+        }
+
+        // The 21 Canon 5/17 videos (v_idx 8..28) MUST all be Unmatched.
+        // OLD code would have MatchedFallback'd them to gyro_index=8 (the
+        // 5/16 long IMU) producing a 91M+ms out-of-range clip window.
+        // NEW code's strict coverage check rejects them.
+        let mut unmatched_canon = 0;
+        for vi in 8..29 {
+            let r = &result.results[vi];
+            assert_eq!(
+                r.status,
+                MatchStatus::Unmatched,
+                "Canon 5/17 v{} (gap={}h from 5/16 cal) expected Unmatched, got {:?}",
+                vi,
+                (videos[vi].created_at_ms.unwrap() - session3_anchor) / 3_600_000,
+                r.status
+            );
+            assert_eq!(r.gyro_index, None);
+            assert_eq!(r.global_offset_ms, None);
+            unmatched_canon += 1;
+        }
+        assert_eq!(unmatched_canon, 21, "all 21 Canon 5/17 videos must be Unmatched");
+
+        // Buttons unblock when all videos have a deterministic status (not
+        // pending in any way). Verify no MatchResult is left in some
+        // half-Matched state (gyro_index Some but status Unmatched, or
+        // gyro_index None but status Matched).
+        for r in &result.results {
+            match r.status {
+                MatchStatus::Matched
+                | MatchStatus::MatchedFallback
+                | MatchStatus::CalibrationPair => {
+                    assert!(r.gyro_index.is_some(),
+                        "v{} matched-state must have gyro_index", r.video_index);
+                    assert!(r.global_offset_ms.is_some(),
+                        "v{} matched-state must have global_offset_ms", r.video_index);
+                }
+                MatchStatus::Unmatched | MatchStatus::NoCreationTime => {
+                    assert!(r.gyro_index.is_none(),
+                        "v{} unmatched must have no gyro_index", r.video_index);
+                    assert!(r.global_offset_ms.is_none(),
+                        "v{} unmatched must have no global_offset_ms", r.video_index);
+                }
+            }
+        }
     }
 }
