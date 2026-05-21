@@ -31,6 +31,7 @@ pub mod neuflow_burn;
 
 pub mod stabilization_params;
 pub mod util;
+pub mod batch_sync_diag;
 pub mod log_context;
 pub mod log_throttle;
 pub mod smooth_diag;
@@ -1510,6 +1511,10 @@ impl StabilizationManager {
             // §4.4 OpGuard: recompute mutates smoothing/zooming/stabilization
             // state; account for it so concurrent project-load waits.
             let _g = OpGuard::enter(&in_flight_count);
+            // Locus D body span: emits batch_sync.recompute_body wall_ms on drop.
+            // Wraps the full closure including early-return prevent_recompute /
+            // stale-compute_id paths so all exits are accounted for.
+            let _diag_recompute = batch_sync_diag::RecomputeBodySpan::new(compute_id);
             // std::thread::sleep(std::time::Duration::from_millis(20));
             if prevent_recompute.load(SeqCst) { return cb((compute_id, true)); } // we're still loading, don't recompute
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }

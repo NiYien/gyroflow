@@ -876,15 +876,62 @@ impl Controller {
                 this.sync_progress(percent, ready, total);
             },
         );
+        // Locus C latency probe for the controller's set_offsets path. The
+        // producer site (sync.on_finished worker thread) calls probe() right
+        // before set_offsets(offsets) so the accumulator can record
+        // worker→UI latency. job_id=0 sentinel (no batch job concept here).
+        let set_offsets_latency_probe: Option<Arc<dyn Fn() + Send + Sync>> =
+            if gyroflow_core::batch_sync_diag::enabled() {
+                let acc = Arc::new(
+                    gyroflow_core::batch_sync_diag::UiLatencyAccumulator::new(
+                        0,
+                        "set_offsets",
+                    ),
+                );
+                let inner = util::qt_queued_callback_mut(
+                    QPointer::from(self as &Self),
+                    move |_this, enq: std::time::Instant| {
+                        acc.record(enq);
+                    },
+                );
+                Some(Arc::new(move || inner(std::time::Instant::now())))
+            } else {
+                None
+            };
         let set_offsets = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this, offsets: Vec<(f64, f64, f64, f64)>| {
+                // Locus C body-exec span: measures how long this UI-thread callback
+                // takes from entry to exit. job_id=0 is the controller-path
+                // sentinel (no batch job concept on this code path).
+                let _diag_exec = gyroflow_core::batch_sync_diag::UiExecSpan::new(
+                    0,
+                    "set_offsets",
+                );
                 if for_rs {
                     if let Some(offs) = offsets.first() {
                         this.rolling_shutter_estimated(offs.1);
                     }
                 } else {
+                    // Locus A: on_finished + lock spans, mirrored from the batch-sync
+                    // path in render_queue.rs. job_id=0 here too (controller sentinel).
+                    let _diag_on_finished =
+                        gyroflow_core::batch_sync_diag::OnFinishedSpan::new(
+                            0,
+                            offsets.len(),
+                        );
+                    let _diag_gyro_acq =
+                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
+                            "gyro_write",
+                            0,
+                        );
                     let mut gyro = this.stabilizer.gyro.write();
+                    drop(_diag_gyro_acq);
+                    let _diag_gyro_hold =
+                        gyroflow_core::batch_sync_diag::LockHoldSpan::new(
+                            "gyro_write",
+                            0,
+                        );
                     gyro.prevent_recompute = true;
                     for x in offsets {
                         ::log::info!(
@@ -912,7 +959,21 @@ impl Controller {
                     }
                     gyro.prevent_recompute = false;
                     gyro.adjust_offsets();
-                    this.stabilizer.keyframes.write().update_gyro(&gyro);
+                    let _diag_kf_acq =
+                        gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
+                            "keyframes_write",
+                            0,
+                        );
+                    let mut kf = this.stabilizer.keyframes.write();
+                    drop(_diag_kf_acq);
+                    let _diag_kf_hold =
+                        gyroflow_core::batch_sync_diag::LockHoldSpan::new(
+                            "keyframes_write",
+                            0,
+                        );
+                    kf.update_gyro(&gyro);
+                    drop(kf);
+                    drop(_diag_kf_hold);
                     this.stabilizer.invalidate_zooming();
                 }
                 this.update_offset_model();
@@ -962,7 +1023,12 @@ impl Controller {
             });
             sync.on_finished(move |arg| {
                 match arg {
-                    Either::Left(offsets) => set_offsets(offsets),
+                    Either::Left(offsets) => {
+                        if let Some(p) = &set_offsets_latency_probe {
+                            p();
+                        }
+                        set_offsets(offsets);
+                    }
                     Either::Right(Some(orientation)) => set_orientation(orientation.0),
                     _ => (),
                 };
@@ -2524,6 +2590,11 @@ impl Controller {
     }
 
     fn recompute_threaded(&mut self) {
+        // Locus D trigger throttle. request_recompute (qt_signal) is dispatched
+        // by QML via `Qt.callLater(controller.recompute_threaded)` so this is
+        // the canonical Rust entry — instrumenting here catches every funnel.
+        gyroflow_core::batch_sync_diag::recompute_trigger_throttle()
+            .maybe_emit("controller");
         if self.stabilizer.params.read().duration_ms <= 0.0 {
             return;
         }

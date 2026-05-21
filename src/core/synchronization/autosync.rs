@@ -5,7 +5,7 @@ use itertools::Either;
 use parking_lot::RwLock;
 use std::borrow::Cow;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::AcqRel, Ordering::Relaxed, Ordering::SeqCst};
 
 use super::PoseEstimator;
 use super::SyncParams;
@@ -583,6 +583,15 @@ impl AutosyncProcess {
 
         let for_negative = AtomicBool::new(false);
 
+        // Locus E (H2 fix): throttle rs-sync / rolling_shutter find_offsets progress
+        // forwarding to ≤30 Hz. State is closure-captured (per AutosyncProcess instance);
+        // `is_first` and `is_final` bypass the gap check so the UI always sees first +
+        // 100% emits. Sync math is unaffected — only this UI notification path is gated.
+        const PROGRESS_THROTTLE_MIN_GAP_NS: u64 = 33_000_000;
+        let progress_throttle_epoch = std::time::Instant::now();
+        let progress_throttle_last_ns = AtomicU64::new(0);
+        let progress_throttle_init_logged = AtomicBool::new(false);
+
         let progress_cb2 = |mut progress| {
             if let Some(cb) = &progress_cb {
                 let d = self.total_detected_frames.load(SeqCst);
@@ -591,7 +600,31 @@ impl AutosyncProcess {
                     progress += if for_negative.load(SeqCst) { 1.0 } else { 0.0 };
                     progress /= 2.0;
                 }
-                cb(0.6 + (progress * 0.4), d, t);
+                let scaled = 0.6 + (progress * 0.4);
+
+                let now_ns = (progress_throttle_epoch.elapsed().as_nanos() as u64).max(1);
+                let prev = progress_throttle_last_ns.load(Relaxed);
+                let is_first = prev == 0;
+                let is_final = scaled >= 0.9999;
+                let due = now_ns.saturating_sub(prev) >= PROGRESS_THROTTLE_MIN_GAP_NS;
+
+                if is_first || is_final || due {
+                    if progress_throttle_last_ns
+                        .compare_exchange_weak(prev, now_ns, AcqRel, Relaxed)
+                        .is_ok()
+                    {
+                        if is_first
+                            && !progress_throttle_init_logged.swap(true, Relaxed)
+                        {
+                            log::info!(
+                                target: "lifecycle",
+                                "batch_sync.progress_throttle_init min_gap_ns={}",
+                                PROGRESS_THROTTLE_MIN_GAP_NS
+                            );
+                        }
+                        cb(scaled, d, t);
+                    }
+                }
             }
         };
 

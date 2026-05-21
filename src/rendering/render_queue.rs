@@ -3341,6 +3341,12 @@ impl RenderQueue {
             let processing = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, progress: f64| {
+                    // Locus C body span: measures how long this UI-thread closure
+                    // takes to execute, paired with the ui_latency probe (enqueue→start).
+                    let _diag_exec = gyroflow_core::batch_sync_diag::UiExecSpan::new(
+                        job_id,
+                        "progress",
+                    );
                     update_model!(this, job_id, itm {
                         itm.processing_progress = progress;
                     });
@@ -3348,6 +3354,29 @@ impl RenderQueue {
                     this.progress_changed();
                 },
             );
+            // Locus C probe: a sibling queued callback that records the
+            // worker→UI latency. Constructed only when diagnostics are on so
+            // the disabled path remains byte-equivalent to today's build.
+            let progress_latency_probe: Option<std::sync::Arc<dyn Fn() + Send + Sync>> =
+                if gyroflow_core::batch_sync_diag::enabled() {
+                    let acc = std::sync::Arc::new(
+                        gyroflow_core::batch_sync_diag::UiLatencyAccumulator::new(
+                            job_id,
+                            "progress",
+                        ),
+                    );
+                    let inner = util::qt_queued_callback_mut(
+                        QPointer::from(self as &Self),
+                        move |_this, enq: std::time::Instant| {
+                            acc.record(enq);
+                        },
+                    );
+                    Some(std::sync::Arc::new(move || {
+                        inner(std::time::Instant::now());
+                    }))
+                } else {
+                    None
+                };
             let encoder_initialized = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, encoder_name: String| {
@@ -3537,6 +3566,7 @@ impl RenderQueue {
                 let sync_stats = Self::do_autosync(
                     stab.clone(),
                     processing,
+                    progress_latency_probe,
                     &input_file,
                     err2,
                     proc_height,
@@ -4787,6 +4817,7 @@ impl RenderQueue {
     >(
         stab: Arc<StabilizationManager>,
         processing_cb: F,
+        progress_latency_probe: Option<Arc<dyn Fn() + Send + Sync>>,
         input_file: &gyroflow_core::InputFile,
         err: F2,
         proc_height: i32,
@@ -4960,8 +4991,26 @@ impl RenderQueue {
                         let sync_frame_count = Arc::new(AtomicUsize::new(0));
                         let processing_cb2 = processing_cb.clone();
                         let sync_frame_count2 = sync_frame_count.clone();
+                        // Locus B: per-job 1-Hz progress-rate window. None when diag off.
+                        let progress_rate_window: Option<
+                            Arc<gyroflow_core::batch_sync_diag::ProgressRateWindow>,
+                        > = if gyroflow_core::batch_sync_diag::enabled() {
+                            Some(Arc::new(
+                                gyroflow_core::batch_sync_diag::ProgressRateWindow::new(job_id),
+                            ))
+                        } else {
+                            None
+                        };
+                        // Locus C: latency probe is supplied by the caller (needs QPointer).
+                        let progress_latency_probe_cb = progress_latency_probe.clone();
                         sync.on_progress(move |percent, ready, total| {
                             sync_frame_count2.store(total.max(ready), SeqCst);
+                            if let Some(rate) = &progress_rate_window {
+                                rate.tick();
+                            }
+                            if let Some(probe) = &progress_latency_probe_cb {
+                                probe();
+                            }
                             processing_cb2(percent);
                         });
                         let stab2 = stab.clone();
@@ -4969,8 +5018,27 @@ impl RenderQueue {
                         let requested_timestamps_ms = attempted_timestamps_ms.clone();
                         sync.on_finished(move |arg| {
                             if let Either::Left(offsets) = arg {
+                                // Locus A: wall-clock span + lock acquire/hold spans for
+                                // gyro and keyframes writes. All four spans are RAII so an
+                                // early break/return inside the loop still emits clean.
+                                let _diag_on_finished =
+                                    gyroflow_core::batch_sync_diag::OnFinishedSpan::new(
+                                        job_id,
+                                        offsets.len(),
+                                    );
                                 let mut candidates = Vec::with_capacity(offsets.len());
+                                let _diag_gyro_acq =
+                                    gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
+                                        "gyro_write",
+                                        job_id,
+                                    );
                                 let mut gyro = stab2.gyro.write();
+                                drop(_diag_gyro_acq);
+                                let _diag_gyro_hold =
+                                    gyroflow_core::batch_sync_diag::LockHoldSpan::new(
+                                        "gyro_write",
+                                        job_id,
+                                    );
                                 gyro.prevent_recompute = true;
                                 for (point_idx, x) in offsets.into_iter().enumerate() {
                                     ::log::info!(
@@ -5041,7 +5109,23 @@ impl RenderQueue {
                                 gyro.integration_method = 2; // VQF
                                 gyro.prevent_recompute = false;
                                 gyro.adjust_offsets();
-                                stab2.keyframes.write().update_gyro(&gyro);
+                                let _diag_kf_acq =
+                                    gyroflow_core::batch_sync_diag::LockAcquireSpan::new(
+                                        "keyframes_write",
+                                        job_id,
+                                    );
+                                let mut kf = stab2.keyframes.write();
+                                drop(_diag_kf_acq);
+                                let _diag_kf_hold =
+                                    gyroflow_core::batch_sync_diag::LockHoldSpan::new(
+                                        "keyframes_write",
+                                        job_id,
+                                    );
+                                kf.update_gyro(&gyro);
+                                drop(kf);
+                                drop(_diag_kf_hold);
+                                // Closure end: _diag_gyro_hold drops then gyro releases. hold_ms
+                                // undercounts by μs (Drop function call) — acceptable.
                             }
                         });
 
