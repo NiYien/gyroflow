@@ -11,4 +11,4 @@ rustflags = ["-C", "default-linker-libraries", "-C", "link-args=-Wl,-rpath,@load
 rustflags = ["-C", "link-args=-Wl,-rpath,$ORIGIN,-rpath,$ORIGIN/lib", "-C", "target-feature=+avx2,+fma"]
 
 [target.x86_64-pc-windows-msvc]
-rustflags = ["-C", "target-feature=+avx2,+fma"]
+rustflags = ["-C", "target-feature=+sse4.2,+popcnt"]
