@@ -2150,6 +2150,13 @@ Item {
             } catch (e) {
                 console.log("filter_supported_drop_items failed:", e);
             }
+            try {
+                urls = JSON.parse(render_queue.filter_non_source_inputs(
+                    JSON.stringify(urls.map(u => u.toString()))
+                ));
+            } catch (e) {
+                console.log("filter_non_source_inputs failed:", e);
+            }
             console.log("[queue_drop:filter] input=" + inputCount + " filtered=" + urls.length);
             if (!urls.length) {
                 console.log("[queue_drop:drop] reason=filtered_empty");

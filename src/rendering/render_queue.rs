@@ -872,6 +872,7 @@ pub struct RenderQueue {
         qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
     filter_raw_proxy_siblings:
         qt_method!(fn(&self, urls_json: String, extensions_json: String) -> QString),
+    filter_non_source_inputs: qt_method!(fn(&self, urls_json: String) -> QString),
     crm_proxy_pair: qt_method!(fn(&self, urls_json: String) -> QString),
     crm_proxy_pairs: qt_method!(fn(&self, urls_json: String) -> QString),
     first_renderable_video_file:
@@ -5945,6 +5946,9 @@ impl RenderQueue {
                     if el == "gyroflow" || el == "crm" {
                         return false;
                     }
+                    if is_non_source_image_ext(&el) {
+                        return false;
+                    }
                     exts_lower.iter().any(|x| x == &el)
                 })
                 .unwrap_or(false);
@@ -6107,6 +6111,25 @@ impl RenderQueue {
                 dropped,
                 urls.len(),
                 result.len()
+            );
+        }
+        QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    fn filter_non_source_inputs(&self, urls_json: String) -> QString {
+        let urls: Vec<String> = serde_json::from_str(&urls_json).unwrap_or_default();
+        let default_suffix = self.default_suffix.to_string();
+        let (result, stabilized_dropped, image_dropped) =
+            filter_non_source_inputs_impl(&urls, &default_suffix);
+        let dropped = stabilized_dropped + image_dropped;
+        if dropped > 0 {
+            ::log::info!(
+                "[filter_non_source_inputs] dropped {} non-source inputs ({} → {} urls, stabilized={}, images={})",
+                dropped,
+                urls.len(),
+                result.len(),
+                stabilized_dropped,
+                image_dropped
             );
         }
         QString::from(serde_json::to_string(&result).unwrap_or_else(|_| "[]".to_string()))
@@ -9612,6 +9635,71 @@ fn has_supported_drop_item_impl(urls: &[String], extensions: &[String]) -> bool 
             })
 }
 
+// Image extensions treated as non-source for batch video loading. `dng` is
+// intentionally absent so raw DNG sequences remain loadable.
+const NON_SOURCE_IMAGE_EXTS: &[&str] = &["jpg", "jpeg", "png", "exr"];
+
+fn is_non_source_image_ext(ext: &str) -> bool {
+    NON_SOURCE_IMAGE_EXTS
+        .iter()
+        .any(|x| x.eq_ignore_ascii_case(ext))
+}
+
+fn stem_matches_default_suffix(filename: &str, default_suffix_lower: &str) -> bool {
+    if default_suffix_lower.is_empty() {
+        return false;
+    }
+    let stem = match filename.rfind('.') {
+        Some(idx) if idx > 0 => &filename[..idx],
+        _ => filename,
+    };
+    stem.to_ascii_lowercase().ends_with(default_suffix_lower)
+}
+
+// Drop "non-source" inputs from a batch video load list:
+//   - videos whose stem ends with the configured default output suffix
+//     (i.e. previously stabilized outputs that the user accidentally
+//     re-selected alongside their source clips)
+//   - non-source still images (jpg/jpeg/png/exr); dng is preserved
+// Returns the filtered url list plus per-bucket dropped counters for
+// diagnostics.
+//
+// Inputs of length ≤ 1 are returned untouched: a user explicitly loading
+// a single previously stabilized clip or a single still frame is treated
+// as deliberate (review / re-stabilize / sanity check). Batch routing
+// rules only apply when there are multiple urls to deduplicate from.
+fn filter_non_source_inputs_impl(
+    urls: &[String],
+    default_suffix: &str,
+) -> (Vec<String>, usize /* stabilized_dropped */, usize /* image_dropped */) {
+    if urls.len() <= 1 {
+        return (urls.to_vec(), 0, 0);
+    }
+    let suffix_lower = default_suffix.to_ascii_lowercase();
+    let mut out = Vec::with_capacity(urls.len());
+    let mut stabilized_dropped = 0usize;
+    let mut image_dropped = 0usize;
+    for url in urls {
+        if is_ignored_system_file_url(url) {
+            out.push(url.clone());
+            continue;
+        }
+        let filename = filesystem::get_filename(url);
+        if let Some(ext) = file_extension(url) {
+            if is_non_source_image_ext(&ext) {
+                image_dropped += 1;
+                continue;
+            }
+        }
+        if stem_matches_default_suffix(&filename, &suffix_lower) {
+            stabilized_dropped += 1;
+            continue;
+        }
+        out.push(url.clone());
+    }
+    (out, stabilized_dropped, image_dropped)
+}
+
 fn first_url_requiring_external_sdk_impl<F>(
     urls: &[String],
     mut requires_install: F,
@@ -12816,6 +12904,261 @@ mod tests {
         let out = filter_supported_drop_items_impl(&urls, &default_exts());
 
         assert_eq!(out, vec!["file:///C:/clips/A001.R3D".to_string()]);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_drops_stabilized_suffix_video() {
+        let urls = vec![
+            "file:///C:/clips/Clip.mp4".to_string(),
+            "file:///C:/clips/Clip_stabilized.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(out, vec!["file:///C:/clips/Clip.mp4".to_string()]);
+        assert_eq!(stabilized, 1);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_drops_jpg_jpeg_png_exr_keeps_dng() {
+        let urls = vec![
+            "file:///C:/clips/a.jpg".to_string(),
+            "file:///C:/clips/b.JPEG".to_string(),
+            "file:///C:/clips/c.png".to_string(),
+            "file:///C:/clips/d.exr".to_string(),
+            "file:///C:/clips/e.dng".to_string(),
+            "file:///C:/clips/f.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/clips/e.dng".to_string(),
+                "file:///C:/clips/f.mp4".to_string(),
+            ]
+        );
+        assert_eq!(stabilized, 0);
+        assert_eq!(image, 4);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_skips_suffix_check_when_default_suffix_empty() {
+        let urls = vec![
+            "file:///C:/clips/Clip.mp4".to_string(),
+            "file:///C:/clips/Clip_stabilized.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "");
+
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/clips/Clip.mp4".to_string(),
+                "file:///C:/clips/Clip_stabilized.mp4".to_string(),
+            ]
+        );
+        assert_eq!(stabilized, 0);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_requires_stem_end_match() {
+        let urls = vec![
+            "file:///C:/clips/Clip_stabilized_v2.mp4".to_string(),
+            "file:///C:/clips/Original.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(
+            out,
+            vec![
+                "file:///C:/clips/Clip_stabilized_v2.mp4".to_string(),
+                "file:///C:/clips/Original.mp4".to_string(),
+            ]
+        );
+        assert_eq!(stabilized, 0);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_honors_custom_default_suffix() {
+        let urls = vec![
+            "file:///C:/clips/B_stab.mp4".to_string(),
+            "file:///C:/clips/C_stabilized.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stab");
+
+        assert_eq!(out, vec!["file:///C:/clips/C_stabilized.mp4".to_string()]);
+        assert_eq!(stabilized, 1);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_case_insensitive_on_stem_and_ext() {
+        let urls = vec![
+            "file:///C:/clips/Clip_STABILIZED.MP4".to_string(),
+            "file:///C:/clips/Other.JPG".to_string(),
+            "file:///C:/clips/Keep.MOV".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(out, vec!["file:///C:/clips/Keep.MOV".to_string()]);
+        assert_eq!(stabilized, 1);
+        assert_eq!(image, 1);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_keeps_project_crm_and_raw_extensions() {
+        let urls = vec![
+            "file:///C:/clips/Proj.gyroflow".to_string(),
+            "file:///C:/clips/Footage.crm".to_string(),
+            "file:///C:/clips/A001.R3D".to_string(),
+            "file:///C:/clips/A001.NEV".to_string(),
+            "file:///C:/clips/Cam.braw".to_string(),
+            "file:///C:/clips/Clip.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(out, urls);
+        assert_eq!(stabilized, 0);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_preserves_appledouble_sidecars_for_other_filters() {
+        // System sidecars are left untouched here; the existing
+        // `is_ignored_system_file_url` paths (see filter_paired_gyroflow_siblings
+        // and filter_supported_drop_items) are responsible for stripping them.
+        let urls = vec![
+            "file:///C:/clips/._A001.R3D".to_string(),
+            "file:///C:/clips/Clip_stabilized.mp4".to_string(),
+        ];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(out, vec!["file:///C:/clips/._A001.R3D".to_string()]);
+        assert_eq!(stabilized, 1);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn video_area_batch_calls_filter_non_source_inputs_after_raw_proxy_filter() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+
+        let raw_proxy_idx = body
+            .find("render_queue.filter_raw_proxy_siblings(")
+            .expect("VideoArea.loadMultipleFiles must call the RAW/proxy filter");
+        let non_source_idx = body
+            .find("render_queue.filter_non_source_inputs(")
+            .expect("VideoArea.loadMultipleFiles must call the non-source input filter");
+        let routing_idx = body
+            .find("if (urls.length == 1)")
+            .expect("VideoArea.loadMultipleFiles must keep single-item routing");
+
+        assert!(
+            raw_proxy_idx < non_source_idx,
+            "filter_non_source_inputs must run after filter_raw_proxy_siblings"
+        );
+        assert!(
+            non_source_idx < routing_idx,
+            "filter_non_source_inputs must run before single-vs-queue routing"
+        );
+    }
+
+    #[test]
+    fn filter_non_source_inputs_keeps_single_stabilized_clip_untouched() {
+        let urls = vec!["file:///D:/clips/DSC_0381_stabilized.mp4".to_string()];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(out, urls);
+        assert_eq!(stabilized, 0);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn filter_non_source_inputs_keeps_single_image_untouched() {
+        let urls = vec!["file:///D:/clips/Screenshot.jpg".to_string()];
+
+        let (out, stabilized, image) = filter_non_source_inputs_impl(&urls, "_stabilized");
+
+        assert_eq!(out, urls);
+        assert_eq!(stabilized, 0);
+        assert_eq!(image, 0);
+    }
+
+    #[test]
+    fn render_queue_drop_calls_filter_non_source_inputs_after_supported_drop_items() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let on_load_idx = qml
+            .find("onLoadFiles:")
+            .expect("RenderQueue.qml must define dt.onLoadFiles");
+        let remaining = &qml[on_load_idx..];
+        // Bound the search to the onLoadFiles handler body; the next handler
+        // / property declaration starts after the closing brace, so we cap
+        // the slice generously to keep the assertion fast.
+        let body_end = remaining.find("\n        }").unwrap_or(remaining.len());
+        let body = &remaining[..body_end];
+
+        let supported_idx = body
+            .find("render_queue.filter_supported_drop_items(")
+            .expect("RenderQueue.onLoadFiles must call filter_supported_drop_items");
+        let non_source_idx = body
+            .find("render_queue.filter_non_source_inputs(")
+            .expect("RenderQueue.onLoadFiles must call filter_non_source_inputs");
+
+        assert!(
+            supported_idx < non_source_idx,
+            "filter_non_source_inputs must run after filter_supported_drop_items inside RenderQueue.onLoadFiles"
+        );
+    }
+
+    #[test]
+    fn folder_video_scan_drops_non_source_images_and_keeps_dng() {
+        let dir = tempfile::tempdir().unwrap();
+        let mp4 = dir.path().join("Clip.mp4");
+        let jpg = dir.path().join("thumb.jpg");
+        let png = dir.path().join("poster.png");
+        let dng = dir.path().join("raw.dng");
+        let exr = dir.path().join("hdr.exr");
+        let stab = dir.path().join("Clip_stabilized.mp4");
+        for p in [&mp4, &jpg, &png, &dng, &exr, &stab] {
+            std::fs::write(p, []).unwrap();
+        }
+
+        let mut found = Vec::new();
+        RenderQueue::scan_video_folder(
+            dir.path(),
+            0,
+            3,
+            600,
+            &default_exts(),
+            "_stabilized",
+            &mut found,
+        );
+
+        found.sort();
+        let expected = {
+            let mut v = vec![mp4.clone(), dng.clone()];
+            v.sort();
+            v
+        };
+        assert_eq!(found, expected);
     }
 
     #[test]

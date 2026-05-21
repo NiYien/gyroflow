@@ -639,6 +639,14 @@ Item {
         } catch (e) {
             console.log("filter_raw_proxy_siblings failed:", e);
         }
+        try {
+            const filteredJson = render_queue.filter_non_source_inputs(
+                JSON.stringify(urls.map(u => u.toString()))
+            );
+            urls = JSON.parse(filteredJson);
+        } catch (e) {
+            console.log("filter_non_source_inputs failed:", e);
+        }
         if (urls.length == 1) {
             if (window.motionData && isSingleMotionDataFile(urls[0])) {
                 window.motionData.loadFile(urls[0]);
