@@ -203,6 +203,21 @@ impl AutosyncProcess {
                     log::error!("Sync thread panic! {:?}", e);
                 }
             })
+            // spawn_handler overrides rayon's own thread spawn, so the
+            // outer stack_size above is preserved only by mirroring it on
+            // std::thread::Builder here. Worker priority is dropped right
+            // before entering the rayon work loop.
+            .spawn_handler(|thread| {
+                let mut b = std::thread::Builder::new().stack_size(10 * 1024 * 1024);
+                if let Some(name) = thread.name() {
+                    b = b.name(name.to_string());
+                }
+                b.spawn(move || {
+                    crate::worker_priority::apply_to_current_thread();
+                    thread.run();
+                })?;
+                Ok(())
+            })
             .build()
             .unwrap();
 

@@ -34,6 +34,7 @@ pub mod util;
 pub mod log_context;
 pub mod log_throttle;
 pub mod smooth_diag;
+pub mod worker_priority;
 
 use camera_identifier::CameraIdentifier;
 use gpu::Buffers;
@@ -64,7 +65,24 @@ pub use telemetry_parser;
 use calibration::LensCalibrator;
 
 lazy_static::lazy_static! {
-    static ref THREAD_POOL: rayon::ThreadPool = rayon::ThreadPoolBuilder::new().build().unwrap();
+    // Global rayon pool used by every `par_iter()` that does not pin itself to
+    // another pool. Workers spawn at the resolved worker_priority level so
+    // background parallelism does not starve the Qt UI thread.
+    static ref THREAD_POOL: rayon::ThreadPool = rayon::ThreadPoolBuilder::new()
+        .thread_name(|i| format!("rayon-global {}", i))
+        .spawn_handler(|thread| {
+            let mut b = std::thread::Builder::new();
+            if let Some(name) = thread.name() {
+                b = b.name(name.to_string());
+            }
+            b.spawn(move || {
+                worker_priority::apply_to_current_thread();
+                thread.run();
+            })?;
+            Ok(())
+        })
+        .build()
+        .unwrap();
 }
 
 // Operation lifecycle: in-flight ops counter primitive.
@@ -492,8 +510,15 @@ fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f
         return false;
     }
 
-    if (effective_fps - params.fps).abs() > 0.001 {
-        params.fps_scale = Some(effective_fps / params.fps);
+    // Only apply fps_scale when it indicates real slow-motion playback
+    // (record_fps >> playback_fps, e.g. 60->30 scale=2.0, 120->24 scale=5.0).
+    // NTSC micro-adjustments (e.g. 30/29.97 ≈ 1.001) are rejected because
+    // some cameras (e.g. Fujifilm X-H2S, no internal IMU) emit a bogus
+    // RecordFrameRate=30 tag against a true 29.97 container, which would
+    // otherwise drag the gyro timeline by 0.1% and break sync on external IMU.
+    let scale = effective_fps / params.fps;
+    if scale > 1.8 {
+        params.fps_scale = Some(scale);
     } else {
         params.fps_scale = None;
     }
