@@ -49,6 +49,10 @@ struct KernelParams {
     reserved2:                f32, // 16
     ewa_coeffs_p:             vec4<f32>, // 16
     ewa_coeffs_q:             vec4<f32>, // 16
+    // openfx-output-adjust-affine: appended at end; identity-default short-circuits.
+    post_rotation:            f32, // 4
+    post_zoom:                f32, // 8
+    post_offset:        vec2<f32>, // 16
 }
 
 @group(0) @binding(0) @fragment var<uniform> params: KernelParams;
@@ -467,6 +471,24 @@ fn undistort_coord(position: vec2<f32>) -> vec2<f32> {
         );
     }
     out_pos += params.translation2d;
+
+    // openfx-output-adjust-affine post-affine inverse: composed into the single existing
+    // sample so identity bypass is byte-equivalent (D4); inserted after translation2d and
+    // before lens correction so the displayed pixel goes through the same distortion
+    // model (D2); range-capped at the UI (D6) so the RS-refine below converges.
+    if (params.post_zoom != 1.0 || params.post_rotation != 0.0 || params.post_offset.x != 0.0 || params.post_offset.y != 0.0) {
+        let oc = vec2<f32>(f32(params.output_width) * 0.5, f32(params.output_height) * 0.5);
+        let off_px = vec2<f32>(params.post_offset.x * f32(params.output_width),
+                               params.post_offset.y * f32(params.output_height));
+        out_pos = out_pos - oc;
+        out_pos = out_pos / params.post_zoom;
+        let ang = -params.post_rotation * (3.14159265358979 / 180.0);
+        let cs = cos(ang);
+        let sn = sin(ang);
+        out_pos = vec2<f32>(cs * out_pos.x - sn * out_pos.y, sn * out_pos.x + cs * out_pos.y);
+        out_pos = out_pos + oc;
+        out_pos = out_pos - off_px;
+    }
 
     ///////////////////////////////////////////////////////////////////
     // Add lens distortion back

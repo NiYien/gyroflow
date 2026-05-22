@@ -98,7 +98,7 @@ bitflags::bitflags! {
 // Each parameter must be aligned to 4 bytes and whole struct to 16 bytes
 // Must be kept in sync with: opencl_undistort.cl, wgpu_undistort.wgsl and qt_gpu/undistort.frag
 #[repr(C, packed(4))]
-#[derive(Default, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct KernelParams {
     pub width: i32,                                         // 4
     pub height: i32,                                        // 8
@@ -142,9 +142,24 @@ pub struct KernelParams {
     pub reserved2: f32,    // 16
     pub ewa_coeffs_p: [f32; 4], // 16
     pub ewa_coeffs_q: [f32; 4], // 16
+    // openfx-output-adjust-affine: appended at end to preserve packed(4) offsets
+    // of all prior fields across the four backend struct definitions.
+    pub post_rotation: f32, // 4
+    pub post_zoom: f32,     // 8
+    pub post_offset: [f32; 2], // 16
 }
 unsafe impl bytemuck::Zeroable for KernelParams {}
 unsafe impl bytemuck::Pod for KernelParams {}
+impl Default for KernelParams {
+    fn default() -> Self {
+        // Zeroed for all prior fields preserves previous derived-Default behavior;
+        // post_zoom must be 1.0 so the openfx-output-adjust-affine shader block
+        // is identity when no PostAffine is supplied.
+        let mut p: Self = bytemuck::Zeroable::zeroed();
+        p.post_zoom = 1.0;
+        p
+    }
+}
 
 #[derive(Default, Debug)]
 pub enum BackendType {
@@ -464,6 +479,11 @@ impl Stabilization {
         if let Some(r) = buffers.output.rotation {
             transform.kernel_params.output_rotation = r;
         }
+        if let Some(pa) = buffers.output.post_affine {
+            transform.kernel_params.post_rotation = pa.rotation_deg;
+            transform.kernel_params.post_zoom = pa.zoom;
+            transform.kernel_params.post_offset = pa.offset_norm;
+        }
 
         transform.kernel_params.source_rect = Self::get_rect(&buffers.input);
         transform.kernel_params.output_rect = Self::get_rect(&buffers.output);
@@ -506,10 +526,14 @@ impl Stabilization {
                 );
                 insert = true;
             }
+            let pa = buffers.output.post_affine.unwrap_or_default();
             if itm.kernel_params.input_rotation != buffers.input.rotation.unwrap_or(0.0)
                 || itm.kernel_params.output_rotation != buffers.output.rotation.unwrap_or(0.0)
                 || itm.kernel_params.source_rect != Self::get_rect(&buffers.input)
                 || itm.kernel_params.output_rect != Self::get_rect(&buffers.output)
+                || itm.kernel_params.post_rotation != pa.rotation_deg
+                || itm.kernel_params.post_zoom != pa.zoom
+                || itm.kernel_params.post_offset != pa.offset_norm
             {
                 log::warn!("Updating stab params at {timestamp_us}");
                 insert = true;

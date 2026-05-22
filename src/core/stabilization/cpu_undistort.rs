@@ -662,6 +662,28 @@ impl Stabilization {
             out_pos.x += params.translation2d[0];
             out_pos.y += params.translation2d[1];
 
+            // openfx-output-adjust-affine post-affine inverse: composed into the single
+            // existing sample so identity bypass is byte-equivalent (D4); inserted after
+            // translation2d and before lens correction so the displayed pixel goes through
+            // the same distortion model (D2); range-capped at the UI (D6).
+            if params.post_zoom != 1.0 || params.post_rotation != 0.0 || params.post_offset[0] != 0.0 || params.post_offset[1] != 0.0 {
+                let oc_x = params.output_width as f32 * 0.5;
+                let oc_y = params.output_height as f32 * 0.5;
+                let off_x = params.post_offset[0] * params.output_width as f32;
+                let off_y = params.post_offset[1] * params.output_height as f32;
+                let mut rx = out_pos.x - oc_x;
+                let mut ry = out_pos.y - oc_y;
+                rx /= params.post_zoom;
+                ry /= params.post_zoom;
+                let ang = -params.post_rotation * (std::f32::consts::PI / 180.0);
+                let cs = ang.cos();
+                let sn = ang.sin();
+                let new_rx = cs * rx - sn * ry;
+                let new_ry = sn * rx + cs * ry;
+                out_pos.x = new_rx + oc_x - off_x;
+                out_pos.y = new_ry + oc_y - off_y;
+            }
+
             ///////////////////////////////////////////////////////////////////
             // Add lens distortion back
             if params.lens_correction_amount < 1.0 {

@@ -51,6 +51,10 @@ typedef struct {
     float reserved2;                 // 16
     float4 ewa_coeffs_p;             // 16
     float4 ewa_coeffs_q;             // 16
+    // openfx-output-adjust-affine: appended at end; identity-default short-circuits.
+    float post_rotation;             // 4
+    float post_zoom;                 // 8
+    float2 post_offset;              // 16
 } KernelParams;
 
 #if INTERPOLATION == 2 // Bilinear
@@ -481,6 +485,24 @@ float2 rotate_and_distort(float2 pos, uint idx, __global KernelParams *params, _
 float2 undistort_coord(float2 out_pos, __global KernelParams *params, __global const float *matrices, __global const float *mesh_data) {
     out_pos.x = map_coord(out_pos.x, (float)params->output_rect.x, (float)(params->output_rect.x + params->output_rect.z), 0.0f, (float)params->output_width ) + params->translation2d.x;
     out_pos.y = map_coord(out_pos.y, (float)params->output_rect.y, (float)(params->output_rect.y + params->output_rect.w), 0.0f, (float)params->output_height) + params->translation2d.y;
+
+    // openfx-output-adjust-affine post-affine inverse: composed into the single existing
+    // sample so identity bypass is byte-equivalent (D4); inserted after translation2d and
+    // before lens correction so the displayed pixel goes through the same distortion
+    // model (D2); range-capped at the UI (D6) so the RS-refine below converges.
+    if (params->post_zoom != 1.0f || params->post_rotation != 0.0f || params->post_offset.x != 0.0f || params->post_offset.y != 0.0f) {
+        float2 oc = (float2)((float)params->output_width * 0.5f, (float)params->output_height * 0.5f);
+        float2 off_px = (float2)(params->post_offset.x * (float)params->output_width,
+                                 params->post_offset.y * (float)params->output_height);
+        out_pos -= oc;
+        out_pos /= params->post_zoom;
+        float ang = -params->post_rotation * (M_PI_F / 180.0f);
+        float cs = cos(ang);
+        float sn = sin(ang);
+        out_pos = (float2)(cs * out_pos.x - sn * out_pos.y, sn * out_pos.x + cs * out_pos.y);
+        out_pos += oc;
+        out_pos -= off_px;
+    }
 
     ///////////////////////////////////////////////////////////////////
     // Add lens distortion back

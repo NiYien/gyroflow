@@ -154,6 +154,26 @@ pub fn undistort(
     let org_out_pos = out_pos;
     out_pos = out_pos + params.translation2d;
 
+    // openfx-output-adjust-affine post-affine inverse: composed into the single existing
+    // sample so identity bypass is byte-equivalent (D4); inserted after translation2d and
+    // before lens correction so the displayed pixel goes through the same distortion
+    // model (D2); range-capped at the UI (D6) so the RS-refine below converges.
+    if params.post_zoom != 1.0 || params.post_rotation != 0.0 || params.post_offset.x != 0.0 || params.post_offset.y != 0.0 {
+        let oc = vec2(params.output_width as f32 * 0.5, params.output_height as f32 * 0.5);
+        let off_px = vec2(
+            params.post_offset.x * params.output_width as f32,
+            params.post_offset.y * params.output_height as f32,
+        );
+        out_pos = out_pos - oc;
+        out_pos = out_pos / params.post_zoom;
+        let ang = -params.post_rotation * (core::f32::consts::PI / 180.0);
+        let cs = ang.cos();
+        let sn = ang.sin();
+        out_pos = vec2(cs * out_pos.x - sn * out_pos.y, sn * out_pos.x + cs * out_pos.y);
+        out_pos = out_pos + oc;
+        out_pos = out_pos - off_px;
+    }
+
     ///////////////////////////////////////////////////////////////////
     // Add lens distortion back
     if params.lens_correction_amount < 1.0 {

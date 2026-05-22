@@ -18,6 +18,19 @@ pub mod wgpu_interop_vulkan;
 pub mod drawing;
 use std::hash::Hasher;
 
+// Output-stage post-affine for the openfx-output-adjust-affine capability:
+// composed into the stabilization kernel's existing inverse mapping so the
+// transform stays a single Lanczos sample. See `openfx-output-adjust` spec.
+#[derive(Debug, Copy, Clone)]
+pub struct PostAffine {
+    pub rotation_deg: f32,
+    pub zoom: f32,
+    pub offset_norm: [f32; 2],
+}
+impl Default for PostAffine {
+    fn default() -> Self { Self { rotation_deg: 0.0, zoom: 1.0, offset_norm: [0.0, 0.0] } }
+}
+
 #[derive(Debug, Default)]
 pub struct BufferDescription<'a> {
     pub size: (usize, usize, usize), // width, height, stride
@@ -25,6 +38,7 @@ pub struct BufferDescription<'a> {
     pub rotation: Option<f32>,       // pixels rotation in degrees
     pub data: BufferSource<'a>,
     pub texture_copy: bool,
+    pub post_affine: Option<PostAffine>,
 }
 pub struct Buffers<'a> {
     pub input: BufferDescription<'a>,
@@ -88,6 +102,11 @@ impl<'a> BufferDescription<'a> {
             hasher.write_usize(r.3);
         }
         hasher.write_u32(self.rotation.unwrap_or_default().to_bits());
+        let pa = self.post_affine.unwrap_or_default();
+        hasher.write_u32(pa.rotation_deg.to_bits());
+        hasher.write_u32(pa.zoom.to_bits());
+        hasher.write_u32(pa.offset_norm[0].to_bits());
+        hasher.write_u32(pa.offset_norm[1].to_bits());
         match &self.data {
             BufferSource::None => {}
             BufferSource::Cpu { .. } => {}
