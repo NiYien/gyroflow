@@ -659,6 +659,17 @@ impl Stabilization {
                 0.0,
                 params.output_height as f32,
             );
+
+            // openfx-output-adjust-flip: mirror toggles applied before every other transform
+            // (including translation2d and the post-affine block below). Identity-bypass when
+            // both flag bits are clear keeps the byte-equivalent guarantee.
+            if (params.flags & 4096) != 0 {
+                out_pos.x = params.output_width as f32 - out_pos.x;
+            }
+            if (params.flags & 8192) != 0 {
+                out_pos.y = params.output_height as f32 - out_pos.y;
+            }
+
             out_pos.x += params.translation2d[0];
             out_pos.y += params.translation2d[1];
 

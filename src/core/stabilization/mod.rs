@@ -92,6 +92,11 @@ bitflags::bitflags! {
         const HAS_MESH_DATA        = 1 << 9; // 512
         const HAS_FPD_DATA         = 1 << 10; // 1024
         const ANY_UNDERWATER       = 1 << 11; // 2048
+        // openfx-output-adjust-flip: per-pass horizontal/vertical mirror toggles, applied
+        // at the very top of `undistort_coord` before any other transform. Identity (both
+        // bits clear) is byte-equivalent to the prior kernel.
+        const FLIP_H               = 1 << 12; // 4096
+        const FLIP_V               = 1 << 13; // 8192
     }
 }
 
@@ -363,6 +368,9 @@ impl Stabilization {
                     .keyframes
                     .is_keyframed(&crate::KeyframeType::LightRefractionCoeff),
         );
+        // openfx-output-adjust-flip: drive mirror toggles from the output buffer description.
+        kernel_flags.set(KernelParamsFlags::FLIP_H, buffers.output.flip_h);
+        kernel_flags.set(KernelParamsFlags::FLIP_V, buffers.output.flip_v);
 
         {
             let gyro = self.compute_params.gyro.read();

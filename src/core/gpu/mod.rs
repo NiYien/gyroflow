@@ -39,6 +39,11 @@ pub struct BufferDescription<'a> {
     pub data: BufferSource<'a>,
     pub texture_copy: bool,
     pub post_affine: Option<PostAffine>,
+    // openfx-output-adjust-flip: per-pass mirror toggles. Map onto KernelParamsFlags::FLIP_H /
+    // FLIP_V in `Stabilization::get_kernel_flags`. Default `false` keeps every existing
+    // construction site at identity behavior.
+    pub flip_h: bool,
+    pub flip_v: bool,
 }
 pub struct Buffers<'a> {
     pub input: BufferDescription<'a>,
@@ -107,6 +112,8 @@ impl<'a> BufferDescription<'a> {
         hasher.write_u32(pa.zoom.to_bits());
         hasher.write_u32(pa.offset_norm[0].to_bits());
         hasher.write_u32(pa.offset_norm[1].to_bits());
+        hasher.write_u8(self.flip_h as u8);
+        hasher.write_u8(self.flip_v as u8);
         match &self.data {
             BufferSource::None => {}
             BufferSource::Cpu { .. } => {}

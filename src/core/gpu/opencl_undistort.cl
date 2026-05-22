@@ -483,8 +483,17 @@ float2 rotate_and_distort(float2 pos, uint idx, __global KernelParams *params, _
 }
 
 float2 undistort_coord(float2 out_pos, __global KernelParams *params, __global const float *matrices, __global const float *mesh_data) {
-    out_pos.x = map_coord(out_pos.x, (float)params->output_rect.x, (float)(params->output_rect.x + params->output_rect.z), 0.0f, (float)params->output_width ) + params->translation2d.x;
-    out_pos.y = map_coord(out_pos.y, (float)params->output_rect.y, (float)(params->output_rect.y + params->output_rect.w), 0.0f, (float)params->output_height) + params->translation2d.y;
+    out_pos.x = map_coord(out_pos.x, (float)params->output_rect.x, (float)(params->output_rect.x + params->output_rect.z), 0.0f, (float)params->output_width );
+    out_pos.y = map_coord(out_pos.y, (float)params->output_rect.y, (float)(params->output_rect.y + params->output_rect.w), 0.0f, (float)params->output_height);
+
+    // openfx-output-adjust-flip: mirror toggles applied before every other transform
+    // (including translation2d and the post-affine block below). Identity-bypass when both
+    // flag bits are clear keeps the byte-equivalent guarantee.
+    if ((params->flags & 4096) != 0) { out_pos.x = (float)params->output_width  - out_pos.x; }
+    if ((params->flags & 8192) != 0) { out_pos.y = (float)params->output_height - out_pos.y; }
+
+    out_pos.x += params->translation2d.x;
+    out_pos.y += params->translation2d.y;
 
     // openfx-output-adjust-affine post-affine inverse: composed into the single existing
     // sample so identity bypass is byte-equivalent (D4); inserted after translation2d and

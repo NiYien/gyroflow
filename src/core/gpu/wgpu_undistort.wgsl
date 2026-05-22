@@ -470,6 +470,13 @@ fn undistort_coord(position: vec2<f32>) -> vec2<f32> {
             map_coord(position.y, f32(params.output_rect.y), f32(params.output_rect.y + params.output_rect.w), 0.0, f32(params.output_height))
         );
     }
+
+    // openfx-output-adjust-flip: mirror toggles applied before every other transform
+    // (including translation2d and the post-affine block below). Identity-bypass when both
+    // flag bits are clear keeps the byte-equivalent guarantee.
+    if (bool(flags & 4096)) { out_pos.x = f32(params.output_width)  - out_pos.x; }
+    if (bool(flags & 8192)) { out_pos.y = f32(params.output_height) - out_pos.y; }
+
     out_pos += params.translation2d;
 
     // openfx-output-adjust-affine post-affine inverse: composed into the single existing
