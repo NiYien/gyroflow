@@ -46,6 +46,29 @@ class ReleaseCenterUiTests(unittest.TestCase):
         self.assertIn("list_plugin_action_builds", app_js)
         self.assertIn("selectPluginArtifactItem", app_js)
 
+    def test_changelog_uses_9_language_tab_ui(self):
+        # The 9-language tab editor replaces the single textarea so
+        # release notes can be authored per locale (release-notes-i18n).
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+
+        # Old single-textarea ID must be gone.
+        self.assertNotIn('id="pub-changelog"', html)
+        # New tab strip + active editor + translate buttons must be present.
+        self.assertIn('id="pub-changelog-tabs"', html)
+        self.assertIn('id="pub-changelog-active"', html)
+        self.assertIn('id="pub-translate-btn"', html)
+        self.assertIn('id="pub-translate-current-btn"', html)
+        # zh validation hint placeholder.
+        self.assertIn('id="pub-changelog-empty-hint"', html)
+        # app.js must declare the 9-language vocabulary.
+        for lang in ("'zh'", "'en'", "'ja'", "'ko'", "'de'", "'fr'", "'es'", "'ru'", "'pt'"):
+            self.assertIn(lang, app_js)
+        # Must collect changelogs map into payload on publish.
+        self.assertIn("collectChangelogsForPayload", app_js)
+        # Must call the new backend translate endpoint.
+        self.assertIn("translate_changelog", app_js)
+
     def test_lens_tag_has_latest_release_refresh_button(self):
         html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
         app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

@@ -194,10 +194,43 @@
           </div>
         </div>
 
-        <!-- Changelog -->
+        <!-- Changelog (9-language tabs) -->
         <div class="mb-4">
-          <label class="text-sm font-semibold text-slate-600 mb-1 block">更新说明</label>
-          <textarea id="pub-changelog" rows="3" class="w-full border border-slate-300 rounded-md p-2 text-sm font-mono" placeholder="选中 release/artifact 后自动填充,可编辑"></textarea>
+          <div class="flex items-baseline justify-between mb-1">
+            <label class="text-sm font-semibold text-slate-600 block">
+              更新说明
+              <span class="text-xs font-normal text-slate-400 ml-1">9 种语言, 中文必填</span>
+            </label>
+            <span id="pub-changelog-empty-hint" class="text-xs text-rose-500 hidden">中文 (zh) tab 为空, 发布前需填写</span>
+          </div>
+          <div id="pub-changelog-tabs" class="flex flex-wrap gap-1 mb-2 border-b border-slate-200" role="tablist">
+            <!-- Tab buttons injected by app.js -->
+          </div>
+          <textarea
+            id="pub-changelog-active"
+            rows="4"
+            class="w-full border border-slate-300 rounded-md p-2 text-sm font-mono"
+            placeholder="选中 release/artifact 后自动填充 zh tab, 可编辑"
+          ></textarea>
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              id="pub-translate-btn"
+              type="button"
+              class="px-3 py-1.5 text-xs rounded-md border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled
+            >🌐 翻译中文到其他 8 种</button>
+            <button
+              id="pub-translate-current-btn"
+              type="button"
+              class="px-3 py-1.5 text-xs rounded-md border border-slate-300 bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled
+            >🔄 重译当前 tab</button>
+            <span id="pub-translate-status" class="text-xs text-slate-500 ml-1"></span>
+          </div>
+          <p class="text-xs text-slate-400 mt-1">
+            zh 为主语言, 客户端按 UI locale 选择对应语言显示。未填写的语言会从 manifest 中省略,
+            客户端 fallback 到 en → zh → legacy。
+          </p>
         </div>
 
         <!-- Recommended -->

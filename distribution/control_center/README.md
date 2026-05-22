@@ -78,6 +78,27 @@ recommended for new work — the pywebview version has clearer field
 discipline and fewer hidden constants. Planned removal after a few
 weeks of production use.
 
+## Translate API (multi-language release notes)
+
+The Publish view edits release notes across 9 languages (zh/en/ja/ko/de/fr/es/ru/pt).
+Chinese is the primary language and is required; the other 8 tabs can be
+auto-filled by a one-click LLM translation that calls an OpenAI-compatible
+chat-completions endpoint (DeepSeek, OpenAI, Azure, or any compatible proxy).
+
+`control_center.config.json` fields:
+
+- `translate_api_base` — Base URL of the chat completions API
+  (e.g. `https://api.deepseek.com/v1` or `https://api.openai.com/v1`).
+  Leave empty to disable the translate button.
+- `translate_api_key` — Bearer token. Treated as sensitive (masked when
+  surfaced to the UI / never exposed to the frontend bundle).
+- `translate_model` — Model identifier (e.g. `deepseek-chat`,
+  `gpt-4o-mini`).
+
+When any of the three fields is empty, the translate button is disabled and
+the Publish view still works with Chinese-only release notes (older clients
+read the legacy `changelog` field).
+
 ## Known limitations
 
 - `NIYIEN_RELEASE_POLICY_JSON` comes back encrypted from Vercel even with

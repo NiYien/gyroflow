@@ -32,6 +32,9 @@ DEFAULT_CONFIG: dict = {
     "pan123_client_id": "",
     "pan123_client_secret": "",
     "pan123_releases_root_id": "",
+    "translate_api_base": "",
+    "translate_api_key": "",
+    "translate_model": "",
     "network_proxy": "127.0.0.1:6063",
     "git_remote": "origin",
     "publish_defaults": {

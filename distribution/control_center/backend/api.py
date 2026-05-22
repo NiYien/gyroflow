@@ -698,12 +698,21 @@ class Api:
                 missing = (not tag) or (tag not in release_tags)
                 if not missing:
                     continue
+                # `changelogs` is the multi-language map written by the new
+                # publisher UI; missing / non-dict for legacy entries.
+                raw_changelogs = v.get("changelogs")
+                changelogs_out: dict[str, str] = {}
+                if isinstance(raw_changelogs, dict):
+                    for code, text in raw_changelogs.items():
+                        if isinstance(code, str) and isinstance(text, str):
+                            changelogs_out[code] = text
                 out.append({
                     "version": version,
                     "tag": tag,
                     "channels": list(v.get("channels", []) or []),
                     "recommended": bool(v.get("recommended", False)),
                     "changelog": str(v.get("changelog", "") or ""),
+                    "changelogs": changelogs_out,
                     "is_auto_version": version == auto_version,
                 })
             return {"ok": True, "orphans": out, "auto_version": auto_version}
@@ -2637,7 +2646,8 @@ class Api:
                                changelog: str, recommended: bool, channels: list[str],
                                run_id: int = 0,
                                app_source_mode: str = "",
-                               app_urls: dict | None = None) -> None:
+                               app_urls: dict | None = None,
+                               changelogs: dict[str, str] | None = None) -> None:
         """Add or replace the policy entry for `version` in place.
 
         `run_id` is non-zero for artifact-mode entries — it lets later
@@ -2661,13 +2671,40 @@ class Api:
         nle_plugins.rs::source_changed compares fallback vs install base
         URLs that can never match).
         """
+        # Multi-language release notes: keep `changelog` (legacy single
+        # string) for old clients and add `changelogs` (lang -> text map)
+        # for new clients. Only keys with non-empty stripped values land in
+        # the map. When changelogs has a zh entry but the caller did not
+        # provide a legacy `changelog`, fall back to the zh value so old
+        # clients still see something.
+        filtered_changelogs: dict[str, str] = {}
+        if changelogs:
+            for code, text in changelogs.items():
+                if not isinstance(text, str):
+                    continue
+                stripped = text.strip()
+                if stripped:
+                    filtered_changelogs[code] = text
+        legacy_changelog = changelog or ""
+        if not legacy_changelog.strip() and filtered_changelogs.get("zh"):
+            legacy_changelog = filtered_changelogs["zh"]
+
         entry = {
             "version": version,
             "tag": tag,
             "channels": channels,
-            "changelog": changelog,
             "recommended": recommended,
         }
+        # Only write a release-notes key when the caller actually provides
+        # content. An empty payload from a caller that doesn't carry
+        # release notes (e.g. a future switch_auto-style action, or a CLI
+        # tool that omits the field) MUST NOT clobber whatever changelog
+        # the existing policy entry already has — that would silently
+        # erase a previously translated entry's release notes.
+        if legacy_changelog.strip():
+            entry["changelog"] = legacy_changelog
+        if filtered_changelogs:
+            entry["changelogs"] = filtered_changelogs
         if int(run_id or 0) > 0:
             entry["run_id"] = int(run_id)
         if app_source_mode:
@@ -3111,8 +3148,30 @@ class Api:
             "tag": tag,
             "run_id": run_id,
             "changelog": str(payload.get("changelog", "")).strip(),
+            "changelogs": Api._normalize_changelogs_input(payload.get("changelogs")),
             "recommended": payload.get("recommended") if "recommended" in payload else None,
         }
+
+    @staticmethod
+    def _normalize_changelogs_input(raw) -> dict[str, str]:
+        """Coerce a frontend-supplied `changelogs` value into a clean
+        {lang_code: text} dict, dropping empty entries and non-string values.
+
+        Accepts None / dict; anything else returns {}. Whitespace is preserved
+        inside each value (Markdown indentation matters), but values that
+        strip-to-empty are dropped to keep the policy entry minimal.
+        """
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, str] = {}
+        for code, value in raw.items():
+            if not isinstance(code, str):
+                continue
+            if not isinstance(value, str):
+                continue
+            if value.strip():
+                out[code] = value
+        return out
 
     @staticmethod
     def _env_flag_enabled(envs: dict, key: str) -> bool:
@@ -3137,6 +3196,42 @@ class Api:
             return self._execute_release_plan(payload or {})
         except Exception as e:
             return _error(e, "execute_release_plan")
+
+    def translate_changelog(self, payload: dict) -> dict:
+        """Translate the Chinese release notes into 8 target languages.
+
+        Payload: {"zh": "<markdown text>"}.
+        Returns: {"ok": True, "changelogs": {lang: text, ...}} on success,
+                 or {"ok": False, "error": "...", "kind": "config|http|parse"}
+                 on failure so the frontend can pick an appropriate toast.
+        """
+        try:
+            from . import translate as translate_module
+            zh_text = str((payload or {}).get("zh", "") or "")
+            cfg = config_module.load_config()
+            translations = translate_module.translate_to_all(zh_text, cfg=cfg)
+            return {"ok": True, "changelogs": translations}
+        except Exception as e:
+            # Map our own exception hierarchy to a `kind` discriminator so
+            # the frontend can tell apart "config missing" (user must edit
+            # config.json) from "transient HTTP error" (retry button).
+            try:
+                from . import translate as _translate_for_kind
+            except Exception:
+                _translate_for_kind = None
+            kind = "unknown"
+            if _translate_for_kind is not None:
+                if isinstance(e, _translate_for_kind.TranslateConfigError):
+                    kind = "config"
+                elif isinstance(e, _translate_for_kind.TranslateHTTPError):
+                    kind = "http"
+                elif isinstance(e, _translate_for_kind.TranslateParseError):
+                    kind = "parse"
+                elif isinstance(e, _translate_for_kind.TranslateError):
+                    kind = "translate"
+            result = _error(e, "translate_changelog")
+            result["kind"] = kind
+            return result
 
     def _execute_release_plan(self, payload: dict) -> dict:
         import json as _json
@@ -3181,6 +3276,7 @@ class Api:
                 run_id=plan["run_id"],
                 app_source_mode=app_source_mode_field,
                 app_urls=app_urls_field,
+                changelogs=plan["changelogs"],
             )
         elif action == "publish_and_push":
             self._upsert_version_entry(
@@ -3188,6 +3284,7 @@ class Api:
                 run_id=plan["run_id"],
                 app_source_mode=app_source_mode_field,
                 app_urls=app_urls_field,
+                changelogs=plan["changelogs"],
             )
             for item in versions:
                 if item.get("version") != version and "auto" in item.get("channels", []):
@@ -3365,6 +3462,7 @@ class Api:
             if source_kind == "artifact" and run_id > 0 and not tag:
                 tag = f"run-{run_id}"
             changelog = str(payload.get("changelog", "")).strip()
+            changelogs = Api._normalize_changelogs_input(payload.get("changelogs"))
             recommended = bool(payload.get("recommended", False))
 
             cfg = config_module.load_config()
@@ -3400,6 +3498,7 @@ class Api:
                     run_id=run_id,
                     app_source_mode=app_source_mode_field,
                     app_urls=app_urls_field,
+                    changelogs=changelogs,
                 )
 
             elif action == "publish_and_push":
@@ -3408,6 +3507,7 @@ class Api:
                     run_id=run_id,
                     app_source_mode=app_source_mode_field,
                     app_urls=app_urls_field,
+                    changelogs=changelogs,
                 )
                 # Clear auto channel from other versions
                 for v in versions:

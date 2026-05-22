@@ -12,6 +12,7 @@ SENSITIVE_KEYS = frozenset({
     "pan123_client_id",
     "pan123_client_secret",
     "pan123_releases_root_id",
+    "translate_api_key",
 })
 
 

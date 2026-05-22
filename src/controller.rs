@@ -3188,9 +3188,19 @@ impl Controller {
                         manifest.app.version,
                         util::get_version()
                     );
+                    // Pick the changelog string matching the current UI
+                    // locale. `Settings.lang` (QML side) is persisted via
+                    // `gyroflow_core::settings::set("lang", ...)`, so we
+                    // read it back the same way to stay in sync.
+                    let locale = gyroflow_core::settings::get_str("lang", "en");
+                    let changelog = crate::distribution::pick_changelog(
+                        &manifest.app.changelog,
+                        &manifest.app.changelogs,
+                        &locale,
+                    );
                     update((
                         manifest.app.version,
-                        manifest.app.changelog,
+                        changelog,
                         manifest.app.url,
                     ));
                 }
@@ -3212,7 +3222,10 @@ impl Controller {
     }
 
     fn fetch_available_versions(&self) -> QString {
-        let payload = match crate::distribution::fetch_app_update_candidates(true) {
+        // Same locale source as `check_updates` — `Settings.lang` written
+        // by Advanced.qml flows through `gyroflow_core::settings`.
+        let locale = gyroflow_core::settings::get_str("lang", "en");
+        let payload = match crate::distribution::fetch_app_update_candidates(true, &locale) {
             Ok(updates) => serde_json::json!({
                 "updates": updates
             }),

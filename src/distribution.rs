@@ -46,6 +46,11 @@ pub struct AppRelease {
     pub url: String,
     #[serde(default)]
     pub changelog: String,
+    // Multi-language release notes keyed by language code (zh/en/ja/...).
+    // Optional in older manifests; clients fall back to `changelog` when
+    // this map is empty (release-notes-i18n).
+    #[serde(default)]
+    pub changelogs: BTreeMap<String, String>,
     #[serde(default)]
     pub manual_versions: Vec<ManualAppVersion>,
     #[serde(default)]
@@ -105,6 +110,9 @@ pub struct ManualAppVersion {
     pub url: String,
     #[serde(default)]
     pub changelog: String,
+    // See AppRelease::changelogs.
+    #[serde(default)]
+    pub changelogs: BTreeMap<String, String>,
     #[serde(default)]
     pub recommended: bool,
     #[serde(default)]
@@ -682,13 +690,70 @@ pub fn has_app_update(manifest: &Manifest) -> bool {
     app_version_is_newer_than_current(&manifest.app.version)
 }
 
-pub fn app_update_candidates(manifest: &Manifest) -> Vec<AppUpdateCandidate> {
+/// Pick the release-notes string that matches the given UI locale, with
+/// a fallback chain. Used by both the auto-update path and manual
+/// version listings (release-notes-i18n).
+///
+/// Fallback order:
+///   1. `changelogs[base(locale)]` — e.g. `zh_CN` -> `zh`, `pt_BR` -> `pt`
+///   2. `changelogs["en"]`
+///   3. `changelogs["zh"]`
+///   4. First entry of `changelogs` (sorted by key — BTreeMap is ordered)
+///   5. Legacy `changelog` string
+pub fn pick_changelog(
+    legacy: &str,
+    changelogs: &BTreeMap<String, String>,
+    locale: &str,
+) -> String {
+    if !changelogs.is_empty() {
+        // Try the base language code of the current locale ("zh_CN" -> "zh").
+        let base = base_lang_code(locale);
+        if !base.is_empty() {
+            if let Some(text) = changelogs.get(base) {
+                return text.clone();
+            }
+        }
+        for fallback in ["en", "zh"] {
+            if let Some(text) = changelogs.get(fallback) {
+                return text.clone();
+            }
+        }
+        if let Some((_, text)) = changelogs.iter().next() {
+            return text.clone();
+        }
+    }
+    legacy.to_owned()
+}
+
+/// Extract the base ISO 639-1 language code from a locale string.
+/// Splits on `_` or `-` and lowercases the first chunk. Returns empty
+/// string if the input is empty or the chunk has fewer than 2 chars.
+fn base_lang_code(locale: &str) -> &str {
+    let trimmed = locale.trim();
+    if trimmed.is_empty() {
+        return "";
+    }
+    let end = trimmed
+        .find(|c: char| c == '_' || c == '-')
+        .unwrap_or(trimmed.len());
+    let base = &trimmed[..end];
+    if base.len() >= 2 { base } else { "" }
+}
+
+pub fn app_update_candidates(
+    manifest: &Manifest,
+    locale: &str,
+) -> Vec<AppUpdateCandidate> {
     let mut candidates = Vec::new();
     if has_app_update(manifest) {
         candidates.push(AppUpdateCandidate {
             channel: "auto".to_owned(),
             version: manifest.app.version.trim().to_owned(),
-            changelog: manifest.app.changelog.clone(),
+            changelog: pick_changelog(
+                &manifest.app.changelog,
+                &manifest.app.changelogs,
+                locale,
+            ),
         });
     }
     if let Some(manual) = latest_manual_app_update(manifest)
@@ -697,7 +762,11 @@ pub fn app_update_candidates(manifest: &Manifest) -> Vec<AppUpdateCandidate> {
         candidates.push(AppUpdateCandidate {
             channel: "manual".to_owned(),
             version: manual.version.trim().to_owned(),
-            changelog: manual.changelog.clone(),
+            changelog: pick_changelog(
+                &manual.changelog,
+                &manual.changelogs,
+                locale,
+            ),
         });
     }
     candidates
@@ -1715,11 +1784,14 @@ pub fn fetch_manual_versions(force: bool) -> Result<Vec<ManualAppVersion>, Strin
     }
 }
 
-pub fn fetch_app_update_candidates(force: bool) -> Result<Vec<AppUpdateCandidate>, String> {
+pub fn fetch_app_update_candidates(
+    force: bool,
+    locale: &str,
+) -> Result<Vec<AppUpdateCandidate>, String> {
     match fetch_manifest(force) {
-        Ok(manifest) => Ok(app_update_candidates(&manifest)),
+        Ok(manifest) => Ok(app_update_candidates(&manifest, locale)),
         Err(first_err) if force => cached_manifest()
-            .map(|manifest| app_update_candidates(&manifest))
+            .map(|manifest| app_update_candidates(&manifest, locale))
             .ok_or(first_err),
         Err(err) => Err(err),
     }
@@ -2089,7 +2161,7 @@ mod app_update_tests {
         )
         .unwrap();
 
-        let candidates = app_update_candidates(&manifest);
+        let candidates = app_update_candidates(&manifest, "");
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].channel, "auto");
         assert_eq!(candidates[0].version, "9999.9.8");
@@ -2114,7 +2186,7 @@ mod app_update_tests {
         )
         .unwrap();
 
-        let candidates = app_update_candidates(&manifest);
+        let candidates = app_update_candidates(&manifest, "");
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].channel, "auto");
         assert_eq!(candidates[0].version, "9999.9.9");
@@ -2135,7 +2207,174 @@ mod app_update_tests {
         )
         .unwrap();
 
-        assert!(app_update_candidates(&manifest).is_empty());
+        assert!(app_update_candidates(&manifest, "").is_empty());
+    }
+
+    // ---- release-notes-i18n: pick_changelog fallback chain ----
+
+    #[test]
+    fn pick_changelog_uses_base_lang_match() {
+        let mut map = BTreeMap::new();
+        map.insert("zh".to_owned(), "中文".to_owned());
+        map.insert("en".to_owned(), "English".to_owned());
+        map.insert("ja".to_owned(), "日本語".to_owned());
+        assert_eq!(pick_changelog("legacy", &map, "zh_CN"), "中文");
+        assert_eq!(pick_changelog("legacy", &map, "ja_JP"), "日本語");
+        assert_eq!(pick_changelog("legacy", &map, "en_US"), "English");
+    }
+
+    #[test]
+    fn pick_changelog_base_lang_handles_dash_separator() {
+        let mut map = BTreeMap::new();
+        map.insert("pt".to_owned(), "Português".to_owned());
+        // BCP-47 "pt-BR" should land on "pt" just like POSIX "pt_BR".
+        assert_eq!(pick_changelog("legacy", &map, "pt-BR"), "Português");
+    }
+
+    #[test]
+    fn pick_changelog_falls_back_to_en_then_zh_then_first() {
+        // cs locale -> no cs key, fallback to en.
+        let mut map = BTreeMap::new();
+        map.insert("zh".to_owned(), "中文".to_owned());
+        map.insert("en".to_owned(), "English".to_owned());
+        map.insert("ja".to_owned(), "日本語".to_owned());
+        assert_eq!(pick_changelog("legacy", &map, "cs"), "English");
+
+        // No en, but zh exists -> fall back to Chinese.
+        let mut map_no_en = BTreeMap::new();
+        map_no_en.insert("zh".to_owned(), "中文".to_owned());
+        map_no_en.insert("ja".to_owned(), "日本語".to_owned());
+        assert_eq!(pick_changelog("legacy", &map_no_en, "fr_FR"), "中文");
+
+        // No en, no zh -> first entry by BTreeMap key order.
+        let mut map_only_obscure = BTreeMap::new();
+        map_only_obscure.insert("ja".to_owned(), "日本語".to_owned());
+        map_only_obscure.insert("ko".to_owned(), "한국어".to_owned());
+        assert_eq!(
+            pick_changelog("legacy", &map_only_obscure, "de"),
+            "日本語"
+        );
+    }
+
+    #[test]
+    fn pick_changelog_falls_back_to_legacy_when_map_empty() {
+        let empty: BTreeMap<String, String> = BTreeMap::new();
+        assert_eq!(pick_changelog("legacy text", &empty, "zh_CN"), "legacy text");
+        assert_eq!(pick_changelog("legacy text", &empty, ""), "legacy text");
+    }
+
+    #[test]
+    fn pick_changelog_handles_empty_locale_with_map() {
+        // Empty locale skips the base-lang step but en/zh fallbacks still apply.
+        let mut map = BTreeMap::new();
+        map.insert("zh".to_owned(), "中文".to_owned());
+        map.insert("en".to_owned(), "English".to_owned());
+        assert_eq!(pick_changelog("legacy", &map, ""), "English");
+    }
+
+    #[test]
+    fn pick_changelog_single_chinese_for_english_locale() {
+        // Spec scenario: en client falls back to zh when only zh present.
+        let mut map = BTreeMap::new();
+        map.insert("zh".to_owned(), "中文".to_owned());
+        assert_eq!(pick_changelog("legacy", &map, "en_US"), "中文");
+    }
+
+    #[test]
+    fn pick_changelog_full_9_language_map_resolves_correctly() {
+        let mut map = BTreeMap::new();
+        for code in ["zh", "en", "ja", "ko", "de", "fr", "es", "ru", "pt"] {
+            map.insert(code.to_owned(), format!("text-{code}"));
+        }
+        for (locale, expected) in [
+            ("zh_CN", "text-zh"),
+            ("zh_TW", "text-zh"),
+            ("en_US", "text-en"),
+            ("en_GB", "text-en"),
+            ("ja_JP", "text-ja"),
+            ("ko_KR", "text-ko"),
+            ("de_DE", "text-de"),
+            ("fr_FR", "text-fr"),
+            ("es_ES", "text-es"),
+            ("es_MX", "text-es"),
+            ("ru_RU", "text-ru"),
+            ("pt_PT", "text-pt"),
+            ("pt_BR", "text-pt"),
+            ("cs", "text-en"),
+            ("da", "text-en"),
+            ("fi", "text-en"),
+            ("nb", "text-en"),
+        ] {
+            assert_eq!(
+                pick_changelog("legacy", &map, locale),
+                expected,
+                "locale={locale}"
+            );
+        }
+    }
+
+    #[test]
+    fn app_update_candidates_picks_locale_aware_changelog() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "changelog": "legacy stable",
+                    "changelogs": {
+                        "zh": "稳定版更新",
+                        "en": "Stable update",
+                        "ja": "安定版アップデート"
+                    },
+                    "manual_versions": [
+                        {
+                            "version": "9999.9.9-ni.1",
+                            "changelog": "legacy manual",
+                            "changelogs": {
+                                "zh": "测试版",
+                                "en": "Manual test",
+                                "ja": "テスト版"
+                            }
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let zh = app_update_candidates(&manifest, "zh_CN");
+        assert_eq!(zh.len(), 2);
+        assert_eq!(zh[0].changelog, "稳定版更新");
+        assert_eq!(zh[1].changelog, "测试版");
+
+        let ja = app_update_candidates(&manifest, "ja_JP");
+        assert_eq!(ja[0].changelog, "安定版アップデート");
+        assert_eq!(ja[1].changelog, "テスト版");
+
+        let de = app_update_candidates(&manifest, "de_DE");
+        // No de in map -> fallback to en.
+        assert_eq!(de[0].changelog, "Stable update");
+        assert_eq!(de[1].changelog, "Manual test");
+    }
+
+    #[test]
+    fn app_update_candidates_legacy_manifest_without_changelogs() {
+        // Manifest pre-i18n: only `changelog` string, no `changelogs` field.
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "changelog": "legacy single",
+                    "manual_versions": [
+                        { "version": "9999.9.9-ni.1", "changelog": "legacy manual" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest, "ja_JP");
+        assert_eq!(candidates[0].changelog, "legacy single");
+        assert_eq!(candidates[1].changelog, "legacy manual");
     }
 
     #[test]

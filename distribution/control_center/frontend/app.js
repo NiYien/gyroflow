@@ -546,6 +546,10 @@ function showView(target) {
     prefillPublishView();
     if (!resourcesState.loaded) loadResourcesState();
     initResourcesExtrasOnce();
+    // Re-check translate API availability on every publish-view entry so
+    // adding the key in Settings → switching back enables the buttons
+    // without restarting the publisher.
+    checkTranslateAvailability();
   }
   if (target === 'hidden') {
     loadHiddenView();
@@ -568,6 +572,307 @@ const publishState = {
   source: null,     // 'release' | 'artifact' (only for mode=select)
   selected: null,   // selected release/artifact entry
 };
+
+// ---- Multi-language changelog tabs (release-notes-i18n) ----
+//
+// `texts` holds the full content of each language tab; only the active
+// language's textarea is rendered in the DOM, and we swap content in/out
+// on tab change. `dirty` marks "modified since last reset/translate" so
+// the UI can flag unsaved auto-filled tabs visually. `activeLang` is the
+// currently focused tab.
+
+const CHANGELOG_LANGS = ['zh', 'en', 'ja', 'ko', 'de', 'fr', 'es', 'ru', 'pt'];
+const CHANGELOG_LANG_LABELS = {
+  zh: '中文 ★',
+  en: 'English',
+  ja: '日本語',
+  ko: '한국어',
+  de: 'Deutsch',
+  fr: 'Français',
+  es: 'Español',
+  ru: 'Русский',
+  pt: 'Português',
+};
+
+const changelogTabsState = {
+  texts: Object.fromEntries(CHANGELOG_LANGS.map(l => [l, ''])),
+  dirty: Object.fromEntries(CHANGELOG_LANGS.map(l => [l, false])),
+  activeLang: 'zh',
+  translateAvailable: false,        // set by checkTranslateAvailability()
+  translateInFlight: false,
+};
+
+function setActiveChangelogLang(lang) {
+  if (!CHANGELOG_LANGS.includes(lang)) return;
+  // Persist whatever is currently in the visible textarea before switching.
+  syncActiveChangelogToState();
+  changelogTabsState.activeLang = lang;
+  const editor = document.getElementById('pub-changelog-active');
+  if (editor) editor.value = changelogTabsState.texts[lang] || '';
+  renderChangelogTabs();
+  updateChangelogValidationHint();
+  updateTranslateButtons();
+}
+
+function syncActiveChangelogToState() {
+  const editor = document.getElementById('pub-changelog-active');
+  if (!editor) return;
+  const lang = changelogTabsState.activeLang;
+  const prior = changelogTabsState.texts[lang] || '';
+  const current = editor.value;
+  if (current !== prior) {
+    changelogTabsState.texts[lang] = current;
+    changelogTabsState.dirty[lang] = true;
+  }
+}
+
+function renderChangelogTabs() {
+  const wrap = document.getElementById('pub-changelog-tabs');
+  if (!wrap) return;
+  const active = changelogTabsState.activeLang;
+  wrap.innerHTML = CHANGELOG_LANGS.map(lang => {
+    const text = changelogTabsState.texts[lang] || '';
+    const isActive = lang === active;
+    const isPrimary = lang === 'zh';
+    const filled = text.trim().length > 0;
+    const dirty = changelogTabsState.dirty[lang];
+    // Visual hint: active tab gets blue underline; primary required-but-empty
+    // tab gets a rose ring; filled tabs get a subtle dot; dirty tabs get
+    // a "●" indicator.
+    let cls = 'px-2 py-1 text-xs rounded-t-md border-b-2 cursor-pointer hover:bg-slate-50';
+    if (isActive) {
+      cls += ' border-blue-500 text-blue-700 bg-white';
+    } else {
+      cls += ' border-transparent text-slate-600';
+    }
+    if (isPrimary && !filled) {
+      cls += ' ring-1 ring-rose-300';
+    }
+    const dirtyDot = dirty ? '<span class="text-amber-500 ml-0.5" title="未保存">●</span>' : '';
+    const filledDot = (filled && !dirty) ? '<span class="text-emerald-500 ml-0.5" title="已填写">·</span>' : '';
+    return `<button type="button" class="${cls}" data-changelog-lang="${lang}" role="tab">${CHANGELOG_LANG_LABELS[lang]}${filledDot}${dirtyDot}</button>`;
+  }).join('');
+  wrap.querySelectorAll('button[data-changelog-lang]').forEach(btn => {
+    btn.addEventListener('click', () => setActiveChangelogLang(btn.dataset.changelogLang));
+  });
+}
+
+function updateChangelogValidationHint() {
+  const hint = document.getElementById('pub-changelog-empty-hint');
+  if (!hint) return;
+  // Pull latest active-tab text in case the user typed since last render.
+  syncActiveChangelogToState();
+  const zhEmpty = !(changelogTabsState.texts.zh || '').trim();
+  hint.classList.toggle('hidden', !zhEmpty);
+}
+
+function resetChangelogTabsFromEntry(entry) {
+  // Called when publisher selects a release/artifact/orphan source — pre-fill
+  // tabs and clear all dirty flags. For orphans we may have a `changelogs`
+  // map; otherwise we have a single legacy `changelog` string.
+  for (const lang of CHANGELOG_LANGS) {
+    changelogTabsState.texts[lang] = '';
+    changelogTabsState.dirty[lang] = false;
+  }
+  if (entry) {
+    const map = entry.changelogs;
+    if (map && typeof map === 'object' && Object.keys(map).length > 0) {
+      for (const lang of CHANGELOG_LANGS) {
+        if (typeof map[lang] === 'string') {
+          changelogTabsState.texts[lang] = map[lang];
+        }
+      }
+    } else if (typeof entry.changelog === 'string' && entry.changelog) {
+      changelogTabsState.texts.zh = entry.changelog;
+    } else if (typeof entry.body === 'string') {
+      // Release source: pre-fill zh with the first line of GitHub release notes.
+      changelogTabsState.texts.zh = (entry.body || '').split('\n')[0] || '';
+    } else if (typeof entry.title === 'string') {
+      // Artifact source: pre-fill zh with the action build title.
+      changelogTabsState.texts.zh = entry.title;
+    }
+  }
+  changelogTabsState.activeLang = 'zh';
+  const editor = document.getElementById('pub-changelog-active');
+  if (editor) editor.value = changelogTabsState.texts.zh || '';
+  renderChangelogTabs();
+  updateChangelogValidationHint();
+  updateTranslateButtons();
+}
+
+function clearChangelogTabs() {
+  for (const lang of CHANGELOG_LANGS) {
+    changelogTabsState.texts[lang] = '';
+    changelogTabsState.dirty[lang] = false;
+  }
+  changelogTabsState.activeLang = 'zh';
+  const editor = document.getElementById('pub-changelog-active');
+  if (editor) editor.value = '';
+  renderChangelogTabs();
+  updateChangelogValidationHint();
+  updateTranslateButtons();
+}
+
+function collectChangelogsForPayload() {
+  // Snapshot the active textarea into state first, then build a {lang: text}
+  // map with only non-empty (trim) entries.
+  syncActiveChangelogToState();
+  const out = {};
+  for (const lang of CHANGELOG_LANGS) {
+    const v = changelogTabsState.texts[lang] || '';
+    if (v.trim()) out[lang] = v;
+  }
+  return out;
+}
+
+function getZhChangelog() {
+  syncActiveChangelogToState();
+  return changelogTabsState.texts.zh || '';
+}
+
+function updateTranslateButtons() {
+  const allBtn = document.getElementById('pub-translate-btn');
+  const curBtn = document.getElementById('pub-translate-current-btn');
+  if (!allBtn || !curBtn) return;
+  const zhFilled = (changelogTabsState.texts.zh || '').trim().length > 0;
+  const available = changelogTabsState.translateAvailable;
+  const busy = changelogTabsState.translateInFlight;
+  const disabledReason = (() => {
+    if (busy) return '翻译中...';
+    if (!available) return '需在 control_center.config.json 配置 translate_api_base / translate_api_key / translate_model';
+    if (!zhFilled) return '请先填中文';
+    return '';
+  })();
+  allBtn.disabled = busy || !available || !zhFilled;
+  allBtn.title = disabledReason || '一键翻译 zh 到其他 8 种语言';
+  // 重译当前 tab is only meaningful for non-zh tabs.
+  const curIsZh = changelogTabsState.activeLang === 'zh';
+  curBtn.disabled = busy || !available || !zhFilled || curIsZh;
+  curBtn.title = (() => {
+    if (busy) return '翻译中...';
+    if (curIsZh) return '当前是 zh tab, 无需重译';
+    if (!available) return disabledReason;
+    if (!zhFilled) return '请先填中文';
+    return '只更新当前 tab 的翻译';
+  })();
+}
+
+async function checkTranslateAvailability() {
+  // Surface translate_api_* presence via get_config (sensitive values are
+  // masked, but empty stays empty). Frontend never sees the raw key.
+  //
+  // `DOMContentLoaded` can fire before pywebview injects the JS API
+  // bridge, so wait for it explicitly — otherwise this would silently
+  // resolve to "translate unavailable" even when the user has configured
+  // valid credentials.
+  try {
+    await waitForApi();
+    const r = await pywebview.api.get_config();
+    const cfg = (r && r.ok) ? (r.config || {}) : {};
+    changelogTabsState.translateAvailable = !!(cfg.translate_api_base && cfg.translate_api_key && cfg.translate_model);
+  } catch {
+    changelogTabsState.translateAvailable = false;
+  }
+  updateTranslateButtons();
+}
+
+async function runTranslate(targetLang) {
+  // targetLang == null → fill all 8 non-zh tabs. Otherwise overwrite only
+  // that single tab from the translation result.
+  syncActiveChangelogToState();
+  const zh = (changelogTabsState.texts.zh || '').trim();
+  if (!zh) {
+    setTranslateStatus('请先在 zh tab 填中文', 'error');
+    return;
+  }
+  changelogTabsState.translateInFlight = true;
+  updateTranslateButtons();
+  setTranslateStatus('正在调用 LLM ...', 'info');
+  try {
+    const r = await pywebview.api.translate_changelog({ zh });
+    if (!r || !r.ok) {
+      const msg = (r && r.error) ? r.error : '翻译失败';
+      const kind = r && r.kind ? `[${r.kind}] ` : '';
+      setTranslateStatus(`${kind}${msg}`, 'error');
+      return;
+    }
+    const map = r.changelogs || {};
+    let filledCount = 0;
+    const missingLangs = [];
+    for (const lang of CHANGELOG_LANGS) {
+      if (lang === 'zh') continue;
+      if (targetLang && lang !== targetLang) continue;
+      if (typeof map[lang] === 'string' && map[lang].trim()) {
+        changelogTabsState.texts[lang] = map[lang];
+        changelogTabsState.dirty[lang] = true;
+        filledCount += 1;
+      } else {
+        missingLangs.push(lang);
+      }
+    }
+    // Re-render active textarea in case the active tab got overwritten.
+    const editor = document.getElementById('pub-changelog-active');
+    if (editor) editor.value = changelogTabsState.texts[changelogTabsState.activeLang] || '';
+    renderChangelogTabs();
+    // Surface partial / empty results loudly: shipping a "translated" set
+    // that secretly lost languages would make publishers think they sent
+    // i18n release notes when they actually sent a half-baked map. The
+    // backend already raises TranslateParseError for the typical case
+    // (missing keys); this guard catches edge cases like a model that
+    // returns an empty string for some languages.
+    if (filledCount === 0) {
+      setTranslateStatus(
+        '✗ 翻译未填充任何 tab,可能是 LLM 返回不完整或所有目标语言均为空',
+        'error',
+      );
+    } else if (missingLangs.length > 0) {
+      setTranslateStatus(
+        `⚠ 已填充 ${filledCount} 个 tab,但 ${missingLangs.join('/')} 未返回内容,请手工补全`,
+        'error',
+      );
+    } else {
+      setTranslateStatus(`✓ 已填充 ${filledCount} 个 tab, 可逐个校对再发布`, 'success');
+    }
+  } catch (e) {
+    setTranslateStatus(`翻译异常: ${String(e)}`, 'error');
+  } finally {
+    changelogTabsState.translateInFlight = false;
+    updateTranslateButtons();
+  }
+}
+
+function setTranslateStatus(text, level) {
+  const el = document.getElementById('pub-translate-status');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'text-xs ml-1 ' + ({
+    error: 'text-rose-600',
+    success: 'text-emerald-600',
+    info: 'text-slate-500',
+  }[level] || 'text-slate-500');
+}
+
+// Initial render so the tab strip is present even before any source is selected.
+document.addEventListener('DOMContentLoaded', () => {
+  renderChangelogTabs();
+  updateChangelogValidationHint();
+  updateTranslateButtons();
+  checkTranslateAvailability();
+  const editor = document.getElementById('pub-changelog-active');
+  if (editor) {
+    editor.addEventListener('input', () => {
+      syncActiveChangelogToState();
+      updateChangelogValidationHint();
+      // Refresh tab strip so dirty / filled markers track typing.
+      renderChangelogTabs();
+      updateTranslateButtons();
+    });
+  }
+  const allBtn = document.getElementById('pub-translate-btn');
+  if (allBtn) allBtn.addEventListener('click', () => runTranslate(null));
+  const curBtn = document.getElementById('pub-translate-current-btn');
+  if (curBtn) curBtn.addEventListener('click', () => runTranslate(changelogTabsState.activeLang));
+});
 
 const releasePlanState = {
   pluginMode: 'release',
@@ -603,7 +908,9 @@ function setReleasePlanControlsLocked(locked) {
     'pub-major',
     'pub-minor',
     'pub-patch',
-    'pub-changelog',
+    'pub-changelog-active',
+    'pub-translate-btn',
+    'pub-translate-current-btn',
     'plan-include-lens',
     'plan-include-plugin',
     'plan-include-sdk',
@@ -1157,14 +1464,15 @@ function selectSourceItem(el, items) {
     document.getElementById('pub-minor').value = v[1] || '0';
     document.getElementById('pub-patch').value = v[2] || '0';
     document.getElementById('pub-suffix').textContent = '';
-    // Changelog fill from release body first line
-    document.getElementById('pub-changelog').value = (entry.body || '').split('\n')[0] || '';
+    // Changelog tabs: zh = first line of release body, others empty.
+    resetChangelogTabsFromEntry(entry);
   } else if (kind === 'artifact') {
     entry = items.find(x => String(x.run_id) === el.dataset.runId);
     publishState.selected = { kind: 'artifact', ...entry };
     // Keep existing major/minor/patch, set suffix based on run_number
     document.getElementById('pub-suffix').textContent = `-ni.${entry.run_number}`;
-    document.getElementById('pub-changelog').value = entry.title || '';
+    // Changelog tabs: zh = action build title, others empty.
+    resetChangelogTabsFromEntry(entry);
   } else if (kind === 'orphan') {
     entry = items.find(x => x.version === el.dataset.version);
     publishState.selected = { kind: 'orphan', ...entry };
@@ -1174,7 +1482,10 @@ function selectSourceItem(el, items) {
     document.getElementById('pub-minor').value = v[1] || '0';
     document.getElementById('pub-patch').value = v[2] || '0';
     document.getElementById('pub-suffix').textContent = '';
-    document.getElementById('pub-changelog').value = entry.changelog || '';
+    // Orphan entries may carry a full `changelogs` map from a previous
+    // multi-language publish; resetChangelogTabsFromEntry handles both
+    // the map case and the legacy single-string fallback.
+    resetChangelogTabsFromEntry(entry);
     // Force action=hide_version (the only sensible op for an orphan entry)
     const actionSel = document.getElementById('pub-action');
     actionSel.value = 'hide_version';
@@ -1493,11 +1804,33 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
   const version = publishState.selected.kind === 'orphan'
     ? publishState.selected.version
     : `${maj}.${min}.${pat}${suffix}`;
+  const actionValue = document.getElementById('pub-action').value;
+  // zh tab is required for actions that actually write release-notes
+  // content to the policy entry:
+  //   - manual_only / publish_and_push call _upsert_version_entry, which
+  //     persists `changelog` + `changelogs`
+  //   - switch_auto only flips channel membership + auto_version; it
+  //     does NOT touch the changelog fields, so requiring zh would force
+  //     the publisher to retype text that is never used
+  //   - hide_version doesn't need a changelog either
+  const ZH_REQUIRED_ACTIONS = new Set(['manual_only', 'publish_and_push']);
+  const zhText = getZhChangelog();
+  if (ZH_REQUIRED_ACTIONS.has(actionValue) && !zhText.trim()) {
+    setActiveChangelogLang('zh');
+    updateChangelogValidationHint();
+    const resultEl = document.getElementById('execute-publish-result');
+    if (resultEl) {
+      resultEl.textContent = '✗ 中文 (zh) tab 为空,请先填写更新说明';
+      resultEl.className = 'text-sm text-rose-600';
+    }
+    return;
+  }
   const payload = {
-    action: document.getElementById('pub-action').value,
+    action: actionValue,
     source_kind: publishState.selected.kind,
     version,
-    changelog: document.getElementById('pub-changelog').value,
+    changelog: zhText,
+    changelogs: collectChangelogsForPayload(),
     recommended: document.getElementById('pub-recommended').checked,
     run_id: publishState.selected.run_id,
     run_number: publishState.selected.run_number,
