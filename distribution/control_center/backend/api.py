@@ -719,6 +719,49 @@ class Api:
         except Exception as e:
             return _error(e, "list_policy_orphan_versions")
 
+    def list_policy_versions_changelog_map(self) -> dict:
+        """Flat lookup map of `{version: {changelog, changelogs}}` over
+        `policy.versions[]`. Used by the publisher UI to pre-fill changelog
+        tabs when a release/artifact source's final version string exactly
+        matches a previously-published entry (avoids re-typing + re-translation
+        for plugin-only re-publishes).
+
+        Entries with missing/non-string `version` are skipped. Missing
+        `changelogs` (or non-dict) yields an empty dict; missing legacy
+        `changelog` yields empty string. No GitHub call — purely policy
+        bound, so it's cheap enough to invoke at page load.
+        """
+        try:
+            cfg = config_module.load_config()
+            vercel = self._vercel(cfg)
+            env_records = vercel.list_env_records()
+            policy = self._load_current_policy(cfg, vercel, env_records)
+            versions = policy.get("versions", []) or []
+
+            out: dict[str, dict] = {}
+            for v in versions:
+                if not isinstance(v, dict):
+                    continue
+                version_raw = v.get("version")
+                if not isinstance(version_raw, str):
+                    continue
+                version = version_raw.strip()
+                if not version:
+                    continue
+                raw_changelogs = v.get("changelogs")
+                changelogs_out: dict[str, str] = {}
+                if isinstance(raw_changelogs, dict):
+                    for code, text in raw_changelogs.items():
+                        if isinstance(code, str) and isinstance(text, str):
+                            changelogs_out[code] = text
+                out[version] = {
+                    "changelog": str(v.get("changelog", "") or ""),
+                    "changelogs": changelogs_out,
+                }
+            return {"ok": True, "map": out}
+        except Exception as e:
+            return _error(e, "list_policy_versions_changelog_map")
+
     def list_action_builds(self, limit: int = 20) -> dict:
         """Recent Action runs for the configured owner/repo.
 

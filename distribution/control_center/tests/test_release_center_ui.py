@@ -69,6 +69,81 @@ class ReleaseCenterUiTests(unittest.TestCase):
         # Must call the new backend translate endpoint.
         self.assertIn("translate_changelog", app_js)
 
+    def test_changelog_reuse_indicator_bar_present_in_html(self):
+        # release-notes-reuse-by-version: when a release/artifact source's
+        # final version matches a previously-published policy entry, the
+        # changelog tabs are pre-filled from that entry and an indicator
+        # bar reveals the reuse so the publisher can spot a wrong match.
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+
+        # The bar itself + the version span + both manual control buttons.
+        self.assertIn('id="pub-changelog-reuse-bar"', html)
+        self.assertIn('id="pub-changelog-reuse-version"', html)
+        self.assertIn('id="pub-changelog-reuse-revert-btn"', html)
+        self.assertIn('id="pub-changelog-reuse-relookup-btn"', html)
+        # Non-blocking warning placeholder for "lookup miss" outcomes.
+        self.assertIn('id="pub-changelog-reuse-warning"', html)
+        # Bar starts hidden — only revealed when an active reuse hit
+        # exists (no `hidden` class would mean every fresh page shows it,
+        # which is wrong).
+        self.assertRegex(
+            html,
+            r'id="pub-changelog-reuse-bar"[^>]*\bclass="[^"]*\bhidden\b',
+        )
+
+    def test_changelog_reuse_lookup_wired_in_publisher_js(self):
+        # Verify the publisher app.js declares the reuse state, fetches
+        # the lookup map at startup, exposes the helper functions that
+        # selectSourceItem uses, and binds the manual control buttons.
+        app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+
+        # publishState carries the cached map + active snapshot version.
+        self.assertIn("changelogReuseMap", app_js)
+        self.assertIn("reuseSnapshotVersion", app_js)
+        # Fetcher + degrade-on-failure path (try/catch sets map to null).
+        self.assertIn("loadChangelogReuseMap", app_js)
+        self.assertIn("list_policy_versions_changelog_map", app_js)
+        self.assertIn("publishState.changelogReuseMap = null", app_js)
+        # Helpers used by selectSourceItem + manual buttons.
+        self.assertIn("computeFinalVersion", app_js)
+        self.assertIn("resolveChangelogReuse", app_js)
+        self.assertIn("applyChangelogReuseHit", app_js)
+        self.assertIn("applyCommitNameFallback", app_js)
+        self.assertIn("updateChangelogReuseBar", app_js)
+        # Manual control handlers + their DOM bindings.
+        self.assertIn("revertChangelogReuse", app_js)
+        self.assertIn("relookupChangelogReuse", app_js)
+        self.assertIn(
+            "getElementById('pub-changelog-reuse-revert-btn')", app_js
+        )
+        self.assertIn(
+            "getElementById('pub-changelog-reuse-relookup-btn')", app_js
+        )
+        # selectSourceItem must invoke the reuse lookup for both
+        # release and artifact branches — easiest way to spot this in a
+        # string check is the matched-pair assignment to
+        # reuseSnapshotVersion in the success path.
+        self.assertGreaterEqual(
+            app_js.count("publishState.reuseSnapshotVersion = finalVersion"),
+            2,
+        )
+        # updateFinalVersion must refresh the bar so drift becomes visible
+        # the moment major/minor/patch are edited. Look for the call
+        # within a bounded window after the function signature — template
+        # literals in the body mean we can't cleanly match `}` as a
+        # body-end marker without a JS parser.
+        func_start = app_js.find("function updateFinalVersion(")
+        self.assertGreater(func_start, 0)
+        body_window = app_js[func_start:func_start + 1000]
+        self.assertIn("updateChangelogReuseBar()", body_window)
+        # reload-sources-btn must also refresh the reuse map so concurrent
+        # policy edits show up on the same gesture the publisher already
+        # uses to re-pull source lists.
+        self.assertRegex(
+            app_js,
+            r"reload-sources-btn[\s\S]*?loadChangelogReuseMap\(\)",
+        )
+
     def test_lens_tag_has_latest_release_refresh_button(self):
         html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
         app_js = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
@@ -505,6 +580,206 @@ class UpsertVersionEntryInheritanceTests(unittest.TestCase):
         self.assertEqual(merged["plugin_tag"], "plugin-0549a827ac4f")
         self.assertEqual(merged["changelog"], "updated changelog")
         self.assertEqual(merged["channels"], ["manual"])
+
+
+# ---- list_policy_versions_changelog_map (release-notes-reuse-by-version) ----
+
+
+class _FakeReuseVercel:
+    """Vercel double for the changelog-map lookup tests.
+
+    Same shape as FakeHiddenVercel but minimal — only the env read path is
+    exercised by `_load_current_policy`. Optionally raises on env access to
+    test the error path.
+    """
+
+    def __init__(self, policy_dict: dict, raise_on_read: bool = False):
+        self._policy = dict(policy_dict)
+        self._raise = raise_on_read
+
+    def list_env_records(self) -> dict:
+        if self._raise:
+            raise RuntimeError("vercel offline")
+        return {"NIYIEN_RELEASE_POLICY_JSON": {"id": "policy-env"}}
+
+    def get_env_value(self, env_id: str) -> str:
+        if self._raise:
+            raise RuntimeError("vercel offline")
+        if env_id != "policy-env":
+            raise RuntimeError("unexpected env id")
+        return json.dumps(self._policy, ensure_ascii=False)
+
+    def list_envs_decrypted(self) -> dict:
+        if self._raise:
+            raise RuntimeError("vercel offline")
+        return {
+            "NIYIEN_RELEASE_POLICY_JSON": json.dumps(
+                self._policy, ensure_ascii=False
+            )
+        }
+
+
+class _ReuseApi(Api):
+    def __init__(self, policy_dict: dict, raise_on_read: bool = False):
+        self.vercel = _FakeReuseVercel(policy_dict, raise_on_read=raise_on_read)
+
+    def _vercel(self, cfg=None):
+        return self.vercel
+
+
+class ChangelogMapLookupTests(unittest.TestCase):
+    def setUp(self):
+        self._orig_load_config = api_module.config_module.load_config
+        api_module.config_module.load_config = lambda: {
+            "github_owner": "NiYien",
+            "github_repo": "gyroflow",
+            "network_proxy": "",
+        }
+
+    def tearDown(self):
+        api_module.config_module.load_config = self._orig_load_config
+
+    def test_full_changelogs_map_round_trip(self):
+        # A versions entry with the full 9-language changelogs map should
+        # round-trip every language plus the legacy `changelog` string.
+        policy = {
+            "versions": [
+                {
+                    "version": "1.6.3-ni.5",
+                    "tag": "v1.6.3-niyien.1",
+                    "changelog": "首次发版",
+                    "changelogs": {
+                        "zh": "首次发版",
+                        "en": "First release",
+                        "ja": "初回リリース",
+                        "ko": "첫 출시",
+                        "de": "Erste Version",
+                        "fr": "Première version",
+                        "es": "Primera versión",
+                        "ru": "Первый выпуск",
+                        "pt": "Primeira versão",
+                    },
+                },
+            ],
+        }
+        result = _ReuseApi(policy).list_policy_versions_changelog_map()
+
+        self.assertTrue(result["ok"])
+        m = result["map"]
+        self.assertIn("1.6.3-ni.5", m)
+        self.assertEqual(m["1.6.3-ni.5"]["changelog"], "首次发版")
+        self.assertEqual(
+            m["1.6.3-ni.5"]["changelogs"]["en"], "First release"
+        )
+        self.assertEqual(len(m["1.6.3-ni.5"]["changelogs"]), 9)
+
+    def test_legacy_only_returns_empty_changelogs_dict(self):
+        # Entry with only legacy `changelog` (older publisher UI) yields
+        # legacy in `changelog` and empty dict in `changelogs`.
+        policy = {
+            "versions": [
+                {
+                    "version": "1.6.2-ni.4",
+                    "tag": "v1.6.2-niyien.1",
+                    "changelog": "稳定性改进",
+                },
+            ],
+        }
+        m = _ReuseApi(policy).list_policy_versions_changelog_map()["map"]
+
+        self.assertEqual(m["1.6.2-ni.4"]["changelog"], "稳定性改进")
+        self.assertEqual(m["1.6.2-ni.4"]["changelogs"], {})
+
+    def test_missing_changelog_field_returns_empty_string(self):
+        # Entry with no `changelog` field at all gets a defaulted empty
+        # string, no KeyError.
+        policy = {
+            "versions": [
+                {"version": "1.5.0-ni.3", "tag": "v1.5.0"},
+            ],
+        }
+        m = _ReuseApi(policy).list_policy_versions_changelog_map()["map"]
+
+        self.assertEqual(m["1.5.0-ni.3"]["changelog"], "")
+        self.assertEqual(m["1.5.0-ni.3"]["changelogs"], {})
+
+    def test_skips_entries_with_missing_or_nonstring_version(self):
+        # Garbage entries (no `version` key, non-string version) are
+        # skipped — the lookup is by version string, so these are unusable.
+        policy = {
+            "versions": [
+                {"version": "1.6.3-ni.5", "changelog": "ok"},
+                {"version": "", "changelog": "blank version"},   # skipped
+                {"version": 123, "changelog": "non-string"},     # skipped
+                {"changelog": "no version key"},                 # skipped
+                "not a dict at all",                             # skipped
+            ],
+        }
+        m = _ReuseApi(policy).list_policy_versions_changelog_map()["map"]
+
+        self.assertEqual(list(m.keys()), ["1.6.3-ni.5"])
+
+    def test_changelogs_filters_non_string_values(self):
+        # Defensive: malformed `changelogs` map with non-string values
+        # (e.g. a number leaked in somehow) should be filtered.
+        # Note: integer keys can't occur because policy round-trips through
+        # JSON (json.loads always returns string keys).
+        policy = {
+            "versions": [
+                {
+                    "version": "1.6.3-ni.5",
+                    "changelog": "legacy",
+                    "changelogs": {
+                        "zh": "中文",
+                        "en": 42,            # filtered (non-string value)
+                        "ja": "日本語",
+                    },
+                },
+            ],
+        }
+        m = _ReuseApi(policy).list_policy_versions_changelog_map()["map"]
+
+        self.assertEqual(
+            m["1.6.3-ni.5"]["changelogs"], {"zh": "中文", "ja": "日本語"}
+        )
+
+    def test_changelogs_non_dict_returns_empty(self):
+        # `changelogs` present but not a dict (e.g. accidentally set to a
+        # string) should fall back to empty dict, not blow up.
+        policy = {
+            "versions": [
+                {
+                    "version": "1.6.3-ni.5",
+                    "changelog": "legacy",
+                    "changelogs": "should be a dict",
+                },
+            ],
+        }
+        m = _ReuseApi(policy).list_policy_versions_changelog_map()["map"]
+
+        self.assertEqual(m["1.6.3-ni.5"]["changelogs"], {})
+
+    def test_empty_versions_returns_empty_map(self):
+        result = _ReuseApi({"versions": []}).list_policy_versions_changelog_map()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["map"], {})
+
+    def test_missing_versions_key_returns_empty_map(self):
+        # Defensive: policy with no `versions` key at all should not crash.
+        result = _ReuseApi({}).list_policy_versions_changelog_map()
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["map"], {})
+
+    def test_upstream_error_returns_ok_false(self):
+        # Vercel offline → API returns ok=False with an error string, never
+        # raises — consistent with sibling list_* APIs.
+        result = _ReuseApi({}, raise_on_read=True).list_policy_versions_changelog_map()
+
+        self.assertFalse(result["ok"])
+        self.assertIn("error", result)
+        self.assertIsInstance(result["error"], str)
 
 
 if __name__ == "__main__":

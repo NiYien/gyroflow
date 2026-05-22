@@ -571,6 +571,15 @@ const publishState = {
   mode: null,       // 'trigger' | 'tag' | 'select'
   source: null,     // 'release' | 'artifact' (only for mode=select)
   selected: null,   // selected release/artifact entry
+  // Lookup map cached at startup. `null` means "not loaded / load failed"
+  // — selectSourceItem then degrades to the commit-name fallback. Shape:
+  // { version: { changelog: string, changelogs: { lang: string } } }
+  changelogReuseMap: null,
+  // The final version string that the current changelog tabs were
+  // pre-filled from (when reuse hit). Empty string = no active reuse.
+  // Used by the reuse indicator bar to detect drift after major/minor/
+  // patch edits and offer a "re-resolve" action.
+  reuseSnapshotVersion: '',
 };
 
 // ---- Multi-language changelog tabs (release-notes-i18n) ----
@@ -770,6 +779,28 @@ function updateTranslateButtons() {
   })();
 }
 
+async function loadChangelogReuseMap() {
+  // Pull `{version: {changelog, changelogs}}` from policy.versions[] once
+  // and cache it so selectSourceItem can pre-fill tabs without a round trip.
+  // Failure path: leave the cache as `null` (the source-select code treats
+  // that as "reuse unavailable" and degrades to the commit-name fallback).
+  try {
+    await waitForApi();
+    const r = await pywebview.api.list_policy_versions_changelog_map();
+    if (r && r.ok && r.map && typeof r.map === 'object') {
+      publishState.changelogReuseMap = r.map;
+      return;
+    }
+    publishState.changelogReuseMap = null;
+    if (r && r.error) {
+      console.warn('list_policy_versions_changelog_map error:', r.error);
+    }
+  } catch (e) {
+    publishState.changelogReuseMap = null;
+    console.warn('list_policy_versions_changelog_map exception:', e);
+  }
+}
+
 async function checkTranslateAvailability() {
   // Surface translate_api_* presence via get_config (sensitive values are
   // masked, but empty stays empty). Frontend never sees the raw key.
@@ -871,6 +902,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateChangelogValidationHint();
   updateTranslateButtons();
   checkTranslateAvailability();
+  loadChangelogReuseMap();
   const editor = document.getElementById('pub-changelog-active');
   if (editor) {
     editor.addEventListener('input', () => {
@@ -1399,6 +1431,10 @@ document.querySelectorAll('.source-btn').forEach(btn => {
 
 document.getElementById('reload-sources-btn')?.addEventListener('click', () => {
   if (publishState.source) loadSourceList(publishState.source);
+  // Concurrent policy edits (other browser tab, CLI) won't appear in our
+  // cached reuse map otherwise — refresh on the same gesture that already
+  // re-pulls the source list.
+  loadChangelogReuseMap();
 });
 
 async function loadSourceList(source) {
@@ -1463,6 +1499,130 @@ async function loadSourceList(source) {
   }
 }
 
+// Final version is `${maj}.${min}.${pat}${suffix}` — matches what gets
+// written to `policy.versions[].version` at publish time, so it's the
+// correct key to look up against the cached changelog map.
+function computeFinalVersion() {
+  const maj = document.getElementById('pub-major')?.value || '0';
+  const min = document.getElementById('pub-minor')?.value || '0';
+  const pat = document.getElementById('pub-patch')?.value || '0';
+  const suffix = document.getElementById('pub-suffix')?.textContent || '';
+  return `${maj}.${min}.${pat}${suffix}`;
+}
+
+// Returns `{ changelog, changelogs }` for the given final version if it
+// exists in the cached map; null otherwise. Called by selectSourceItem
+// and by the "重新查找" button on the reuse indicator bar.
+function resolveChangelogReuse(finalVersion) {
+  if (!publishState.changelogReuseMap || !finalVersion) return null;
+  const hit = publishState.changelogReuseMap[finalVersion];
+  if (!hit || typeof hit !== 'object') return null;
+  return {
+    changelog: typeof hit.changelog === 'string' ? hit.changelog : '',
+    changelogs: (hit.changelogs && typeof hit.changelogs === 'object') ? hit.changelogs : {},
+  };
+}
+
+// Apply a reuse hit by handing a synthetic entry with `changelogs` /
+// `changelog` fields to resetChangelogTabsFromEntry — that function
+// already knows how to fill 9 tabs from the map or fall back to legacy
+// `changelog`-only when the map is empty.
+function applyChangelogReuseHit(hit) {
+  resetChangelogTabsFromEntry({
+    changelogs: hit.changelogs,
+    changelog: hit.changelog,
+  });
+}
+
+// Reconcile the indicator bar with `publishState.reuseSnapshotVersion`
+// and the current final version. Three states:
+//   1. No active reuse — bar hidden, "重新查找" button hidden.
+//   2. Active reuse, final version still equals snapshot — bar visible,
+//      "重新查找" hidden.
+//   3. Active reuse but the version inputs drifted from snapshot —
+//      bar still references the original snapshot, "重新查找" appears.
+function updateChangelogReuseBar() {
+  const bar = document.getElementById('pub-changelog-reuse-bar');
+  if (!bar) return;
+  const snapshot = publishState.reuseSnapshotVersion || '';
+  if (!snapshot) {
+    bar.classList.add('hidden');
+    return;
+  }
+  bar.classList.remove('hidden');
+  const verEl = document.getElementById('pub-changelog-reuse-version');
+  if (verEl) verEl.textContent = snapshot;
+  const relookupBtn = document.getElementById('pub-changelog-reuse-relookup-btn');
+  if (relookupBtn) {
+    const drifted = computeFinalVersion() !== snapshot;
+    relookupBtn.classList.toggle('hidden', !drifted);
+  }
+}
+
+function clearChangelogReuseWarning() {
+  const el = document.getElementById('pub-changelog-reuse-warning');
+  if (!el) return;
+  el.textContent = '';
+  el.classList.add('hidden');
+}
+
+function setChangelogReuseWarning(text) {
+  const el = document.getElementById('pub-changelog-reuse-warning');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove('hidden');
+}
+
+// Strip any policy-supplied changelog fields off the current selection so
+// resetChangelogTabsFromEntry walks the commit-name fallback (release body
+// first line / artifact title). Orphan entries don't have body/title, so
+// the tabs end up cleared — consistent with "no source-provided fallback
+// available" for orphans.
+function applyCommitNameFallback() {
+  const sel = publishState.selected;
+  if (!sel) {
+    resetChangelogTabsFromEntry(null);
+    return;
+  }
+  const fallbackEntry = { ...sel };
+  delete fallbackEntry.changelog;
+  delete fallbackEntry.changelogs;
+  resetChangelogTabsFromEntry(fallbackEntry);
+}
+
+// "改回 commit 名" — drop the reuse hit and walk the commit-name fallback.
+function revertChangelogReuse() {
+  applyCommitNameFallback();
+  publishState.reuseSnapshotVersion = '';
+  clearChangelogReuseWarning();
+  updateChangelogReuseBar();
+}
+
+// "按新版本号重新查找" — re-run the lookup against the current final
+// version. Hit → swap tabs + update snapshot. Miss → revert to commit
+// name + emit a non-blocking warning identifying the missing version.
+function relookupChangelogReuse() {
+  const finalVersion = computeFinalVersion();
+  const hit = resolveChangelogReuse(finalVersion);
+  if (hit) {
+    applyChangelogReuseHit(hit);
+    publishState.reuseSnapshotVersion = finalVersion;
+    clearChangelogReuseWarning();
+  } else {
+    applyCommitNameFallback();
+    publishState.reuseSnapshotVersion = '';
+    setChangelogReuseWarning(`未在 policy.versions[] 找到 ${finalVersion}`);
+  }
+  updateChangelogReuseBar();
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('pub-changelog-reuse-revert-btn')
+    ?.addEventListener('click', revertChangelogReuse);
+  document.getElementById('pub-changelog-reuse-relookup-btn')
+    ?.addEventListener('click', relookupChangelogReuse);
+});
+
 function selectSourceItem(el, items) {
   document.querySelectorAll('.source-item').forEach(i => i.classList.remove('active'));
   el.classList.add('active');
@@ -1477,15 +1637,36 @@ function selectSourceItem(el, items) {
     document.getElementById('pub-minor').value = v[1] || '0';
     document.getElementById('pub-patch').value = v[2] || '0';
     document.getElementById('pub-suffix').textContent = '';
-    // Changelog tabs: zh = first line of release body, others empty.
-    resetChangelogTabsFromEntry(entry);
+    // Prefer reusing the previously-published changelog for this exact
+    // final version (saves re-typing + LLM re-translate when the publisher
+    // is doing a plugin-only re-release). Falls back to the commit-name
+    // pre-fill (release body first line) when no match exists.
+    const finalVersion = computeFinalVersion();
+    const reuseHit = resolveChangelogReuse(finalVersion);
+    if (reuseHit) {
+      applyChangelogReuseHit(reuseHit);
+      publishState.reuseSnapshotVersion = finalVersion;
+    } else {
+      resetChangelogTabsFromEntry(entry);
+      publishState.reuseSnapshotVersion = '';
+    }
   } else if (kind === 'artifact') {
     entry = items.find(x => String(x.run_id) === el.dataset.runId);
     publishState.selected = { kind: 'artifact', ...entry };
     // Keep existing major/minor/patch, set suffix based on run_number
     document.getElementById('pub-suffix').textContent = `-ni.${entry.run_number}`;
-    // Changelog tabs: zh = action build title, others empty.
-    resetChangelogTabsFromEntry(entry);
+    // Same reuse / fallback logic as the release branch — artifact final
+    // versions follow the `<base>-ni.<run_number>` shape, so the lookup
+    // key is still computeFinalVersion() with the suffix now applied.
+    const finalVersion = computeFinalVersion();
+    const reuseHit = resolveChangelogReuse(finalVersion);
+    if (reuseHit) {
+      applyChangelogReuseHit(reuseHit);
+      publishState.reuseSnapshotVersion = finalVersion;
+    } else {
+      resetChangelogTabsFromEntry(entry);
+      publishState.reuseSnapshotVersion = '';
+    }
   } else if (kind === 'orphan') {
     entry = items.find(x => x.version === el.dataset.version);
     publishState.selected = { kind: 'orphan', ...entry };
@@ -1499,12 +1680,20 @@ function selectSourceItem(el, items) {
     // multi-language publish; resetChangelogTabsFromEntry handles both
     // the map case and the legacy single-string fallback.
     resetChangelogTabsFromEntry(entry);
+    // Treat orphan as a reuse hit so the indicator bar reveals what
+    // the changelog was loaded from (consistent UX with release /
+    // artifact reuse).
+    publishState.reuseSnapshotVersion = entry.version || '';
     // Force action=hide_version (the only sensible op for an orphan entry)
     const actionSel = document.getElementById('pub-action');
     actionSel.value = 'hide_version';
     actionSel.dispatchEvent(new Event('change'));
   }
+  // Any stale "未找到" warning from a previous re-lookup is cleared on
+  // every fresh source selection — the new selection has its own outcome.
+  clearChangelogReuseWarning();
   updateFinalVersion();
+  updateChangelogReuseBar();
   document.getElementById('execute-publish-btn').disabled = false;
   document.getElementById('execute-publish-result').textContent = '';
   releasePlanState.lastResult = '';
@@ -1518,6 +1707,10 @@ function updateFinalVersion() {
   const pat = document.getElementById('pub-patch').value || '0';
   const suffix = document.getElementById('pub-suffix').textContent || '';
   document.getElementById('pub-final').textContent = `${maj}.${min}.${pat}${suffix}`;
+  // Reuse bar surfaces a "重新查找" control as soon as the final version
+  // drifts off the snapshot — update on every input edit so drift becomes
+  // visible without waiting for a re-selection.
+  updateChangelogReuseBar();
   clearReleasePlanOutcomeIfIdle();
   refreshReleasePlanChecklist();
 }

@@ -203,6 +203,22 @@
             </label>
             <span id="pub-changelog-empty-hint" class="text-xs text-rose-500 hidden">中文 (zh) tab 为空, 发布前需填写</span>
           </div>
+          <!-- Reuse indicator bar — visible only when current tabs were
+               pre-filled from a previously-published policy.versions[]
+               entry (saves re-typing + re-translating on plugin-only
+               re-releases). -->
+          <div id="pub-changelog-reuse-bar" class="hidden mb-2 flex flex-wrap items-center gap-2 px-3 py-2 rounded-md border-l-4 border-blue-400 bg-slate-50 text-xs">
+            <div class="flex-1 text-slate-700">
+              <span>已沿用 </span>
+              <span class="font-mono">policy.versions['</span><span id="pub-changelog-reuse-version" class="font-mono font-semibold"></span><span class="font-mono">']</span>
+              <span> 的更新说明</span>
+            </div>
+            <button id="pub-changelog-reuse-revert-btn" type="button"
+              class="px-2 py-0.5 rounded border border-slate-300 bg-white text-slate-700 hover:bg-slate-50">改回 commit 名</button>
+            <button id="pub-changelog-reuse-relookup-btn" type="button"
+              class="hidden px-2 py-0.5 rounded border border-blue-300 bg-blue-50 text-blue-700 hover:bg-blue-100">按新版本号重新查找</button>
+          </div>
+          <div id="pub-changelog-reuse-warning" class="hidden text-xs text-rose-600 mb-1"></div>
           <div id="pub-changelog-tabs" class="flex flex-wrap gap-1 mb-2 border-b border-slate-200" role="tablist">
             <!-- Tab buttons injected by app.js -->
           </div>
