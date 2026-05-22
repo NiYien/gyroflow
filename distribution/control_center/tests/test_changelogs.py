@@ -89,10 +89,46 @@ class UpsertVersionEntryTests(unittest.TestCase):
             changelogs={"zh": "仅中文"},
         )
         entry = versions[0]
-        # Legacy `changelog` SHALL be filled from `zh` even though the
-        # caller passed empty `changelog`.
+        # Legacy `changelog` SHALL be filled from `zh` when caller passed
+        # empty changelog and en is not present in the map either.
         self.assertEqual(entry["changelog"], "仅中文")
         self.assertEqual(entry["changelogs"], {"zh": "仅中文"})
+
+    def test_legacy_fallback_prefers_en_over_zh(self):
+        # When the caller doesn't supply a legacy `changelog` explicitly
+        # but the changelogs map has both en and zh, the legacy field
+        # SHALL be filled from en (better default for international old
+        # clients that only read `changelog`).
+        versions: list[dict] = []
+        Api._upsert_version_entry(
+            versions, "1.6.4", "v1.6.4-niyien.1", "", True, ["manual"],
+            changelogs={"zh": "中文", "en": "English", "ja": "日本語"},
+        )
+        entry = versions[0]
+        self.assertEqual(entry["changelog"], "English")
+        # The map itself still carries all three.
+        self.assertEqual(set(entry["changelogs"].keys()), {"zh", "en", "ja"})
+
+    def test_legacy_fallback_uses_zh_when_en_missing(self):
+        # When en isn't translated, zh tracks the final fallback.
+        versions: list[dict] = []
+        Api._upsert_version_entry(
+            versions, "1.6.4", "v1.6.4-niyien.1", "", True, ["manual"],
+            changelogs={"zh": "中文", "ja": "日本語"},
+        )
+        entry = versions[0]
+        self.assertEqual(entry["changelog"], "中文")
+
+    def test_explicit_legacy_changelog_overrides_fallback(self):
+        # If the caller (e.g. frontend that picked legacy = en explicitly)
+        # passes a non-empty changelog, the fallback chain is skipped.
+        versions: list[dict] = []
+        Api._upsert_version_entry(
+            versions, "1.6.4", "v1.6.4-niyien.1", "explicit legacy", True, ["manual"],
+            changelogs={"zh": "中文", "en": "English"},
+        )
+        entry = versions[0]
+        self.assertEqual(entry["changelog"], "explicit legacy")
 
     def test_legacy_only_payload(self):
         versions: list[dict] = []

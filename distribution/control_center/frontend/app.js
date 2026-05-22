@@ -730,6 +730,19 @@ function getZhChangelog() {
   return changelogTabsState.texts.zh || '';
 }
 
+// Pick the string that goes into the legacy `changelog` field of the
+// policy entry. Old gyroflow clients (i18n feature was added in 1.6.4+)
+// don't know about `changelogs` and only read this single string —
+// English is the better default for an international tool than Chinese,
+// so we prefer en when the publisher filled it. zh is the required
+// primary, so it's always available as the fallback.
+function getLegacyChangelog() {
+  syncActiveChangelogToState();
+  const en = (changelogTabsState.texts.en || '').trim();
+  if (en) return changelogTabsState.texts.en;
+  return changelogTabsState.texts.zh || '';
+}
+
 function updateTranslateButtons() {
   const allBtn = document.getElementById('pub-translate-btn');
   const curBtn = document.getElementById('pub-translate-current-btn');
@@ -1829,7 +1842,10 @@ document.getElementById('execute-publish-btn')?.addEventListener('click', async 
     action: actionValue,
     source_kind: publishState.selected.kind,
     version,
-    changelog: zhText,
+    // Legacy `changelog` field for pre-i18n clients: prefer English when
+    // the publisher filled it (international default), fall back to
+    // Chinese which is always present as the required primary.
+    changelog: getLegacyChangelog(),
     changelogs: collectChangelogsForPayload(),
     recommended: document.getElementById('pub-recommended').checked,
     run_id: publishState.selected.run_id,

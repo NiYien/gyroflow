@@ -2674,9 +2674,13 @@ class Api:
         # Multi-language release notes: keep `changelog` (legacy single
         # string) for old clients and add `changelogs` (lang -> text map)
         # for new clients. Only keys with non-empty stripped values land in
-        # the map. When changelogs has a zh entry but the caller did not
-        # provide a legacy `changelog`, fall back to the zh value so old
-        # clients still see something.
+        # the map.
+        #
+        # Legacy `changelog` fallback priority when the caller doesn't
+        # provide one explicitly: en first, then zh. English is the
+        # better default for old international clients than Chinese; zh
+        # is the required primary so it's always available as a final
+        # fallback when en wasn't translated.
         filtered_changelogs: dict[str, str] = {}
         if changelogs:
             for code, text in changelogs.items():
@@ -2686,8 +2690,11 @@ class Api:
                 if stripped:
                     filtered_changelogs[code] = text
         legacy_changelog = changelog or ""
-        if not legacy_changelog.strip() and filtered_changelogs.get("zh"):
-            legacy_changelog = filtered_changelogs["zh"]
+        if not legacy_changelog.strip():
+            for fallback_lang in ("en", "zh"):
+                if filtered_changelogs.get(fallback_lang):
+                    legacy_changelog = filtered_changelogs[fallback_lang]
+                    break
 
         entry = {
             "version": version,
