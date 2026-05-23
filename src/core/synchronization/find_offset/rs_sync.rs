@@ -911,27 +911,6 @@ impl FindOffsetsRssync<'_> {
         // The pre-existing anchor_prior refinement (sync-fusion-sharpness-and-cross-prior)
         // is kept intact because it only fires when prior_dominated == true,
         // which is its built-in safety lock.
-        //
-        // Weak-signal abandon guard: when (a) NO estimator has decent Pearson
-        // shape match (max_pearson_r < threshold) AND (b) cluster output
-        // diverged far from initial_offset, the segment is too weak to trust.
-        // Fall back to global_prior (when present) or initial_offset with
-        // conf=0 so downstream rank/conf filters treat it as "skipped"
-        // rather than as a low-confidence garbage value. Bypassed on
-        // anchor_prior path (the anchor itself is a trusted external source).
-        let weak_abandon_enabled = std::env::var("GYROFLOW_SYNC_WEAK_ABANDON")
-            .map(|v| !matches!(v.trim(), "0" | "false" | "no" | "off"))
-            .unwrap_or(true);
-        let weak_abandon_r: f64 = std::env::var("GYROFLOW_SYNC_WEAK_ABANDON_R")
-            .ok()
-            .and_then(|v| v.trim().parse::<f64>().ok())
-            .unwrap_or(0.30)
-            .clamp(0.0, 1.0);
-        let weak_abandon_dist_ms: f64 = std::env::var("GYROFLOW_SYNC_WEAK_ABANDON_DIST_MS")
-            .ok()
-            .and_then(|v| v.trim().parse::<f64>().ok())
-            .unwrap_or(500.0)
-            .max(0.0);
         let ncc_sharp_floor: f64 = std::env::var("GYROFLOW_SYNC_NCC_SHARP_FLOOR")
             .ok()
             .and_then(|v| v.trim().parse::<f64>().ok())
@@ -1923,59 +1902,7 @@ impl FindOffsetsRssync<'_> {
                 (raw_confidence, raw_path)
             };
 
-            // Weak-signal abandon: bail to a trusted prior when the OUTPUT
-            // position has weak Pearson shape match AND diverged far from
-            // initial_offset. Use best_r_refined (Pearson r AT the output
-            // position) rather than max_pearson_r (max across all candidate
-            // positions): mid=5172 case had max_r=0.330 at pearson_peak
-            // -4071ms but output landed at -166ms with r=0.242 (shape match
-            // at output is what matters). Anchor path exempt (anchor brings
-            // external trust even when local shape match is low).
-            let init_diff_ms = (output_ms - initial_offset).abs();
-            let r_at_output_weak = best_r_refined.is_finite()
-                && best_r_refined < weak_abandon_r;
-            let weak_abandoned = weak_abandon_enabled
-                && conf_path != ConfPath::AnchorPrior
-                && r_at_output_weak
-                && init_diff_ms > weak_abandon_dist_ms;
-            let (output_ms, confidence, conf_path) = if weak_abandoned {
-                // Fallback choice: prefer pearson_peak when Pearson shows a
-                // strong unimodal signal (r > 0.5 AND prom > 0.4) — Pearson is
-                // a 1st-order shape-match estimator independent of the rs cost
-                // surface that fooled the cluster vote. Otherwise fall back
-                // to global_prior or initial_offset (user-supplied prior).
-                // This DOES NOT touch sf gate or normal-case cluster behavior;
-                // only changes which value we land on when the guard fires.
-                let pearson_strong = pearson_peak_ms.is_finite()
-                    && pearson_peak_r > 0.5
-                    && pearson_prominence > 0.4;
-                let (fallback_ms, fallback_kind) = if pearson_strong {
-                    (pearson_peak_ms, "pearson_peak")
-                } else {
-                    let v = global_prior.unwrap_or(initial_offset);
-                    let k = if global_prior.is_some() { "global_prior" } else { "initial" };
-                    (v, k)
-                };
-                log::warn!(
-                    "[ncc-fuse] seg {}: weak signal abandon (r_at_output={:.3} < {:.2} AND |output-init|={:.1}ms > {:.0}ms) → fallback={:.1}ms ({}) (was output={:.1}ms conf={:.3})",
-                    i,
-                    best_r_refined,
-                    weak_abandon_r,
-                    init_diff_ms,
-                    weak_abandon_dist_ms,
-                    fallback_ms,
-                    fallback_kind,
-                    output_ms,
-                    confidence,
-                );
-                (fallback_ms, 0.0, conf_path)
-            } else {
-                (output_ms, confidence, conf_path)
-            };
-
-            let path_str_owned = if weak_abandoned {
-                format!("weak_abandon|was_[{}]", cluster_signals)
-            } else if use_rs_shortcut {
+            let path_str_owned = if use_rs_shortcut {
                 format!("v2_consensus[{}]|rs_shortcut", cluster_signals)
             } else {
                 format!("v2_consensus[{}]", cluster_signals)
