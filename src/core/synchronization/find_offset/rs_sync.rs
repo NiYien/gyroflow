@@ -210,6 +210,12 @@ pub(super) enum ConfPath {
     PeriodicAmbiguity,
     Normal,
     LegacyCeiling,
+    /// Chosen cluster was elevated by cross-segment prior decay (weak base
+    /// candidates whose final weight only crossed the cluster-vote threshold
+    /// because they sit close to `global_prior`). Confidence is clamped to
+    /// [0.05, 0.5] so downstream rank filtering can distinguish "borrowed
+    /// from anchor" from self-evidenced consensus.
+    AnchorPrior,
 }
 
 impl ConfPath {
@@ -220,6 +226,7 @@ impl ConfPath {
             ConfPath::PeriodicAmbiguity => "periodic_ambiguity",
             ConfPath::Normal => "normal",
             ConfPath::LegacyCeiling => "legacy_ceiling",
+            ConfPath::AnchorPrior => "anchor_prior",
         }
     }
 }
@@ -432,40 +439,99 @@ impl FindOffsetsRssync<'_> {
                         (offset - initial_delay).abs(),
                         bounded_max
                     );
-                    // Fallback: scan grid curve for lowest cost within bounds.
-                    // curve is Vec<(cost, delay_s)> from full_sync_with_curve's
-                    // pre-search grid (5ms step). delay_s is rs-sync internal
-                    // (pre-frt-comp), same convention as `offset` here.
-                    let mut best: Option<(f64, f64)> = None; // (cost, delay_s)
-                    for &(c, d_s) in curve.iter() {
-                        let off_ms = d_s * 1000.0;
-                        if (off_ms - initial_delay).abs() < bounded_max && c.is_finite() {
-                            match best {
-                                None => best = Some((c, d_s)),
-                                Some((bc, _)) if c < bc => best = Some((c, d_s)),
-                                _ => {}
-                            }
-                        }
-                    }
-                    if let Some((b_cost, b_delay_s)) = best {
-                        let b_offset = b_delay_s * 1000.0;
-                        let final_offset =
-                            -b_offset - (self.frame_readout_time * 1000.0 / 2.0);
+                    // Sharpness-aware fallback (Step A of sync-fusion-sharpness-and-cross-prior):
+                    // Prefer the local minimum with the highest sharpness (= depth / width)
+                    // over the absolute cost-min. C50 case study: cost-min picks a wide
+                    // shallow basin at +2889ms while the true value is a sharp narrow
+                    // valley at -950ms — sharpness 0.77 vs 0.05 (15× higher).
+                    //
+                    // Env vars:
+                    //   GYROFLOW_SYNC_SHARPNESS_GRID=0       → bypass, revert to cost-min
+                    //   GYROFLOW_SYNC_DEPTH_GATE=<f>         → depth gate (default 0.30 of baseline_p75)
+                    let sharpness_mode = std::env::var("GYROFLOW_SYNC_SHARPNESS_GRID")
+                        .map(|v| !matches!(v.trim(), "0" | "false" | "no" | "off"))
+                        .unwrap_or(true);
+                    let depth_gate_ratio: f64 = std::env::var("GYROFLOW_SYNC_DEPTH_GATE")
+                        .ok()
+                        .and_then(|v| v.trim().parse::<f64>().ok())
+                        .unwrap_or(0.30);
+
+                    // Convert curve to external convention so sync_metric works in
+                    // external offset space (matching `initial_offset` and the output).
+                    // Source curve is Vec<(cost, delay_s)>; external offset =
+                    //   -delay_s * 1000 - frt/2.
+                    let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
+                    let initial_offset_ext = self.sync_params.initial_offset;
+                    let curve_external: Vec<(f64, f64)> = curve
+                        .iter()
+                        .filter(|(c, _)| c.is_finite())
+                        .map(|&(c, d_s)| (-d_s * 1000.0 - frt_offset_ms, c))
+                        .collect();
+
+                    let sharp_pick = if sharpness_mode {
+                        crate::synchronization::sync_metric::sharpest_minimum_in_bound(
+                            &curve_external,
+                            initial_offset_ext,
+                            bounded_max,
+                            depth_gate_ratio,
+                        )
+                    } else {
+                        None
+                    };
+
+                    if let Some(m) = sharp_pick {
                         log::info!(
-                            "[rssync] grid fallback: offset={:.1}ms cost={:.4}",
-                            -b_offset, b_cost
+                            "[rssync] sharpness fallback: offset={:.1}ms sharp={:.3} cost={:.2}",
+                            m.offset_ms, m.sharpness, m.cost
                         );
-                        final_offset_external_ms = final_offset;
+                        final_offset_external_ms = m.offset_ms;
                         offsets.push((
                             (from_ts + to_ts) as f64 / 2.0 / 1000.0,
-                            final_offset,
-                            b_cost,
+                            m.offset_ms,
+                            m.cost,
                             0.5,
                         ));
                     } else {
-                        log::warn!("[rssync] no grid candidate within bounds, segment dropped");
-                        final_offset_external_ms =
-                            -offset - (self.frame_readout_time * 1000.0 / 2.0);
+                        // Legacy cost-min path. Triggered when sharpness mode is
+                        // disabled, or no local minimum passed the depth gate, or the
+                        // curve had no local minimum at all.
+                        let mut best: Option<(f64, f64)> = None; // (cost, delay_s)
+                        for &(c, d_s) in curve.iter() {
+                            let off_ms = d_s * 1000.0;
+                            if (off_ms - initial_delay).abs() < bounded_max && c.is_finite() {
+                                match best {
+                                    None => best = Some((c, d_s)),
+                                    Some((bc, _)) if c < bc => best = Some((c, d_s)),
+                                    _ => {}
+                                }
+                            }
+                        }
+                        if let Some((b_cost, b_delay_s)) = best {
+                            let b_offset = b_delay_s * 1000.0;
+                            let final_offset = -b_offset - frt_offset_ms;
+                            if sharpness_mode {
+                                log::info!(
+                                    "[rssync] cost-min fallback (no minima passed depth gate): offset={:.1}ms cost={:.4}",
+                                    final_offset, b_cost
+                                );
+                            } else {
+                                log::info!(
+                                    "[rssync] grid fallback: offset={:.1}ms cost={:.4}",
+                                    -b_offset, b_cost
+                                );
+                            }
+                            final_offset_external_ms = final_offset;
+                            offsets.push((
+                                (from_ts + to_ts) as f64 / 2.0 / 1000.0,
+                                final_offset,
+                                b_cost,
+                                0.5,
+                            ));
+                        } else {
+                            log::warn!("[rssync] no grid candidate within bounds, segment dropped");
+                            final_offset_external_ms =
+                                -offset - frt_offset_ms;
+                        }
                     }
                 }
                 self.presync_curves[range_idx] = curve;
@@ -830,6 +896,170 @@ impl FindOffsetsRssync<'_> {
             .and_then(|v| v.trim().parse::<f64>().ok())
             .unwrap_or(100.0);
 
+        // ═══ Per-fusion env vars (sync-fusion-candidate-sharpness-gate) ═══
+        // Read once per fusion run. Per-segment behavior derives from these
+        // booleans + the cached cost-curve minima built right below.
+        let cand_sharpness_gate_enabled = std::env::var("GYROFLOW_SYNC_CAND_SHARPNESS_GATE")
+            .map(|v| !matches!(v.trim(), "0" | "false" | "no" | "off"))
+            .unwrap_or(true);
+        let cost_sharp_boost_enabled = std::env::var("GYROFLOW_SYNC_COST_SHARP_BOOST")
+            .map(|v| !matches!(v.trim(), "0" | "false" | "no" | "off"))
+            .unwrap_or(true);
+        // Step 5/6 (always-on cluster refinement) was reverted after observing
+        // Run 2 regression: ±10ms pre_sync around cluster centroid jumped to a
+        // neighbor cost-curve minimum (-936 instead of cluster -945, truth ~-949).
+        // The pre-existing anchor_prior refinement (sync-fusion-sharpness-and-cross-prior)
+        // is kept intact because it only fires when prior_dominated == true,
+        // which is its built-in safety lock.
+        let ncc_sharp_floor: f64 = std::env::var("GYROFLOW_SYNC_NCC_SHARP_FLOOR")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(0.2)
+            .clamp(0.0, 1.0);
+        let sharpness_gate_min_ref: f64 = std::env::var("GYROFLOW_SYNC_SHARPNESS_GATE_MIN_REF")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(0.05)
+            .max(0.0);
+
+        // Precompute per-segment external cost curves + local minima once,
+        // shared by both the anchor pool (Phase A) and the main fusion loop
+        // below. Avoids running find_local_minima twice per segment.
+        // Each entry is (curve_external, max_sharp_ref, minima).
+        use crate::synchronization::sync_metric::{
+            find_local_minima as _find_local_minima, CostMinimum as _CostMinimum,
+        };
+        let curve_cache: Vec<(Vec<(f64, f64)>, f64, Vec<_CostMinimum>)> = (0..offsets.len())
+            .map(|idx| {
+                if idx >= self.presync_curves.len() {
+                    return (Vec::new(), 0.0_f64, Vec::new());
+                }
+                let curve_internal = &self.presync_curves[idx];
+                if curve_internal.is_empty() {
+                    return (Vec::new(), 0.0_f64, Vec::new());
+                }
+                let curve_external: Vec<(f64, f64)> = curve_internal
+                    .iter()
+                    .filter(|(c, _)| c.is_finite())
+                    .map(|&(c, d_s)| (-d_s * 1000.0 - frt_offset_ms, c))
+                    .collect();
+                let (_baseline, minima) = _find_local_minima(&curve_external, 0.05);
+                let max_sharp_ref = minima
+                    .iter()
+                    .map(|m| m.sharpness)
+                    .fold(0.0_f64, f64::max);
+                (curve_external, max_sharp_ref, minima)
+            })
+            .collect();
+
+        // ═══ Phase A (sync-fusion-sharpness-and-cross-prior) ═══════════════
+        // Cross-segment anchor pool: collect strong-signal segments whose
+        // (cost ≤ threshold) AND (sharpness ≥ gate) qualify as trusted
+        // anchors. Their median becomes a global prior that decays weak
+        // segments' off-target candidates in the main fusion loop below.
+        //
+        // Env vars (defaults per design.md D3/D4/D5):
+        //   GYROFLOW_SYNC_CROSS_PRIOR=0       → bypass entirely (no prior)
+        //   GYROFLOW_SYNC_ANCHOR_MIN_SHARP    → anchor sharpness gate (default 0.30)
+        //   GYROFLOW_SYNC_PRIOR_SPAN_MAX      → max anchor pool span ms (default 100)
+        //   GYROFLOW_SYNC_PRIOR_SIGMA         → decay σ ms (default 200), read per-segment
+        let cross_prior_enabled = std::env::var("GYROFLOW_SYNC_CROSS_PRIOR")
+            .map(|v| !matches!(v.trim(), "0" | "false" | "no" | "off"))
+            .unwrap_or(true);
+        let anchor_min_sharp: f64 = std::env::var("GYROFLOW_SYNC_ANCHOR_MIN_SHARP")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(0.30);
+        let prior_span_max: f64 = std::env::var("GYROFLOW_SYNC_PRIOR_SPAN_MAX")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(100.0);
+
+        // anchors: (seg_idx, offset_ms, cost, sharpness_at_anchor)
+        let mut anchors: Vec<(usize, f64, f64, f64)> = Vec::new();
+        if cross_prior_enabled {
+            for (idx, &(_mid, off, cost, _conf)) in offsets.iter().enumerate() {
+                if !cost.is_finite() || cost > fusion_cost_threshold {
+                    continue;
+                }
+                if idx >= curve_cache.len() {
+                    continue;
+                }
+                let (_curve_external, _max_sharp, minima) = &curve_cache[idx];
+                if minima.is_empty() {
+                    continue;
+                }
+                // Nearest local minimum within 50ms of the LBFGS-converged offset.
+                let mut best_sharp: Option<f64> = None;
+                let mut best_dist = f64::INFINITY;
+                for m in minima.iter() {
+                    let d = (m.offset_ms - off).abs();
+                    if d <= 50.0 && d < best_dist {
+                        best_dist = d;
+                        best_sharp = Some(m.sharpness);
+                    }
+                }
+                if let Some(sharp) = best_sharp {
+                    if sharp >= anchor_min_sharp {
+                        anchors.push((idx, off, cost, sharp));
+                    }
+                }
+            }
+        }
+
+        // Phase B: compute global_prior from the anchor pool.
+        // - empty pool → None (main loop behaves as if cross-prior were off)
+        // - 1 anchor  → Some(its offset)
+        // - ≥2 anchors → span check first; if span > prior_span_max give up,
+        //                otherwise median of anchor offsets.
+        let global_prior: Option<f64> = if !cross_prior_enabled || anchors.is_empty() {
+            None
+        } else if anchors.len() == 1 {
+            Some(anchors[0].1)
+        } else {
+            let mut vals: Vec<f64> = anchors.iter().map(|a| a.1).collect();
+            vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let span = vals.last().unwrap() - vals.first().unwrap();
+            if span > prior_span_max {
+                log::warn!(
+                    "[anchor-pool] span {:.1}ms > {:.0}ms, no global prior",
+                    span,
+                    prior_span_max
+                );
+                None
+            } else {
+                Some(vals[vals.len() / 2])
+            }
+        };
+
+        // Diagnostic line so post-hoc log triage can see anchor pool state.
+        if !anchors.is_empty() {
+            let brief: Vec<String> = anchors
+                .iter()
+                .map(|(i, off, cost, s)| {
+                    format!("seg {}: {:.1}ms cost={:.2} sharp={:.2}", i, off, cost, s)
+                })
+                .collect();
+            log::info!(
+                "[anchor-pool] collected {} anchors: [{}] global_prior={:?}",
+                anchors.len(),
+                brief.join(", "),
+                global_prior
+            );
+        } else if cross_prior_enabled {
+            log::info!(
+                "[anchor-pool] no anchors collected (no segment met cost ≤ {} and sharp ≥ {:.2})",
+                fusion_cost_threshold,
+                anchor_min_sharp
+            );
+        }
+
+        // Per-fusion σ read once. Used by closures in the main loop.
+        let sigma_prior: f64 = std::env::var("GYROFLOW_SYNC_PRIOR_SIGMA")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .unwrap_or(200.0);
+
         for i in 0..offsets.len() {
             // Hybrid bypass: trust raw rs_argmin when rs-sync converged well
             let raw_cost = offsets[i].2;
@@ -1137,6 +1367,42 @@ impl FindOffsetsRssync<'_> {
                 );
             }
 
+            // ── Candidate position sharpness gate (sync-fusion-candidate-sharpness-gate) ──
+            // Pre-scan this segment's cost curve once for local minima. Each
+            // candidate's weight gets multiplied by a sharpness_factor based
+            // on whether its position sits on a sharp valley (factor=1.0) or
+            // out in a wide / featureless region (factor→0 or NCC floor).
+            // Cached above so anchor pool + main loop share the scan.
+            let (max_sharp_ref, minima_ref): (f64, &[_CostMinimum]) = if i < curve_cache.len() {
+                let (_curve_ext, m, mins) = &curve_cache[i];
+                (*m, mins.as_slice())
+            } else {
+                (0.0_f64, &[][..])
+            };
+            let gate_active = cand_sharpness_gate_enabled
+                && max_sharp_ref > sharpness_gate_min_ref
+                && !minima_ref.is_empty();
+            if cand_sharpness_gate_enabled && !gate_active {
+                log::info!(
+                    "[ncc-fuse] seg {}: sharpness gate disabled (max_sharp={:.3} < {:.3})",
+                    i,
+                    max_sharp_ref,
+                    sharpness_gate_min_ref
+                );
+            }
+            let sharpness_at = |cand_ms: f64, floor: f64| -> f64 {
+                if !gate_active {
+                    return 1.0;
+                }
+                crate::synchronization::sync_metric::factor_from_minima(
+                    minima_ref,
+                    cand_ms,
+                    20.0,
+                    max_sharp_ref,
+                    floor,
+                )
+            };
+
             // ═══ V2: Scene-adaptive signal fusion ════════════════════════════
             // 3 candidate positions with Pearson-r reliability multipliers.
             // Each candidate's weight = scene_feature × Pearson_r_at_position.
@@ -1173,7 +1439,21 @@ impl FindOffsetsRssync<'_> {
             // Scene-adaptive base weights.
             // cost_sharpness: (ratio-1)*50 clamped [0,1] — rs signals meaningful
             // when cost landscape has a distinguishable basin (ratio>1.02 → >1.0).
-            let cost_sharpness = ((rs_2nd_over_best - 1.0) * 50.0).clamp(0.0, 1.0);
+            let cost_sharpness_old = ((rs_2nd_over_best - 1.0) * 50.0).clamp(0.0, 1.0);
+            // Candidate-position sharpness factors (per Step 1+3). Each one
+            // multiplies the corresponding candidate's weight below.
+            let sf_rs = sharpness_at(rs_argmin_ms, 0.0);
+            let sf_rs_cost = sharpness_at(rs_best_offs, 0.0);
+            let sf_ncc = sharpness_at(ncc_peak_ms, ncc_sharp_floor);
+            // Step 4: cost_sharpness fallback. When the global rs cost basin
+            // is flat (ratio≈1.0 → cost_sharpness_old≈0) but rs_argmin still
+            // sits on a sharp local valley, the per-position sharpness lifts
+            // cost_sharpness so the rs signals are not zeroed out.
+            let cost_sharpness = if cost_sharp_boost_enabled {
+                cost_sharpness_old.max(sf_rs)
+            } else {
+                cost_sharpness_old
+            };
             // NCC edge penalty: FFT cross-correlation has a known bug where
             // shifts near search_radius edge produce artificial peaks (normalized
             // by full-segment energy but with minimal overlap). Penalize NCC
@@ -1182,20 +1462,50 @@ impl FindOffsetsRssync<'_> {
                 (ncc_peak_ms - initial_offset).abs() / self.sync_params.search_size.max(1.0);
             let ncc_edge_penalty = (1.0 - 2.0 * tau_ratio).clamp(0.0, 1.0);
 
-            let w_rs = cost_sharpness * r_at_rs_argmin.max(0.0);
-            let w_rs_cost = cost_sharpness * 0.8 * r_at_rs_best.max(0.0);
-            let w_ncc = peak_h * (1.0 - r2).max(0.0) * ncc_edge_penalty * r_at_ncc_peak.max(0.0);
+            let w_rs = cost_sharpness * r_at_rs_argmin.max(0.0) * sf_rs;
+            let w_rs_cost = cost_sharpness * 0.8 * r_at_rs_best.max(0.0) * sf_rs_cost;
+            let w_ncc =
+                peak_h * (1.0 - r2).max(0.0) * ncc_edge_penalty * r_at_ncc_peak.max(0.0) * sf_ncc;
 
-            // Gather candidates with non-negligible weight.
+            // Phase C (sync-fusion-sharpness-and-cross-prior): every candidate's
+            // base weight is multiplied by `prior_decay = exp(-d² / σ²)` where
+            // d = |cand_ms - global_prior|. When `global_prior.is_none()` decay
+            // is identically 1.0 → behavior matches pre-change byte-for-byte.
+            let prior_decay_at = |c_ms: f64| -> f64 {
+                match global_prior {
+                    Some(p) if c_ms.is_finite() && p.is_finite() => {
+                        (-(c_ms - p).powi(2) / (sigma_prior * sigma_prior)).exp()
+                    }
+                    _ => 1.0,
+                }
+            };
+
+            // cand stores FINAL weight (= base × decay) for cluster voting.
+            // cand_decomp tracks (base, decay) per source for the anchor_prior
+            // classification step after cluster selection.
             let mut cand: Vec<(f64, f64, &'static str)> = Vec::new();
-            if w_rs > 1e-6 && rs_argmin_ms.is_finite() {
-                cand.push((rs_argmin_ms, w_rs, "rs_argmin"));
+            let mut cand_decomp: std::collections::HashMap<&'static str, (f64, f64)> =
+                std::collections::HashMap::new();
+
+            let p_dec_rs = prior_decay_at(rs_argmin_ms);
+            let w_rs_final = w_rs * p_dec_rs;
+            if w_rs_final > 1e-6 && rs_argmin_ms.is_finite() {
+                cand.push((rs_argmin_ms, w_rs_final, "rs_argmin"));
+                cand_decomp.insert("rs_argmin", (w_rs, p_dec_rs));
             }
-            if w_rs_cost > 1e-6 && rs_best_offs.is_finite() {
-                cand.push((rs_best_offs, w_rs_cost, "rs_best_offs"));
+
+            let p_dec_rs_best = prior_decay_at(rs_best_offs);
+            let w_rs_cost_final = w_rs_cost * p_dec_rs_best;
+            if w_rs_cost_final > 1e-6 && rs_best_offs.is_finite() {
+                cand.push((rs_best_offs, w_rs_cost_final, "rs_best_offs"));
+                cand_decomp.insert("rs_best_offs", (w_rs_cost, p_dec_rs_best));
             }
-            if w_ncc > 1e-6 && ncc_peak_ms.is_finite() {
-                cand.push((ncc_peak_ms, w_ncc, "ncc_peak"));
+
+            let p_dec_ncc = prior_decay_at(ncc_peak_ms);
+            let w_ncc_final = w_ncc * p_dec_ncc;
+            if w_ncc_final > 1e-6 && ncc_peak_ms.is_finite() {
+                cand.push((ncc_peak_ms, w_ncc_final, "ncc_peak"));
+                cand_decomp.insert("ncc_peak", (w_ncc, p_dec_ncc));
             }
 
             // ═══ Pearson curve argmax (4th candidate) ════════════════════════
@@ -1212,7 +1522,12 @@ impl FindOffsetsRssync<'_> {
             let mut pearson_peak_r = 0.0f64;
             let mut pearson_prominence = 0.0f64;
             let mut pearson_second_r = 0.0f64;
+            let mut pearson_second_ms = f64::NAN; // Tracked for cross-prior Pearson 2nd-peak candidate
             let mut w_pearson_peak = 0.0f64;
+            // Per-candidate sharpness factors for the Pearson candidates,
+            // captured here so the [ncc-fuse] decision log can surface them.
+            let mut sf_p: f64 = 1.0;
+            let mut sf_p2: f64 = 1.0;
 
             if pearson_candidate_enabled {
                 let _g_ps = crate::synchronization::sync_perf::StageGuard::new(
@@ -1277,15 +1592,19 @@ impl FindOffsetsRssync<'_> {
                     rs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                     let median_r = rs[rs.len() / 2];
                     pearson_prominence = (pk_r - median_r).max(0.0);
-                    // second peak (>= SECOND_PEAK_MIN_GAP_MS away from peak)
-                    pearson_second_r = samples
+                    // second peak (>= SECOND_PEAK_MIN_GAP_MS away from peak) — capture
+                    // both the offset and the r so cross-segment prior can use the
+                    // 2nd peak as a refinement candidate (D7).
+                    let (second_ms, second_r) = samples
                         .iter()
                         .filter(|x| (x.0 - pk_ms).abs() >= SECOND_PEAK_MIN_GAP_MS)
-                        .map(|x| x.1)
-                        .fold(f64::NEG_INFINITY, f64::max);
-                    if !pearson_second_r.is_finite() {
-                        pearson_second_r = 0.0;
-                    }
+                        .copied()
+                        .fold(
+                            (f64::NAN, f64::NEG_INFINITY),
+                            |acc, x| if x.1 > acc.1 { x } else { acc },
+                        );
+                    pearson_second_r = if second_r.is_finite() { second_r } else { 0.0 };
+                    pearson_second_ms = second_ms;
                 }
 
                 // Scene-adaptive weight for Pearson peak.
@@ -1309,15 +1628,48 @@ impl FindOffsetsRssync<'_> {
                         let ratio = (pearson_second_r / pearson_peak_r).max(0.0);
                         (1.0 - (ratio - 0.5).max(0.0) * 2.0).clamp(0.0, 1.0)
                     };
+                    sf_p = sharpness_at(pearson_peak_ms, 0.0);
                     w_pearson_peak = pearson_peak_r
                         * prominence_factor
                         * n_factor
                         * motion_factor
-                        * unimodal_factor;
+                        * unimodal_factor
+                        * sf_p;
                 }
 
                 if w_pearson_peak > 1e-6 && pearson_peak_ms.is_finite() {
-                    cand.push((pearson_peak_ms, w_pearson_peak, "pearson_peak"));
+                    let p_dec_p = prior_decay_at(pearson_peak_ms);
+                    let w_pearson_final = w_pearson_peak * p_dec_p;
+                    if w_pearson_final > 1e-6 {
+                        cand.push((pearson_peak_ms, w_pearson_final, "pearson_peak"));
+                        cand_decomp.insert("pearson_peak", (w_pearson_peak, p_dec_p));
+                    }
+                }
+
+                // Pearson 2nd-peak candidate (D7): only joins the vote when a
+                // global prior is active (prior decay can lift a 2nd peak near
+                // the prior over a far main peak — exactly the C50 seg 0 case).
+                // Env var GYROFLOW_SYNC_PEARSON_SECOND_ALWAYS=1 forces it on
+                // even without a prior (regression A/B comparison).
+                let pearson_second_always = std::env::var("GYROFLOW_SYNC_PEARSON_SECOND_ALWAYS")
+                    .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+                    .unwrap_or(false);
+                let allow_second = pearson_second_always || global_prior.is_some();
+                if allow_second
+                    && pearson_second_ms.is_finite()
+                    && pearson_second_r > 0.0
+                    && pearson_peak_r > 1e-9
+                    && pearson_second_r >= 0.6 * pearson_peak_r
+                    && (pearson_second_ms - pearson_peak_ms).abs() >= SECOND_PEAK_MIN_GAP_MS
+                {
+                    sf_p2 = sharpness_at(pearson_second_ms, 0.0);
+                    let w_second_base = w_pearson_peak * 0.5 * sf_p2;
+                    let p_dec_second = prior_decay_at(pearson_second_ms);
+                    let w_second_final = w_second_base * p_dec_second;
+                    if w_second_final > 1e-6 {
+                        cand.push((pearson_second_ms, w_second_final, "pearson_2nd"));
+                        cand_decomp.insert("pearson_2nd", (w_second_base, p_dec_second));
+                    }
                 }
 
                 // Diagnostic log: factors contributing to w_pearson_peak
@@ -1421,11 +1773,74 @@ impl FindOffsetsRssync<'_> {
                 && rs_argmin_ms.is_finite()
                 && unimodal_ok
                 && (rs_argmin_ms - coarse_ms).abs() < CLUSTER_MERGE_MS;
-            let output_ms = if use_rs_shortcut {
+            let cluster_output_ms = if use_rs_shortcut {
                 rs_argmin_ms
             } else {
                 coarse_ms
             };
+
+            // AnchorPrior detection + sub-grid refinement
+            // (sync-fusion-sharpness-and-cross-prior).
+            //
+            // When the chosen cluster's candidates ALL have weak base weight
+            // (< 0.3) AND substantial prior decay (> 0.5), the cluster won
+            // solely because it sits near global_prior — its centroid is
+            // grid-quantized to Pearson's 5ms scan step (±2.5ms quantization
+            // error). The anchor segment's offset itself came from LBFGS f64
+            // (sub-millisecond), so a `pre_sync` 0.1ms scan around the prior
+            // recovers that precision for the weak segment.
+            let chosen_sources: Vec<&str> = cluster_signals
+                .split('+')
+                .filter(|s| !s.is_empty() && *s != "fallback")
+                .collect();
+            let prior_dominated = global_prior.is_some()
+                && !chosen_sources.is_empty()
+                && chosen_sources.iter().all(|s| {
+                    cand_decomp
+                        .get(*s)
+                        .map_or(false, |&(b, d)| b < 0.3 && d > 0.5)
+                });
+
+            // Pre-existing anchor_prior refinement (sync-fusion-sharpness-and-cross-prior).
+            // Only fires when prior_dominated == true (cluster signals all weak +
+            // sit near global_prior). Step 5/6 of sync-fusion-candidate-sharpness-gate
+            // proposed extending this to always-on around cluster_centroid, but Run 2
+            // regression showed the ±10ms window can jump to a neighbor cost-curve
+            // minimum that's worse than the cluster centroid. Reverted; the general
+            // cluster centroid is kept as-is (5ms Pearson grid + parabolic interp gives
+            // sub-grid precision for the Pearson candidate already).
+            let output_ms = if prior_dominated {
+                if let Some(p) = global_prior {
+                    let center_int_s = -(p + frt_offset_ms) / 1000.0;
+                    let radius_int_s = (2.0 * sigma_prior) / 1000.0;
+                    match self.sync.pre_sync(
+                        center_int_s,
+                        sp_from,
+                        sp_to,
+                        FINE_STEP_S,
+                        radius_int_s,
+                    ) {
+                        Some((_c, d_s)) => {
+                            let refined = -d_s * 1000.0 - frt_offset_ms;
+                            log::info!(
+                                "[ncc-fuse] seg {}: anchor_prior refine: cluster={:.2}ms → pre_sync_argmin={:.2}ms (center=prior={:.2}ms ±{:.0}ms)",
+                                i,
+                                cluster_output_ms,
+                                refined,
+                                p,
+                                2.0 * sigma_prior
+                            );
+                            refined
+                        }
+                        None => cluster_output_ms,
+                    }
+                } else {
+                    cluster_output_ms
+                }
+            } else {
+                cluster_output_ms
+            };
+
             let best_r_refined = pearson_at(output_ms);
             let refine_ok = best_r_refined.is_finite() && best_r_refined > 0.0;
 
@@ -1467,7 +1882,7 @@ impl FindOffsetsRssync<'_> {
             .into_iter()
             .filter(|r| r.is_finite() && *r >= 0.0)
             .fold(0.0_f64, f64::max);
-            let (confidence, conf_path) = decide_confidence(
+            let (raw_confidence, raw_path) = decide_confidence(
                 cluster_frac,
                 max_pearson_r,
                 best_r_refined,
@@ -1477,6 +1892,16 @@ impl FindOffsetsRssync<'_> {
                 legacy_ceiling,
             );
 
+            // AnchorPrior confidence clamp (prior_dominated computed above
+            // alongside the precision refinement). Confidence ceiling 0.5
+            // so sync_repair/rank can tell "borrowed from anchor" apart
+            // from self-evidenced consensus (≥ 0.5 by construction).
+            let (confidence, conf_path) = if prior_dominated {
+                (raw_confidence.clamp(0.05, 0.5), ConfPath::AnchorPrior)
+            } else {
+                (raw_confidence, raw_path)
+            };
+
             let path_str_owned = if use_rs_shortcut {
                 format!("v2_consensus[{}]|rs_shortcut", cluster_signals)
             } else {
@@ -1484,8 +1909,30 @@ impl FindOffsetsRssync<'_> {
             };
             offsets[i] = (mid_ms, output_ms, output_cost, confidence);
 
+            // Prior-state tail for log traceability. Only emit when prior is
+            // active to keep the no-prior log line byte-identical to the
+            // pre-change format.
+            let prior_tail = match global_prior {
+                Some(p) => {
+                    let chosen_decay: String = chosen_sources
+                        .iter()
+                        .filter_map(|s| {
+                            cand_decomp.get(*s).map(|&(_, d)| format!("{}={:.3}", s, d))
+                        })
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        ", anchor_pool={} global_prior={:.1}ms σ={:.0} prior_decay=[{}]",
+                        anchors.len(),
+                        p,
+                        sigma_prior,
+                        chosen_decay
+                    )
+                }
+                None => String::new(),
+            };
             log::info!(
-                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], cfrac={:.2}, max_r={:.3}, conf={:.3}, conf_path={})",
+                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], sf=[rs={:.2}/rs_cost={:.2}/ncc={:.2}/p={:.2}/p2={:.2}], cost_sharp={:.2} (old={:.2}, sf_rs={:.2}), cfrac={:.2}, max_r={:.3}, conf={:.3}, conf_path={}{})",
                 i,
                 path_str_owned,
                 coarse_ms,
@@ -1501,10 +1948,19 @@ impl FindOffsetsRssync<'_> {
                 w_rs_cost,
                 w_ncc,
                 w_pearson_peak,
+                sf_rs,
+                sf_rs_cost,
+                sf_ncc,
+                sf_p,
+                sf_p2,
+                cost_sharpness,
+                cost_sharpness_old,
+                sf_rs,
                 cluster_frac,
                 max_pearson_r,
                 confidence,
-                conf_path.as_str()
+                conf_path.as_str(),
+                prior_tail
             );
 
             let total_seg_ms = seg_t0.elapsed().as_secs_f64() * 1000.0;

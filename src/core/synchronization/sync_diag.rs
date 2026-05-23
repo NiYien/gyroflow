@@ -346,24 +346,27 @@ pub fn analyze_curve_and_record(
     if !is_enabled() {
         return;
     }
-    let mut sorted: Vec<(f64, f64)> = curve
-        .iter()
-        .filter(|(_, c)| !c.is_nan() && c.is_finite())
-        .copied()
-        .collect();
-    if sorted.len() < 3 {
+    // Delegate minima detection + scoring to the first-class sync_metric mod.
+    // Diag layer keeps only the per-record tagging (is_final / is_sharpest /
+    // sharpness_ratio / same_minimum) and SESSION push.
+    let (baseline, minima) =
+        crate::synchronization::sync_metric::find_local_minima(curve, width_tolerance);
+    if minima.is_empty() {
         return;
     }
-    sorted.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // baseline = P75 of cost (resistant to deep minima dragging it down)
-    let mut costs: Vec<f64> = sorted.iter().map(|p| p.1).collect();
-    costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let baseline = costs[(costs.len() as f64 * 0.75) as usize];
-
-    // Estimate step_ms (median of adjacent-point gaps)
-    let mut step_ms_samples: Vec<f64> =
-        sorted.windows(2).map(|w| (w[1].0 - w[0].0).abs()).collect();
+    // Estimate step_ms locally (same recipe as sync_metric uses internally) —
+    // needed for the `same_minimum` tolerance below.
+    let mut sorted_offsets: Vec<f64> = curve
+        .iter()
+        .filter(|(_, c)| !c.is_nan() && c.is_finite())
+        .map(|(o, _)| *o)
+        .collect();
+    sorted_offsets.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let mut step_ms_samples: Vec<f64> = sorted_offsets
+        .windows(2)
+        .map(|w| (w[1] - w[0]).abs())
+        .collect();
     step_ms_samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     let step_ms = if step_ms_samples.is_empty() {
         5.0
@@ -371,55 +374,31 @@ pub fn analyze_curve_and_record(
         step_ms_samples[step_ms_samples.len() / 2].max(0.001)
     };
 
-    // Find local minima
-    let n = sorted.len();
-    let mut minima: Vec<(usize, f64, f64, f64, f64, f64)> = Vec::new();
-    // (idx, offset, cost, depth, width_ms, sharpness)
-    for i in 1..(n - 1) {
-        if sorted[i].1 < sorted[i - 1].1 && sorted[i].1 < sorted[i + 1].1 {
-            let cost_i = sorted[i].1;
-            let threshold = cost_i * (1.0 + width_tolerance);
-            // Expand left
-            let mut l = i;
-            while l > 0 && sorted[l - 1].1 < threshold {
-                l -= 1;
-            }
-            // Expand right
-            let mut r = i;
-            while r + 1 < n && sorted[r + 1].1 < threshold {
-                r += 1;
-            }
-            let width_ms = (sorted[r].0 - sorted[l].0).abs().max(step_ms);
-            let depth = (baseline - cost_i).max(0.0);
-            let sharpness = depth / width_ms;
-            minima.push((i, sorted[i].0, cost_i, depth, width_ms, sharpness));
-        }
-    }
-
-    if minima.is_empty() {
-        return;
-    }
-
-    // Find the minimum nearest to `final_offset_ms` and the sharpest minimum
+    // Final = minimum nearest to the offset rs_sync actually chose.
     let final_min = minima
         .iter()
         .min_by(|a, b| {
-            (a.1 - final_offset_ms)
+            (a.offset_ms - final_offset_ms)
                 .abs()
-                .partial_cmp(&(b.1 - final_offset_ms).abs())
+                .partial_cmp(&(b.offset_ms - final_offset_ms).abs())
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .copied()
         .unwrap();
+    // Sharpest = highest depth/width score.
     let sharpest_min = minima
         .iter()
-        .max_by(|a, b| a.5.partial_cmp(&b.5).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|a, b| {
+            a.sharpness
+                .partial_cmp(&b.sharpness)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .copied()
         .unwrap();
 
-    let same = (final_min.1 - sharpest_min.1).abs() < step_ms * 1.5;
-    let sharpness_ratio = if final_min.5 > 1e-9 {
-        sharpest_min.5 / final_min.5
+    let same = (final_min.offset_ms - sharpest_min.offset_ms).abs() < step_ms * 1.5;
+    let sharpness_ratio = if final_min.sharpness > 1e-9 {
+        sharpest_min.sharpness / final_min.sharpness
     } else {
         f64::INFINITY
     };
@@ -428,17 +407,17 @@ pub fn analyze_curve_and_record(
         for m in &minima {
             s.local_minima.push(LocalMinRecord {
                 range_idx,
-                offset_ms: m.1,
-                cost: m.2,
-                depth: m.3,
-                width_ms: m.4,
-                sharpness: m.5,
-                is_final: if (m.1 - final_min.1).abs() < 1e-9 {
+                offset_ms: m.offset_ms,
+                cost: m.cost,
+                depth: m.depth,
+                width_ms: m.width_ms,
+                sharpness: m.sharpness,
+                is_final: if (m.offset_ms - final_min.offset_ms).abs() < 1e-9 {
                     1
                 } else {
                     0
                 },
-                is_sharpest: if (m.1 - sharpest_min.1).abs() < 1e-9 {
+                is_sharpest: if (m.offset_ms - sharpest_min.offset_ms).abs() < 1e-9 {
                     1
                 } else {
                     0
@@ -450,16 +429,16 @@ pub fn analyze_curve_and_record(
             n_local_minima: minima.len(),
             baseline_p75: baseline,
             final_offset_ms,
-            final_depth: final_min.3,
-            final_width_ms: final_min.4,
-            final_sharpness: final_min.5,
-            sharpest_offset_ms: sharpest_min.1,
-            sharpest_depth: sharpest_min.3,
-            sharpest_width_ms: sharpest_min.4,
-            sharpest_sharpness: sharpest_min.5,
+            final_depth: final_min.depth,
+            final_width_ms: final_min.width_ms,
+            final_sharpness: final_min.sharpness,
+            sharpest_offset_ms: sharpest_min.offset_ms,
+            sharpest_depth: sharpest_min.depth,
+            sharpest_width_ms: sharpest_min.width_ms,
+            sharpest_sharpness: sharpest_min.sharpness,
             sharpness_ratio,
             same_minimum: same,
-            sharpest_offset_diff_from_final_ms: sharpest_min.1 - final_min.1,
+            sharpest_offset_diff_from_final_ms: sharpest_min.offset_ms - final_min.offset_ms,
         });
     }
 }
