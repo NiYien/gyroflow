@@ -48,7 +48,7 @@ impl Default for DefaultAlgo {
             second_pass: true,
             trim_range_only: true,
             max_smoothness: 1.0,
-            alpha_0_1s: 0.12,
+            alpha_0_1s: 0.10,
         }
     }
 }
@@ -731,3 +731,4 @@ fn trim_pad(padded: TimeQuat, first_ts: i64, last_ts: i64) -> TimeQuat {
         .filter(|(ts, _)| *ts >= first_ts && *ts <= last_ts)
         .collect()
 }
+
