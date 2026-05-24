@@ -46,7 +46,7 @@ use lens_profile::LensProfile;
 use lens_profile_database::LensProfileDatabase;
 use nalgebra::Vector4;
 use niyien_lens_presets::{LensGroupConfig, LensGroupStatus};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use smoothing::Smoothing;
 pub use stabilization::PixelType;
 use stabilization::{ComputeParams, KernelParamsFlags, Stabilization};
@@ -352,6 +352,30 @@ pub struct StabilizationManager {
     // video URL changed. Render threads compare per-thread last-seen epoch and
     // self-clear their thread_local caches when they diverge.
     pub gpu_epoch: Arc<AtomicU64>,
+    // Monotonic ms timestamp (since process start) of the last GPU invalidation
+    // request that actually fired. Used by `request_gpu_invalidation` to
+    // coalesce back-to-back requests that would otherwise trigger redundant
+    // d3d11 / wgpu resource reinit within the same QML/MDK transition window
+    // (see Bug 2 / DXGI 0x887a0005 root cause). Sentinel value 0 means
+    // "never fired"; first fire stores `now.max(1)` so subsequent deltas are
+    // always computed from a real timestamp.
+    pub last_gpu_invalidation_ms: Arc<AtomicU64>,
+    // Holds the OpGuard for the in-flight video load across the full
+    // QML → MDK async → load_telemetry chain (see
+    // video-load-lifecycle-guard change). do_load writes Some(guard) when
+    // the mutation block runs; load_telemetry's `finished` callback takes
+    // the guard on the main-video path so `in_flight_count` only decrements
+    // after telemetry is committed and `telemetry_loaded` has been emitted.
+    // Error paths (e.g. MDK metadata fail) call
+    // `Controller::abort_pending_video_load` to drain the guard.
+    //
+    // NOTE: it is intentional that this is independent of `in_flight_count`
+    // itself — replacing the inner Some(_) with a new guard during a
+    // second load_video raced against the first is safe because the
+    // previous OpGuard's Drop fires automatically, keeping the counter
+    // consistent. The Mutex is for concurrent reader/writer arbitration
+    // between QML do_load (write) and load_telemetry::finished (take).
+    pub video_load_guard: Arc<Mutex<Option<OpGuard>>>,
 }
 
 impl Default for StabilizationManager {
@@ -412,8 +436,96 @@ impl Default for StabilizationManager {
 
             in_flight_count: Arc::new(AtomicUsize::new(0)),
             gpu_epoch: Arc::new(AtomicU64::new(0)),
+            last_gpu_invalidation_ms: Arc::new(AtomicU64::new(0)),
+            video_load_guard: Arc::new(Mutex::new(None)),
         }
     }
+}
+
+// Resolved once per process from env `GYROFLOW_GPU_INVALIDATE_COALESCE_MS`.
+// Default 1000 ms; value 0 disables coalescing (every request fires).
+static GPU_INVALIDATE_COALESCE_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+static GPU_INVALIDATE_COALESCE_LOGGED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+// Monotonic anchor for `last_gpu_invalidation_ms`. Initialized on first call,
+// not at literal process start; only deltas matter, so this is fine.
+static GPU_INVALIDATE_TIME_ANCHOR: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+
+fn gpu_invalidate_coalesce_ms() -> u64 {
+    let value = *GPU_INVALIDATE_COALESCE_MS.get_or_init(|| {
+        match std::env::var("GYROFLOW_GPU_INVALIDATE_COALESCE_MS") {
+            Ok(raw) if !raw.is_empty() => match raw.parse::<u64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_GPU_INVALIDATE_COALESCE_MS={} invalid, using default 1000",
+                        raw
+                    );
+                    1000
+                }
+            },
+            _ => 1000,
+        }
+    });
+    if GPU_INVALIDATE_COALESCE_LOGGED.set(()).is_ok() {
+        let source = if std::env::var("GYROFLOW_GPU_INVALIDATE_COALESCE_MS")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        {
+            "env"
+        } else {
+            "default"
+        };
+        log::info!(
+            target: "lifecycle",
+            "gpu_invalidate_coalesce_ms resolved={} source={}",
+            value, source
+        );
+    }
+    value
+}
+
+fn gpu_invalidate_now_ms() -> u64 {
+    let anchor = *GPU_INVALIDATE_TIME_ANCHOR.get_or_init(Instant::now);
+    anchor.elapsed().as_millis() as u64
+}
+
+// Bug 2 / Bug 1 master kill switch. Set `GYROFLOW_VIDEO_LOAD_GUARD=0` to
+// disable the extended-lifecycle OpGuard hold (do_load drops the guard
+// inline as in the c623a548 baseline) and the QML video_loading_in_progress
+// gate is never flipped to true. Useful for A/B diagnostic against the
+// pre-change behavior.
+static VIDEO_LOAD_GUARD_ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+static VIDEO_LOAD_GUARD_LOGGED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+pub fn video_load_guard_enabled() -> bool {
+    let enabled = *VIDEO_LOAD_GUARD_ENABLED.get_or_init(|| {
+        match std::env::var("GYROFLOW_VIDEO_LOAD_GUARD") {
+            Ok(raw) => {
+                let trimmed = raw.trim();
+                !(trimmed == "0"
+                    || trimmed.eq_ignore_ascii_case("off")
+                    || trimmed.eq_ignore_ascii_case("false"))
+            }
+            Err(_) => true,
+        }
+    });
+    if VIDEO_LOAD_GUARD_LOGGED.set(()).is_ok() {
+        let source = if std::env::var("GYROFLOW_VIDEO_LOAD_GUARD")
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            "env"
+        } else {
+            "default"
+        };
+        log::info!(
+            target: "lifecycle",
+            "video_load_guard_enabled resolved={} source={}",
+            enabled, source
+        );
+    }
+    enabled
 }
 
 fn populate_lens_metadata_fields(
@@ -527,20 +639,64 @@ fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f
 }
 
 impl StabilizationManager {
-    // §8a Layer A + epoch bump. Clears the GPU wrappers held on the
-    // Stabilization struct AND increments `gpu_epoch` so render threads see
-    // the change on their next frame and self-clear their thread_local
-    // CACHED_OPENCL / CACHED_WGPU LRUs. MUST be called after MDK setUrl, so
-    // the render thread sees the new texture handle when it re-initializes.
-    pub fn invalidate_gpu_bindings(&self) {
-        self.stabilization.write().invalidate_gpu_bindings();
-        let prev = self.gpu_epoch.fetch_add(1, SeqCst);
+    // §8a Layer A + epoch bump, with coalescing of back-to-back requests.
+    // Clears the GPU wrappers held on the Stabilization struct AND increments
+    // `gpu_epoch` so render threads see the change on their next frame and
+    // self-clear their thread_local CACHED_OPENCL / CACHED_WGPU LRUs. MUST be
+    // called after MDK setUrl, so the render thread sees the new texture
+    // handle when it re-initializes.
+    //
+    // Within `GYROFLOW_GPU_INVALIDATE_COALESCE_MS` (default 1000 ms) of a
+    // previous fire, subsequent calls are no-ops with a coalesced log line.
+    // This prevents the double-setUrl race during a video-load-during-load
+    // sequence from triggering DXGI device-removed (Bug 2 / 0x887a0005).
+    // `try_write` is used so we never block the QML thread; if the stab
+    // RwLock is busy, the epoch is still bumped and the render thread will
+    // self-clear on the next frame.
+    pub fn request_gpu_invalidation(&self) {
+        let now = gpu_invalidate_now_ms();
+        let window = gpu_invalidate_coalesce_ms();
+        let last = self.last_gpu_invalidation_ms.load(SeqCst);
+        let elapsed = now.saturating_sub(last);
+        let fire = last == 0 || window == 0 || elapsed >= window;
+        if !fire {
+            log::info!(
+                target: "lifecycle",
+                "gpu_invalidation_coalesced prev_ms_ago={} window_ms={}",
+                elapsed,
+                window
+            );
+            return;
+        }
+        let stab_locked = match self.stabilization.try_write() {
+            Some(mut g) => {
+                g.invalidate_gpu_bindings();
+                false
+            }
+            None => true,
+        };
+        let prev_epoch = self.gpu_epoch.fetch_add(1, SeqCst);
+        // Store at least 1 so the "never fired" sentinel (0) is consumed even
+        // when `now` happens to also be 0 (sub-millisecond after anchor init).
+        self.last_gpu_invalidation_ms.store(now.max(1), SeqCst);
         log::info!(
             target: "lifecycle",
-            "StabilizationManager::invalidate_gpu_bindings — epoch {} → {}",
-            prev,
-            prev + 1
+            "gpu_invalidation_applied at_ms={} prev_ms={} window_ms={} stab_locked={} epoch={}→{}",
+            now,
+            last,
+            window,
+            stab_locked,
+            prev_epoch,
+            prev_epoch + 1
         );
+    }
+
+    // Legacy entry point retained for backwards compatibility with any external
+    // callers (NLE plugins, etc.). Routes through `request_gpu_invalidation`
+    // so the coalescing policy is applied uniformly. New code should call
+    // `request_gpu_invalidation` directly.
+    pub fn invalidate_gpu_bindings(&self) {
+        self.request_gpu_invalidation();
     }
 
     // Signal cancellation to in-flight long ops, then block (polling, 20 ms

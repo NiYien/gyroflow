@@ -38,6 +38,10 @@ Item {
     property url pendingExternalGyroFallbackUrl: "";
     property int pendingExternalGyroFallbackProjectVersion: 0;
     property url pendingCrmTelemetryUrl: "";
+    // Set by loadFile() from its suppressAssociatedGyroflow argument; consumed
+    // by fileLoaded() to decide whether to fire the deferred .gyroflow
+    // sibling prompt. Reset to false inside fileLoaded after use.
+    property bool skipAssociatedGyroflowOnLoad: false;
     property bool queueEditLoading: false;
     property url loadedFileUrl;
 
@@ -388,8 +392,21 @@ Item {
         let filename = filesystem.get_filename(url);
         let folder = filesystem.get_folder(url);
 
+        // .gyroflow routing must come BEFORE the loading gate: import_gyroflow_file
+        // has its own wait_until_idle, so .gyroflow drops while a video load is
+        // in progress are deferred via that path (LifecycleBusy → toast), not
+        // by this gate.
         if (filename.endsWith(".gyroflow")) {
             return loadGyroflowData(url, queueJobId);
+        }
+
+        // Video-load-in-progress gate: refuse a second video while the first
+        // is still resolving its metadata + telemetry. Closes the Bug 2 race
+        // where double setUrl + double GPU invalidate triggered DXGI
+        // device-removed. .gyroflow path above is intentionally exempt.
+        if (controller.video_loading_in_progress) {
+            messageBox(Modal.Warning, qsTr("Previous video is still loading, please wait..."), [{ text: qsTr("Ok") }]);
+            return;
         }
         if (filename.endsWith(".RDC")) {
             // Assumes regular filesystem
@@ -521,26 +538,13 @@ Item {
             }
             window.exportSettings.updateCodecParams();
         }
-        if (!root.pendingGyroflowData && !skipAssociatedGyroflow) {
-            let gfBaseFilename = filename;
-            if (gfBaseFilename.includes("%0")) {
-                gfBaseFilename = gfBaseFilename.replace(/%0(\d+)d/, (_, len) => controller.image_sequence_start.toString().padStart(parseInt(len), '0'));
-            }
-            const gfFilename = filesystem.filename_with_extension(gfBaseFilename, "gyroflow");
-            if (filesystem.exists_in_folder(folder, gfFilename)) {
-                const gfUrl = filesystem.get_file_url(folder, gfFilename, false);
-                if (activeProjectFileUrl && activeProjectFileUrl == gfUrl.toString()) {
-                    Qt.callLater(() => loadFile(gfUrl, true, 0, "", true));
-                } else {
-                    messageBox(Modal.Question, qsTr("There's a %1 file associated with this video, do you want to load it?").arg("<b>" + gfFilename + "</b>"), [
-                        { text: qsTr("Yes"), clicked: function() {
-                            Qt.callLater(() => loadFile(gfUrl, true));
-                        } },
-                        { text: qsTr("No"), accent: true },
-                    ]);
-                }
-            }
-        }
+        // Associated .gyroflow prompt is deferred to fileLoaded() so it
+        // only fires once vidInfo.filename is set. Asking earlier (while
+        // metadata is still being decoded) lets a Yes-click route through
+        // loadGyroflowData → isCorrectVideoLoaded=false → reload-original
+        // path → late telemetry_loaded then clears pendingGyroflowData and
+        // load_default_preset overwrites the imported project (Bug 1).
+        root.skipAssociatedGyroflowOnLoad = !!suppressAssociatedGyroflow;
 
         dropText.loadingFile = filename;
         vidInfo.cleanupModel();
@@ -549,6 +553,44 @@ Item {
         vidInfo.updateEntry("Detected lens", "---");
         vidInfo.updateEntry("Contains gyro", "---");
         timeline.editingSyncPoint = false;
+    }
+    // Sibling-`.gyroflow` prompt logic, deferred from loadFile() to fileLoaded().
+    // Runs once the main video's metadata is decoded and vidInfo.filename is set;
+    // a Yes click then routes through loadGyroflowData → isCorrectVideoLoaded=true
+    // → import_gyroflow_file directly (no reload-original detour, no late
+    // load_default_preset overwriting the project).
+    function maybePromptAssociatedGyroflow(): void {
+        const suppress = root.skipAssociatedGyroflowOnLoad;
+        // Reset immediately so subsequent loads start clean even if we early-return.
+        root.skipAssociatedGyroflowOnLoad = false;
+
+        if (root.pendingGyroflowData) return;
+        if (suppress) return;
+        if (!vid.loaded) return;
+        if (!vidInfo.filename) return;
+
+        const url = root.loadedFileUrl;
+        if (!url || !url.toString()) return;
+        const folder = filesystem.get_folder(url);
+        let gfBaseFilename = vidInfo.filename;
+        if (gfBaseFilename.includes("%0")) {
+            gfBaseFilename = gfBaseFilename.replace(/%0(\d+)d/, (_, len) => controller.image_sequence_start.toString().padStart(parseInt(len), '0'));
+        }
+        const gfFilename = filesystem.filename_with_extension(gfBaseFilename, "gyroflow");
+        if (!filesystem.exists_in_folder(folder, gfFilename)) return;
+
+        const gfUrl = filesystem.get_file_url(folder, gfFilename, false);
+        const activeProjectFileUrl = controller.project_file_url ? controller.project_file_url.toString() : "";
+        if (activeProjectFileUrl && activeProjectFileUrl == gfUrl.toString()) {
+            Qt.callLater(() => loadFile(gfUrl, true, 0, "", true));
+        } else {
+            messageBox(Modal.Question, qsTr("There's a %1 file associated with this video, do you want to load it?").arg("<b>" + gfFilename + "</b>"), [
+                { text: qsTr("Yes"), clicked: function() {
+                    Qt.callLater(() => loadFile(gfUrl, true));
+                } },
+                { text: qsTr("No"), accent: true },
+            ]);
+        }
     }
     function loadCrmProxyPair(pair: var, skip_detection: bool): void {
         if (!pair || !pair.crm_url || !pair.proxy_url) {
@@ -918,6 +960,13 @@ Item {
 
                         window.lensProfile.selected_manually = false;
 
+                        // Deferred associated .gyroflow prompt — fires here
+                        // (after vidInfo.loadFromVideoMetadata) so vidInfo.filename
+                        // is set and loadGyroflowData's isCorrectVideoLoaded check
+                        // resolves true on the Yes path (avoids the reload-original
+                        // detour that opens the Bug 1 race).
+                        root.maybePromptAssociatedGyroflow();
+
                         // for (var i in md) console.info(i, md[i]);
                     }
                     property bool errorShown: false;
@@ -940,6 +989,10 @@ Item {
                             dropText.loadingFile = "";
                             root.pendingGyroflowData = null;
                             stabEnabledBtn.checked = true;
+                            // Release the video-load guard. load_telemetry::finished
+                            // will never fire (MDK reported videoWidth=0), so without
+                            // this call the guard would hang until the watchdog.
+                            controller.abort_pending_video_load();
                         }
                     }
                     Timer {

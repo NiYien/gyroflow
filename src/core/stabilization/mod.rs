@@ -303,8 +303,10 @@ impl Stabilization {
     // §8a Layer A — drop GPU resource wrappers held on this struct. Render
     // threads (which own their own thread_local CACHED_* LRUs) self-clear via
     // the gpu_epoch counter on `StabilizationManager` once `gpu_epoch` ticks.
-    // See `StabilizationManager::invalidate_gpu_bindings`.
-    pub fn invalidate_gpu_bindings(&mut self) {
+    // Crate-private: external callers should go through
+    // `StabilizationManager::request_gpu_invalidation` so coalescing is
+    // applied; this entry point exists only for the manager wrapper.
+    pub(crate) fn invalidate_gpu_bindings(&mut self) {
         #[cfg(feature = "use-opencl")]
         {
             self.cl = None;

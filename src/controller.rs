@@ -270,6 +270,19 @@ pub struct Controller {
     loading_gyro_in_progress_changed: qt_signal!(),
     loading_gyro_progress: qt_signal!(progress: f64),
 
+    // True from the moment do_load enters its mutation block until
+    // load_telemetry's finished callback (main-video path) completes.
+    // QML uses this to gate re-entry: a second loadFile/load_video while
+    // this is true must be deferred or rejected (see VideoArea.qml::loadFile
+    // top-of-function gate). Bug 2 root cause was that
+    // `in_flight_count` returned to 0 in the µs window between do_load
+    // OpGuard drop and load_telemetry OpGuard enter, so wait_until_idle
+    // saw count=0 and let a second load_video race the first → double
+    // setUrl + double GPU invalidation → DXGI device-removed.
+    video_loading_in_progress: qt_property!(bool; NOTIFY video_loading_in_progress_changed),
+    video_loading_in_progress_changed: qt_signal!(),
+    abort_pending_video_load: qt_method!(fn(&mut self)),
+
     calib_model: qt_property!(RefCell<SimpleListModel<CalibrationItem>>; NOTIFY calib_model_updated),
     calib_model_updated: qt_signal!(),
 
@@ -632,11 +645,43 @@ impl Controller {
                     image_sequence_start,
                     image_sequence_fps,
                 ) = payload;
-                // OpGuard held only across the mutation window. Re-entry from
-                // the QML thread itself can't race because Qt's event loop is
-                // single-threaded — a second load_video call queues and runs
-                // strictly after this returns.
-                let _g = OpGuard::enter(&this.stabilizer.in_flight_count);
+                // OpGuard held across the FULL video-load lifecycle: do_load
+                // mutation block → MDK async decode → load_telemetry finished
+                // callback. The guard is stored in `video_load_guard`
+                // (a Mutex<Option<OpGuard>>) and released by
+                // `load_telemetry::finished` on the main-video path, or by
+                // `abort_pending_video_load` on metadata-error paths. This
+                // ensures `wait_until_idle` from any subsequent op sees
+                // `in_flight_count >= 1` for the entire MDK-async window —
+                // closing the Bug 2 race where double setUrl + double GPU
+                // invalidate triggered DXGI device-removed.
+                //
+                // Replacing a prior Some(_) is safe: the previous OpGuard's
+                // Drop fires on the temporary, keeping in_flight_count
+                // consistent. This handles the corner where a watchdog or
+                // error path failed to drain the guard cleanly.
+                //
+                // When GYROFLOW_VIDEO_LOAD_GUARD=0 we fall back to the
+                // c623a548 baseline: the guard drops naturally at the end
+                // of this callback (the let-binding scope) and the QML
+                // gate never sees video_loading_in_progress=true.
+                let g = OpGuard::enter(&this.stabilizer.in_flight_count);
+                if core::video_load_guard_enabled() {
+                    *this.stabilizer.video_load_guard.lock() = Some(g);
+                    this.video_loading_in_progress = true;
+                    this.video_loading_in_progress_changed();
+                    ::log::info!(
+                        target: "lifecycle",
+                        "video_load_guard_enter filename={}",
+                        filename
+                    );
+                }
+                // When guard is disabled, `g` stays bound here and the
+                // OpGuard drops at the end of this closure — matching the
+                // c623a548 baseline (µs-window protection only). The
+                // conditional move is fine for Rust's drop elaboration:
+                // in the enabled branch `g` is moved into the Mutex; in
+                // the disabled branch `g` lives to closure end.
                 this.stabilizer.clear();
                 *this.stabilizer.lens.write() = Default::default();
                 *this.stabilizer.input_file.write() = gyroflow_core::InputFile {
@@ -686,12 +731,15 @@ impl Controller {
                     // §8c.1 / 8c.4: invalidate GPU bindings AFTER MDK setUrl
                     // so the render thread sees the new texture handle on
                     // its next frame (epoch bump triggers thread_local LRU
-                    // clear inside the onProcessTexture closure).
+                    // clear inside the onProcessTexture closure). Goes through
+                    // `request_gpu_invalidation` so a second load_video racing
+                    // the first one within the coalesce window does not
+                    // double-bump the epoch and starve d3d11/wgpu resources.
                     ::log::info!(
                         target: "lifecycle",
                         "GPU bindings invalidated (video URL changed via load_video)"
                     );
-                    this.stabilizer.invalidate_gpu_bindings();
+                    this.stabilizer.request_gpu_invalidation();
                 }
             },
         );
@@ -1546,6 +1594,7 @@ impl Controller {
             let finished = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, params: (bool, QString, QString, bool, serde_json::Value)| {
+                    let is_main_video = params.0;
                     this.gyro_loaded = params.3; // Contains motion
                     this.gyro_changed();
 
@@ -1566,6 +1615,32 @@ impl Controller {
                     stab2.invalidate_ongoing_computations();
                     stab2.invalidate_smoothing();
                     this.request_recompute();
+
+                    // Release the video-load guard on the main-video path
+                    // (non-main paths — fallback gyro URL, CRM telemetry —
+                    // do not touch the guard). Order: flip the QML-visible
+                    // flag FIRST so QML observers see false, then drop the
+                    // OpGuard so any subsequent long op's wait_until_idle
+                    // sees in_flight_count return to 0. Doing it in the
+                    // opposite order would let a queued op observe count=0
+                    // before the property updated, defeating QML-side
+                    // re-entry detection.
+                    if is_main_video {
+                        this.video_loading_in_progress = false;
+                        this.video_loading_in_progress_changed();
+                        let was_present = this
+                            .stabilizer
+                            .video_load_guard
+                            .lock()
+                            .take()
+                            .is_some();
+                        if was_present {
+                            ::log::info!(
+                                target: "lifecycle",
+                                "video_load_guard_exit reason=telemetry_loaded"
+                            );
+                        }
+                    }
                 },
             );
             let load_lens = util::qt_queued_callback_mut(
@@ -2620,6 +2695,24 @@ impl Controller {
         self.cancel_flag.store(true, SeqCst);
     }
 
+    // Release the video-load guard and clear the loading flag without
+    // waiting for load_telemetry::finished. Called from QML's
+    // onMetadataChanged error branch (MDK reports videoWidth=0 → decode
+    // failed → no telemetry will follow, so the guard would otherwise hang
+    // until the watchdog fires). Idempotent: calling when the guard is
+    // already absent is a silent no-op.
+    fn abort_pending_video_load(&mut self) {
+        self.video_loading_in_progress = false;
+        self.video_loading_in_progress_changed();
+        let was_present = self.stabilizer.video_load_guard.lock().take().is_some();
+        if was_present {
+            ::log::info!(
+                target: "lifecycle",
+                "video_load_aborted reason=metadata_error_or_explicit"
+            );
+        }
+    }
+
     fn export_gyroflow_file(&self, url: QUrl, typ: QString, additional_data: QJsonObject) {
         let url = util::qurl_to_encoded(url);
         let typ_str = typ.clone();
@@ -2882,7 +2975,7 @@ impl Controller {
                                 target: "lifecycle",
                                 "GPU bindings invalidated (video URL changed via import_gyroflow_data)"
                             );
-                            stab.invalidate_gpu_bindings();
+                            stab.request_gpu_invalidation();
                         }
                     }
                     finished(result);
