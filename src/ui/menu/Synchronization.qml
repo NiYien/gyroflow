@@ -95,13 +95,18 @@ MenuItem {
         }
     }
     function getSettings(): var {
-        // Simple mode "AI SYNC" toggle overrides the Full mode dropdown when
-        // it's on. Lets single-clip Auto sync (App.qml's simpleAutoSyncBtn →
-        // sync.runAutosync) pick up the user's NeuFlow preference without
-        // needing them to switch to Full mode and change the dropdown.
+        // Simple mode binds of_method entirely to the AI SYNC toggle:
+        //   on  → NeuFlow Burn (4),  off → OpenCV DIS (2).
+        // The Full-mode dropdown is bypassed here so that toggling AI SYNC off
+        // in Simple mode does not silently inherit a NeuFlow selection the
+        // user previously made in Full mode (and vice versa).
+        // Full mode keeps using the dropdown.
         const aiSyncRaw = settings.value("simpleAiSync", false);
         const aiSyncOn  = (aiSyncRaw === true || aiSyncRaw === "true");
         const useAi     = aiSyncOn && controller.has_neuflow_support();
+        const isSimple  = window.isSimpleMode === true;
+        const ofMethod  = isSimple ? (useAi ? 4 : 2)
+                                   : (useAi ? 4 : syncMethod.ofMethodMap[syncMethod.currentIndex]);
         return {
             "initial_offset":     initialOffset.value,
             "initial_offset_inv": checkNegativeInitialOffset.checked,
@@ -110,7 +115,7 @@ MenuItem {
             "max_sync_points":    maxSyncPoints.value,
             "every_nth_frame":    everyNthFrame.value,
             "time_per_syncpoint": timePerSyncpoint.value,
-            "of_method":          useAi ? 4 : syncMethod.ofMethodMap[syncMethod.currentIndex],
+            "of_method":          ofMethod,
             "offset_method":      offsetMethod.currentIndex,
             "pose_method":        poseMethod.currentIndex,
             "auto_sync_points":   experimentalAutoSyncPoints.checked,
