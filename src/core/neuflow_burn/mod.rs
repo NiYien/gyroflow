@@ -158,9 +158,17 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
     std::thread::Builder::new()
         .name("neuflow-infer".to_string())
         .spawn(move || {
+            // Pin autotune off by default. Level=2 lets cubecl re-benchmark
+            // kernels at runtime, which silently flips between numerically
+            // distinct kernel variants between inferences. The variance bleeds
+            // into the flow tensor and makes rs-sync lock onto alternating
+            // close-but-distinct cost minima (observed: bimodal +/-4.6ms offset
+            // on DSC_0385). Default kernel is deterministic and only ~5-20%
+            // slower for our 768x432 model — sync accuracy trumps that delta.
+            // Power users can still override by setting CUBECL_AUTOTUNE_LEVEL=2.
             if std::env::var_os("CUBECL_AUTOTUNE_LEVEL").is_none() {
                 unsafe {
-                    std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "2");
+                    std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0");
                 }
             }
 
