@@ -55,6 +55,42 @@ fn main() {
 
     // 3. Generate the built-in preset lookup table from the snapshot on disk.
     generate_builtin_preset_table(&project_dir);
+
+    // 4. Regenerate NeuFlow v2 model bindings from bundled ONNX (only when
+    //    feature `neuflow-burn` is enabled; pulled in as build-dep regardless
+    //    but ModelGen is skipped to keep default-build cost down).
+    if std::env::var_os("CARGO_FEATURE_NEUFLOW_BURN").is_some() {
+        generate_neuflow_burn_model(&project_dir);
+    }
+}
+
+fn generate_neuflow_burn_model(project_dir: &str) {
+    use burn_onnx::ModelGen;
+
+    let onnx_path = format!("{project_dir}/../../resources/neuflow_v2_iter5_768x432.onnx");
+    if !std::path::Path::new(&onnx_path).exists() {
+        panic!(
+            "neuflow-burn feature enabled but ONNX source missing at {onnx_path}. \
+             Expected resources/neuflow_v2_iter5_768x432.onnx to be present."
+        );
+    }
+    println!("cargo:rerun-if-changed={onnx_path}");
+
+    ModelGen::new()
+        .input(&onnx_path)
+        .out_dir("burn_onnx/")
+        .run_from_script();
+
+    // Copy the regenerated .bpk into the source tree so mod.rs::find_weight_file()
+    // can still locate it from a release/install layout (no env!("OUT_DIR") at runtime).
+    // The .rs glue stays in $OUT_DIR and is pulled in via include!().
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    let src_bpk = format!("{out_dir}/burn_onnx/neuflow_v2_iter5_768x432.bpk");
+    let dst_bpk =
+        format!("{project_dir}/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk");
+    if let Err(e) = std::fs::copy(&src_bpk, &dst_bpk) {
+        panic!("Failed to copy regenerated burnpack {src_bpk} -> {dst_bpk}: {e}");
+    }
 }
 
 fn generate_builtin_preset_table(project_dir: &str) {

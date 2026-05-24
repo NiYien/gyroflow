@@ -1,0 +1,65 @@
+[package]
+name = "burn-tensor"
+version = "0.22.0-pre.1"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
+categories = ["science", "no-std", "embedded", "wasm"]
+description = "Tensor library with user-friendly APIs and automatic differentiation support"
+documentation = "https://docs.rs/burn-tensor"
+keywords = ["deep-learning", "machine-learning", "tensor", "pytorch", "ndarray"]
+repository = "https://github.com/tracel-ai/burn/tree/main/crates/burn-tensor"
+
+[features]
+default = ["std", "burn-dispatch/default"]
+doc = ["default"]
+std = [
+    "num-traits/std",
+    "burn-std/std",
+    "burn-backend/std",
+    "burn-dispatch/std",
+    "colored",
+]
+tracing = ["burn-std/tracing", "burn-backend/tracing", "burn-dispatch/tracing"]
+distributed = ["std", "burn-backend/distributed", "burn-dispatch/distributed"]
+
+cubecl = ["burn-std/cubecl", "burn-backend/cubecl"]
+cubecl-cuda = ["burn-backend/cubecl-cuda"]
+cubecl-hip = ["burn-backend/cubecl-hip"]
+cubecl-wgpu = ["burn-backend/cubecl-wgpu"]
+cubecl-cpu = ["burn-backend/cubecl-cpu"]
+
+cuda = ["burn-dispatch/cuda"]
+rocm = ["burn-dispatch/rocm"]
+flex = ["burn-dispatch/flex"]
+ndarray = ["burn-dispatch/ndarray"]
+tch = ["burn-dispatch/tch"]
+vulkan = ["burn-dispatch/vulkan"]
+webgpu = ["burn-dispatch/webgpu"]
+wgpu = ["burn-dispatch/wgpu"]
+metal = ["burn-dispatch/metal"]
+cpu = ["burn-dispatch/cpu"]
+autodiff = ["burn-dispatch/autodiff"]
+
+extension = []
+
+autotune = ["burn-dispatch/autotune"]
+autotune-checks = ["burn-dispatch/autotune-checks"]
+fusion = ["burn-dispatch/fusion"]
+
+[dependencies]
+burn-std = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-std", version = "=0.22.0-pre.1", default-features = false }
+burn-backend = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-backend", version = "=0.22.0-pre.1", default-features = false }
+burn-dispatch = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-dispatch", version = "=0.22.0-pre.1", default-features = false }
+burn-backend-extension = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-backend-extension", version = "=0.22.0-pre.1", default-features = false, optional = true }
+
+colored = { version = "3.0.0", optional = true }
+derive-new = { version = "0.7.0", default-features = false }
+num-traits = { version = "0.2.19", default-features = false, features = ["libm"] }
+
+serde = { version = "1.0.228", default-features = false, features = ["derive", "alloc"] }
+enumset = { version = "1.1.13", default-features = false }
+
+[package.metadata.docs.rs]
+features = ["doc"]
+rustdoc-args = ["--cfg", "docsrs", "--html-in-header", "katex-header.html"]

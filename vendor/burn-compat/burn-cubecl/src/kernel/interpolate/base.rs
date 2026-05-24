@@ -4,15 +4,12 @@ use crate::{
     ops::{numeric::empty_device_dtype, permute_nchw_to_nhwc, permute_nhwc_to_nchw},
     tensor::CubeTensor,
 };
-use burn_backend::{
-    Shape, TensorMetadata,
-    ops::{InterpolateMode, InterpolateOptions},
-};
-
-use super::{
-    bicubic::interpolate_bicubic_launch, bilinear::interpolate_bilinear_launch,
-    lanczos3::interpolate_lanczos3_launch, nearest::interpolate_nearest_launch,
-    nearest_backward::interpolate_nearest_backward_launch,
+use burn_backend::{Shape, TensorMetadata, ops::InterpolateMode, ops::InterpolateOptions};
+use cubek::interpolate::{
+    definition::InterpolateMode as CubekInterpolateMode,
+    definition::InterpolateOptions as CubekInterpolateOptions,
+    definition::NearestMode as CubekNearestMode, interpolate as cubek_interpolate,
+    interpolate_backward as cubek_interpolate_backward,
 };
 
 /// Interpolate operation
@@ -36,13 +33,19 @@ pub fn interpolate<R: CubeRuntime>(
         input.dtype,
     );
 
-    let align_corners = options.align_corners;
-    let output = match options.mode {
-        InterpolateMode::Nearest => interpolate_nearest_launch(input, output),
-        InterpolateMode::Bilinear => interpolate_bilinear_launch(input, output, align_corners),
-        InterpolateMode::Bicubic => interpolate_bicubic_launch(input, output, align_corners),
-        InterpolateMode::Lanczos3 => interpolate_lanczos3_launch(input, output, align_corners),
-    };
+    cubek_interpolate(
+        &input.client.clone(),
+        input.clone().binding(),
+        output.clone().binding(),
+        map_options(options.clone()),
+        input.dtype.into(),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "interpolate kernel failed (device={0:?}, dtype={1:?}, options={2:?}): {3}",
+            input.device, input.dtype, options, e
+        )
+    });
 
     permute_nhwc_to_nchw(output)
 }
@@ -67,18 +70,37 @@ pub fn interpolate_backward<R: CubeRuntime>(
         input.dtype,
     );
 
-    let output = match options.mode {
-        InterpolateMode::Nearest => interpolate_nearest_backward_launch(out_grad, output),
-        InterpolateMode::Bilinear => {
-            panic!("bilinear interpolation backward is not supported by JIT backend")
-        }
-        InterpolateMode::Bicubic => {
-            panic!("bicubic interpolation backward is not supported by JIT backend")
-        }
-        InterpolateMode::Lanczos3 => {
-            panic!("lanczos3 interpolation backward is not supported by JIT backend")
-        }
-    };
+    cubek_interpolate_backward(
+        &input.client.clone(),
+        input.clone().binding(),
+        out_grad.binding(),
+        output.clone().binding(),
+        map_options(options.clone()),
+        input.dtype.into(),
+    )
+    .unwrap_or_else(|e| {
+        panic!(
+            "interpolate_backward kernel failed (device={0:?}, dtype={1:?}, options={2:?}): {3}",
+            input.device, input.dtype, options, e
+        )
+    });
 
     permute_nhwc_to_nchw(output)
+}
+
+fn map_options(options: InterpolateOptions) -> CubekInterpolateOptions {
+    CubekInterpolateOptions {
+        mode: {
+            match options.mode {
+                InterpolateMode::Nearest => CubekInterpolateMode::Nearest(CubekNearestMode::Floor),
+                InterpolateMode::NearestExact => {
+                    CubekInterpolateMode::Nearest(CubekNearestMode::Exact)
+                }
+                InterpolateMode::Bilinear => CubekInterpolateMode::Bilinear,
+                InterpolateMode::Bicubic => CubekInterpolateMode::Bicubic,
+                InterpolateMode::Lanczos3 => CubekInterpolateMode::Lanczos3,
+            }
+        },
+        align_corners: options.align_corners,
+    }
 }

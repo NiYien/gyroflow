@@ -174,13 +174,15 @@ where
     }
 
     /// Change the context of the current tensor and return the newly transferred tensor.
-    pub fn to_client(&self, client: ComputeClient<R>, device: R::Device) -> Self {
+    pub fn to_client(&mut self, client: ComputeClient<R>, device: R::Device) -> Self {
         let desc = self.handle.clone().copy_descriptor(
             self.meta.shape().clone(),
             self.meta.strides().clone(),
             self.elem_size(),
         );
-        let handle = self.client.to_client_tensor(desc, &client);
+        let handle = self
+            .client
+            .to_client_tensor(desc, &client, self.dtype.into());
 
         Self {
             client,
@@ -212,9 +214,9 @@ where
         self.binding().into_tensor_arg()
     }
 
-    /// Return the reference to an array argument.
-    pub fn into_array_arg(self) -> ArrayArg<R> {
-        self.into_tensor_arg().into_array_arg()
+    /// Return the reference to a buffer argument.
+    pub fn into_buffer_arg(self) -> BufferArg<R> {
+        self.into_tensor_arg().into_buffer_arg()
     }
 
     /// Returns a reference to the aliased tensor argument.

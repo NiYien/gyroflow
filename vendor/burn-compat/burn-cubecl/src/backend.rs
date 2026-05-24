@@ -1,6 +1,8 @@
 use crate::{CubeRuntime, FloatElement, IntElement, element::BoolElement, tensor::CubeTensor};
-use burn_backend::{Backend, DTypeUsage, DTypeUsageSet, DeviceOps, ExecutionError, TensorData};
-use burn_std::DType;
+use burn_backend::{
+    Backend, BackendTypes, DTypeUsage, DTypeUsageSet, DeviceOps, ExecutionError, TensorData,
+};
+use burn_std::{BoolStore, DType};
 use cubecl::{
     features::{MmaConfig, TypeUsage},
     server::ComputeServer,
@@ -21,7 +23,7 @@ pub struct CubeBackend<R: CubeRuntime, F: FloatElement, I: IntElement, BT: BoolE
     _bool_elem: PhantomData<BT>,
 }
 
-impl<R, F, I, BT> Backend for CubeBackend<R, F, I, BT>
+impl<R, F, I, BT> BackendTypes for CubeBackend<R, F, I, BT>
 where
     R: CubeRuntime,
     R::Server: ComputeServer,
@@ -40,7 +42,17 @@ where
     type IntTensorPrimitive = CubeTensor<R>;
     type BoolTensorPrimitive = CubeTensor<R>;
     type QuantizedTensorPrimitive = CubeTensor<R>;
+}
 
+impl<R, F, I, BT> Backend for CubeBackend<R, F, I, BT>
+where
+    R: CubeRuntime,
+    R::Server: ComputeServer,
+    R::Device: DeviceOps,
+    F: FloatElement,
+    I: IntElement,
+    BT: BoolElement,
+{
     fn name(device: &Self::Device) -> String {
         let client = R::client(device);
         format!("cubecl<{}>", R::name(&client))
@@ -88,6 +100,12 @@ where
     }
 
     fn supports_dtype(device: &Self::Device, dtype: DType) -> bool {
+        // Right now no cubecl backend actually works with native bool, even if
+        // the `TypeUsage` might indicate otherwise.
+        if let DType::Bool(BoolStore::Native) = dtype {
+            return false;
+        }
+
         let client = R::client(device);
 
         let type_usage = client.properties().type_usage(dtype.into());
@@ -101,6 +119,12 @@ where
     }
 
     fn dtype_usage(device: &Self::Device, dtype: DType) -> DTypeUsageSet {
+        // Right now no cubecl backend actually works with native bool, even if
+        // the `TypeUsage` might indicate otherwise.
+        if let DType::Bool(BoolStore::Native) = dtype {
+            return DTypeUsageSet::empty();
+        }
+
         let client = R::client(device);
 
         let props = client.properties();

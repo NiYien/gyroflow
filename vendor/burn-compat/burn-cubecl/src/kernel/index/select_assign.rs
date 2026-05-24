@@ -15,9 +15,14 @@ fn select_assign_kernel<F: Numeric, I: Numeric, Op: BinaryOpFamily>(
     indices: &LinearView<I>,
     value: &Tensor<F>,
     value_shape: Sequence<FastDivmod<usize>>,
+    working_units: usize,
     #[comptime] axis: usize,
     #[define(F, I)] _dtypes: [StorageType; 2],
 ) {
+    if ABSOLUTE_POS >= working_units {
+        terminate!();
+    }
+
     let rank = value_shape.len().comptime();
 
     let mut offset = ABSOLUTE_POS;
@@ -42,20 +47,20 @@ fn select_assign_kernel<F: Numeric, I: Numeric, Op: BinaryOpFamily>(
 
     // Main operation
     for i in 0..value.shape(axis) {
-        let index_tensor = usize::cast_from(indices[i]) * strides_tensor_dim + offset_tensor;
+        let index_tensor = usize::cast_from(indices.read(i)) * strides_tensor_dim + offset_tensor;
         let index_value = i * strides_value_dim + offset_value;
 
         let value = Op::BinaryOp::<F, Const<1>>::execute(
             Vector::cast_from(tensor[index_tensor]),
             Vector::cast_from(value[index_value]),
         );
-        tensor[index_tensor] = F::cast_from(value);
+        write_checked(tensor.as_mut_slice(), index_tensor, F::cast_from(value));
     }
 }
 
 pub(crate) fn select_assign<R: CubeRuntime>(
     tensor: CubeTensor<R>,
-    axis: usize,
+    dim: usize,
     indices: CubeTensor<R>,
     value: CubeTensor<R>,
     is_bool: bool,
@@ -65,7 +70,7 @@ pub(crate) fn select_assign<R: CubeRuntime>(
         false => tensor.copy(),
     };
 
-    let working_units = value.meta.num_elements() / value.meta.shape()[axis];
+    let working_units = tensor.meta.num_elements() / tensor.meta.shape()[dim];
     let cube_dim = CubeDim::new(&indices.client, working_units);
     let cube_count = calculate_cube_count_elemwise(&indices.client, working_units, cube_dim);
 
@@ -86,7 +91,8 @@ pub(crate) fn select_assign<R: CubeRuntime>(
         indices.into_linear_view(),
         value.into_tensor_arg(),
         shape,
-        axis,
+        working_units,
+        dim,
         [tensor_dtype.into(), indices_dtype.into()],
     );
 

@@ -27,6 +27,9 @@ pub(crate) struct RemainderOp;
 pub(crate) struct AndOp;
 pub(crate) struct OrOp;
 pub(crate) struct PowOp;
+pub(crate) struct AssignOp;
+pub(crate) struct BinaryMinOp;
+pub(crate) struct BinaryMaxOp;
 
 impl BinaryOpFamily for AddOp {
     type BinaryOp<C: Numeric, N: Size> = Self;
@@ -57,6 +60,18 @@ impl BinaryOpFamily for AndOp {
 }
 
 impl BinaryOpFamily for OrOp {
+    type BinaryOp<C: Numeric, N: Size> = Self;
+}
+
+impl BinaryOpFamily for AssignOp {
+    type BinaryOp<C: Numeric, N: Size> = Self;
+}
+
+impl BinaryOpFamily for BinaryMinOp {
+    type BinaryOp<C: Numeric, N: Size> = Self;
+}
+
+impl BinaryOpFamily for BinaryMaxOp {
     type BinaryOp<C: Numeric, N: Size> = Self;
 }
 
@@ -91,7 +106,7 @@ impl<T: Numeric, N: Size> BinaryOp<T, N> for DivOp {
 #[cube]
 impl<T: Numeric, N: Size> BinaryOp<T, N> for RemainderOp {
     fn execute(lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
-        Vector::rem(lhs, rhs)
+        Vector::mod_floor(lhs, rhs)
     }
 }
 
@@ -100,7 +115,7 @@ impl<T: Numeric, N: Size> BinaryOp<T, N> for PowOp {
     #[allow(unused)]
     fn execute(lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
         intrinsic!(|scope| {
-            let elem = T::as_type(scope).elem_type();
+            let elem = T::__expand_as_type(scope).elem_type();
 
             if let cubecl::ir::ElemType::Float(kind) = elem {
                 match kind {
@@ -137,7 +152,9 @@ impl<T: Numeric, N: Size> BinaryOp<T, N> for PowOp {
 #[cube]
 impl<T: Numeric, N: Size> BinaryOp<T, N> for AndOp {
     fn execute(lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
-        Vector::cast_from(Vector::<bool, N>::cast_from(lhs).and(Vector::<bool, N>::cast_from(rhs)))
+        Vector::cast_from(
+            Vector::<bool, N>::cast_from(lhs).vec_and(Vector::<bool, N>::cast_from(rhs)),
+        )
     }
 }
 
@@ -145,6 +162,27 @@ impl<T: Numeric, N: Size> BinaryOp<T, N> for AndOp {
 impl<T: Numeric, N: Size> BinaryOp<T, N> for OrOp {
     fn execute(lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
         Vector::cast_from(Vector::<bool, N>::cast_from(lhs).or(Vector::<bool, N>::cast_from(rhs)))
+    }
+}
+
+#[cube]
+impl<T: Numeric, N: Size> BinaryOp<T, N> for AssignOp {
+    fn execute(_lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
+        rhs
+    }
+}
+
+#[cube]
+impl<T: Numeric, N: Size> BinaryOp<T, N> for BinaryMinOp {
+    fn execute(lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
+        clamp_max(lhs, rhs)
+    }
+}
+
+#[cube]
+impl<T: Numeric, N: Size> BinaryOp<T, N> for BinaryMaxOp {
+    fn execute(lhs: Vector<T, N>, rhs: Vector<T, N>) -> Vector<T, N> {
+        clamp_min(lhs, rhs)
     }
 }
 
@@ -159,8 +197,10 @@ pub(crate) fn kernel_scalar_binop<C: Numeric, N: Size, O: BinaryOpFamily>(
         terminate!();
     }
 
-    output[ABSOLUTE_POS] =
-        O::BinaryOp::<C, N>::execute(input[ABSOLUTE_POS], Vector::new(scalar.get::<C>()));
+    output.write(
+        ABSOLUTE_POS,
+        O::BinaryOp::<C, N>::execute(input.read(ABSOLUTE_POS), Vector::new(scalar.get::<C>())),
+    );
 }
 
 #[cube(launch_unchecked, address_type = "dynamic")]
@@ -174,7 +214,10 @@ pub(crate) fn kernel_binop<C: Numeric, N: Size, O: BinaryOpFamily>(
         terminate!();
     }
 
-    out[ABSOLUTE_POS] = O::BinaryOp::<C, N>::execute(lhs[ABSOLUTE_POS], rhs[ABSOLUTE_POS]);
+    out.write(
+        ABSOLUTE_POS,
+        O::BinaryOp::<C, N>::execute(lhs.read(ABSOLUTE_POS), rhs.read(ABSOLUTE_POS)),
+    );
 }
 
 pub(crate) fn launch_binop<R: CubeRuntime, O: BinaryOpFamily>(

@@ -86,7 +86,7 @@ ort = { version = "2.0.0-rc.12", optional = true, default-features = false, feat
 neuflow-trace-shared = { path = "../../vendor/neuflow-trace/neuflow-trace-shared" }
 
 # Burn framework for NeuFlow v2 inference (Vulkan/Metal backend)
-burn-store = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "burnpack"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", default-features = false, features = ["std", "burnpack"], optional = true }
 cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
@@ -94,10 +94,10 @@ objc2 = "0.6"
 objc2-metal = "0.3"
 objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
-burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
 
 [target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
@@ -107,7 +107,7 @@ features = [ "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemSer
              "Win32_Storage_Packaging_Appx", "Win32_Storage_FileSystem" ]
 
 [features]
-default = ["cache-gyro-metadata"]
+default = ["cache-gyro-metadata", "neuflow-burn"]
 use-opencl = ["ocl", "ocl-interop"]
 use-opencv = ["opencv"]
 bundle-lens-profiles = []
@@ -121,8 +121,8 @@ jni = "0.22"
 ndk = { version = "0.9.0", features = ["media", "api-level-26"] }
 ndk-sys = { version = "0.6.0" }
 ndk-context = { version = "0.1.1" }
-burn = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
-burn-store = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", default-features = false, features = ["std", "burnpack"], optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [dev-dependencies]
 serial_test = "3"
@@ -133,3 +133,7 @@ which = "6"
 ureq = "3.3"
 flate2 = "1.1"
 tar = "0.4"
+# Used by build.rs only when feature `neuflow-burn` is enabled (gated via
+# CARGO_FEATURE_NEUFLOW_BURN env var). Generates Rust + .bpk artifacts from the
+# bundled NeuFlow v2 ONNX file into $OUT_DIR/burn_onnx/.
+burn-onnx = { git = "https://github.com/tracel-ai/burn-onnx", rev = "8f578180c025a702ec902c9fdec8133db2daec90" }

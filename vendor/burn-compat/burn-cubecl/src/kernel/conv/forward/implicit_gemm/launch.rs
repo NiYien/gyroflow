@@ -2,8 +2,8 @@ use crate::{CubeRuntime, ops::numeric::empty_device_dtype, tensor::CubeTensor};
 use burn_backend::ops::{ConvOptions, conv::calculate_conv_output_sizes};
 use cubek::{
     convolution::{
-        AcceleratedTileKind, ConvolutionArgs, ReadingStrategy, Strategy,
-        components::ConvSetupError, forward,
+        AcceleratedTileKind, ConvAlgorithm, ConvolutionArgs, ConvolutionInputs, Strategy,
+        components::ConvSetupError, launch_ref,
     },
     matmul::definition::{MatmulElems, MatmulGlobalElems},
     std::InputBinding,
@@ -23,13 +23,13 @@ pub fn conv_gemm_simple_sync<R: CubeRuntime, const N: usize>(
     options: ConvOptions<N>,
     tile_kind: AcceleratedTileKind,
 ) -> Result<CubeTensor<R>, ConvSetupError> {
-    let read_strategy = match tile_kind {
-        AcceleratedTileKind::Cmma => ReadingStrategy::Cyclic,
-        AcceleratedTileKind::Mma => ReadingStrategy::Strided,
+    let algorithm = match tile_kind {
+        AcceleratedTileKind::Cmma => ConvAlgorithm::SimpleSyncCyclic,
+        AcceleratedTileKind::Mma => ConvAlgorithm::SimpleSyncStrided,
     };
     launch_convolution_forward::<R, N>(
-        &Strategy::Simple {
-            read_strategy,
+        &Strategy::Inferred {
+            algorithm,
             tile_kind,
         },
         input,
@@ -46,13 +46,13 @@ pub fn conv_gemm_simple_async<R: CubeRuntime, const N: usize>(
     options: ConvOptions<N>,
     tile_kind: AcceleratedTileKind,
 ) -> Result<CubeTensor<R>, ConvSetupError> {
-    let read_strategy = match tile_kind {
-        AcceleratedTileKind::Cmma => ReadingStrategy::AsyncCyclic,
-        AcceleratedTileKind::Mma => ReadingStrategy::AsyncStrided,
+    let algorithm = match tile_kind {
+        AcceleratedTileKind::Cmma => ConvAlgorithm::SimpleAsyncCyclic,
+        AcceleratedTileKind::Mma => ConvAlgorithm::SimpleAsyncStrided,
     };
     launch_convolution_forward::<R, N>(
-        &Strategy::Simple {
-            read_strategy,
+        &Strategy::Inferred {
+            algorithm,
             tile_kind,
         },
         input,
@@ -77,8 +77,8 @@ pub fn conv_gemm_simple_tma<R: CubeRuntime, const N: usize>(
     tile_kind: AcceleratedTileKind,
 ) -> Result<CubeTensor<R>, ConvSetupError> {
     launch_convolution_forward::<R, N>(
-        &Strategy::Simple {
-            read_strategy: ReadingStrategy::Tma,
+        &Strategy::Inferred {
+            algorithm: ConvAlgorithm::SimpleAsyncTma,
             tile_kind,
         },
         input,
@@ -149,13 +149,15 @@ pub fn launch_convolution_forward<R: CubeRuntime, const N: usize>(
     let input = InputBinding::new(input.binding(), input_dtype.into());
     let weight = InputBinding::new(weight.binding(), weight_dtype.into());
 
-    forward::launch_ref::<R, N>(
+    launch_ref::<R, N>(
         strategy,
         &client,
-        input,
-        weight,
-        bias,
-        out.clone().binding(),
+        ConvolutionInputs::Forward {
+            input,
+            weight,
+            bias,
+            out: out.clone().binding(),
+        },
         ConvolutionArgs {
             stride: options.stride,
             padding: options.padding,

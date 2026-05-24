@@ -1,6 +1,6 @@
 [package]
 name = "burn-cubecl"
-version = "0.21.0-pre.3"
+version = "0.22.0-pre.1"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["nathanielsimard <nathaniel.simard.42@gmail.com>"]
@@ -27,7 +27,7 @@ std = [
     "burn-cubecl-fusion?/std",
 ]
 doc = ["default"]
-memory-checks = ["burn-fusion?/memory-checks"]
+
 tracing = [
     "dep:tracing",
     "cubecl/tracing",
@@ -49,23 +49,25 @@ fusion-experimental = ["fusion"]
 
 template = []
 
-distributed = ["std", "burn-backend/distributed"]
+distributed = [
+    "std",
+    "burn-backend/distributed",
+    "burn-fusion?/distributed",
+]
 
 [dependencies]
-burn-cubecl-fusion = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-cubecl-fusion", version = "=0.21.0-pre.3", default-features = false, optional = true }
-burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-fusion", version = "=0.21.0-pre.3", default-features = false, optional = true }
-burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-ir", version = "=0.21.0-pre.3", default-features = false }
-burn-std = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-std", version = "=0.21.0-pre.3", default-features = false, features = [
-    "cubecl",
-] }
-burn-backend = { git = "https://github.com/tracel-ai/burn", rev = "b62be4dd7da92c90e31b79c854b161b4d011a7e3", package = "burn-backend", version = "=0.21.0-pre.3", default-features = false, features = [
-    "cubecl",
-] }
-cubecl = { version = "=0.10.0-pre.3", default-features = false, features = ["stdlib"] }
-cubek = { version = "=0.2.0-pre.3", default-features = false, features = [
+burn-cubecl-fusion = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-cubecl-fusion", version = "=0.22.0-pre.1", default-features = false, optional = true }
+burn-fusion = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-fusion", version = "=0.22.0-pre.1", default-features = false, optional = true }
+burn-ir = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-ir", version = "=0.22.0-pre.1", default-features = false }
+burn-std = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-std", version = "=0.22.0-pre.1", default-features = false, features = ["cubecl"] }
+burn-backend = { git = "https://github.com/tracel-ai/burn", rev = "ca57d897ca7e80f4f3785e83c076dcf2fa36ade6", package = "burn-backend", version = "=0.22.0-pre.1", default-features = false, features = ["cubecl"] }
+cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "0751cf6a5005c1755c1cd44d1c9383e7b1de814c", default-features = false, features = ["stdlib"] }
+cubek = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc", default-features = false, features = [
     "attention",
     "matmul",
     "convolution",
+    "interpolate",
+    "pool",
     "reduce",
     "random",
     "quantization",
