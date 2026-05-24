@@ -252,7 +252,26 @@ impl SmoothingAlgorithm for DefaultAlgo {
             &compute_params.trim_ranges,
             compute_params,
         );
-        let quats = quats.as_ref();
+        let quats_inner = quats.as_ref();
+
+        // Mirror-pad both ends so the 4-pass forward/backward EMA can do its
+        // burn-in inside pad zones instead of leaking transient into the visible
+        // first/last frames. Pad size = 3x the max time constant in samples,
+        // capped to keep high-rate IMU buffers reasonable.
+        let pad_sample_rate =
+            (quats_inner.len() as f64) / (duration_ms / 1000.0).max(1e-9);
+        let max_tc = self.max_smoothness.max(self.alpha_0_1s);
+        let pad_n = ((max_tc * pad_sample_rate * 3.0).ceil() as usize)
+            .min(quats_inner.len().saturating_sub(1))
+            .min(2000);
+
+        let (orig_first_ts, orig_last_ts) = (
+            *quats_inner.iter().next().map(|(k, _)| k).unwrap_or(&0),
+            *quats_inner.iter().next_back().map(|(k, _)| k).unwrap_or(&0),
+        );
+
+        let padded_quats = mirror_pad_quats(quats_inner, pad_n);
+        let quats: &TimeQuat = &padded_quats;
 
         let get_keyframed_param = |typ: &KeyframeType,
                                    def: f64,
@@ -448,7 +467,11 @@ impl SmoothingAlgorithm for DefaultAlgo {
             .collect();
 
         // Reverse pass
-        let mut q = *smoothed1.iter().next_back().unwrap().1;
+        // EXPERIMENT: init from raw quats.last() instead of smoothed1.last() to
+        // check whether tail-end raw_fov drop (adaptive-zoom blow-up at the last
+        // ~8 frames) is caused by forward-EMA lag being inherited as reverse
+        // start. Revert if no improvement.
+        let mut q = *quats.iter().next_back().unwrap().1;
         let smoothed2: TimeQuat = smoothed1
             .into_iter()
             .rev()
@@ -480,7 +503,7 @@ impl SmoothingAlgorithm for DefaultAlgo {
             .collect();
 
         if !self.second_pass {
-            return smoothed2;
+            return trim_pad(smoothed2, orig_first_ts, orig_last_ts);
         }
 
         // Calculate distance
@@ -606,8 +629,11 @@ impl SmoothingAlgorithm for DefaultAlgo {
             .collect();
 
         // Reverse pass
-        let mut q = *smoothed1.iter().next_back().unwrap().1;
-        smoothed1
+        // Init from raw quats.last() instead of forward-EMA terminal
+        // smoothed1.last() to avoid inheriting forward transient at the start
+        // of reverse. Mirror padding handles the rest of the boundary cleanup.
+        let mut q = *quats.iter().next_back().unwrap().1;
+        let final_smoothed: TimeQuat = smoothed1
             .into_iter()
             .rev()
             .map(|(ts, x)| {
@@ -640,6 +666,68 @@ impl SmoothingAlgorithm for DefaultAlgo {
                 }
                 (ts, q)
             })
-            .collect()
+            .collect();
+        trim_pad(final_smoothed, orig_first_ts, orig_last_ts)
     }
+}
+
+// Mirror-pad a TimeQuat using SO(3) spherical reflection around the boundary
+// quaternion, so the 4-pass forward/backward EMA can do its burn-in inside the
+// pad zones and enter real data with zero boundary transient. Callers slice
+// the pad off with `trim_pad` after smoothing. Timestamps in the pad region
+// are linearly extrapolated from the boundary dt.
+//
+// SO(3) reflection formula:  q_pad[k] = q_boundary * q_src[k].inverse() * q_boundary
+//   - q_src[k] is the kth real frame measured from the boundary (towards interior)
+//   - geodesic midpoint of (q_src[k], q_pad[k]) on the rotation manifold = q_boundary
+//   - When q_src[k] ≈ q_boundary (camera static near the edge), q_pad[k] ≈ q_boundary
+//     (degenerates to replicate). When q_src[k] differs by rotation Δ, q_pad[k]
+//     differs by the inverse rotation Δ.inverse() — physical meaning: future
+//     motion is the time-reversed mirror of past motion.
+fn mirror_pad_quats(quats: &TimeQuat, pad_n: usize) -> TimeQuat {
+    if pad_n == 0 || quats.len() < 2 {
+        return quats.clone();
+    }
+    let entries: Vec<(i64, Quat64)> = quats.iter().map(|(k, v)| (*k, *v)).collect();
+    let n = entries.len();
+    let pad_n = pad_n.min(n - 1);
+
+    let head_ts0 = entries[0].0;
+    let tail_ts_last = entries[n - 1].0;
+    let dt_head = (entries[1].0 - entries[0].0).max(1);
+    let dt_tail = (entries[n - 1].0 - entries[n - 2].0).max(1);
+
+    let head_quat = entries[0].1;
+    let tail_quat = entries[n - 1].1;
+
+    let mut out: TimeQuat = BTreeMap::new();
+    // Head pad: reflect entries[1..=pad_n] around entries[0] (q_0)
+    // pad position i ∈ [0, pad_n) maps to src index (pad_n - i) ∈ [1, pad_n]
+    for i in 0..pad_n {
+        let src_idx = pad_n - i;
+        let pad_ts = head_ts0 - dt_head * (pad_n - i) as i64;
+        let src_quat = entries[src_idx].1;
+        let reflected = head_quat * src_quat.inverse() * head_quat;
+        out.insert(pad_ts, reflected);
+    }
+    // Real data
+    for (k, v) in &entries {
+        out.insert(*k, *v);
+    }
+    // Tail pad: reflect entries[n-2..n-1-pad_n] around entries[n-1] (q_last)
+    for i in 0..pad_n {
+        let src_idx = n - 2 - i;
+        let pad_ts = tail_ts_last + dt_tail * (i + 1) as i64;
+        let src_quat = entries[src_idx].1;
+        let reflected = tail_quat * src_quat.inverse() * tail_quat;
+        out.insert(pad_ts, reflected);
+    }
+    out
+}
+
+fn trim_pad(padded: TimeQuat, first_ts: i64, last_ts: i64) -> TimeQuat {
+    padded
+        .into_iter()
+        .filter(|(ts, _)| *ts >= first_ts && *ts <= last_ts)
+        .collect()
 }

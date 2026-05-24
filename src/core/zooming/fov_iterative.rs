@@ -84,17 +84,22 @@ impl FieldOfViewAlgorithm for FovIterative<'_> {
                 .collect()
         };
 
+        super::zoom_diag::record_raw_fov(&fov_values);
+
         if !ranges.is_empty() {
             // Only within render range.
             if let Some(max_fov) = fov_values.iter().copied().reduce(f64::max) {
+                let mut replaced = 0usize;
                 for (i, v) in fov_values.iter_mut().enumerate() {
                     let within_range = ranges
                         .iter()
                         .any(|r| i >= (l * r.0).floor() as usize && i <= (l * r.1).ceil() as usize);
                     if !within_range {
                         *v = max_fov;
+                        replaced += 1;
                     }
                 }
+                super::zoom_diag::record_post_range_fix(&fov_values, max_fov, replaced);
             }
         }
 

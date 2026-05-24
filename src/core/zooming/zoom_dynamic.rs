@@ -61,21 +61,31 @@ pub fn compute(
         match method {
             ZoomMethod::GaussianFilter => {
                 let max_window_half = max_window / 2;
+                super::zoom_diag::record_pad(
+                    *fov_values.first().unwrap_or(&0.0),
+                    *fov_values.last().unwrap_or(&0.0),
+                    max_window_half,
+                    max_window_half,
+                );
                 let fov_values_pad = pad_edge(&fov_values, (max_window_half, max_window_half));
                 let fov_min = min_rolling_dynamic(
                     &fov_values_pad,
                     max_window_half as isize,
                     &data_per_timestamp,
                 );
+                super::zoom_diag::record_after_min_rolling(&fov_min);
                 let fov_min_pad = pad_edge(&fov_min, (max_window_half, max_window_half));
                 fov_values =
                     convolve_dynamic(&fov_min_pad, max_window_half as isize, &data_per_timestamp);
+                super::zoom_diag::record_after_gaussian(&fov_values);
             }
             ZoomMethod::EnvelopeFollower => {
                 let second_pass_alpha = 1.0 - (-(1.0 / compute_params.scaled_fps) / 0.2).exp();
                 fov_values = envelope_follower(&fov_values, &data_per_timestamp, None);
+                super::zoom_diag::record_after_min_rolling(&fov_values);
                 fov_values =
                     envelope_follower(&fov_values, &data_per_timestamp, Some(second_pass_alpha));
+                super::zoom_diag::record_after_gaussian(&fov_values);
             }
         }
     } else {
@@ -84,19 +94,29 @@ pub fn compute(
                 // Static window
                 let frames = get_frames_per_window(compute_params);
 
+                super::zoom_diag::record_pad(
+                    *fov_values.first().unwrap_or(&0.0),
+                    *fov_values.last().unwrap_or(&0.0),
+                    frames / 2,
+                    frames / 2,
+                );
                 let fov_values_pad = pad_edge(&fov_values, (frames / 2, frames / 2));
                 let fov_min = min_rolling(&fov_values_pad, frames);
+                super::zoom_diag::record_after_min_rolling(&fov_min);
                 let fov_min_pad = pad_edge(&fov_min, (frames / 2, frames / 2));
 
                 let gaussian = gaussian_window_normalized(frames, frames as f64 / 6.0);
                 fov_values = convolve(&fov_min_pad, &gaussian);
+                super::zoom_diag::record_after_gaussian(&fov_values);
             }
             ZoomMethod::EnvelopeFollower => {
                 let first_pass_alpha = 1.0 - (-(1.0 / compute_params.scaled_fps) / window).exp();
                 let second_pass_alpha = 1.0 - (-(1.0 / compute_params.scaled_fps) / 0.2).exp();
 
                 fov_values = envelope_follower(&fov_values, &[], Some(first_pass_alpha));
+                super::zoom_diag::record_after_min_rolling(&fov_values);
                 fov_values = envelope_follower(&fov_values, &[], Some(second_pass_alpha));
+                super::zoom_diag::record_after_gaussian(&fov_values);
             }
         }
     }

@@ -2,6 +2,7 @@
 // Copyright © 2022 Maik <myco at gmx>
 
 pub mod fov_iterative;
+pub mod zoom_diag;
 pub mod zoom_dynamic;
 
 use std::collections::BTreeMap;
@@ -55,6 +56,17 @@ pub fn calculate_fovs(
     compute_params.output_width = compute_params.width;
     compute_params.output_height = compute_params.height;
 
+    let method_kind = match &method {
+        ZoomMethod::GaussianFilter => zoom_diag::MethodKind::GaussianFilter,
+        ZoomMethod::EnvelopeFollower => zoom_diag::MethodKind::EnvelopeFollower,
+    };
+    zoom_diag::start_run(
+        timestamps,
+        &compute_params.trim_ranges,
+        compute_params.adaptive_zoom_window,
+        method_kind,
+    );
+
     let fov_estimator = fov_iterative::FovIterative::new(&compute_params, org_output_size);
     let mut fov_values = fov_estimator.compute(timestamps, &compute_params.trim_ranges);
     let (final_fovs, final_fovs_minimal) = if compute_params.adaptive_zoom_window < -0.9 {
@@ -71,6 +83,10 @@ pub fn calculate_fovs(
         // Disabled zoom
         (vec![1.0; fov_values.len()], fov_values)
     };
+
+    zoom_diag::record_final(&final_fovs);
+    zoom_diag::finish_and_dump();
+
     (
         final_fovs,
         final_fovs_minimal,
