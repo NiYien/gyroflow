@@ -85,19 +85,28 @@ wgpu = { version = "29", features = ["spirv", "naga-ir"] }
 ort = { version = "2.0.0-rc.12", optional = true, default-features = false, features = ["std", "ndarray", "load-dynamic", "api-24"] }
 neuflow-trace-shared = { path = "../../vendor/neuflow-trace/neuflow-trace-shared" }
 
-# Burn framework for NeuFlow v2 inference (Vulkan/Metal backend)
-burn-store = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "burnpack"], optional = true }
-cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
+# Burn framework for NeuFlow v2 inference (Win Vulkan / Mac Metal backend).
+# Burn / burn-store / cubecl-runtime are declared per-target so Linux / iOS /
+# Android never pull them in. The cargo feature `neuflow-burn` is still the
+# user-facing on/off switch; build.rs synthesises a `neuflow_burn_enabled`
+# cfg that combines the feature + supported target. See change
+# burn-platform-and-ai-sync-toggle.
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 objc2 = "0.6"
 objc2-metal = "0.3"
 objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
-burn = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
 
-[target.'cfg(not(any(target_os = "macos", target_os = "ios")))'.dependencies]
+[target.'cfg(target_os = "macos")'.dependencies]
+burn = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "burnpack"], optional = true }
+cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
 burn = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "burnpack"], optional = true }
+cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
@@ -121,8 +130,6 @@ jni = "0.22"
 ndk = { version = "0.9.0", features = ["media", "api-level-26"] }
 ndk-sys = { version = "0.6.0" }
 ndk-context = { version = "0.1.1" }
-burn = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
-burn-store = { git = "https://github.com/NiYien/burn", rev = "85e41275efb984be7cf0ce4b2e14a3e4d534cc67", default-features = false, features = ["std", "burnpack"], optional = true }
 
 [dev-dependencies]
 serial_test = "3"

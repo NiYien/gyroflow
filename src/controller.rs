@@ -2108,7 +2108,7 @@ impl Controller {
         QString::from(self.stabilizer.get_lens_presets_json())
     }
     fn has_neuflow_support(&self) -> bool {
-        cfg!(any(feature = "neuflow-ort", feature = "neuflow-burn"))
+        cfg!(any(feature = "neuflow-ort", neuflow_burn_enabled))
     }
 
     fn set_preview_resolution(&mut self, target_height: i32, player: QJSValue) {
@@ -4516,11 +4516,11 @@ impl Controller {
         {
             return crate::core::neuflow::is_available();
         }
-        #[cfg(feature = "neuflow-burn")]
+        #[cfg(neuflow_burn_enabled)]
         {
             return crate::core::neuflow_burn::is_available();
         }
-        #[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
+        #[cfg(not(any(feature = "neuflow-ort", neuflow_burn_enabled)))]
         {
             false
         }

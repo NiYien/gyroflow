@@ -208,6 +208,17 @@ deploy *param:
         # Niyien: camera_db (populated by src/core/build.rs from niyien-lens-data release)
         mkdir -p "$APP_BUNDLE/Contents/Resources/camera_db/"
         cp -f "$PROJECT_DIR/resources/camera_db/"*.json "$APP_BUNDLE/Contents/Resources/camera_db/"
+
+        # NeuFlow v2 Burn weights (.bpk). find_weight_file() looks up
+        # ../Resources/generated_iter5/ relative to Contents/MacOS/gyroflow.
+        # Hard-fail if the source .bpk is missing: it means the cargo build
+        # did NOT run on a target with neuflow_burn_enabled, so the bundled
+        # app would silently fail to load NeuFlow at runtime.
+        BPK_SRC="$PROJECT_DIR/src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"
+        BPK_DST_DIR="$APP_BUNDLE/Contents/Resources/generated_iter5"
+        mkdir -p "$BPK_DST_DIR"
+        cp -f "$BPK_SRC" "$BPK_DST_DIR/"
+        test -f "$BPK_DST_DIR/neuflow_v2_iter5_768x432.bpk" || { echo "ERROR: NeuFlow .bpk missing after copy"; exit 1; }
     fi
 
     cp -af "$QT_DIR/lib/QtCore.framework"                     "$CARGO_TARGET/../Frameworks/"

@@ -39,12 +39,12 @@ pub type OpticalFlowPoints = Vec<(f32, f32)>; // timestamp_us, points
 pub type OpticalFlowPair = Option<(OpticalFlowPoints, OpticalFlowPoints)>;
 pub type OpticalFlowPairWithTs = Option<((i64, OpticalFlowPoints), (i64, OpticalFlowPoints))>;
 
-#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+#[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
 fn is_neuflow_method(method: &OpticalFlowMethod) -> bool {
     matches!(method, OpticalFlowMethod::OFNeuFlowV2(_))
 }
 
-#[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
+#[cfg(not(any(feature = "neuflow-ort", neuflow_burn_enabled)))]
 fn is_neuflow_method(_method: &OpticalFlowMethod) -> bool {
     false
 }

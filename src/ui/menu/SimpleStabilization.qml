@@ -349,6 +349,24 @@ Column {
         }
     }
 
+    // ── AI SYNC (NeuFlow v2 Burn) ──
+    // Persisted to QSettings (key: simpleAiSync). Hidden on platforms without
+    // Burn support (Linux / iOS / Android). When checked, batch sync uses
+    // of_method=4 (NeuFlow Burn) instead of the default of_method=2 (DIS).
+    // The switch is one-way QML→render_queue; loading a .gyroflow project
+    // does NOT modify this UI preference.
+    CheckBox {
+        id: aiSyncCb;
+        visible: controller.has_neuflow_support();
+        text: qsTr("AI SYNC");
+        checked: settings.value("simpleAiSync", false) === true || settings.value("simpleAiSync", false) === "true";
+        onCheckedChanged: {
+            settings.setValue("simpleAiSync", checked);
+            render_queue.batch_sync_ai_method = checked;
+        }
+        Component.onCompleted: render_queue.batch_sync_ai_method = checked;
+    }
+
     // ── Sync with Full mode ──
     Connections {
         target: controller;

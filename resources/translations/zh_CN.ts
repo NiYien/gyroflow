@@ -3654,6 +3654,11 @@ Click Ok and select the destination folder.</source>
         <source>ms</source>
         <translation>毫秒</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="361"/>
+        <source>AI SYNC</source>
+        <translation>AI 同步</translation>
+    </message>
 </context>
 <context>
     <name>SliderWithField</name>
@@ -4191,11 +4196,6 @@ This doubles the calculation time, so check this only for the initial point and 
     </message>
     <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="364"/>
-        <source>NeuFlow v2 CUDA</source>
-        <translation>NeuFlow v2 CUDA</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="365"/>
         <source>NeuFlow v2 Burn</source>
         <translation>NeuFlow v2 Burn</translation>
     </message>

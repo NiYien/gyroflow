@@ -219,6 +219,20 @@ fn main() {
 
     let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap();
 
+    // Synthetic cfg `neuflow_burn_enabled`. Must mirror the same logic in
+    // src/core/build.rs since cfg flags from build.rs are per-crate. See
+    // change burn-platform-and-ai-sync-toggle.
+    println!("cargo::rustc-check-cfg=cfg(neuflow_burn_enabled)");
+    let neuflow_burn_feature_on = std::env::var_os("CARGO_FEATURE_NEUFLOW_BURN").is_some();
+    let neuflow_burn_supported = target_os == "windows" || target_os == "macos";
+    if neuflow_burn_feature_on && neuflow_burn_supported {
+        println!("cargo:rustc-cfg=neuflow_burn_enabled");
+    } else if neuflow_burn_feature_on {
+        println!(
+            "cargo:warning=NeuFlow Burn disabled on target={target_os} (feature gated to win+mac)"
+        );
+    }
+
     if let Ok(out_dir) = env::var("OUT_DIR") {
         println!("cargo::rustc-check-cfg=cfg(compiled_qml)");
         if out_dir.contains("\\deploy\\build\\")

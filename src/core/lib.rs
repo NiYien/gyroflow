@@ -26,7 +26,7 @@ pub mod gpu;
 pub mod gyro_match;
 #[cfg(feature = "neuflow-ort")]
 pub mod neuflow;
-#[cfg(feature = "neuflow-burn")]
+#[cfg(neuflow_burn_enabled)]
 pub mod neuflow_burn;
 
 pub mod stabilization_params;

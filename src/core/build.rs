@@ -29,6 +29,12 @@ fn main() {
     println!("cargo:rerun-if-changed=resources/.lens_data_pin_check_sentinel");
     println!("cargo:rerun-if-env-changed=NIYIEN_LENS_DATA_TAG");
 
+    // Synthetic cfg `neuflow_burn_enabled` gates all Burn-backed NeuFlow code
+    // to Win+Mac targets even when the cargo feature is on. See change
+    // burn-platform-and-ai-sync-toggle for rationale.
+    println!("cargo::rustc-check-cfg=cfg(neuflow_burn_enabled)");
+    let neuflow_burn_supported = neuflow_burn_target_supported();
+
     // 1. gyroflow upstream lens profiles database (unchanged behaviour).
     let db_path = format!("{project_dir}/../../resources/camera_presets/profiles.cbor.gz");
     if !std::path::Path::new(&db_path).exists() {
@@ -57,11 +63,25 @@ fn main() {
     generate_builtin_preset_table(&project_dir);
 
     // 4. Regenerate NeuFlow v2 model bindings from bundled ONNX (only when
-    //    feature `neuflow-burn` is enabled; pulled in as build-dep regardless
-    //    but ModelGen is skipped to keep default-build cost down).
-    if std::env::var_os("CARGO_FEATURE_NEUFLOW_BURN").is_some() {
+    //    feature `neuflow-burn` is enabled AND target supports burn; pulled in
+    //    as build-dep regardless but ModelGen is skipped to keep default-build
+    //    cost down). On Linux/iOS/Android the feature is a no-op and we don't
+    //    spend time regenerating the model.
+    let feature_on = std::env::var_os("CARGO_FEATURE_NEUFLOW_BURN").is_some();
+    if feature_on && neuflow_burn_supported {
+        println!("cargo:rustc-cfg=neuflow_burn_enabled");
         generate_neuflow_burn_model(&project_dir);
+    } else if feature_on {
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+        println!(
+            "cargo:warning=NeuFlow Burn disabled on target={target_os} (feature gated to win+mac)"
+        );
     }
+}
+
+fn neuflow_burn_target_supported() -> bool {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    target_os == "windows" || target_os == "macos"
 }
 
 fn generate_neuflow_burn_model(project_dir: &str) {

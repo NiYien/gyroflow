@@ -82,7 +82,7 @@ impl OFNeuFlowV2 {
 
     /// Get cached preprocessed CHW tensor + gray, or compute from NV12 and cache.
     /// Thread-safe: Mutex ensures only one thread computes; others wait and get the cached result.
-    #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+    #[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
     fn get_or_preprocess(&self) -> Result<PreprocessedFrame, String> {
         let mut cache = self.preprocessed.lock();
         if let Some(ref cached) = *cache {
@@ -105,7 +105,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
     }
 
     fn optical_flow_to(&self, _to: &OpticalFlowMethod) -> OpticalFlowPair {
-        #[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+        #[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
         if let OpticalFlowMethod::OFNeuFlowV2(next) = _to {
             // Return cached result if available (needed because cache_optical_flow
             // calls this again after process_detected_frames has cleaned up frames)
@@ -163,7 +163,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                         }
                     }
                 }
-                #[cfg(feature = "neuflow-burn")]
+                #[cfg(neuflow_burn_enabled)]
                 4 => {
                     // Burn: GPU-side sparse sampling (no full tensor readback)
                     match super::neuflow_burn::neuflow_inference_burn_sampled(
@@ -254,7 +254,7 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
 /// This eliminates the intermediate RGB buffer allocation (w×h×3) and converts
 /// only the output-resolution pixels (640×480) instead of all source pixels.
 /// For a 960×540 source, this is ~60% fewer pixel operations.
-#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+#[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
 pub(super) fn preprocess_frame_nv12(
     nv12: &[u8],
     width: u32,

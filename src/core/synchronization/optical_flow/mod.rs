@@ -10,11 +10,11 @@ mod opencv_dis;
 pub use opencv_dis::*;
 mod opencv_pyrlk;
 pub use opencv_pyrlk::*;
-#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+#[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
 mod neuflow;
-#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+#[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
 pub use self::neuflow::*;
-#[cfg(feature = "neuflow-burn")]
+#[cfg(neuflow_burn_enabled)]
 mod neuflow_burn;
 #[cfg(feature = "neuflow-ort")]
 mod neuflow_ort;
@@ -31,7 +31,7 @@ pub trait OpticalFlowTrait {
     }
 }
 
-#[cfg(any(feature = "neuflow-ort", feature = "neuflow-burn"))]
+#[cfg(any(feature = "neuflow-ort", neuflow_burn_enabled))]
 #[enum_delegate::implement(OpticalFlowTrait)]
 #[derive(Clone)]
 pub enum OpticalFlowMethod {
@@ -41,7 +41,7 @@ pub enum OpticalFlowMethod {
     OFNeuFlowV2(OFNeuFlowV2),
 }
 
-#[cfg(not(any(feature = "neuflow-ort", feature = "neuflow-burn")))]
+#[cfg(not(any(feature = "neuflow-ort", neuflow_burn_enabled)))]
 #[enum_delegate::implement(OpticalFlowTrait)]
 #[derive(Clone)]
 pub enum OpticalFlowMethod {
@@ -55,11 +55,11 @@ impl OpticalFlowMethod {
         method: u32,
         timestamp_us: i64,
         img: Arc<image::GrayImage>,
-        #[cfg_attr(not(any(feature = "neuflow-ort", feature = "neuflow-burn")), allow(unused_variables))]
+        #[cfg_attr(not(any(feature = "neuflow-ort", neuflow_burn_enabled)), allow(unused_variables))]
         frame_data: Option<Arc<Vec<u8>>>,
         width: u32,
         height: u32,
-        #[cfg_attr(not(any(feature = "neuflow-ort", feature = "neuflow-burn")), allow(unused_variables))]
+        #[cfg_attr(not(any(feature = "neuflow-ort", neuflow_burn_enabled)), allow(unused_variables))]
         stride: usize,
     ) -> Self {
         match method {
@@ -85,7 +85,7 @@ impl OpticalFlowMethod {
                 stride,
                 3,
             )),
-            #[cfg(feature = "neuflow-burn")]
+            #[cfg(neuflow_burn_enabled)]
             4 => Self::OFNeuFlowV2(OFNeuFlowV2::new(
                 timestamp_us,
                 frame_data.unwrap_or_else(|| Arc::new(Vec::new())),

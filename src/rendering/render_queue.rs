@@ -787,12 +787,17 @@ pub struct RenderQueue {
     pub status: qt_property!(QString; NOTIFY status_changed),
     pub auto_rotate: qt_property!(bool; NOTIFY auto_rotate_changed),
     pub simple_mode: qt_property!(bool; NOTIFY simple_mode_changed),
+    // Simple mode "AI SYNC" toggle. When true, apply_match uses of_method=4
+    // (NeuFlow v2 Burn) for batch sync; when false, of_method=2 (DIS).
+    // Driven by SimpleStabilization.qml::aiSyncCb and persisted via QSettings.
+    pub batch_sync_ai_method: qt_property!(bool; NOTIFY batch_sync_ai_method_changed),
 
     pub progress_changed: qt_signal!(),
     pub queue_changed: qt_signal!(),
     pub status_changed: qt_signal!(),
     pub auto_rotate_changed: qt_signal!(),
     pub simple_mode_changed: qt_signal!(),
+    pub batch_sync_ai_method_changed: qt_signal!(),
 
     pub render_progress: qt_signal!(job_id: u32, progress: f64, current_frame: usize, total_frames: usize, finished: bool, start_time: f64, is_conversion: bool),
     pub encoder_initialized: qt_signal!(job_id: u32, encoder_name: String),
@@ -7154,9 +7159,16 @@ impl RenderQueue {
             },
         );
 
-        // Default optical flow: OpenCV DIS (method=2). neuflow feature 关闭时
-        // 依然可用；开启时用户可在 Advanced 下拉手动切到 NeuFlow。
-        let default_of_method: u64 = 2;
+        // Default optical flow method for batch sync. Driven by Simple mode
+        // "AI SYNC" checkbox via the batch_sync_ai_method qt_property:
+        //   true  → NeuFlow v2 Burn (method=4), faster on supported GPUs but
+        //           heavier; only effective when neuflow_burn_enabled (Win/Mac).
+        //   false → OpenCV DIS (method=2), the historical default. Works on
+        //           every target.
+        // On platforms without burn support, the AI SYNC checkbox is hidden in
+        // QML so this stays false there; if a method=4 somehow leaks through,
+        // OpticalFlowMethod::detect_features falls back to DIS with a log error.
+        let default_of_method: u64 = if self.batch_sync_ai_method { 4 } else { 2 };
 
         core::run_threaded(move || {
             let t_bg = std::time::Instant::now();

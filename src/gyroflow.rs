@@ -110,7 +110,7 @@ fn entry() {
     // Enable cubecl SPIR-V pipeline cache before any wgpu device probe so the
     // cubecl GlobalConfig can still accept `set()`. Without this, NeuFlow Burn
     // warmup recompiles every kernel on every launch (~4-5 s).
-    #[cfg(feature = "neuflow-burn")]
+    #[cfg(neuflow_burn_enabled)]
     core::neuflow_burn::init_cubecl_cache();
 
     let brand = gyroflow_core::distribution::config().brand.clone();
@@ -378,7 +378,7 @@ fn entry() {
     // Pre-load NeuFlow sessions in background while user interacts with UI
     #[cfg(feature = "neuflow-ort")]
     std::thread::spawn(|| core::neuflow::ensure_ready());
-    #[cfg(feature = "neuflow-burn")]
+    #[cfg(neuflow_burn_enabled)]
     std::thread::spawn(|| core::neuflow_burn::ensure_ready());
 
     engine.exec();

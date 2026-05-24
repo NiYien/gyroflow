@@ -871,6 +871,11 @@ pub fn find_weight_file() -> Option<PathBuf> {
             candidates.push(dir.join("generated_iter5/neuflow_v2_iter5_768x432.bpk"));
             candidates.push(dir.join("../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
             candidates.push(dir.join("../../generated_iter5/neuflow_v2_iter5_768x432.bpk"));
+            // Mac .app bundle layout: Contents/MacOS/gyroflow -> Contents/Resources/...
+            candidates.push(
+                dir.join("../Resources/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
+            );
+            candidates.push(dir.join("../Resources/neuflow_v2_iter5_768x432.bpk"));
             candidates.push(
                 dir.join("src/core/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk"),
             );

@@ -95,6 +95,13 @@ MenuItem {
         }
     }
     function getSettings(): var {
+        // Simple mode "AI SYNC" toggle overrides the Full mode dropdown when
+        // it's on. Lets single-clip Auto sync (App.qml's simpleAutoSyncBtn →
+        // sync.runAutosync) pick up the user's NeuFlow preference without
+        // needing them to switch to Full mode and change the dropdown.
+        const aiSyncRaw = settings.value("simpleAiSync", false);
+        const aiSyncOn  = (aiSyncRaw === true || aiSyncRaw === "true");
+        const useAi     = aiSyncOn && controller.has_neuflow_support();
         return {
             "initial_offset":     initialOffset.value,
             "initial_offset_inv": checkNegativeInitialOffset.checked,
@@ -103,7 +110,7 @@ MenuItem {
             "max_sync_points":    maxSyncPoints.value,
             "every_nth_frame":    everyNthFrame.value,
             "time_per_syncpoint": timePerSyncpoint.value,
-            "of_method":          syncMethod.ofMethodMap[syncMethod.currentIndex],
+            "of_method":          useAi ? 4 : syncMethod.ofMethodMap[syncMethod.currentIndex],
             "offset_method":      offsetMethod.currentIndex,
             "pose_method":        poseMethod.currentIndex,
             "auto_sync_points":   experimentalAutoSyncPoints.checked,
@@ -352,16 +359,17 @@ MenuItem {
 
             ComboBox {
                 id: syncMethod;
-                // neuflow feature 关闭时隐藏 NeuFlow 两项；数组与 model 顺序一致。
-                // method 编号：0=AKAZE, 1=PyrLK, 2=DIS, 3=NeuFlow-ORT, 4=NeuFlow-Burn
+                // Method ids: 0=AKAZE, 1=PyrLK, 2=DIS, 3=NeuFlow-CUDA (removed), 4=NeuFlow-Burn.
+                // The NeuFlow v2 CUDA option (id 3) was dropped — Burn replaces it.
+                // Legacy .gyroflow projects with of_method=3 are silently mapped to Burn
+                // on Win/Mac (or DIS on platforms without neuflow_burn_enabled).
                 readonly property bool hasNeuflow: controller.has_neuflow_support();
                 readonly property var ofMethodMap:
-                    hasNeuflow ? [3, 4, 0, 1, 2] : [0, 1, 2];
+                    hasNeuflow ? [4, 0, 1, 2] : [0, 1, 2];
                 readonly property var ofMethodReverseMap:
-                    hasNeuflow ? ({0: 2, 1: 3, 2: 4, 3: 0, 4: 1})
-                               : ({0: 0, 1: 1, 2: 2});
+                    hasNeuflow ? ({0: 1, 1: 2, 2: 3, 3: 0, 4: 0})
+                               : ({0: 0, 1: 1, 2: 2, 3: 2, 4: 2});
                 model: hasNeuflow ? [
-                    QT_TR_NOOP("NeuFlow v2 CUDA"),
                     QT_TR_NOOP("NeuFlow v2 Burn"),
                     "AKAZE",
                     "OpenCV (PyrLK)",
@@ -373,8 +381,8 @@ MenuItem {
                 ];
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
-                // 默认选中 "OpenCV (DIS)"：有 NeuFlow 时第 5 项(index 4)、无 NeuFlow 时第 3 项(index 2)
-                currentIndex: hasNeuflow ? 4 : 2;
+                // Default to "OpenCV (DIS)" — last item in both branches.
+                currentIndex: hasNeuflow ? 3 : 2;
                 onCurrentIndexChanged: controller.set_of_method(ofMethodMap[currentIndex]);
                 Component.onCompleted: currentIndexChanged();
             }
