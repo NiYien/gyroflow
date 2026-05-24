@@ -132,12 +132,6 @@ cubek-reduce = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff08
 cubek-std = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 cubek-test-utils = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 
-[patch."https://github.com/tracel-ai/burn"]
-burn-cubecl = { path = "vendor/burn-compat/burn-cubecl" }
-# niyien fix: pad_constant uses input dtype so F16 inputs don't panic with
-# DTypeMismatch in burn-ir. See vendor/burn-compat/burn-tensor/src/tensor/api/pad.rs.
-burn-tensor = { path = "vendor/burn-compat/burn-tensor" }
-
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
 features = [ "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemServices", "Win32_UI_Shell", "Win32_Foundation", "Wdk_Foundation", "Win32_System_LibraryLoader",

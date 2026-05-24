@@ -778,18 +778,49 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "burn"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-nn 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-optim 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-store 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-vision 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-wgpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+]
+
+[[package]]
+name = "burn"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-autodiff",
- "burn-core",
- "burn-flex",
- "burn-ir",
- "burn-nn",
- "burn-optim",
- "burn-std",
- "burn-store",
- "burn-vision",
- "burn-wgpu",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-flex 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-nn 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-optim 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-store 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-vision 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+]
+
+[[package]]
+name = "burn-autodiff"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "derive-new",
+ "hashbrown 0.16.1",
+ "log",
+ "num-traits 0.2.19",
+ "parking_lot",
+ "portable-atomic",
+ "portable-atomic-util",
+ "spin",
 ]
 
 [[package]]
@@ -797,8 +828,8 @@ name = "burn-autodiff"
 version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-std",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "derive-new",
  "hashbrown 0.16.1",
  "log",
@@ -812,9 +843,28 @@ dependencies = [
 [[package]]
 name = "burn-backend"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "bytemuck",
+ "cubecl",
+ "derive-new",
+ "enumset",
+ "hashbrown 0.16.1",
+ "num-traits 0.2.19",
+ "portable-atomic-util",
+ "rand 0.10.1",
+ "rand_distr",
+ "serde",
+ "spin",
+]
+
+[[package]]
+name = "burn-backend"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-std",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "bytemuck",
  "cubecl",
  "derive-new",
@@ -831,6 +881,16 @@ dependencies = [
 [[package]]
 name = "burn-backend-extension"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
+]
+
+[[package]]
+name = "burn-backend-extension"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
  "proc-macro2",
@@ -841,16 +901,47 @@ dependencies = [
 [[package]]
 name = "burn-core"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "ahash",
+ "bincode",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-backend-extension 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-derive 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-dispatch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-tensor 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "data-encoding",
+ "derive-new",
+ "flate2",
+ "half",
+ "hashbrown 0.16.1",
+ "log",
+ "num-traits 0.2.19",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rand 0.10.1",
+ "regex",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "spin",
+ "uuid",
+]
+
+[[package]]
+name = "burn-core"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
  "ahash",
  "bincode",
- "burn-backend",
- "burn-backend-extension",
- "burn-derive",
- "burn-dispatch",
- "burn-std",
- "burn-tensor",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-backend-extension 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-derive 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-dispatch 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-tensor 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "data-encoding",
  "derive-new",
  "flate2",
@@ -872,23 +963,53 @@ dependencies = [
 [[package]]
 name = "burn-cpu"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cubecl",
+]
+
+[[package]]
+name = "burn-cpu"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-cubecl",
- "burn-fusion",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cubecl",
 ]
 
 [[package]]
 name = "burn-cubecl"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
 dependencies = [
- "burn-backend",
- "burn-cubecl-fusion",
- "burn-fusion",
- "burn-ir",
- "burn-std",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cubecl-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cubecl",
+ "cubek",
+ "derive-new",
+ "futures-lite",
+ "log",
+ "serde",
+ "text_placeholder",
+]
+
+[[package]]
+name = "burn-cubecl"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cubecl-fusion 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cubecl",
  "cubek",
  "derive-new",
@@ -901,12 +1022,29 @@ dependencies = [
 [[package]]
 name = "burn-cubecl-fusion"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cubecl",
+ "cubek",
+ "derive-new",
+ "hashbrown 0.16.1",
+ "serde",
+ "spin",
+]
+
+[[package]]
+name = "burn-cubecl-fusion"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-fusion",
- "burn-ir",
- "burn-std",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cubecl",
  "cubek",
  "derive-new",
@@ -918,12 +1056,33 @@ dependencies = [
 [[package]]
 name = "burn-cuda"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cubecl",
+]
+
+[[package]]
+name = "burn-cuda"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-cubecl",
- "burn-fusion",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cubecl",
+]
+
+[[package]]
+name = "burn-derive"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "derive-new",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]
@@ -940,18 +1099,50 @@ dependencies = [
 [[package]]
 name = "burn-dispatch"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cuda 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-flex 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ndarray 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-rocm 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-tch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-wgpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "paste",
+]
+
+[[package]]
+name = "burn-dispatch"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-autodiff",
- "burn-backend",
- "burn-cpu",
- "burn-cuda",
- "burn-flex",
- "burn-ndarray",
- "burn-rocm",
- "burn-tch",
- "burn-wgpu",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cpu 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cuda 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-flex 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ndarray 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-rocm 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-tch 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-wgpu 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "paste",
+]
+
+[[package]]
+name = "burn-flex"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "bytemuck",
+ "gemm",
+ "half",
+ "libm",
+ "num-traits 0.2.19",
 ]
 
 [[package]]
@@ -959,9 +1150,9 @@ name = "burn-flex"
 version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-ir",
- "burn-std",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "bytemuck",
  "gemm",
  "half",
@@ -972,11 +1163,28 @@ dependencies = [
 [[package]]
 name = "burn-fusion"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "derive-new",
+ "hashbrown 0.16.1",
+ "log",
+ "serde",
+ "smallvec",
+ "spin",
+ "tracing",
+]
+
+[[package]]
+name = "burn-fusion"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-ir",
- "burn-std",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "derive-new",
  "hashbrown 0.16.1",
  "log",
@@ -989,11 +1197,43 @@ dependencies = [
 [[package]]
 name = "burn-ir"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
 dependencies = [
- "burn-backend",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
  "hashbrown 0.16.1",
  "serde",
+]
+
+[[package]]
+name = "burn-ir"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "hashbrown 0.16.1",
+ "serde",
+]
+
+[[package]]
+name = "burn-ndarray"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "atomic_float",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "const-random",
+ "libm",
+ "macerator",
+ "matrixmultiply",
+ "ndarray 0.17.2",
+ "num-traits 0.2.19",
+ "paste",
+ "portable-atomic",
+ "portable-atomic-util",
+ "rand 0.10.1",
 ]
 
 [[package]]
@@ -1002,10 +1242,10 @@ version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
  "atomic_float",
- "burn-autodiff",
- "burn-backend",
- "burn-ir",
- "burn-std",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "const-random",
  "libm",
  "macerator",
@@ -1021,9 +1261,18 @@ dependencies = [
 [[package]]
 name = "burn-nn"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "num-traits 0.2.19",
+]
+
+[[package]]
+name = "burn-nn"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-core",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "num-traits 0.2.19",
 ]
 
@@ -1032,8 +1281,8 @@ name = "burn-onnx"
 version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn-onnx?rev=8f578180c025a702ec902c9fdec8133db2daec90#8f578180c025a702ec902c9fdec8133db2daec90"
 dependencies = [
- "burn",
- "burn-store",
+ "burn 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-store 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "clap",
  "derive-new",
  "log",
@@ -1049,9 +1298,22 @@ dependencies = [
 [[package]]
 name = "burn-optim"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "derive-new",
+ "hashbrown 0.16.1",
+ "log",
+ "num-traits 0.2.19",
+ "serde",
+]
+
+[[package]]
+name = "burn-optim"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-core",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "derive-new",
  "hashbrown 0.16.1",
  "log",
@@ -1062,12 +1324,46 @@ dependencies = [
 [[package]]
 name = "burn-rocm"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cubecl",
+]
+
+[[package]]
+name = "burn-rocm"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-cubecl",
- "burn-fusion",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cubecl",
+]
+
+[[package]]
+name = "burn-std"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "bytemuck",
+ "bytes",
+ "cubecl",
+ "cubecl-common 0.11.0-pre.1",
+ "cubecl-zspace 0.11.0-pre.1",
+ "derive-new",
+ "enumset",
+ "half",
+ "hashbrown 0.16.1",
+ "num-traits 0.2.19",
+ "portable-atomic-util",
+ "rand 0.10.1",
+ "rand_distr",
+ "serde",
+ "smallvec",
+ "spin",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -1097,9 +1393,27 @@ dependencies = [
 [[package]]
 name = "burn-store"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "byteorder",
+ "bytes",
+ "ciborium",
+ "half",
+ "hashbrown 0.16.1",
+ "memmap2",
+ "regex",
+ "safetensors 0.7.0",
+ "serde",
+ "textdistance",
+]
+
+[[package]]
+name = "burn-store"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-core",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "byteorder",
  "bytes",
  "ciborium",
@@ -1115,9 +1429,22 @@ dependencies = [
 [[package]]
 name = "burn-tch"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cc",
+ "libc",
+ "log",
+ "tch",
+ "torch-sys",
+]
+
+[[package]]
+name = "burn-tch"
+version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cc",
  "libc",
  "log",
@@ -1128,10 +1455,26 @@ dependencies = [
 [[package]]
 name = "burn-tensor"
 version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
 dependencies = [
- "burn-backend",
- "burn-dispatch",
- "burn-std",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-dispatch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "colored",
+ "derive-new",
+ "enumset",
+ "num-traits 0.2.19",
+ "serde",
+]
+
+[[package]]
+name = "burn-tensor"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-dispatch 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "colored",
  "derive-new",
  "enumset",
@@ -1142,14 +1485,14 @@ dependencies = [
 [[package]]
 name = "burn-vision"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
 dependencies = [
  "aligned-vec",
  "bon",
- "burn-core",
- "burn-cubecl",
- "burn-fusion",
- "burn-ir",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
  "bytemuck",
  "cubecl",
  "derive-new",
@@ -1163,13 +1506,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "burn-vision"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
+dependencies = [
+ "aligned-vec",
+ "bon",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "bytemuck",
+ "derive-new",
+ "half",
+ "image",
+ "macerator",
+ "ndarray 0.17.2",
+ "num-traits 0.2.19",
+ "paste",
+ "serde",
+]
+
+[[package]]
+name = "burn-wgpu"
+version = "0.22.0-pre.1"
+source = "git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67#85e41275efb984be7cf0ce4b2e14a3e4d534cc67"
+dependencies = [
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
+ "cubecl",
+]
+
+[[package]]
 name = "burn-wgpu"
 version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6#ca57d897ca7e80f4f3785e83c076dcf2fa36ade6"
 dependencies = [
- "burn-backend",
- "burn-cubecl",
- "burn-fusion",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "cubecl",
 ]
 
@@ -3786,9 +4159,9 @@ dependencies = [
  "biquad",
  "bitarray",
  "bitflags 2.11.1",
- "burn",
+ "burn 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
  "burn-onnx",
- "burn-store",
+ "burn-store 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=85e41275efb984be7cf0ce4b2e14a3e4d534cc67)",
  "bytemuck",
  "byteorder",
  "ciborium",
@@ -5746,7 +6119,7 @@ name = "onnx-ir"
 version = "0.22.0-pre.1"
 source = "git+https://github.com/tracel-ai/burn-onnx?rev=8f578180c025a702ec902c9fdec8133db2daec90#8f578180c025a702ec902c9fdec8133db2daec90"
 dependencies = [
- "burn-tensor",
+ "burn-tensor 0.22.0-pre.1 (git+https://github.com/tracel-ai/burn?rev=ca57d897ca7e80f4f3785e83c076dcf2fa36ade6)",
  "bytemuck",
  "bytes",
  "derive-new",
