@@ -101,15 +101,80 @@ fn generate_neuflow_burn_model(project_dir: &str) {
         .out_dir("burn_onnx/")
         .run_from_script();
 
+    // Wrap 3 unguarded matmuls in F32 cast blocks. burn-onnx leaves these as
+    // raw F16 matmul, which accumulates a 128-dim (or 1296-dim) dot product
+    // in F16. Combined with cubecl autotune's kernel switching, the ULP-level
+    // variance bleeds into rs-sync and produces bimodal sync offsets. Adding
+    // F32 cast guards here is the targeted fix vs. disabling autotune globally.
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
+    post_process_neuflow_model_for_f32_matmul_casts(&out_dir);
+
     // Copy the regenerated .bpk into the source tree so mod.rs::find_weight_file()
     // can still locate it from a release/install layout (no env!("OUT_DIR") at runtime).
     // The .rs glue stays in $OUT_DIR and is pulled in via include!().
-    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
     let src_bpk = format!("{out_dir}/burn_onnx/neuflow_v2_iter5_768x432.bpk");
     let dst_bpk =
         format!("{project_dir}/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk");
     if let Err(e) = std::fs::copy(&src_bpk, &dst_bpk) {
         panic!("Failed to copy regenerated burnpack {src_bpk} -> {dst_bpk}: {e}");
+    }
+}
+
+fn post_process_neuflow_model_for_f32_matmul_casts(out_dir: &str) {
+    let path = format!("{out_dir}/burn_onnx/neuflow_v2_iter5_768x432.rs");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => {
+            println!("cargo:warning=neuflow post-process: cannot read {path}: {e}");
+            return;
+        }
+    };
+
+    // Exact-match replacements. Pattern not found → log + skip (don't fail
+    // build), since burn-onnx output shape could shift across regenerations.
+    let replacements: &[(&str, &str)] = &[
+        (
+            "let matmul18_out1 = softmax3_out1.matmul(constant86_out1);",
+            "let matmul18_out1 = { let _dt = softmax3_out1.dtype(); \
+             softmax3_out1.cast(burn::tensor::DType::F32) \
+             .matmul(constant86_out1.cast(burn::tensor::DType::F32)).cast(_dt) };",
+        ),
+        (
+            "let matmul19_out1 = transpose7_out1.matmul(reshape7_out1);",
+            "let matmul19_out1 = { let _dt = transpose7_out1.dtype(); \
+             transpose7_out1.cast(burn::tensor::DType::F32) \
+             .matmul(reshape7_out1.cast(burn::tensor::DType::F32)).cast(_dt) };",
+        ),
+        (
+            "let matmul20_out1 = transpose10_out1.matmul(reshape12_out1);",
+            "let matmul20_out1 = { let _dt = transpose10_out1.dtype(); \
+             transpose10_out1.cast(burn::tensor::DType::F32) \
+             .matmul(reshape12_out1.cast(burn::tensor::DType::F32)).cast(_dt) };",
+        ),
+    ];
+
+    let mut new_content = content;
+    let mut applied = 0;
+    for (from, to) in replacements {
+        if new_content.contains(from) {
+            new_content = new_content.replace(from, to);
+            applied += 1;
+        } else {
+            let preview: String = from.chars().take(60).collect();
+            println!(
+                "cargo:warning=neuflow post-process: pattern not found, skipping: {preview}..."
+            );
+        }
+    }
+
+    if applied > 0 {
+        if let Err(e) = std::fs::write(&path, &new_content) {
+            panic!("Failed to write post-processed {path}: {e}");
+        }
+        println!(
+            "cargo:warning=neuflow post-process: applied {applied}/{} F32-matmul cast wrappers",
+            replacements.len()
+        );
     }
 }
 
