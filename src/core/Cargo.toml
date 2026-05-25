@@ -99,13 +99,13 @@ objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-burn = { git = "https://github.com/NiYien/burn", rev = "a87c5a98fd2cc129e38b825030b50a6d9af51c48", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
-burn-store = { git = "https://github.com/NiYien/burn", rev = "a87c5a98fd2cc129e38b825030b50a6d9af51c48", default-features = false, features = ["std", "burnpack"], optional = true }
+burn = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "burnpack"], optional = true }
 cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-burn = { git = "https://github.com/NiYien/burn", rev = "a87c5a98fd2cc129e38b825030b50a6d9af51c48", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
-burn-store = { git = "https://github.com/NiYien/burn", rev = "a87c5a98fd2cc129e38b825030b50a6d9af51c48", default-features = false, features = ["std", "burnpack"], optional = true }
+burn = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "burnpack"], optional = true }
 cubecl-runtime = { version = "=0.10.0-pre.3", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]

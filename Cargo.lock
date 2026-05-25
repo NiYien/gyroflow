@@ -778,17 +778,17 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 [[package]]
 name = "burn"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-nn 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-optim 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-store 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-vision 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-wgpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-nn 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-optim 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-store 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-vision 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-wgpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
 ]
 
 [[package]]
@@ -809,10 +809,10 @@ dependencies = [
 [[package]]
 name = "burn-autodiff"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "derive-new",
  "hashbrown 0.16.1",
  "log",
@@ -843,9 +843,9 @@ dependencies = [
 [[package]]
 name = "burn-backend"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "bytemuck",
  "cubecl",
  "derive-new",
@@ -881,7 +881,7 @@ dependencies = [
 [[package]]
 name = "burn-backend-extension"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -901,16 +901,16 @@ dependencies = [
 [[package]]
 name = "burn-core"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
  "ahash",
  "bincode",
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-backend-extension 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-derive 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-dispatch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-tensor 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-backend-extension 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-derive 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-dispatch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-tensor 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "data-encoding",
  "derive-new",
  "flate2",
@@ -963,11 +963,11 @@ dependencies = [
 [[package]]
 name = "burn-cpu"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cubecl",
 ]
 
@@ -984,13 +984,13 @@ dependencies = [
 [[package]]
 name = "burn-cubecl"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cubecl-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cubecl-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cubecl",
  "cubek",
  "derive-new",
@@ -1022,12 +1022,12 @@ dependencies = [
 [[package]]
 name = "burn-cubecl-fusion"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cubecl",
  "cubek",
  "derive-new",
@@ -1056,11 +1056,11 @@ dependencies = [
 [[package]]
 name = "burn-cuda"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cubecl",
 ]
 
@@ -1077,7 +1077,7 @@ dependencies = [
 [[package]]
 name = "burn-derive"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
  "derive-new",
  "proc-macro2",
@@ -1099,17 +1099,17 @@ dependencies = [
 [[package]]
 name = "burn-dispatch"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cuda 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-flex 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ndarray 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-rocm 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-tch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-wgpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cuda 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-flex 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ndarray 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-rocm 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-tch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-wgpu 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "paste",
 ]
 
@@ -1133,11 +1133,11 @@ dependencies = [
 [[package]]
 name = "burn-flex"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "bytemuck",
  "gemm",
  "half",
@@ -1163,11 +1163,11 @@ dependencies = [
 [[package]]
 name = "burn-fusion"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "derive-new",
  "hashbrown 0.16.1",
  "log",
@@ -1197,9 +1197,9 @@ dependencies = [
 [[package]]
 name = "burn-ir"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "hashbrown 0.16.1",
  "serde",
 ]
@@ -1217,13 +1217,13 @@ dependencies = [
 [[package]]
 name = "burn-ndarray"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
  "atomic_float",
- "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-autodiff 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "const-random",
  "libm",
  "macerator",
@@ -1261,9 +1261,9 @@ dependencies = [
 [[package]]
 name = "burn-nn"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "num-traits 0.2.19",
 ]
 
@@ -1298,9 +1298,9 @@ dependencies = [
 [[package]]
 name = "burn-optim"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "derive-new",
  "hashbrown 0.16.1",
  "log",
@@ -1324,11 +1324,11 @@ dependencies = [
 [[package]]
 name = "burn-rocm"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cubecl",
 ]
 
@@ -1345,7 +1345,7 @@ dependencies = [
 [[package]]
 name = "burn-std"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
  "bytemuck",
  "bytes",
@@ -1393,9 +1393,9 @@ dependencies = [
 [[package]]
 name = "burn-store"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "byteorder",
  "bytes",
  "ciborium",
@@ -1429,9 +1429,9 @@ dependencies = [
 [[package]]
 name = "burn-tch"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cc",
  "libc",
  "log",
@@ -1455,11 +1455,11 @@ dependencies = [
 [[package]]
 name = "burn-tensor"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-dispatch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-dispatch 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-std 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "colored",
  "derive-new",
  "enumset",
@@ -1485,14 +1485,14 @@ dependencies = [
 [[package]]
 name = "burn-vision"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
  "aligned-vec",
  "bon",
- "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-core 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-ir 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "bytemuck",
  "cubecl",
  "derive-new",
@@ -1528,11 +1528,11 @@ dependencies = [
 [[package]]
 name = "burn-wgpu"
 version = "0.22.0-pre.1"
-source = "git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48#a87c5a98fd2cc129e38b825030b50a6d9af51c48"
+source = "git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb#946698ddcb9f4826d4d56b688a6cd7493bb607cb"
 dependencies = [
- "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
- "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-backend 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-cubecl 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
+ "burn-fusion 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "cubecl",
 ]
 
@@ -2194,7 +2194,7 @@ dependencies = [
 [[package]]
 name = "cubecl"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "cubecl-core",
  "cubecl-cpu",
@@ -2248,7 +2248,7 @@ dependencies = [
 [[package]]
 name = "cubecl-common"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "backtrace",
  "bytemuck",
@@ -2289,7 +2289,7 @@ dependencies = [
 [[package]]
 name = "cubecl-core"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
@@ -2318,7 +2318,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpp"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
  "cubecl-common 0.11.0-pre.1",
@@ -2334,7 +2334,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cpu"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
  "cubecl-common 0.11.0-pre.1",
@@ -2355,7 +2355,7 @@ dependencies = [
 [[package]]
 name = "cubecl-cuda"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
  "cubecl-common 0.11.0-pre.1",
@@ -2373,7 +2373,7 @@ dependencies = [
 [[package]]
 name = "cubecl-hip"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
  "cubecl-common 0.11.0-pre.1",
@@ -2424,7 +2424,7 @@ dependencies = [
 [[package]]
 name = "cubecl-ir"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bumpalo",
  "cubecl-common 0.11.0-pre.1",
@@ -2448,7 +2448,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "cubecl-common 0.11.0-pre.1",
  "darling 0.23.0",
@@ -2477,7 +2477,7 @@ dependencies = [
 [[package]]
 name = "cubecl-macros-internal"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "darling 0.23.0",
  "proc-macro2",
@@ -2488,7 +2488,7 @@ dependencies = [
 [[package]]
 name = "cubecl-opt"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "cubecl-common 0.11.0-pre.1",
  "cubecl-core",
@@ -2536,7 +2536,7 @@ dependencies = [
 [[package]]
 name = "cubecl-runtime"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "ahash",
  "async-channel",
@@ -2567,7 +2567,7 @@ dependencies = [
 [[package]]
 name = "cubecl-spirv"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bitflags 2.11.1",
  "cubecl-common 0.11.0-pre.1",
@@ -2583,7 +2583,7 @@ dependencies = [
 [[package]]
 name = "cubecl-std"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "cubecl-common 0.11.0-pre.1",
  "cubecl-core",
@@ -2599,7 +2599,7 @@ dependencies = [
 [[package]]
 name = "cubecl-wgpu"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "ash",
  "async-channel",
@@ -2639,7 +2639,7 @@ dependencies = [
 [[package]]
 name = "cubecl-zspace"
 version = "0.11.0-pre.1"
-source = "git+https://github.com/NiYien/cubecl?rev=24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79#24f8d95af48a0ae1dcaca1c6e48cfe3a41755a79"
+source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "derive-new",
  "serde",
@@ -4159,9 +4159,9 @@ dependencies = [
  "biquad",
  "bitarray",
  "bitflags 2.11.1",
- "burn 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "burn-onnx",
- "burn-store 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=a87c5a98fd2cc129e38b825030b50a6d9af51c48)",
+ "burn-store 0.22.0-pre.1 (git+https://github.com/NiYien/burn?rev=946698ddcb9f4826d4d56b688a6cd7493bb607cb)",
  "bytemuck",
  "byteorder",
  "ciborium",
