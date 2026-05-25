@@ -261,8 +261,15 @@ pub(super) fn decide_confidence(
     }
 
     // Geometric-ambiguity exception: keep ceiling so consensus can't all
-    // step into the same wrong cost-surface peak.
-    if quality_warn == Some("periodic_ambiguity") {
+    // step into the same wrong cost-surface peak — UNLESS Pearson signal is
+    // strong. r2 ambiguity is computed on NCC's cost surface; when Pearson
+    // peak is independently strong (max_pearson_r >= 0.6), it's an
+    // independent rotation-correlation signal not affected by NCC's
+    // geometric ambiguity, so fall through to consensus path instead of
+    // hard-ceiling conf. Previously this hard ceiling dropped conf to 0.2
+    // for low-motion cases where Pearson was the dominant deciding signal,
+    // causing Auto Sync to silently filter out a correct offset.
+    if quality_warn == Some("periodic_ambiguity") && max_pearson_r < 0.6 {
         return (warn_floor, ConfPath::PeriodicAmbiguity);
     }
 
@@ -1009,13 +1016,21 @@ impl FindOffsetsRssync<'_> {
 
         // Phase B: compute global_prior from the anchor pool.
         // - empty pool → None (main loop behaves as if cross-prior were off)
-        // - 1 anchor  → Some(its offset)
+        // - 1 anchor  → None (single-segment self-reference is equivalent to
+        //                trust-rs_argmin bypass — anchor IS the segment being
+        //                refined, so anchor_prior just pulls fusion back to
+        //                rs-sync's potentially-wrong-basin output. Real cross-
+        //                prior value requires ≥2 anchors from independent segs.)
         // - ≥2 anchors → span check first; if span > prior_span_max give up,
         //                otherwise median of anchor offsets.
         let global_prior: Option<f64> = if !cross_prior_enabled || anchors.is_empty() {
             None
         } else if anchors.len() == 1 {
-            Some(anchors[0].1)
+            log::info!(
+                "[anchor-pool] single anchor (seg {} offset={:.1}ms) — ignored to avoid self-reference",
+                anchors[0].0, anchors[0].1
+            );
+            None
         } else {
             let mut vals: Vec<f64> = anchors.iter().map(|a| a.1).collect();
             vals.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -1061,20 +1076,13 @@ impl FindOffsetsRssync<'_> {
             .unwrap_or(200.0);
 
         for i in 0..offsets.len() {
-            // Hybrid bypass: trust raw rs_argmin when rs-sync converged well
-            let raw_cost = offsets[i].2;
-            if raw_cost.is_finite() && raw_cost <= fusion_cost_threshold {
-                log::info!(
-                    "[ncc-fuse] seg {}: cost={:.2} ≤ {:.0} → bypass fusion (trust rs_argmin offset={:.1}ms)",
-                    i,
-                    raw_cost,
-                    fusion_cost_threshold,
-                    offsets[i].1
-                );
-                // offsets[i] already (mid_ms, rs_argmin_offset, cost, 0.5);
-                // keep conf=0.5 as raw rs_argmin trust signal.
-                continue;
-            }
+            // Reverted aaaa3e1f's cost ≤ fusion_cost_threshold bypass: rs-sync
+            // cost surface in low-motion / rotation-dominated cases is not a
+            // reliable basin indicator (wrong basin cost can be lower than true
+            // basin). 4-candidate consensus must always run to provide rotation-
+            // based correlation signals (NCC, Pearson) that recover the true
+            // offset. Anchor-pool gate above still uses fusion_cost_threshold
+            // for cross-prior anchor selection, which is correct usage.
             let seg_t0 = std::time::Instant::now();
             let mut tik_ns: u64 = 0;
             let cost_scan_ns: u64;
@@ -1444,7 +1452,15 @@ impl FindOffsetsRssync<'_> {
             // multiplies the corresponding candidate's weight below.
             let sf_rs = sharpness_at(rs_argmin_ms, 0.0);
             let sf_rs_cost = sharpness_at(rs_best_offs, 0.0);
-            let sf_ncc = sharpness_at(ncc_peak_ms, ncc_sharp_floor);
+            // NCC peak is a correlation-based signal independent of rs-sync's
+            // cost surface — rs cost sharpness at ncc_peak position has no
+            // veto authority over NCC's reliability. Force sf=1.0 so NCC
+            // weight reflects only its own signal quality (peak_h, r2,
+            // ncc_edge_penalty, r_at_ncc_peak). Was: sharpness_at(ncc_peak_ms,
+            // ncc_sharp_floor) which suppressed NCC to 0.01 in low-motion
+            // cases where pearson_peak / ncc_peak are the only valid signals.
+            let sf_ncc = 1.0;
+            let _ = ncc_sharp_floor; // keep var for future re-enable via env
             // Step 4: cost_sharpness fallback. When the global rs cost basin
             // is flat (ratio≈1.0 → cost_sharpness_old≈0) but rs_argmin still
             // sits on a sharp local valley, the per-position sharpness lifts
@@ -1628,7 +1644,12 @@ impl FindOffsetsRssync<'_> {
                         let ratio = (pearson_second_r / pearson_peak_r).max(0.0);
                         (1.0 - (ratio - 0.5).max(0.0) * 2.0).clamp(0.0, 1.0)
                     };
-                    sf_p = sharpness_at(pearson_peak_ms, 0.0);
+                    // Pearson peak is a correlation-based signal independent of
+                    // rs-sync cost surface — sf gate has no veto authority.
+                    // Was: sharpness_at(pearson_peak_ms, 0.0) which dropped
+                    // pearson_peak weight to 0.007 in low-motion cases where
+                    // it's actually the only reliable signal (r=0.8, prom=0.8).
+                    sf_p = 1.0;
                     w_pearson_peak = pearson_peak_r
                         * prominence_factor
                         * n_factor

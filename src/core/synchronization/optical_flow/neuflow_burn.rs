@@ -78,7 +78,10 @@ pub(super) fn neuflow_inference_burn_sampled(
 
 /// Compute texture-aware grid points for GPU sparse sampling.
 fn compute_grid_points(gray: &[u8], w: usize, h: usize) -> (Vec<(usize, usize)>, Vec<i32>) {
-    // w/18 grid with loosened texture filter (threshold 1.0 vs 3.0)
+    // Looser threshold than DIS (3.0): NeuFlow's learned spatial prior can
+    // estimate flow at low-texture points (propagates from nearby textured
+    // regions), unlike DIS which suffers aperture problem there. Keep more
+    // samples so RANSAC inlier set is larger.
     let step = (w / 18).max(4);
     let window_size = ((w as f32 * 0.02).round() as usize).max(10);
     let texture_threshold = 1.0;

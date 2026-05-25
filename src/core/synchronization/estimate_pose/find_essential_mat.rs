@@ -49,34 +49,22 @@ impl EstimatePoseTrait for PoseFindEssentialMat {
 
             let identity = Mat::eye(3, 3, opencv::core::CV_64F)?;
 
-            // Adaptive threshold: 1.0 px / fx (normalized space). Long-focal
-            // lenses get tighter threshold (e.g. f=5000 → 0.0002), short-focal
-            // gets ~0.001. MAGSAC++ marginalizes over thresholds anyway, so
-            // this is fine-tuning. Fallback to 0.001 if fx unavailable.
-            let normalized_threshold: f64 = {
-                let (camera_matrix, _, _, _, _, _) = FrameTransform::get_lens_data_at_timestamp(
-                    params,
-                    timestamp_us as f64 / 1000.0,
-                    false,
-                );
-                let img_dim_ratio = size.0 as f64 / (params.width.max(1)) as f64;
-                let scaled_fx = camera_matrix[(0, 0)] * img_dim_ratio;
-                if scaled_fx > 1.0 {
-                    1.0 / scaled_fx
-                } else {
-                    0.001
-                }
-            };
-
+            // Reverted aaaa3e1f's USAC_MAGSAC + adaptive threshold + iter=1000
+            // back to LMEDS + fixed 0.00001 + iter=4000. USAC_MAGSAC uses
+            // random sampling RANSAC → non-deterministic OF rotation tracks
+            // across runs → pearson_peak in fusion jumps between basins,
+            // causing unstable sync output (200ms vs -1848ms across runs)
+            // in low-motion long-focal cases. LMEDS is deterministic and
+            // gives stable pearson_peak position → stable fusion output.
             let mut mask = Mat::default();
             let e = opencv::calib3d::find_essential_mat(
                 &a1_pts,
                 &a2_pts,
                 &identity,
-                opencv::calib3d::USAC_MAGSAC,
+                opencv::calib3d::LMEDS,
                 0.999,
-                normalized_threshold,
-                1000, // USAC adaptive sampling early-stops well before this
+                0.00001,
+                4000,
                 &mut mask,
             )?;
 
