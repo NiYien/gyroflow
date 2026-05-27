@@ -242,6 +242,64 @@ struct Session {
     reliable: bool,
 }
 
+/// How to derive a per-(vi_pair, gi_pair) candidate's offset from its two
+/// per-pair raw offsets.
+///
+/// - `Avg`: legacy behaviour, `(offset0 + offset1) / 2`. Balances measurement
+///   noise across two well-paired cal videos so each one passes the
+///   downstream `clip_bounds_ok` 70% coverage gate. Required for the common
+///   "tightly paired cal" case where both per-pair offsets are genuine but
+///   the user pressed gyro/camera with a few hundred ms of latency jitter.
+/// - `SinglePick`: NiYien Tool semantics (auto_sync.cpp:134-142), keep only
+///   the half with smaller `|dur_diff|` (the better-matching cal pair).
+///   Required when `vi_pair` spans two real cal sub-sessions with different
+///   offsets - the avg lands between the two true offsets and creates a
+///   "bridge" candidate that pulls both sub-sessions into the same inlier
+///   halo, inflating spread above the reliable gate.
+///
+/// Two-pass strategy in `compute_session_offset`: try `Avg` first; if the
+/// resulting inlier spread exceeds the reliable gate (signal that the avg
+/// hit a bimodal cluster), retry with `SinglePick` and take whichever pass
+/// produces the smaller spread.
+#[derive(Copy, Clone, Debug)]
+enum CandidateOffsetMode {
+    Avg,
+    SinglePick,
+}
+
+/// Raw per-(vi_pair, gi_pair) candidate. Keeps both per-pair offsets and
+/// dur_diffs so we can re-derive the final candidate offset in either
+/// `CandidateOffsetMode` without re-running the filter loop.
+#[derive(Copy, Clone, Debug)]
+struct CandidateRaw {
+    offset0: i64,
+    offset1: i64,
+    dur_diff0: f64,
+    dur_diff1: f64,
+    delay: i64,
+    vi_pair: [usize; 2],
+    // Kept for diagnostic parity with the original NiYien Tool record even
+    // though downstream V<->G assignment is done by assign_videos_by_coverage
+    // rather than from this field.
+    #[allow(dead_code)]
+    gi_pair: [usize; 2],
+}
+
+impl CandidateRaw {
+    fn resolved_offset(&self, mode: CandidateOffsetMode) -> i64 {
+        match mode {
+            CandidateOffsetMode::Avg => (self.offset0 + self.offset1) / 2,
+            CandidateOffsetMode::SinglePick => {
+                if self.dur_diff0.abs() <= self.dur_diff1.abs() {
+                    self.offset0
+                } else {
+                    self.offset1
+                }
+            }
+        }
+    }
+}
+
 /// Compute offset/delay/spread for a single session.
 ///
 /// Equivalent to the legacy compute_global_offset but scoped to one
@@ -258,8 +316,9 @@ fn compute_session_offset(
         return None;
     }
 
-    // Candidate offsets: (offset, delay, video_pair, gyro_pair)
-    let mut candidates: Vec<(i64, i64, [usize; 2], [usize; 2])> = Vec::new();
+    // Raw candidate pool: keeps both per-pair offsets so the RANSAC pass can
+    // re-derive each candidate's offset under either Avg or SinglePick mode.
+    let mut raw_candidates: Vec<CandidateRaw> = Vec::new();
 
     for vi in 0..v_cluster.len() - 1 {
         let v0 = &videos[v_cluster[vi]];
@@ -317,8 +376,13 @@ fn compute_session_offset(
             };
 
             let avg_offset = (offset0 + offset1) / 2;
+            let sp_offset = if dur_diff0.abs() <= dur_diff1.abs() {
+                offset0
+            } else {
+                offset1
+            };
             log::info!(
-                "[batch_match_diag] candidate vi_pair=[{},{}] gi_pair=[{},{}] offset0={}ms offset1={}ms avg={}ms delay={}ms dur_diff=[{:.3},{:.3}] total_diff=[{:.3},{:.3}] v_paths=['{}','{}'] g_paths=['{}','{}']",
+                "[batch_match_diag] candidate vi_pair=[{},{}] gi_pair=[{},{}] offset0={}ms offset1={}ms avg={}ms single_pick={}ms delay={}ms dur_diff=[{:.3},{:.3}] total_diff=[{:.3},{:.3}] v_paths=['{}','{}'] g_paths=['{}','{}']",
                 v_cluster[vi],
                 v_cluster[vi + 1],
                 g_cluster[gi],
@@ -326,6 +390,7 @@ fn compute_session_offset(
                 offset0,
                 offset1,
                 avg_offset,
+                sp_offset,
                 delay,
                 dur_diff0,
                 dur_diff1,
@@ -336,34 +401,96 @@ fn compute_session_offset(
                 g0.path,
                 g1.path
             );
-            candidates.push((
-                avg_offset,
+
+            raw_candidates.push(CandidateRaw {
+                offset0,
+                offset1,
+                dur_diff0,
+                dur_diff1,
                 delay,
-                [v_cluster[vi], v_cluster[vi + 1]],
-                [g_cluster[gi], g_cluster[gi + 1]],
-            ));
+                vi_pair: [v_cluster[vi], v_cluster[vi + 1]],
+                gi_pair: [g_cluster[gi], g_cluster[gi + 1]],
+            });
         }
     }
 
-    if candidates.is_empty() {
+    if raw_candidates.is_empty() {
         return None;
     }
 
+    // Pass 1 - `Avg`: legacy/balanced semantics. Right for "tightly paired
+    // cal" cases where 2 well-paired cal videos differ by a few hundred ms
+    // of user-induced latency jitter - the averaged offset lands at the
+    // midpoint of the two true per-pair offsets so BOTH videos pass the
+    // downstream `clip_bounds_ok` 70% coverage gate.
+    let result_avg = select_session_from_candidates(
+        &raw_candidates,
+        videos,
+        gyros,
+        CandidateOffsetMode::Avg,
+    );
+
+    if let Some((_, _, spread, _)) = &result_avg {
+        if *spread <= SYNC_CREATE_OFFSET_MAX {
+            return result_avg;
+        }
+    }
+
+    // Pass 2 - `SinglePick` (NiYien Tool auto_sync.cpp:134-142). Triggered
+    // when pass 1's RANSAC inlier spread blew past the reliable gate - the
+    // bimodal signature: a `vi_pair` straddling two real cal sub-sessions
+    // produced a "bridge" candidate at the arithmetic midpoint of the two
+    // true offsets, pulling both sub-sessions into the same inlier halo
+    // and inflating spread. Single-pick stores per-video truth offsets
+    // (the half with smaller `|dur_diff|`), so the bridge collapses onto
+    // whichever sub-session's offset is dominant in the candidate pool.
+    //
+    // Whichever pass produces the smaller spread wins. Pass 1 ties take
+    // precedence (SinglePick must STRICTLY improve to be used) so tight-pair
+    // cases where both passes coincide stay on the coverage-balanced Avg
+    // result.
+    let result_sp = select_session_from_candidates(
+        &raw_candidates,
+        videos,
+        gyros,
+        CandidateOffsetMode::SinglePick,
+    );
+
+    match (result_avg, result_sp) {
+        (Some(a), Some(s)) if s.2 < a.2 => Some(s),
+        (Some(a), _) => Some(a),
+        (None, sp) => sp,
+    }
+}
+
+/// RANSAC mode finder + median + spread, parameterized by how each
+/// `CandidateRaw` resolves to a scalar offset. Shared between the
+/// `Avg` and `SinglePick` passes in `compute_session_offset`.
+///
+/// For each candidate we treat its offset as a hypothesis and count how
+/// many other candidates fall within SYNC_CREATE_OFFSET_MAX (= inlier
+/// count, robust to proxy duplicates and cross-pair noise). Highest
+/// inlier count wins; ties resolved by which offset, applied across all
+/// gyros, covers the most videos geometrically.
+fn select_session_from_candidates(
+    raw: &[CandidateRaw],
+    videos: &[VideoMatchInfo],
+    gyros: &[GyroMatchInfo],
+    mode: CandidateOffsetMode,
+) -> Option<(i64, i64, i64, Vec<usize>)> {
+    if raw.is_empty() {
+        return None;
+    }
+
+    // Resolve each raw candidate's offset under this mode while keeping a
+    // back-pointer to its raw record (for delay-majority counting and
+    // cal-video collection).
+    let mut candidates: Vec<(i64, &CandidateRaw)> = raw
+        .iter()
+        .map(|r| (r.resolved_offset(mode), r))
+        .collect();
     candidates.sort_by_key(|c| c.0);
 
-    // RANSAC-style mode finder with video-coverage tie-break.
-    //
-    // For each candidate we treat its offset as a hypothesis and count how
-    // many other candidates fall within SYNC_CREATE_OFFSET_MAX (= inlier
-    // count, robust to proxy duplicates and cross-pair noise). The candidate
-    // with the highest inlier count wins.
-    //
-    // When multiple candidates tie on inlier count (e.g. two equally-sized
-    // offset clusters from a multi-modal distribution like "morning cal +
-    // evening cal with different drifts") we tie-break by **geometric video
-    // coverage**: which hypothesis offset, when applied across all gyros,
-    // covers the most videos. This favours the cluster that explains more
-    // of the data instead of arbitrarily picking the lower offset.
     let n = candidates.len();
     let inlier_counts: Vec<usize> = candidates
         .iter()
@@ -382,7 +509,6 @@ fn compute_session_offset(
         .map(|(i, _)| i)
         .collect();
 
-    // Closure: count how many input videos this offset would cover.
     let coverage = |test_offset: i64| -> usize {
         let mut covered = 0usize;
         for v in videos.iter() {
@@ -402,8 +528,6 @@ fn compute_session_offset(
         covered
     };
 
-    // Pick the mode. Tie-break by video coverage; stable on equal coverage
-    // by preferring the earlier-listed mode (deterministic).
     let chosen_idx = if mode_indices.len() == 1 {
         mode_indices[0]
     } else {
@@ -412,7 +536,8 @@ fn compute_session_offset(
         for &i in mode_indices.iter().skip(1) {
             let cov = coverage(candidates[i].0);
             log::info!(
-                "[batch_match_diag] tie_break candidate_offset={} inlier_count={} coverage={}",
+                "[batch_match_diag] tie_break mode={:?} candidate_offset={} inlier_count={} coverage={}",
+                mode,
                 candidates[i].0,
                 max_count,
                 cov
@@ -425,10 +550,8 @@ fn compute_session_offset(
         best_idx
     };
 
-    // The inlier set: every candidate within SYNC_CREATE_OFFSET_MAX of the
-    // chosen hypothesis. Median of inliers becomes the final offset.
     let chosen_center = candidates[chosen_idx].0;
-    let inliers: Vec<&(i64, i64, [usize; 2], [usize; 2])> = candidates
+    let inliers: Vec<&(i64, &CandidateRaw)> = candidates
         .iter()
         .filter(|c| (c.0 - chosen_center).abs() <= SYNC_CREATE_OFFSET_MAX)
         .collect();
@@ -436,30 +559,26 @@ fn compute_session_offset(
     inlier_offsets.sort();
     let median_offset = inlier_offsets[inlier_offsets.len() / 2];
 
-    // Delay: majority of inliers.
-    let delay_500_count = inliers.iter().filter(|c| c.1 == 500).count();
+    let delay_500_count = inliers.iter().filter(|c| c.1.delay == 500).count();
     let delay = if delay_500_count * 2 > inliers.len() {
         500
     } else {
         0
     };
 
-    // Spread = max - min within the inlier set (used for the reliable flag).
     let spread = inlier_offsets.last().copied().unwrap_or(median_offset)
         - inlier_offsets.first().copied().unwrap_or(median_offset);
 
-    // Track the video indices that participated in the inlier set. These are
-    // the "verified" cal videos; any video in v_cluster outside this set is
-    // just an incidentally-short clip and stays Matched.
     let mut cal_videos: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
     for c in &inliers {
-        cal_videos.insert(c.2[0]);
-        cal_videos.insert(c.2[1]);
+        cal_videos.insert(c.1.vi_pair[0]);
+        cal_videos.insert(c.1.vi_pair[1]);
     }
     let cal_video_indices: Vec<usize> = cal_videos.into_iter().collect();
 
     log::info!(
-        "[batch_match_diag] selected global_offset={}ms delay={}ms inlier_count={}/{} ties={} spread_ms={} cal_videos={:?} all_candidates={:?}",
+        "[batch_match_diag] selected mode={:?} global_offset={}ms delay={}ms inlier_count={}/{} ties={} spread_ms={} cal_videos={:?} all_candidates={:?}",
+        mode,
         median_offset,
         delay,
         inliers.len(),
@@ -2087,6 +2206,66 @@ mod tests {
         assert_eq!(spread, 0); // Single avg per (vi,gi) pair -> single offset in candidates.
         // offset = (1000+1200)/2 = 1100
         assert_eq!(offset, 1100);
+    }
+
+    #[test]
+    fn session_offset_bimodal_falls_back_to_single_pick() {
+        // Regression: feedback 20260527-caccbf81 (P1004702..P1004706, all
+        // Panasonic S5 + SenseFlow .bin). Five short videos and six gyros
+        // cluster together but the per-video offsets split into two real
+        // sub-sessions:
+        //   group A (P1004702/03):   ~43094-43097ms
+        //   group B (P1004704/05/06): ~43091.6-43091.9ms
+        // (5+ second drift across the burst, plausibly from user pressing
+        // gyro vs camera with different latency for two separate cal taps).
+        //
+        // Pass 1 (Avg) generated a "bridge" candidate at vi_pair=[40,41]
+        // (avg = 43093193ms, midway between groups). RANSAC picked it as
+        // the mode, pulled both groups into its 3000ms inlier halo, and
+        // reported spread = 4124ms > SYNC_CREATE_OFFSET_MAX -> reliable
+        // gate FAILS at the caller site (line ~1687).
+        //
+        // Pass 2 (SinglePick) stores each candidate's stronger half so the
+        // bridge collapses onto v[41]/g[6]'s true offset (43091942ms),
+        // joining v[42]/g[8] (43091822ms) as a tight inlier pair with
+        // spread 120ms -> reliable gate PASSES, session ships and downstream
+        // coverage/fallback handles the outlier P1004702/03 separately.
+        let videos = vec![
+            v(39, 3270.0, Some(1_775_253_706_761)), // P1004702
+            v(40, 1400.0, Some(1_775_253_715_556)), // P1004703
+            v(41, 5610.0, Some(1_775_253_725_058)), // P1004704
+            v(42, 7470.0, Some(1_775_253_744_178)), // P1004705
+            v(43, 6540.0, Some(1_775_253_755_388)), // P1004706
+        ];
+        let gyros = vec![
+            g(4, 3450.0, 1_775_296_804_000), // 18:00:04 mix.bin
+            g(5, 2300.0, 1_775_296_810_000), // 18:00:10
+            g(6, 5760.0, 1_775_296_817_000), // 18:00:17
+            g(7, 2300.0, 1_775_296_825_000), // 18:00:25 (delay=500 outlier)
+            g(8, 7480.0, 1_775_296_836_000), // 18:00:36
+            g(9, 6330.0, 1_775_296_847_000), // 18:00:47
+        ];
+
+        let (offset, _delay, spread, _cal_videos) = compute_session_offset(
+            &videos,
+            &gyros,
+            &[0, 1, 2, 3, 4],
+            &[0, 1, 2, 3, 4, 5],
+        )
+        .expect("session should resolve via single-pick fallback");
+
+        assert!(
+            offset == 43_091_942 || offset == 43_091_822,
+            "expected SinglePick to lock onto P1004704/05/06 cluster (~43091.9s), \
+             got {} (Avg-bridge would land at 43093193)",
+            offset
+        );
+        assert!(
+            spread <= SYNC_CREATE_OFFSET_MAX,
+            "spread {}ms must satisfy reliable gate; Avg's bridge candidate \
+             used to push it to 4124ms",
+            spread
+        );
     }
 
     #[test]
