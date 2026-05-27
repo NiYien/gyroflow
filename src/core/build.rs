@@ -121,8 +121,27 @@ fn generate_neuflow_burn_model(project_dir: &str) {
     let src_bpk = format!("{out_dir}/burn_onnx/neuflow_v2_iter5_768x432.bpk");
     let dst_bpk =
         format!("{project_dir}/neuflow_burn/generated_iter5/neuflow_v2_iter5_768x432.bpk");
-    if let Err(e) = std::fs::copy(&src_bpk, &dst_bpk) {
-        panic!("Failed to copy regenerated burnpack {src_bpk} -> {dst_bpk}: {e}");
+    // Skip the 26 MB copy when dst already matches src by size. burn-onnx
+    // ModelGen is a deterministic host tool (same ONNX + same burn version →
+    // identical bytes), so size equality is a reliable cheap proxy for
+    // content equality. Mac universal build runs cargo twice (x86_64 +
+    // aarch64) and would otherwise rewrite the same bytes on each pass.
+    let needs_copy = match (std::fs::metadata(&src_bpk), std::fs::metadata(&dst_bpk)) {
+        (Ok(s), Ok(d)) => s.len() != d.len(),
+        _ => true,
+    };
+    if needs_copy {
+        if let Err(e) = std::fs::copy(&src_bpk, &dst_bpk) {
+            panic!("Failed to copy regenerated burnpack {src_bpk} -> {dst_bpk}: {e}");
+        }
+        let copied_len = std::fs::metadata(&dst_bpk).map(|m| m.len()).unwrap_or(0);
+        println!(
+            "cargo:warning=neuflow: copied .bpk to source tree ({copied_len} bytes)"
+        );
+    } else {
+        println!(
+            "cargo:warning=neuflow: .bpk in source tree already up-to-date, skipping copy"
+        );
     }
 }
 

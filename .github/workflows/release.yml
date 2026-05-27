@@ -64,9 +64,11 @@ jobs:
           path: '${{ github.workspace }}/ext/'
           key: ${{ matrix.targets.type }}-gyroflow-niyien-ext-0
 
-      # Vulkan SDK 仅在 neuflow feature 开启时需要（burn wgpu 后端）。
-      # 本次 release default feature 已去掉 "neuflow"，无需装 Vulkan。
-      # TODO: neuflow feature 恢复时把此步骤加回来。
+      # NeuFlow v2 Burn (default feature) does not require Vulkan SDK at build
+      # OR runtime: burn-onnx ModelGen is a host-side tool (ndarray, no GPU);
+      # wgpu picks DX12 on Windows / Metal on Mac at runtime. The install step
+      # is intentionally left disabled and is only relevant if a future build
+      # forces wgpu's Vulkan backend explicitly.
       # - name: Prepare Vulkan SDK
       #   uses: johnnynunez/setup-vulkan-sdk@v1
       #   with:
