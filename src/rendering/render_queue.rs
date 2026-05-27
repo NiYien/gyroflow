@@ -968,6 +968,8 @@ pub struct RenderQueue {
     get_batch_sync_prompt_kind: qt_method!(fn(&self) -> QString),
     get_anamorphic_applied_count: qt_method!(fn(&self) -> u32),
     get_assigned_gyro_job_ids_json: qt_method!(fn(&self) -> QString),
+    get_all_video_job_ids_json: qt_method!(fn(&self) -> QString),
+    has_video_jobs: qt_property!(bool; READ get_has_video_jobs NOTIFY queue_changed),
     get_adjacent_gyro_index: qt_method!(fn(&self, job_id: u32, offset: i32) -> i32),
     enter_pairing_mode: qt_method!(fn(&mut self, gyro_index: usize)),
     exit_pairing_mode: qt_method!(fn(&mut self)),
@@ -8472,6 +8474,41 @@ impl RenderQueue {
         QString::from(serde_json::to_string(&assigned).unwrap_or_else(|_| "[]".to_owned()))
     }
 
+    /// Collect job IDs for all queue items except those that are part of a CalibrationPair
+    /// (used by simple-mode-only "no-selection = apply to all video jobs" UX).
+    fn collect_video_job_ids(&self) -> Vec<u32> {
+        let ordered = self.get_ordered_job_ids();
+
+        // Build the set of calibration-pair job IDs (if any).
+        let mut calibration_ids: HashSet<u32> = HashSet::new();
+        if let Some(ref results) = self.match_results {
+            for result in &results.results {
+                if matches!(
+                    result.status,
+                    core::gyro_match::MatchStatus::CalibrationPair
+                ) {
+                    if let Some(job_id) = result.job_id {
+                        calibration_ids.insert(job_id);
+                    }
+                }
+            }
+        }
+
+        ordered
+            .into_iter()
+            .filter(|id| !calibration_ids.contains(id))
+            .collect()
+    }
+
+    fn get_all_video_job_ids_json(&self) -> QString {
+        let ids = self.collect_video_job_ids();
+        QString::from(serde_json::to_string(&ids).unwrap_or_else(|_| "[]".to_owned()))
+    }
+
+    pub fn get_has_video_jobs(&self) -> bool {
+        !self.collect_video_job_ids().is_empty()
+    }
+
     /// 获取相邻 job 的 matchGyroIndex，用于 QML 判断同组 gyro。
     /// offset=-1 为前一个 job，offset=1 为后一个 job。
     /// 返回 -1 表示不存在或无匹配。
@@ -11686,6 +11723,96 @@ mod tests {
     }
 
     #[test]
+    fn all_video_job_ids_excludes_calibration_pairs() {
+        let mut queue = RenderQueue::default();
+        for job_id in [10, 11, 12, 13] {
+            queue.queue.borrow_mut().push(RenderQueueItem {
+                job_id,
+                ..Default::default()
+            });
+        }
+        // Job 11 is a CalibrationPair; the rest are normal video jobs.
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results: vec![
+                core::gyro_match::MatchResult {
+                    video_index: 0,
+                    job_id: Some(10),
+                    gyro_index: Some(0),
+                    status: core::gyro_match::MatchStatus::Matched,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 1,
+                    job_id: Some(11),
+                    gyro_index: Some(0),
+                    status: core::gyro_match::MatchStatus::CalibrationPair,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 2,
+                    job_id: Some(12),
+                    gyro_index: None,
+                    status: core::gyro_match::MatchStatus::Unmatched,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 3,
+                    job_id: Some(13),
+                    gyro_index: None,
+                    status: core::gyro_match::MatchStatus::NoCreationTime,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+            ],
+            global_offset_ms: None,
+            error: None,
+        });
+
+        let ids: Vec<u32> =
+            serde_json::from_str(&queue.get_all_video_job_ids_json().to_string()).unwrap();
+
+        // Job 11 (CalibrationPair) excluded; the other three are video jobs.
+        assert_eq!(ids, vec![10, 12, 13]);
+        assert!(queue.get_has_video_jobs());
+    }
+
+    #[test]
+    fn all_video_job_ids_empty_when_queue_empty() {
+        let queue = RenderQueue::default();
+        let ids: Vec<u32> =
+            serde_json::from_str(&queue.get_all_video_job_ids_json().to_string()).unwrap();
+        assert!(ids.is_empty());
+        assert!(!queue.get_has_video_jobs());
+    }
+
+    #[test]
+    fn all_video_job_ids_no_match_results_returns_all() {
+        // Without any match_results, every queue item is treated as a video job.
+        let queue = RenderQueue::default();
+        for job_id in [20, 21, 22] {
+            queue.queue.borrow_mut().push(RenderQueueItem {
+                job_id,
+                ..Default::default()
+            });
+        }
+        let ids: Vec<u32> =
+            serde_json::from_str(&queue.get_all_video_job_ids_json().to_string()).unwrap();
+        assert_eq!(ids, vec![20, 21, 22]);
+        assert!(queue.get_has_video_jobs());
+    }
+
+    #[test]
     fn auto_rotate_decision_accepts_job_or_queue_state_for_senseflow_only() {
         assert!(should_apply_auto_rotate(false, true, false, "SenseFlow Mini"));
         assert!(should_apply_auto_rotate(false, false, true, "SenseFlow"));
@@ -11964,6 +12091,7 @@ mod tests {
             lens_group_index: Some(0),
             video_created_at: None,
             original_video_rotation: 0.0,
+            lens_index_override: None,
         }
     }
 
@@ -12155,6 +12283,7 @@ mod tests {
             lens_group_index: Some(0),
             video_created_at: None,
             original_video_rotation: 0.0,
+            lens_index_override: None,
         };
 
         let project_data = export_project_data_with_effective_job_lens_group(&job, true);
