@@ -389,6 +389,18 @@ Rectangle {
         function onSelectedJobsChanged() { window.loadBatchParams(); }
     }
     Connections {
+        target: (window.isSimpleMode && videoArea.queue) ? render_queue : null
+        function onQueue_changed() {
+            // Simple-mode-only: when the queue changes (job added/removed) and nothing
+            // is selected, refresh the panel from the new first video job so the
+            // user's next adjustment uses a sane starting value.
+            if (videoArea.queue && videoArea.queue.selectedCount === 0
+                && render_queue.has_video_jobs) {
+                window.loadBatchParams();
+            }
+        }
+    }
+    Connections {
         target: controller
         function onLens_group_status_changed(): void { window.updateLensGroupPanelState(); }
     }
@@ -407,18 +419,28 @@ Rectangle {
     function loadBatchParams() {
         if (!videoArea.queue) return;
         const keys = Object.keys(videoArea.queue.selectedJobs);
-        if (keys.length === 0) {
+        let primaryJobId = 0;
+        if (keys.length > 0) {
+            primaryJobId = videoArea.queue.getPrimarySelectedJobId();
+        } else if (window.isSimpleMode && render_queue.has_video_jobs) {
+            // Simple-mode no-selection fallback: read params from the first video job
+            // so the panel reflects something instead of stale state. Subsequent edits
+            // will flatten every job to the new value (per spec).
+            try {
+                const ids = JSON.parse(render_queue.get_all_video_job_ids_json());
+                primaryJobId = ids.length > 0 ? ids[0] : 0;
+            } catch(e) {
+                console.log("loadBatchParams: get_all_video_job_ids_json parse error:", e);
+                primaryJobId = 0;
+            }
+        }
+        if (!primaryJobId) {
             batchState.detectedSource = "";
             return;
         }
         _batchApplySuppressed = true;
         try {
-            const jobId = videoArea.queue.getPrimarySelectedJobId();
-            if (!jobId) {
-                batchState.detectedSource = "";
-                return;
-            }
-            const p = JSON.parse(render_queue.get_job_display_params(jobId));
+            const p = JSON.parse(render_queue.get_job_display_params(primaryJobId));
             batchState.smoothness = (p.smoothness || 0.5) * 100;
             batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
             batchState.autoRotate = !!p.auto_rotate;
