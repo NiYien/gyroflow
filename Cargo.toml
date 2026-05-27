@@ -107,28 +107,6 @@ qmetaobject = { git = "https://github.com/AdrianEddy/qmetaobject-rs.git", rev = 
 qttypes     = { git = "https://github.com/AdrianEddy/qmetaobject-rs.git", rev = "ff1e23d" }
 cubek = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 
-# TEST: Using latest burn@ed4d313 with latest cubecl@1d628d7
-[patch."https://github.com/NiYien/cubecl"]
-cubecl = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-common = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-core = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-cpp = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-cpu = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-cuda = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-hip = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-ir = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-macros = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-macros-internal = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-opt = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-runtime = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-spirv = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-std = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-wgpu = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-cubecl-zspace = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839" }
-
-[patch."https://github.com/NiYien/burn"]
-burn = { git = "https://github.com/tracel-ai/burn", rev = "ed4d313b16ac348093cfa0f979774b4312b17058" }
-burn-store = { git = "https://github.com/tracel-ai/burn", rev = "ed4d313b16ac348093cfa0f979774b4312b17058" }
 cubek-attention = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 cubek-convolution = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 cubek-fft = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
@@ -137,7 +115,6 @@ cubek-quant = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086
 cubek-random = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 cubek-reduce = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 cubek-std = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
-cubek-test-utils = { git = "https://github.com/tracel-ai/cubek", rev = "0d259b53ff086b727dc1cdf001d064585bbc78bc" }
 
 
 

@@ -5,6 +5,7 @@ _binaries/
 cache/
 target/
 ext/*
+
 *.code-workspace
 gyroflow.log
 .DS_Store
@@ -65,3 +66,10 @@ distribution/log_center/log_center.config.json
 /distribution/control_center/tests/__pycache__
 /_deployment/sdk
 /_deployment/mac
+/scripts
+# NeuFlow Burn model weights: iter5 .bpk is build.rs-regenerated from the
+# bundled ONNX; the other variants are large unused historical binaries.
+# None belong in git — keep them on disk, out of tracking.
+*.bpk
+/local-build-tools
+/Gyroflow-macOS-*build-notes*.md

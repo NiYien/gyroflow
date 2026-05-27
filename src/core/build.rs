@@ -101,13 +101,19 @@ fn generate_neuflow_burn_model(project_dir: &str) {
         .out_dir("burn_onnx/")
         .run_from_script();
 
-    // Wrap 3 unguarded matmuls in F32 cast blocks. burn-onnx leaves these as
-    // raw F16 matmul, which accumulates a 128-dim (or 1296-dim) dot product
-    // in F16. Combined with cubecl autotune's kernel switching, the ULP-level
-    // variance bleeds into rs-sync and produces bimodal sync offsets. Adding
-    // F32 cast guards here is the targeted fix vs. disabling autotune globally.
+    // Wrap unguarded mixed-precision ops in F32 cast blocks. burn-onnx leaves
+    // some ops raw F16:
+    //  - 3 matmuls accumulate a 128-/1296-dim dot product in F16; combined with
+    //    cubecl autotune's kernel switching, ULP-level variance bleeds into
+    //    rs-sync and produces bimodal sync offsets.
+    //  - 1 pad uses an F32 Constant on an F16 tensor; on upstream burn this hits
+    //    a DTypeMismatch panic in burn-ir (pad's internal Tensor::full defaults
+    //    to F32, then slice_assign'ing the F16 input mismatches). The NiYien burn
+    //    fork patched pad.rs to inherit the input dtype; on upstream we cast the
+    //    tensor to F32 around the pad instead, keeping it dtype-consistent.
+    // F32 cast guards here are the targeted fix vs. forking burn / disabling autotune.
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR not set");
-    post_process_neuflow_model_for_f32_matmul_casts(&out_dir);
+    post_process_neuflow_model_for_f32_casts(&out_dir);
 
     // Copy the regenerated .bpk into the source tree so mod.rs::find_weight_file()
     // can still locate it from a release/install layout (no env!("OUT_DIR") at runtime).
@@ -120,7 +126,7 @@ fn generate_neuflow_burn_model(project_dir: &str) {
     }
 }
 
-fn post_process_neuflow_model_for_f32_matmul_casts(out_dir: &str) {
+fn post_process_neuflow_model_for_f32_casts(out_dir: &str) {
     let path = format!("{out_dir}/burn_onnx/neuflow_v2_iter5_768x432.rs");
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
@@ -151,6 +157,12 @@ fn post_process_neuflow_model_for_f32_matmul_casts(out_dir: &str) {
              transpose10_out1.cast(burn::tensor::DType::F32) \
              .matmul(reshape12_out1.cast(burn::tensor::DType::F32)).cast(_dt) };",
         ),
+        // pad on an F16 tensor with an F32 Constant → DTypeMismatch on upstream
+        // burn. Cast the tensor to F32 for the pad, then back to its dtype.
+        (
+            "let pad1_out1 = add21_out1\n            .pad(\n                [(0usize, 0usize), (0usize, 0usize), (1usize, 1usize), (1usize, 1usize)],\n                burn::tensor::ops::PadMode::Constant(0f32),\n            );",
+            "let pad1_out1 = { let _dt = add21_out1.dtype(); add21_out1.cast(burn::tensor::DType::F32)\n            .pad(\n                [(0usize, 0usize), (0usize, 0usize), (1usize, 1usize), (1usize, 1usize)],\n                burn::tensor::ops::PadMode::Constant(0f32),\n            ).cast(_dt) };",
+        ),
     ];
 
     let mut new_content = content;
@@ -172,7 +184,7 @@ fn post_process_neuflow_model_for_f32_matmul_casts(out_dir: &str) {
             panic!("Failed to write post-processed {path}: {e}");
         }
         println!(
-            "cargo:warning=neuflow post-process: applied {applied}/{} F32-matmul cast wrappers",
+            "cargo:warning=neuflow post-process: applied {applied}/{} F32 cast guards (matmul+pad)",
             replacements.len()
         );
     }
