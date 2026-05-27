@@ -1350,8 +1350,8 @@ dependencies = [
  "bytemuck",
  "bytes",
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
- "cubecl-zspace 0.11.0-pre.1",
+ "cubecl-common",
+ "cubecl-zspace",
  "derive-new",
  "enumset",
  "half",
@@ -1374,8 +1374,8 @@ dependencies = [
  "bytemuck",
  "bytes",
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
- "cubecl-zspace 0.11.0-pre.1",
+ "cubecl-common",
+ "cubecl-zspace",
  "derive-new",
  "enumset",
  "half",
@@ -2200,49 +2200,11 @@ dependencies = [
  "cubecl-cpu",
  "cubecl-cuda",
  "cubecl-hip",
- "cubecl-ir 0.11.0-pre.1",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-ir",
+ "cubecl-runtime",
  "cubecl-std",
  "cubecl-wgpu",
  "half",
-]
-
-[[package]]
-name = "cubecl-common"
-version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26305086841b64e39843de5d6d62cfd61437aaf31d94d6b4adcdbf0bf54375a1"
-dependencies = [
- "backtrace",
- "bytemuck",
- "cfg-if",
- "cfg_aliases",
- "derive-new",
- "derive_more 2.1.1",
- "dirs",
- "embassy-futures",
- "embassy-time",
- "float4",
- "float8",
- "futures-lite",
- "half",
- "hashbrown 0.16.1",
- "log",
- "num-traits 0.2.19",
- "oneshot",
- "parking_lot",
- "portable-atomic",
- "portable-atomic-util",
- "rand 0.10.1",
- "sanitize-filename",
- "serde",
- "serde_bytes",
- "serde_json",
- "spin",
- "tynm",
- "wasm-bindgen-futures",
- "web-time",
- "xxhash-rust",
 ]
 
 [[package]]
@@ -2293,11 +2255,11 @@ source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288
 dependencies = [
  "bitflags 2.11.1",
  "bytemuck",
- "cubecl-common 0.11.0-pre.1",
- "cubecl-ir 0.11.0-pre.1",
+ "cubecl-common",
+ "cubecl-ir",
  "cubecl-macros",
- "cubecl-runtime 0.11.0-pre.1",
- "cubecl-zspace 0.11.0-pre.1",
+ "cubecl-runtime",
+ "cubecl-zspace",
  "derive-new",
  "derive_more 2.1.1",
  "enumset",
@@ -2312,7 +2274,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
- "variadics_please 2.0.0",
+ "variadics_please",
 ]
 
 [[package]]
@@ -2321,10 +2283,10 @@ version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-opt",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-runtime",
  "derive-new",
  "half",
  "itertools 0.14.0",
@@ -2337,10 +2299,10 @@ version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-opt",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-runtime",
  "cubecl-std",
  "derive-new",
  "half",
@@ -2358,10 +2320,10 @@ version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-cpp",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-runtime",
  "cudarc",
  "derive-new",
  "half",
@@ -2376,11 +2338,11 @@ version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bytemuck",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-cpp",
  "cubecl-hip-sys",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-runtime",
  "derive-new",
  "half",
  "log",
@@ -2401,34 +2363,12 @@ dependencies = [
 
 [[package]]
 name = "cubecl-ir"
-version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21834fd88bfc98bbfedfff5e4e0867095bb42990617314033e9b55b1d9dce144"
-dependencies = [
- "cubecl-common 0.10.0-pre.3",
- "cubecl-macros-internal 0.10.0-pre.3",
- "derive-new",
- "derive_more 2.1.1",
- "enumset",
- "float-ord",
- "fnv",
- "foldhash 0.2.0",
- "half",
- "hashbrown 0.16.1",
- "num-traits 0.2.19",
- "portable-atomic",
- "serde",
- "variadics_please 1.1.0",
-]
-
-[[package]]
-name = "cubecl-ir"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bumpalo",
- "cubecl-common 0.11.0-pre.1",
- "cubecl-macros-internal 0.11.0-pre.1",
+ "cubecl-common",
+ "cubecl-macros-internal",
  "derive-new",
  "derive_more 2.1.1",
  "enumset",
@@ -2442,7 +2382,7 @@ dependencies = [
  "num-traits 0.2.19",
  "portable-atomic",
  "serde",
- "variadics_please 2.0.0",
+ "variadics_please",
 ]
 
 [[package]]
@@ -2450,25 +2390,13 @@ name = "cubecl-macros"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "darling 0.23.0",
  "derive-new",
  "derive_more 2.1.1",
  "ident_case",
  "inflections",
  "prettyplease 0.2.37",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
-name = "cubecl-macros-internal"
-version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "38590997cab4c64b41568394e205e3e55df8b08ad0a7839fe558a10013bb3fa5"
-dependencies = [
- "darling 0.23.0",
  "proc-macro2",
  "quote",
  "syn 2.0.117",
@@ -2490,9 +2418,9 @@ name = "cubecl-opt"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
- "cubecl-ir 0.11.0-pre.1",
+ "cubecl-ir",
  "float-ord",
  "hashbrown 0.17.1",
  "log",
@@ -2505,36 +2433,6 @@ dependencies = [
 
 [[package]]
 name = "cubecl-runtime"
-version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "934a5bd50210166a5a395c65fb9c38b865d79e81d203c5e3161b5f4e613a2335"
-dependencies = [
- "async-channel",
- "bytemuck",
- "cfg-if",
- "cfg_aliases",
- "cubecl-common 0.10.0-pre.3",
- "cubecl-ir 0.10.0-pre.3",
- "cubecl-zspace 0.10.0-pre.3",
- "derive-new",
- "derive_more 2.1.1",
- "dirs",
- "enumset",
- "hashbrown 0.16.1",
- "log",
- "md5",
- "serde",
- "serde_json",
- "spin",
- "thiserror 2.0.18",
- "toml 1.1.2+spec-1.1.0",
- "variadics_please 1.1.0",
- "wasm-bindgen-futures",
- "web-time",
-]
-
-[[package]]
-name = "cubecl-runtime"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
@@ -2543,9 +2441,9 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "cfg_aliases",
- "cubecl-common 0.11.0-pre.1",
- "cubecl-ir 0.11.0-pre.1",
- "cubecl-zspace 0.11.0-pre.1",
+ "cubecl-common",
+ "cubecl-ir",
+ "cubecl-zspace",
  "derive-new",
  "derive_more 2.1.1",
  "dirs",
@@ -2570,10 +2468,10 @@ version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
  "bitflags 2.11.1",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-opt",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-runtime",
  "half",
  "hashbrown 0.17.1",
  "serde",
@@ -2585,15 +2483,15 @@ name = "cubecl-std"
 version = "0.11.0-pre.1"
 source = "git+https://github.com/NiYien/cubecl?rev=8ec71b07d9116304f038e072fa288f992c2fa2b5#8ec71b07d9116304f038e072fa288f992c2fa2b5"
 dependencies = [
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-runtime",
  "half",
  "num-traits 0.2.19",
  "paste",
  "serde",
  "spin",
- "variadics_please 2.0.0",
+ "variadics_please",
 ]
 
 [[package]]
@@ -2606,11 +2504,11 @@ dependencies = [
  "bytemuck",
  "cfg-if",
  "cfg_aliases",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubecl-core",
  "cubecl-cpp",
- "cubecl-ir 0.11.0-pre.1",
- "cubecl-runtime 0.11.0-pre.1",
+ "cubecl-ir",
+ "cubecl-runtime",
  "cubecl-spirv",
  "derive-new",
  "derive_more 2.1.1",
@@ -2623,17 +2521,6 @@ dependencies = [
  "tracing",
  "wasm-bindgen-futures",
  "wgpu 29.0.0",
-]
-
-[[package]]
-name = "cubecl-zspace"
-version = "0.10.0-pre.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7102db7e3f401ad08bb3fb115747573e22baa13d8b1583102fae11fbf8f82998"
-dependencies = [
- "derive-new",
- "serde",
- "smallvec",
 ]
 
 [[package]]
@@ -2671,7 +2558,7 @@ source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d
 dependencies = [
  "bytemuck",
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubek-matmul",
  "cubek-std",
  "half",
@@ -2685,7 +2572,7 @@ source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d
 dependencies = [
  "bytemuck",
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubek-matmul",
  "cubek-std",
  "derive-new",
@@ -2708,7 +2595,7 @@ version = "0.3.0-pre.1"
 source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d064585bbc78bc#0d259b53ff086b727dc1cdf001d064585bbc78bc"
 dependencies = [
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "thiserror 2.0.18",
 ]
 
@@ -2719,7 +2606,7 @@ source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d
 dependencies = [
  "bytemuck",
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "cubek-std",
  "half",
  "serde",
@@ -2731,7 +2618,7 @@ version = "0.3.0-pre.1"
 source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d064585bbc78bc#0d259b53ff086b727dc1cdf001d064585bbc78bc"
 dependencies = [
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "thiserror 2.0.18",
 ]
 
@@ -2741,7 +2628,7 @@ version = "0.3.0-pre.1"
 source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d064585bbc78bc#0d259b53ff086b727dc1cdf001d064585bbc78bc"
 dependencies = [
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "half",
  "serde",
 ]
@@ -2752,7 +2639,7 @@ version = "0.3.0-pre.1"
 source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d064585bbc78bc#0d259b53ff086b727dc1cdf001d064585bbc78bc"
 dependencies = [
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "half",
  "num-traits 0.2.19",
  "rand 0.10.1",
@@ -2778,7 +2665,7 @@ version = "0.3.0-pre.1"
 source = "git+https://github.com/tracel-ai/cubek?rev=0d259b53ff086b727dc1cdf001d064585bbc78bc#0d259b53ff086b727dc1cdf001d064585bbc78bc"
 dependencies = [
  "cubecl",
- "cubecl-common 0.11.0-pre.1",
+ "cubecl-common",
  "half",
 ]
 
@@ -4166,7 +4053,7 @@ dependencies = [
  "byteorder",
  "ciborium",
  "crc32fast",
- "cubecl-runtime 0.10.0-pre.3",
+ "cubecl-runtime",
  "cv-core",
  "cv-pinhole",
  "dyn-clone",
@@ -8892,17 +8779,6 @@ name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba73ea9cf16a25df0c8caa16c51acb937d5712a8429db78a3ee29d5dcacd3a65"
-
-[[package]]
-name = "variadics_please"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41b6d82be61465f97d42bd1d15bf20f3b0a3a0905018f38f9d6f6962055b0b5c"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "variadics_please"

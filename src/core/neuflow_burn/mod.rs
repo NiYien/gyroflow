@@ -110,12 +110,12 @@ static QUEUE_DEPTH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64:
 /// across runs. Without this, every `just run` recompiles all SPIR-V kernels
 /// (~4-5 s warmup). With this, subsequent runs load from disk (<1 s).
 ///
-/// Must be called before any cubecl `GlobalConfig::get()` or Wgpu device init,
-/// otherwise `GlobalConfig::set` panics. Call at the very top of main before
+/// Must be called before any cubecl `CubeClRuntimeConfig::get()` or Wgpu device init,
+/// otherwise `CubeClRuntimeConfig::set` panics. Call at the very top of main before
 /// wgpu GPU probing (see `util::init_logging` in `gyroflow.rs`).
 pub fn init_cubecl_cache() {
     use cubecl_runtime::config::{
-        GlobalConfig, autotune::AutotuneConfig, cache::CacheConfig,
+        CubeClRuntimeConfig, autotune::AutotuneConfig, cache::CacheConfig,
         compilation::CompilationConfig,
     };
 
@@ -140,28 +140,46 @@ pub fn init_cubecl_cache() {
     // numerical drift in flow output (observed as bimodal sync offsets on
     // DSC_0385). With the cache, first session benchmarks once and writes its
     // decision; later sessions load it and reuse the same kernel deterministically.
-    let config = GlobalConfig {
+    let config = CubeClRuntimeConfig {
         compilation: CompilationConfig {
             cache: Some(CacheConfig::File(cache_root.clone())),
             ..Default::default()
         },
         autotune: AutotuneConfig {
             cache: CacheConfig::File(cache_root.clone()),
+            level: cubecl_autotune_level(),
             ..Default::default()
         },
         ..Default::default()
     };
 
     // `set()` panics if config is already set (e.g. test re-entry). Guard with catch_unwind.
-    let result = std::panic::catch_unwind(|| GlobalConfig::set(config));
+    let result = std::panic::catch_unwind(|| CubeClRuntimeConfig::set(config));
     match result {
         Ok(_) => log::info!(
             "NeuFlow Burn: cubecl SPIR-V + autotune caches enabled at {:?}",
             cache_root
         ),
-        Err(_) => log::debug!("NeuFlow Burn: cubecl GlobalConfig already set, skipping"),
+        Err(_) => log::debug!("NeuFlow Burn: cubecl runtime config already set, skipping"),
     }
     let _ = DONE.set(());
+}
+
+fn cubecl_autotune_level() -> cubecl_runtime::config::autotune::AutotuneLevel {
+    use cubecl_runtime::config::autotune::AutotuneLevel;
+
+    match std::env::var("CUBECL_AUTOTUNE_LEVEL").ok().as_deref() {
+        Some("balanced" | "1") => AutotuneLevel::Balanced,
+        Some("extensive" | "2") => AutotuneLevel::Extensive,
+        Some("full" | "3") => AutotuneLevel::Full,
+        Some("minimal" | "0") => AutotuneLevel::Minimal,
+        // Default to Minimal for numerical stability
+        None => AutotuneLevel::Minimal,
+        Some(other) => {
+            log::warn!("NeuFlow Burn: unknown CUBECL_AUTOTUNE_LEVEL={other:?}, using minimal");
+            AutotuneLevel::Minimal
+        }
+    }
 }
 
 /// Spawn the inference thread: loads model, then loops on channel receiving requests.
@@ -172,24 +190,6 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
     std::thread::Builder::new()
         .name("neuflow-infer".to_string())
         .spawn(move || {
-            // Pin autotune to "minimal" (level=0). Higher levels let cubecl
-            // benchmark multiple kernel variants for the same op and pick the
-            // "fastest" — but variants differ numerically (F16 accumulation
-            // vs F32 accumulation, tile shape, reduction order), and the
-            // benchmark winner is not stable across runs. The resulting flow
-            // tensor drift makes rs-sync lock onto alternating local minima.
-            // Empirically on DSC_0385 @ 2.47-4.95s, level=2 gives 53% wrong
-            // mode, level=1 gives 75% wrong mode, level=0 gives 0% wrong.
-            // Autotune cache in init_cubecl_cache() lets level>0 stabilize
-            // across sessions, but the cached winner can be the wrong-mode
-            // kernel, so we stay at level=0 for guaranteed correctness.
-            // Power users can override with CUBECL_AUTOTUNE_LEVEL={1,2,3}.
-            if std::env::var_os("CUBECL_AUTOTUNE_LEVEL").is_none() {
-                unsafe {
-                    std::env::set_var("CUBECL_AUTOTUNE_LEVEL", "0");
-                }
-            }
-
             init_cubecl_cache();
 
             let model_result = init_model();

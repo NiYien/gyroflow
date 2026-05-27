@@ -64,3 +64,4 @@ distribution/log_center/log_center.config.json
 /_runlogs
 /distribution/control_center/tests/__pycache__
 /_deployment/sdk
+/_deployment/mac
