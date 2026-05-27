@@ -1573,7 +1573,9 @@ Rectangle {
                     iconName: "gyroflow";
                     objectName: "simple-stab";
                     opened: false;
-                    innerItem.enabled: window.videoArea.vid.loaded || batchState.active;
+                    innerItem.enabled: window.videoArea.vid.loaded
+                        || batchState.active
+                        || (window.isSimpleMode && render_queue.has_video_jobs);
                     Menu.SimpleStabilization {
                         id: simpleStab;
                         width: parent.width;
