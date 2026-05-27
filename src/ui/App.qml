@@ -376,6 +376,14 @@ Rectangle {
         && (videoArea.queue.selectedCount > 0
             || (window.isSimpleMode && render_queue.has_video_jobs))
 
+    // Narrow version of _queueBatchActive: only true when the user has an
+    // explicit selection. Used by simple-mode peer panels' opacity/enabled
+    // bindings so they fade only when the user is selection-batch-editing,
+    // not just because the queue happens to be non-empty.
+    property bool _selectionDrivenBatch: videoArea.queue
+        && videoArea.queue.shown
+        && videoArea.queue.selectedCount > 0
+
     on_QueueBatchActiveChanged: {
         batchState.active = _queueBatchActive;
         if (_queueBatchActive) {
@@ -1487,8 +1495,8 @@ Rectangle {
                     iconName: "info";
                     objectName: "simple-info";
                     opened: true;
-                    opacity: batchState.active ? 0.4 : 1.0;
-                    innerItem.enabled: !batchState.active;
+                    opacity: _selectionDrivenBatch ? 0.4 : 1.0;
+                    innerItem.enabled: !_selectionDrivenBatch;
                     Button {
                         text: qsTranslate("VideoInformation", "Open file");
                         iconName: "video";
@@ -1541,8 +1549,8 @@ Rectangle {
                         border.color: styleHrColor;
                         border.width: Math.max(1, 1 * dpiScale);
                         radius: 10 * dpiScale;
-                        opacity: batchState.active ? 0.4 : 1.0;
-                        enabled: !batchState.active;
+                        opacity: _selectionDrivenBatch ? 0.4 : 1.0;
+                        enabled: !_selectionDrivenBatch;
                         ItemLoader {
                             id: simpleDevice;
                             active: controller.device_connected
@@ -1563,7 +1571,7 @@ Rectangle {
                         border.color: styleHrColor;
                         border.width: Math.max(1, 1 * dpiScale);
                         radius: 10 * dpiScale;
-                        opacity: batchState.active ? 0.4 : 1.0;
+                        opacity: _selectionDrivenBatch ? 0.4 : 1.0;
                         ItemLoader {
                             id: simpleMounting;
                             active: true;
@@ -1573,7 +1581,7 @@ Rectangle {
                             sourceComponent: Component {
                                 Menu.MountingPresetSelector {
                                     locked: true;
-                                    innerItem.enabled: !batchState.active;
+                                    innerItem.enabled: !_selectionDrivenBatch;
                                 }
                             }
                         }
@@ -1628,8 +1636,8 @@ Rectangle {
                     objectName: "simple-settings";
                     // Collapsed on first run; MenuItem still preserves the user's saved state.
                     opened: false;
-                    opacity: batchState.active ? 0.4 : 1.0;
-                    innerItem.enabled: !batchState.active;
+                    opacity: _selectionDrivenBatch ? 0.4 : 1.0;
+                    innerItem.enabled: !_selectionDrivenBatch;
                     // Export settings — moved here from the Video information section.
                     SectionDivider { label: qsTranslate("Export", "Export settings"); }
                     Menu.SimpleExport {
