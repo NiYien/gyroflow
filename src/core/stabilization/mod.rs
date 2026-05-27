@@ -294,28 +294,78 @@ pub struct ProcessedInfo {
     pub backend: &'static str,
 }
 
+/// Moved-out GPU wrappers from a Stabilization invalidation. Held briefly
+/// by a background worker (see `StabilizationManager::request_gpu_invalidation`)
+/// while the render-thread grace period elapses, then dropped — so the
+/// OpenCL / wgpu runtime tear-down runs OFF the QML thread and AFTER any
+/// in-flight render-thread dispatch has had time to observe the new
+/// `gpu_epoch` and bail out via `clear_caller_thread_gpu_caches`.
+///
+/// Sending these to a worker thread mirrors the pre-existing
+/// `ThreadLocalWgpuCache::Drop` workaround for Vulkan device-destroy hangs.
+//
+// Fields are only consumed via Drop (the struct's sole purpose is deferred
+// release), so the borrow-checker can't see them being "read" — silence
+// the dead_code lint without disabling it for the whole module.
+#[allow(dead_code)]
+pub(crate) struct TakenGpuBindings {
+    #[cfg(feature = "use-opencl")]
+    cl: Option<opencl::OclWrapper>,
+    wgpu: Option<wgpu::WgpuWrapper>,
+}
+
 impl Stabilization {
     pub fn set_compute_params(&mut self, params: ComputeParams) {
         self.stab_data.clear();
         self.compute_params = params;
     }
 
-    // §8a Layer A — drop GPU resource wrappers held on this struct. Render
-    // threads (which own their own thread_local CACHED_* LRUs) self-clear via
-    // the gpu_epoch counter on `StabilizationManager` once `gpu_epoch` ticks.
-    // Crate-private: external callers should go through
-    // `StabilizationManager::request_gpu_invalidation` so coalescing is
-    // applied; this entry point exists only for the manager wrapper.
-    pub(crate) fn invalidate_gpu_bindings(&mut self) {
+    // §8a Layer A — move GPU resource wrappers out of this struct so the
+    // caller can hand them to a background worker for deferred Drop.
+    // Render threads (which own their own thread_local CACHED_* LRUs)
+    // self-clear via the `gpu_epoch` counter on `StabilizationManager`
+    // once `gpu_epoch` ticks. Crate-private: external callers must go
+    // through `StabilizationManager::request_gpu_invalidation` so the
+    // coalescing policy and the deferred-Drop grace window are both
+    // applied uniformly.
+
+    /// Move out the OpenCL / wgpu wrappers so the caller can defer their
+    /// Drop to a background thread. Non-GPU state (`initialized_backend`,
+    /// `next_backend`, `stab_data`) is reset synchronously since it holds
+    /// no GPU resources.
+    ///
+    /// Returns `None` when nothing needed taking (both wrappers were
+    /// already `None`), so the caller can skip spawning a worker.
+    pub(crate) fn take_gpu_bindings(&mut self) -> Option<TakenGpuBindings> {
         #[cfg(feature = "use-opencl")]
-        {
-            self.cl = None;
-        }
-        self.wgpu = None;
+        let cl = self.cl.take();
+        let wgpu = self.wgpu.take();
         self.initialized_backend = BackendType::None;
         self.next_backend = None;
         self.stab_data.clear();
-        log::info!(target: "lifecycle", "Stabilization GPU bindings invalidated");
+
+        #[cfg(feature = "use-opencl")]
+        let cl_taken = cl.is_some();
+        #[cfg(not(feature = "use-opencl"))]
+        let cl_taken = false;
+        let wgpu_taken = wgpu.is_some();
+
+        log::info!(
+            target: "lifecycle",
+            "Stabilization GPU bindings invalidated (cl_taken={} wgpu_taken={})",
+            cl_taken,
+            wgpu_taken,
+        );
+
+        if cl_taken || wgpu_taken {
+            Some(TakenGpuBindings {
+                #[cfg(feature = "use-opencl")]
+                cl,
+                wgpu,
+            })
+        } else {
+            None
+        }
     }
 
     fn get_rect(desc: &BufferDescription) -> [i32; 4] {

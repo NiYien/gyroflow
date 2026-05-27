@@ -490,6 +490,66 @@ fn gpu_invalidate_now_ms() -> u64 {
     anchor.elapsed().as_millis() as u64
 }
 
+// Grace period (ms) between bumping `gpu_epoch` and actually dropping the
+// taken OpenCL / wgpu wrappers on a background thread. Render threads observe
+// the new epoch on their next vsync frame (see
+// `controller.rs::onProcessTexture` §8b) and self-clear thread_local LRUs;
+// this delay gives any mid-dispatch frame time to bail out before the
+// underlying GPU runtime is torn down on Drop. Closes the load_video →
+// request_gpu_invalidation AV window observed on Windows / OpenCL when a
+// new `.gyroflow` is dragged in while a prior project's stab render is
+// actively in flight.
+//
+// Default 50 ms (≥3 frames at 60 Hz). `0` runs the Drop synchronously on
+// the caller thread, matching the pre-change behaviour for A/B diagnostic.
+// Clamped to [0, 1000] to keep the worker thread short-lived.
+static GPU_INVALIDATE_DROP_DELAY_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+static GPU_INVALIDATE_DROP_DELAY_LOGGED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+fn gpu_invalidate_drop_delay_ms() -> u64 {
+    let value = *GPU_INVALIDATE_DROP_DELAY_MS.get_or_init(|| {
+        match std::env::var("GYROFLOW_GPU_INVALIDATE_DROP_DELAY_MS") {
+            Ok(raw) if !raw.is_empty() => match raw.parse::<u64>() {
+                Ok(v) if v <= 1000 => v,
+                Ok(v) => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_GPU_INVALIDATE_DROP_DELAY_MS={} > 1000ms cap, using 1000",
+                        v
+                    );
+                    1000
+                }
+                Err(_) => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_GPU_INVALIDATE_DROP_DELAY_MS={} invalid, using default 50",
+                        raw
+                    );
+                    50
+                }
+            },
+            _ => 50,
+        }
+    });
+    if GPU_INVALIDATE_DROP_DELAY_LOGGED.set(()).is_ok() {
+        let source = if std::env::var("GYROFLOW_GPU_INVALIDATE_DROP_DELAY_MS")
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+        {
+            "env"
+        } else {
+            "default"
+        };
+        log::info!(
+            target: "lifecycle",
+            "gpu_invalidate_drop_delay_ms resolved={} source={}",
+            value,
+            source
+        );
+    }
+    value
+}
+
 // Bug 2 / Bug 1 master kill switch. Set `GYROFLOW_VIDEO_LOAD_GUARD=0` to
 // disable the extended-lifecycle OpGuard hold (do_load drops the guard
 // inline as in the c623a548 baseline) and the QML video_loading_in_progress
@@ -668,26 +728,90 @@ impl StabilizationManager {
             );
             return;
         }
-        let stab_locked = match self.stabilization.try_write() {
-            Some(mut g) => {
-                g.invalidate_gpu_bindings();
-                false
-            }
-            None => true,
-        };
+        let drop_delay_ms = gpu_invalidate_drop_delay_ms();
+
+        // Step 1: bump `gpu_epoch` FIRST, BEFORE we touch the underlying
+        // GPU wrappers. Render threads observe `gpu_epoch` at the top of
+        // every frame (see `controller.rs::onProcessTexture` §8b) and call
+        // `clear_caller_thread_gpu_caches` when it advances. Bumping here
+        // first means the render thread sees the new epoch on its next
+        // frame BEFORE the OpenCL / wgpu runtime is destroyed.
+        //
+        // Pre-change ordering bumped the epoch AFTER the synchronous Drop
+        // inside `invalidate_gpu_bindings`, leaving a window where the
+        // render thread could be mid-frame holding stale handles when the
+        // GPU runtime got torn down — STATUS_ACCESS_VIOLATION on the next
+        // dispatch (load_video AV observed 2026-05-27 on OpenCL).
         let prev_epoch = self.gpu_epoch.fetch_add(1, SeqCst);
         // Store at least 1 so the "never fired" sentinel (0) is consumed even
         // when `now` happens to also be 0 (sub-millisecond after anchor init).
         self.last_gpu_invalidation_ms.store(now.max(1), SeqCst);
+
+        // Step 2: take the GPU wrappers out under try_write (non-blocking).
+        // `take_gpu_bindings` resets non-GPU state (initialized_backend,
+        // next_backend, stab_data) synchronously and returns the moved-out
+        // wrappers for deferred Drop. If try_write fails (render thread
+        // holds the read lock right now) we skip the take entirely; the
+        // epoch bump above is the safety net — the render thread will
+        // clear its thread_local LRU on the next frame regardless.
+        let (taken, stab_locked) = match self.stabilization.try_write() {
+            Some(mut g) => (g.take_gpu_bindings(), false),
+            None => (None, true),
+        };
+        let took_bindings = taken.is_some();
+
+        // Step 3: Drop the taken wrappers off the QML thread. `drop_delay_ms`
+        // is the grace window the render thread has to (a) observe the new
+        // gpu_epoch, (b) clear its thread_local LRU, (c) finish any
+        // in-flight dispatch — before the OpenCL / wgpu Drop tears down the
+        // runtime. `drop_delay_ms == 0` runs the Drop synchronously on the
+        // caller thread (matches pre-change behaviour for A/B diagnostic).
+        //
+        // Mirrors the pre-existing `ThreadLocalWgpuCache::Drop` workaround
+        // (src/core/stabilization/mod.rs:51) which already hands wgpu Drop
+        // to a background thread on render-thread exit.
+        if let Some(taken) = taken {
+            if drop_delay_ms == 0 {
+                drop(taken);
+                log::info!(
+                    target: "lifecycle",
+                    "gpu_invalidation_drop sync (delay=0)"
+                );
+            } else {
+                let spawn_res = std::thread::Builder::new()
+                    .name("gpu-invalidate-drop".to_string())
+                    .spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(drop_delay_ms));
+                        drop(taken);
+                        log::info!(
+                            target: "lifecycle",
+                            "gpu_invalidation_drop completed after {}ms",
+                            drop_delay_ms
+                        );
+                    });
+                if let Err(e) = spawn_res {
+                    // Worker spawn failed — fall back to synchronous Drop
+                    // so resources still get released. `taken` was moved
+                    // into the closure, so this branch only logs.
+                    log::warn!(
+                        target: "lifecycle",
+                        "gpu_invalidation_drop worker spawn failed ({e}); resources will Drop on caller (already taken)"
+                    );
+                }
+            }
+        }
+
         log::info!(
             target: "lifecycle",
-            "gpu_invalidation_applied at_ms={} prev_ms={} window_ms={} stab_locked={} epoch={}→{}",
+            "gpu_invalidation_applied at_ms={} prev_ms={} window_ms={} stab_locked={} epoch={}→{} took_bindings={} drop_delay_ms={}",
             now,
             last,
             window,
             stab_locked,
             prev_epoch,
-            prev_epoch + 1
+            prev_epoch + 1,
+            took_bindings,
+            drop_delay_ms
         );
     }
 
