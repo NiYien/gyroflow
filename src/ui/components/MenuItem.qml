@@ -22,11 +22,19 @@ Item {
     // Subclasses may override to shrink the collapsed header (e.g. MountingPresetSelector,
     // LensGroupConfig use 28 px for a tighter Sensor & Lens section).
     property real btnHeight: 36 * dpiScale;
+    // When true: force opened=true, hide chevron, title bar click does nothing,
+    // and settings persistence is skipped. Used for card-style simple-mode panels.
+    property bool locked: false;
 
     Component.onCompleted: {
+        if (root.locked) {
+            root.opened = true;
+            return;
+        }
         const val = settings.value(root.objectName + "-opened", root.opened);
         root.opened = (val == true || val == 1 || val == "true");
     }
+    onLockedChanged: { if (locked) root.opened = true; }
 
     function ensureVisible(): void {
         // Some placements (e.g. LensGroupConfig wrapped in an ItemLoader in
@@ -110,8 +118,9 @@ Item {
             MouseArea { anchors.fill: parent; acceptedButtons: Qt.NoButton; cursorShape: Qt.PointingHandCursor; }
         }
 
-        DropdownChevron { visible: col.children.length > 0; opened: root.opened; anchors.rightMargin: 5 * dpiScale; }
+        DropdownChevron { visible: col.children.length > 0 && !root.locked; opened: root.opened; anchors.rightMargin: 5 * dpiScale; }
         onClicked: {
+            if (root.locked) return;
             if (col.children.length > 0) {
                 root.opened = !root.opened;
                 canEnsureVisible = true;
@@ -122,6 +131,7 @@ Item {
         }
 
         Keys.onPressed: (e) => {
+            if (root.locked) return;
             if (e.key == Qt.Key_Enter || e.key == Qt.Key_Return) {
                 btn.clicked();
             }

@@ -116,6 +116,11 @@ MenuItem {
     property alias outAudio: audio.checked;
     property alias preserveOutputSettings: preserveOutputSettings;
     property alias preserveOutputPath: preserveOutputPath;
+    // simple-mode-ux-overhaul: runtime-only flag set by App.qml when entering Simple
+    // mode. When true, preserve-original behavior is forced without touching the
+    // persisted preserveOutputSettings.checked value.
+    property bool simpleModePreserveActive: false;
+    function isPreserveActive(): bool { return preserveOutputSettings.checked || simpleModePreserveActive; }
     property alias exportTrimsSeparately: exportTrimsSeparately;
     // [queue-batch-streamline T3] 队列输出路径设置
     property alias queueOutputMode: queueOutputModeBox.currentIndex
@@ -169,6 +174,8 @@ MenuItem {
     property bool disableUpdate: false;
     function notifySizeChanged(): void {
         controller.set_output_size(outWidth, outHeight);
+        // Only the persistent preserve toggle writes preserved* settings — simpleModePreserveActive
+        // must not pollute the user's saved Full-mode preferences.
         if (preserveOutputSettings.checked && outWidth > 0 && outHeight > 0) {
             settings.setValue("preservedWidth", outWidth);
             settings.setValue("preservedHeight", outHeight);
@@ -189,7 +196,7 @@ MenuItem {
         defaultHeight = h;
 
         disableUpdate = true;
-        if (preserveOutputSettings.checked) {
+        if (isPreserveActive()) {
             const pw = +settings.value("preservedWidth",  w); if (pw > 0) w = pw;
             const ph = +settings.value("preservedHeight", h); if (ph > 0) h = ph;
             aspectRatio = w / h;
@@ -206,7 +213,7 @@ MenuItem {
         root.originalWidth = w;
         root.originalHeight = h;
         Qt.callLater(notifySizeChanged);
-        if (preserveOutputSettings.checked) {
+        if (isPreserveActive()) {
             const pbr = +settings.value("preservedBitrate", br);
             if (pbr > 0) br = pbr;
         }

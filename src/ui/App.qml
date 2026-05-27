@@ -130,6 +130,10 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Simple forces silent overwrite (1); Full honors user setting
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
+        // simple-mode-ux-overhaul: force preserve-original via runtime-only flag.
+        // Persistent preserveOutputSettings.checked is left untouched so Full-mode
+        // preferences survive mode toggling.
+        if (window.exportSettings) window.exportSettings.simpleModePreserveActive = isSimpleMode;
         if (isSimpleMode) applySimpleModeDefaults();
         reparentSimplePanels();
     }
@@ -1471,9 +1475,9 @@ Rectangle {
                 Hr { id: simpleVideoInfoHr; width: parent ? parent.width : 0; }
 
                 // ── 2. Sensor & Lens ──
-                // Outer MenuItem stays fully enabled in batch mode so LensGroupConfig can
-                // handle the multi-selected queue jobs via its own batchScope path.
-                // Individual children opt in to disable when a batch edit is active.
+                // Three children render as locked cards (no chevron, no fold).
+                // Section dividers between them are removed since each card already
+                // has its own visual border.
                 MenuItem {
                     id: simpleSensorLensSection;
                     width: parent ? parent.width : 0;
@@ -1481,6 +1485,7 @@ Rectangle {
                     iconName: "chart";
                     objectName: "simple-sensor-lens";
                     opened: true;
+                    spacing: 16 * dpiScale;
                     BasicText {
                         width: parent.width;
                         wrapMode: Text.WordWrap;
@@ -1491,39 +1496,71 @@ Rectangle {
                         font.pixelSize: 11 * dpiScale;
                     }
 
-                    SectionDivider { visible: simpleDevice.active; }
-                    ItemLoader {
-                        id: simpleDevice;
-                        active: controller.device_connected
-                            || controller.ota_state !== "none"
-                            || ["requesting_permission", "permission_denied", "unsupported", "error"].indexOf(controller.device_connection_status) >= 0;
+                    Rectangle {
+                        id: simpleDeviceCard;
                         width: parent.width;
+                        visible: simpleDevice.active;
+                        height: visible ? simpleDevice.height + 16 * dpiScale : 0;
+                        color: styleBackground2;
+                        border.color: styleHrColor;
+                        border.width: Math.max(1, 1 * dpiScale);
+                        radius: 10 * dpiScale;
                         opacity: batchState.active ? 0.4 : 1.0;
                         enabled: !batchState.active;
-                        sourceComponent: Component { Menu.SimpleDevice { } }
+                        ItemLoader {
+                            id: simpleDevice;
+                            active: controller.device_connected
+                                || controller.ota_state !== "none"
+                                || ["requesting_permission", "permission_denied", "unsupported", "error"].indexOf(controller.device_connection_status) >= 0;
+                            x: 8 * dpiScale;
+                            y: 8 * dpiScale;
+                            width: parent.width - 16 * dpiScale;
+                            sourceComponent: Component { Menu.SimpleDevice { locked: true; } }
+                        }
                     }
 
-                    SectionDivider { }
-                    ItemLoader {
-                        id: simpleMounting;
-                        active: true;
+                    Rectangle {
+                        id: simpleMountingCard;
                         width: parent.width;
+                        height: simpleMounting.height + 16 * dpiScale;
+                        color: styleBackground2;
+                        border.color: styleHrColor;
+                        border.width: Math.max(1, 1 * dpiScale);
+                        radius: 10 * dpiScale;
                         opacity: batchState.active ? 0.4 : 1.0;
-                        sourceComponent: Component {
-                            Menu.MountingPresetSelector {
-                                innerItem.enabled: !batchState.active;
+                        ItemLoader {
+                            id: simpleMounting;
+                            active: true;
+                            x: 8 * dpiScale;
+                            y: 8 * dpiScale;
+                            width: parent.width - 16 * dpiScale;
+                            sourceComponent: Component {
+                                Menu.MountingPresetSelector {
+                                    locked: true;
+                                    innerItem.enabled: !batchState.active;
+                                }
                             }
                         }
                     }
 
-                    SectionDivider { }
-                    ItemLoader {
-                        id: lensGroupConfig;
-                        // Always visible + interactive in Simple mode so users can configure
-                        // lens groups for the multi-selected queue jobs (batchScope path).
-                        active: true;
+                    Rectangle {
+                        id: lensGroupConfigCard;
                         width: parent.width;
-                        sourceComponent: Component { Menu.LensGroupConfig { } }
+                        height: lensGroupConfig.height + 16 * dpiScale;
+                        color: styleBackground2;
+                        border.color: styleHrColor;
+                        border.width: Math.max(1, 1 * dpiScale);
+                        radius: 10 * dpiScale;
+                        ItemLoader {
+                            id: lensGroupConfig;
+                            // Always visible + interactive in Simple mode so users can configure
+                            // lens groups for the multi-selected queue jobs.
+                            active: true;
+                            x: 8 * dpiScale;
+                            y: 8 * dpiScale;
+                            width: parent.width - 16 * dpiScale;
+                            sourceComponent: Component { Menu.LensGroupConfig { locked: true; } }
+                        }
                     }
                 }
                 Hr { id: simpleSensorLensHr; width: parent ? parent.width : 0; }
@@ -1597,7 +1634,9 @@ Rectangle {
                     }
                     // GPU decode + GPU encode side-by-side. Both mirror the Full-mode sources:
                     // decode -> window.advanced.gpudecode, encode -> window.exportSettings.outGpu.
+                    // Hidden in simple-mode-ux-overhaul: simple mode delegates these to defaults.
                     Row {
+                        visible: false;
                         width: parent.width;
                         spacing: 8 * dpiScale;
                         CheckBox {
@@ -1623,7 +1662,8 @@ Rectangle {
                     Label {
                         position: Label.LeftPosition;
                         text: qsTranslate("Advanced", "Device for video processing");
-                        visible: window.advanced ? window.advanced.processingDevice.model.length > 0 : false;
+                        // Hidden in simple-mode-ux-overhaul: defer device choice to defaults.
+                        visible: false;
                         width: parent.width;
                         ComboBox {
                             id: simpleProcessingDevice;
@@ -1653,11 +1693,25 @@ Rectangle {
                         onClicked: window.feedbackDialog.open();
                     }
 
-                    SectionDivider { visible: controller.is_nle_installed(); }
-                    ItemLoader {
-                        active: controller.is_nle_installed();
+                    // 16-20px gap between Other settings and NLE plugin card.
+                    Item { width: 1; height: 16 * dpiScale; visible: nlePluginsCard.visible; }
+                    Rectangle {
+                        id: nlePluginsCard;
                         width: parent.width;
-                        sourceComponent: Component { Menu.NlePlugins { } }
+                        visible: controller.is_nle_installed();
+                        height: visible ? nlePluginsLoader.height + 16 * dpiScale : 0;
+                        color: styleBackground2;
+                        border.color: styleHrColor;
+                        border.width: Math.max(1, 1 * dpiScale);
+                        radius: 10 * dpiScale;
+                        ItemLoader {
+                            id: nlePluginsLoader;
+                            active: controller.is_nle_installed();
+                            x: 8 * dpiScale;
+                            y: 8 * dpiScale;
+                            width: parent.width - 16 * dpiScale;
+                            sourceComponent: Component { Menu.NlePlugins { locked: true; } }
+                        }
                     }
                 }
 
@@ -2025,6 +2079,10 @@ Rectangle {
     }
 
     Component.onCompleted: {
+        // simple-mode-ux-overhaul: enforce Simple mode at every launch.
+        // The property default is already true (line 25), but assign explicitly so
+        // any future binding that flips it during init can't slip past us.
+        window.isSimpleMode = true;
         controller.check_updates();
         // Defer crash scan one tick so QML overlay z-stack is ready.
         Qt.callLater(controller.scanCrashCheckpoints);
@@ -2034,6 +2092,9 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Initialize overwrite mode per current mode — Simple forces silent overwrite
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
+        // simple-mode-ux-overhaul: initialize preserve-original flag (onIsSimpleModeChanged
+        // will not fire for the default value, so seed it here).
+        if (window.exportSettings) window.exportSettings.simpleModePreserveActive = isSimpleMode;
         // NOTE: do NOT call applySimpleModeDefaults() at startup. The controller defaults are already
         // Simple-friendly (smoothing index 1 = DefaultAlgo, feature/flow overlays are only drawn while
         // sync runs). Invoking set_smoothing_method here races with queue-edit reload and blanks the

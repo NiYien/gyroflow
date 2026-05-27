@@ -58,6 +58,8 @@ Column {
         position: Label.LeftPosition;
         text: qsTranslate("Advanced", "Default file suffix");
         width: parent.width;
+        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
+        visible: false;
         TextField {
             id: simpleDefaultSuffix;
             width: parent.width;
@@ -74,6 +76,8 @@ Column {
         id: codec;
         enabled: window.videoArea.vid.loaded;
         opacity: enabled ? 1.0 : 0.5;
+        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
+        visible: false;
         model: exportSettings ? exportSettings.exportFormats.map(x => x.name) : [];
         width: parent.width;
         currentIndex: exportSettings ? exportSettings.outCodec === "H.264/AVC" ? 0 : exportSettings.outCodec === "H.265/HEVC" ? 1 : 0 : 1;
@@ -95,7 +99,8 @@ Column {
         opacity: enabled ? 1.0 : 0.5;
         model: exportSettings ? exportSettings.exportFormats[codec.currentIndex].variants : [];
         width: parent.width;
-        visible: model.length > 0;
+        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
+        visible: false;
         onCurrentIndexChanged: {
             if (exportSettings) {
                 exportSettings.codecOptions.currentIndex = currentIndex;
@@ -114,6 +119,8 @@ Column {
         text: qsTranslate("Export", "Output size");
         enabled: window.videoArea.vid.loaded;
         opacity: enabled ? 1.0 : 0.5;
+        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
+        visible: false;
         Item {
             width: parent.width;
             height: simpleOutputWidth.height;
@@ -212,7 +219,8 @@ Column {
         text: qsTranslate("Export", "Bitrate");
         enabled: window.videoArea.vid.loaded;
         opacity: enabled ? 1.0 : 0.5;
-        visible: exportSettings && (exportSettings.outCodec === "H.264/AVC" || exportSettings.outCodec === "H.265/HEVC" || exportSettings.outCodec === "AV1");
+        // Hidden in simple-mode-ux-overhaul: simple mode runs preserve-original.
+        visible: false;
         NumberField {
             id: simpleBitrate;
             value: exportSettings ? exportSettings.outBitrate : 20;

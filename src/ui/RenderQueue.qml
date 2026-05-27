@@ -912,8 +912,10 @@ Item {
             property real progressColumnGap: 10 * dpiScale
             property real trailingControlsWidth: btnsRow.width + (showProgressColumn ? progressColumnWidth + progressColumnGap : 0)
             property real textRightLimit: Math.max(0, innerItm.width - trailingControlsWidth)
+            // simple-mode-ux-overhaul: basicTextSize grows from 12 to 14, so bump the minimum
+            // content height to keep stab/lens/gyro rows from clipping when text overflows.
             property real delegateContentHeight: Math.max(
-                70 * dpiScale,
+                (window.isSimpleMode && !window.isMobileLayout ? 86 : 70) * dpiScale,
                 Math.max(textColumn.implicitHeight, textColumn.childrenRect.height, textColumn.height) + 20 * dpiScale,
                 showProgressColumn ? Math.max(progressColumn.implicitHeight, progressColumn.childrenRect.height, progressColumn.height) + 20 * dpiScale : 0,
                 btnsRow.height + 20 * dpiScale
@@ -936,7 +938,7 @@ Item {
             property bool isSkipped: skip_reason.length > 0;
             property string skipReason: skip_reason;
             property string errorString: error_string;
-            property real basicTextSize: (window.isMobileLayout? 10 : 12) * dpiScale;
+            property real basicTextSize: (window.isMobileLayout? 10 : (window.isSimpleMode ? 14 : 12)) * dpiScale;
             property var syncStatus: { try { return sync_status ? JSON.parse(sync_status) : { color: "none" }; } catch(e) { return { color: "none" }; } }
             property string syncColor: syncStatus.color || "none"
             property bool syncDonePending: syncColor === "done_pending"
@@ -1081,6 +1083,115 @@ Item {
                 }
             }
 
+            // simple-mode-ux-overhaul Part 11: dynamically-popped Menu for the
+            // "Change lens group" Action. Created on demand (Action.onTriggered)
+            // and popped via Menu.popup(); destroys itself on close.
+            Component {
+                id: changeLensGroupPopupComponent;
+                Menu {
+                    id: lensPopup;
+                    width: 300 * dpiScale;
+                    function lensSlotLabel(idx: int): string {
+                        try {
+                            const cfgs = JSON.parse(controller.lens_group_config || "[]");
+                            const stats = JSON.parse(controller.lens_group_status || "[]");
+                            const cfg = cfgs[idx] || {};
+                            const stat = stats[idx] || {};
+                            const ov = (dlg.displayParams && typeof dlg.displayParams.lens_index_override === "number") ? dlg.displayParams.lens_index_override : -1;
+                            let prefix = "";
+                            const isOverridden = (ov === idx);
+                            const isTelemetryUsed = !!stat.used;
+                            if (isTelemetryUsed && isOverridden) prefix = "●★ ";
+                            else if (isOverridden) prefix = "★ ";
+                            else if (isTelemetryUsed) prefix = "● ";
+                            let focal = "";
+                            if (cfg.focal_length_mm && cfg.focal_length_mm > 0) {
+                                focal = " " + (+cfg.focal_length_mm).toFixed(1) + "mm";
+                            } else if (stat.has_auto_focus && stat.auto_focus_length_mm > 0) {
+                                focal = " " + (+stat.auto_focus_length_mm).toFixed(1) + "mm";
+                            }
+                            let anamorphic = "";
+                            if (cfg.anamorphic_enabled) {
+                                if (cfg.preset_id) {
+                                    anamorphic = " · " + (cfg.preset_id);
+                                } else if (cfg.squeeze_ratio && cfg.squeeze_ratio > 1.0) {
+                                    const dir = (cfg.squeeze_direction === "vertical") ? "V" : "H";
+                                    anamorphic = " · " + (+cfg.squeeze_ratio).toFixed(2).replace(/\.?0+$/, "") + "x-" + dir;
+                                }
+                            }
+                            return prefix + "L" + (idx + 1) + focal + anamorphic;
+                        } catch (e) {
+                            return "L" + (idx + 1);
+                        }
+                    }
+                    Component.onCompleted: {
+                        for (let i = 0; i < 6; ++i) {
+                            const action = gyroPairActionComponent.createObject(lensPopup, {
+                                text: lensSlotLabel(i),
+                                gyroIdx: i
+                            });
+                            if (!action) continue;
+                            action.triggered.connect(function() {
+                                const ids = (root.selectedCount > 1 && root.selectedJobs[job_id])
+                                    ? Object.keys(root.selectedJobs).map(Number)
+                                    : [job_id];
+                                render_queue.set_job_lens_index_override(
+                                    JSON.stringify(ids),
+                                    JSON.stringify(action.gyroIdx)
+                                );
+                                root.matchVersion++;
+                            });
+                            lensPopup.addAction(action);
+                        }
+                    }
+                    onClosed: lensPopup.destroy(500);
+                }
+            }
+
+            // simple-mode-ux-overhaul: framerate input modal for the
+            // "Change framerate" context menu action. Mirrors the old Stabilization-
+            // panel batch field (0 = unchanged); writes via batch_update_params so
+            // single-job and multi-select share the same path.
+            Component {
+                id: framerateDialogComponent;
+                Modal {
+                    id: framerateDialog;
+                    property var jobIds: [];
+                    property real initialValue: 0;
+                    iconType: Modal.Question;
+                    text: qsTr("Frame rate (0=unchanged)");
+                    buttons: [qsTr("OK"), qsTr("Cancel")];
+                    accentButton: 0;
+                    NumberField {
+                        id: framerateDialogField;
+                        width: 200 * dpiScale;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        value: framerateDialog.initialValue > 0 ? framerateDialog.initialValue : 0;
+                        defaultValue: 0;
+                        from: 0; to: 240;
+                        unit: "fps";
+                        precision: 3;
+                    }
+                    onClicked: (idx, dontShowAgain) => {
+                        if (idx === 0) {
+                            const v = framerateDialogField.value;
+                            // 0 = "unchanged" — match App.qml::applyBatchParams behavior.
+                            if (v > 0) {
+                                const params = { framerate: v };
+                                render_queue.batch_update_params(
+                                    JSON.stringify(framerateDialog.jobIds),
+                                    JSON.stringify(params)
+                                );
+                                // Kick the queue display refresh the same way
+                                // batchUpdate does in App.qml.
+                                root.matchVersion++;
+                            }
+                        }
+                        framerateDialog.close();
+                    }
+                }
+            }
+
             Menu {
                 id: contextMenu;
                 font.pixelSize: 11.5 * dpiScale;
@@ -1127,6 +1238,37 @@ Item {
                         } else {
                             render_queue.reset_job(job_id);
                         }
+                    }
+                }
+                // simple-mode-ux-overhaul: per-job framerate override.
+                // Replaces the Stabilization-panel batch-only field — now works for
+                // single jobs too, and the dialog gets reused for multi-select.
+                Action {
+                    text: qsTr("Change framerate");
+                    enabled: !isInProgress;
+                    onTriggered: {
+                        const ids = (root.selectedCount > 1 && root.selectedJobs[job_id])
+                            ? Object.keys(root.selectedJobs).map(Number)
+                            : [job_id];
+                        const initial = (dlg.displayParams && dlg.displayParams.framerate) || 0;
+                        const dialog = framerateDialogComponent.createObject(window, {
+                            "jobIds": ids,
+                            "initialValue": initial
+                        });
+                        if (dialog) dialog.opened = true;
+                    }
+                }
+                // simple-mode-ux-overhaul: per-job lens index override, Manual edit ONLY.
+                // Hidden entirely when Manual edit is OFF (using QQC.MenuItem.visible —
+                // bare Action lacks a visible property). Disabled for Calibration jobs.
+                QQC.MenuItem {
+                    text: qsTr("Change lens group");
+                    visible: controller.lens_group_manual_edit;
+                    height: visible ? implicitHeight : 0;
+                    enabled: !isInProgress && dlg.matchState !== "CalibrationPair";
+                    onTriggered: {
+                        const popup = changeLensGroupPopupComponent.createObject(window);
+                        if (popup) popup.popup();
                     }
                 }
                 // T14: Manual gyro pairing sub-menu
@@ -1661,7 +1803,15 @@ Item {
                             : isProcessing? qsTr("Synchronizing: %1").arg(`<b>${(processing_progress*100).toFixed(2)}%</b>`)
                                           : qsTr("Rendering: %1").arg(`<b>${(dlg.progress*100).toFixed(2)}%</b> <small>(${current_frame}/${total_frames}${time.fpsText}${eta})</small>`);
                     }
-                    BasicText { text: qsTr("Save to: %1").arg("<b>" + display_output_path + "</b>"); font.pixelSize: basicTextSize; width: parent.width; wrapMode: Text.WordWrap; }
+                    BasicText {
+                        // simple-mode-ux-overhaul: simple mode hides the output path
+                        // (users have already configured it via Render queue output path).
+                        visible: !window.isSimpleMode;
+                        text: qsTr("Save to: %1").arg("<b>" + display_output_path + "</b>");
+                        font.pixelSize: basicTextSize;
+                        width: parent.width;
+                        wrapMode: Text.WordWrap;
+                    }
                     // Aligned display params. Flow wraps when Full mode narrows the queue panel.
                     Flow {
                         spacing: 10 * dpiScale;
@@ -1686,18 +1836,43 @@ Item {
                         }
                         BasicText {
                             visible: (dlg.displayParams.framerate || 0) > 0;
-                            text: "<b>" + (dlg.displayParams.framerate || 0).toFixed(0) + "fps</b>";
+                            // simple-mode-ux-overhaul: integer fps shows no decimals, non-integer
+                            // shows 2-digit precision with trailing zeros trimmed (59.94 / 23.98 / 60).
+                            text: {
+                                const fps = dlg.displayParams.framerate || 0;
+                                if (fps === 0) return "";
+                                if (fps % 1 === 0) return "<b>" + fps.toFixed(0) + "fps</b>";
+                                return "<b>" + fps.toFixed(2).replace(/\.?0+$/, "") + "fps</b>";
+                            }
                             font.pixelSize: basicTextSize;
                         }
                         BasicText {
-                            visible: (dlg.displayParams.focal_length || 0) > 0
-                                && (dlg.displayParams.lens_group_display_mode || "auto") === "auto";
-                            text: "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
+                            // simple-mode-ux-overhaul: in Manual edit mode, the focal
+                            // length slot becomes a "Manual: L<n>" tag where n is the
+                            // effective lens group (per-job override > telemetry > L1).
+                            property bool isManualMode: controller.lens_group_manual_edit;
+                            property int effectiveLensIdx: {
+                                if (dlg.displayParams && typeof dlg.displayParams.lens_index_override === "number")
+                                    return dlg.displayParams.lens_index_override;
+                                if (dlg.displayParams && typeof dlg.displayParams.lens_index_effective === "number")
+                                    return dlg.displayParams.lens_index_effective;
+                                return 0;
+                            }
+                            visible: isManualMode
+                                || ((dlg.displayParams.focal_length || 0) > 0
+                                    && (dlg.displayParams.lens_group_display_mode || "auto") === "auto");
+                            text: isManualMode
+                                ? "<b>" + qsTr("Manual") + ": L" + (effectiveLensIdx + 1) + "</b>"
+                                : "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
                             font.pixelSize: basicTextSize;
                         }
                     }
                     Flow {
-                        visible: (dlg.displayParams.lens_group_display_mode || "auto") !== "auto";
+                        // simple-mode-ux-overhaul: drop the Mode/Lens/Focal/Anamorphic
+                        // row entirely in Manual edit mode — the "Manual mode" tag in
+                        // the row above conveys what the user needs to know.
+                        visible: !controller.lens_group_manual_edit
+                            && (dlg.displayParams.lens_group_display_mode || "auto") !== "auto";
                         width: parent.width;
                         height: visible ? implicitHeight : 0;
                         spacing: 10 * dpiScale;
@@ -1723,8 +1898,14 @@ Item {
                         }
                     }
                     // T5+T6: Match status annotation with gyro filename.
+                    // simple-mode-ux-overhaul: Matched / Manual branches are hidden in Simple
+                    // mode (users don't need developer-facing filename / detected_source).
+                    // Calibration branch stays visible because it carries genuine signal.
                     BasicText {
-                        visible: root.hasGyroFiles && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"));
+                        property bool isCalibrationBranch: dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime" && dlg.matchState !== "Matched" && dlg.manualGyroIndex < 0;
+                        visible: root.hasGyroFiles
+                            && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"))
+                            && (!window.isSimpleMode || isCalibrationBranch);
                         width: parent.width;
                         wrapMode: Text.WordWrap;
                         color: dlg.manualGyroIndex >= 0 ? root.manualStatusColor
@@ -1973,7 +2154,7 @@ Item {
         function prepareBatchAdditionalData(additional: var): var {
             if (!additional || !additional.output) return additional;
 
-            if (!window.exportSettings.preserveOutputSettings.checked) {
+            if (!window.exportSettings.isPreserveActive()) {
                 delete additional.output.output_width;
                 delete additional.output.output_height;
             }

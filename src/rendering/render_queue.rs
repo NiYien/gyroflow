@@ -188,6 +188,11 @@ struct Job {
     base_lens_metadata: Option<JobLensMetadataBackup>,
     lens_group_config_override: Option<JobLensGroupOverride>,
     lens_group_index: Option<usize>,
+    // simple-mode-ux-overhaul: user override for which lens_index is "effective" for
+    // this job. When Some, takes precedence over telemetry-extracted lens_index.
+    // Set via render-queue right-click "Change lens group" menu (Manual edit ON).
+    // Persisted across .gyroflow save/load by mirroring into job.additional_data.
+    lens_index_override: Option<usize>,
     // [T20] 保存 video_created_at，stab 释放后排序仍可用
     video_created_at: Option<i64>,
     original_video_rotation: f64,
@@ -534,6 +539,41 @@ fn should_apply_auto_rotate(
 
 fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
     serde_json::from_str(job_ids_json).unwrap_or_default()
+}
+
+// simple-mode-ux-overhaul: mirror Job.lens_index_override into the job's
+// additional_data JSON string so it persists across .gyroflow save/load.
+// On None: remove the key entirely (no stale entries left behind).
+fn set_additional_data_lens_index_override(additional_data: &mut String, value: Option<usize>) {
+    let mut obj: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(additional_data).unwrap_or_default();
+    match value {
+        Some(v) => {
+            obj.insert(
+                "lens_index_override".to_string(),
+                serde_json::Value::from(v),
+            );
+        }
+        None => {
+            obj.remove("lens_index_override");
+        }
+    }
+    if let Ok(s) = serde_json::to_string(&obj) {
+        *additional_data = s;
+    }
+}
+
+// Inverse of set_additional_data_lens_index_override — used at .gyroflow load time
+// to restore Job.lens_index_override. Returns None for both "absent" and "explicit null".
+fn read_additional_data_lens_index_override(additional_data: &str) -> Option<usize> {
+    let v: serde_json::Value = serde_json::from_str(additional_data).ok()?;
+    let n = v.get("lens_index_override")?.as_u64()?;
+    let idx = n as usize;
+    if idx < niyien_lens_presets::LENS_GROUP_COUNT {
+        Some(idx)
+    } else {
+        None
+    }
 }
 
 fn update_project_data_batch_params(data: &mut serde_json::Value, params: &serde_json::Value) {
@@ -909,6 +949,17 @@ pub struct RenderQueue {
         qt_method!(fn(&mut self, job_ids_json: String, config_json: String)),
     clear_selected_lens_group_config:
         qt_method!(fn(&mut self, job_ids_json: String, lens_index: usize)),
+    // simple-mode-ux-overhaul: per-job lens override APIs called from the render-queue
+    // right-click menu. set_job_lens_index_override writes Job.lens_index_override; pass
+    // JSON null to clear. set_job_focal_length_override writes focal into the effective
+    // group's per-job override. clear_all_per_job_lens_group_for_indices is called by
+    // Controller::set_lens_group_config to enforce global-wins semantics.
+    set_job_lens_index_override:
+        qt_method!(fn(&mut self, job_ids_json: String, lens_index_json: String)),
+    set_job_focal_length_override:
+        qt_method!(fn(&mut self, job_ids_json: String, focal_mm: f64)),
+    clear_all_per_job_lens_group_for_indices:
+        qt_method!(fn(&mut self, indices_json: String)),
     manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
@@ -2135,6 +2186,10 @@ impl RenderQueue {
             let md = gyro.file_metadata.read();
             niyien_lens_presets::extract_lens_index(&md.additional_data)
         };
+        // simple-mode-ux-overhaul: restore lens_index_override from a previously-saved
+        // .gyroflow project via the additional_data JSON string. None on legacy files
+        // (no key present) — caller falls back to telemetry-derived lens_index.
+        let lens_index_override_at_load = read_additional_data_lens_index_override(&additional_data);
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
         let original_video_rotation = stab.params.read().video_rotation;
@@ -2155,6 +2210,7 @@ impl RenderQueue {
                 stab: Some(stab.clone()),
                 base_lens_metadata,
                 lens_group_config_override: None,
+                lens_index_override: lens_index_override_at_load,
                 lens_group_index,
                 video_created_at,
                 original_video_rotation,
@@ -2921,6 +2977,11 @@ impl RenderQueue {
                         "lens_group_display_focal_length": lens_group_focal_length,
                         "lens_group_display_ratio": lens_group_ratio,
                         "lens_group_display_direction": lens_group_direction,
+                        // simple-mode-ux-overhaul: expose for the context-menu Change lens
+                        // group submenu. lens_index_override is Some when set via the menu;
+                        // lens_index_effective is the index actually applied for rendering.
+                        "lens_index_override": job.lens_index_override,
+                        "lens_index_effective": lens_group_index,
                     });
                     return QString::from(result.to_string());
                 }
@@ -3123,6 +3184,125 @@ impl RenderQueue {
             return;
         }
         self.reapply_lens_group_config_filtered(Some(job_ids));
+    }
+
+    // simple-mode-ux-overhaul: writes Job.lens_index_override and mirrors the value
+    // into job.additional_data so it survives .gyroflow round-trip. Pass JSON `null`
+    // (or "null") to clear the override.
+    fn set_job_lens_index_override(&mut self, job_ids_json: String, lens_index_json: String) {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() {
+            return;
+        }
+        let parsed: Option<usize> = serde_json::from_str::<Option<usize>>(&lens_index_json)
+            .ok()
+            .flatten()
+            .filter(|v| *v < niyien_lens_presets::LENS_GROUP_COUNT);
+        for job_id in &job_ids {
+            if let Some(job) = self.jobs.get_mut(job_id) {
+                job.lens_index_override = parsed;
+                set_additional_data_lens_index_override(&mut job.additional_data, parsed);
+            }
+        }
+        if self.has_match_results() {
+            self.reapply_selected_lens_group_config(job_ids_json);
+        } else {
+            self.match_results_changed();
+        }
+    }
+
+    // simple-mode-ux-overhaul: writes focal_length_mm into the effective lens group's
+    // per-job override for each target job. Effective lens_index resolution:
+    // lens_index_override > telemetry-extracted lens_index > FALLBACK to 0 (L1).
+    // Fallback also persists as lens_index_override so reapply uses it consistently.
+    fn set_job_focal_length_override(&mut self, job_ids_json: String, focal_mm: f64) {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() || !focal_mm.is_finite() || focal_mm <= 0.0 {
+            return;
+        }
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        for job_id in &job_ids {
+            if let Some(job) = self.jobs.get_mut(job_id) {
+                let resolved_li = job.lens_index_override.or_else(|| {
+                    let stab = job.stab.as_ref()?;
+                    let gyro = stab.gyro.read();
+                    let md = gyro.file_metadata.read();
+                    niyien_lens_presets::extract_lens_index(&md.additional_data)
+                });
+                // Fallback: when no telemetry/explicit override is available, assume L1.
+                // Without this, jobs whose camera doesn't report lens_index would silently
+                // skip the focal override and the user would see the change apply only to
+                // a subset of the batch.
+                let lens_index = resolved_li.unwrap_or(0);
+                if job.lens_index_override.is_none() && resolved_li.is_none() {
+                    job.lens_index_override = Some(0);
+                    set_additional_data_lens_index_override(&mut job.additional_data, Some(0));
+                }
+                let mut requested_configs = effective_lens_group_configs(job, &global_configs);
+                if let Some(config) = requested_configs.get_mut(lens_index) {
+                    config.focal_length_mm = Some(focal_mm);
+                }
+                let existing_override = job.lens_group_config_override.clone();
+                job.lens_group_config_override = build_job_lens_group_override(
+                    &requested_configs,
+                    &global_configs,
+                    existing_override.as_ref(),
+                );
+            }
+        }
+        if self.has_match_results() {
+            self.reapply_selected_lens_group_config(job_ids_json);
+        } else {
+            self.match_results_changed();
+        }
+    }
+
+    // simple-mode-ux-overhaul: invoked by Controller after the user edits a global lens
+    // group. Walks all jobs and clears the per-job override for the listed lens indices,
+    // so subsequent renders pick up the freshly-written global value.
+    fn clear_all_per_job_lens_group_for_indices(&mut self, indices_json: String) {
+        let indices: HashSet<usize> = serde_json::from_str::<Vec<usize>>(&indices_json)
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|i| *i < niyien_lens_presets::LENS_GROUP_COUNT)
+            .collect();
+        if indices.is_empty() {
+            return;
+        }
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let mut affected: Vec<u32> = Vec::new();
+        for (job_id, job) in self.jobs.iter_mut() {
+            let Some(existing) = job.lens_group_config_override.as_ref() else {
+                continue;
+            };
+            let mut touched = false;
+            let mut requested_configs = effective_lens_group_configs(job, &global_configs);
+            for &lens_index in &indices {
+                if existing.is_group_enabled(lens_index) {
+                    if let Some(config) = requested_configs.get_mut(lens_index) {
+                        // Reset the whole group's per-job entry back to the global value.
+                        if let Some(global) = global_configs.get(lens_index) {
+                            *config = global.clone();
+                        }
+                    }
+                    touched = true;
+                }
+            }
+            if touched {
+                let existing_clone = job.lens_group_config_override.clone();
+                job.lens_group_config_override = build_job_lens_group_override(
+                    &requested_configs,
+                    &global_configs,
+                    existing_clone.as_ref(),
+                );
+                affected.push(*job_id);
+            }
+        }
+        if !affected.is_empty() && self.has_match_results() {
+            self.reapply_lens_group_config_filtered(Some(affected.into_iter().collect()));
+        } else {
+            self.match_results_changed();
+        }
     }
 
     fn set_batch_auto_rotate(&mut self, job_ids_json: String, enabled: bool) {
@@ -6556,6 +6736,7 @@ impl RenderQueue {
             JobLensMetadataBackup,
             String,
             Vec<niyien_lens_presets::LensGroupConfig>,
+            Option<usize>,
         )> = self
             .jobs
             .iter()
@@ -6589,6 +6770,7 @@ impl RenderQueue {
                     base_lens_metadata,
                     gyro_file_url,
                     effective_lens_group_configs(job, &global_configs),
+                    job.lens_index_override,
                 ))
             })
             .collect();
@@ -6650,11 +6832,15 @@ impl RenderQueue {
                             base_lens_metadata,
                             gyro_file_url,
                             effective_configs,
+                            lens_index_override,
                         )| {
                             let (lens_index, size) = {
                                 let gyro = stab.gyro.read();
                                 let md = gyro.file_metadata.read();
-                                let li = niyien_lens_presets::extract_lens_index(&md.additional_data);
+                                // simple-mode-ux-overhaul: per-job lens_index_override wins
+                                // over telemetry-derived lens_index when set.
+                                let li = lens_index_override
+                                    .or_else(|| niyien_lens_presets::extract_lens_index(&md.additional_data));
                                 let sz = stab.params.read().size;
                                 (li, sz)
                             };
@@ -9771,6 +9957,7 @@ mod tests {
                 stab: Some(job_stab),
                 base_lens_metadata: Some(base_lens_metadata),
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: Some(0),
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -9855,6 +10042,7 @@ mod tests {
                 stab: Some(stab),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -9907,6 +10095,7 @@ mod tests {
                 stab: Some(stab),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -10933,6 +11122,7 @@ mod tests {
                 stab: Some(Arc::new(StabilizationManager::default())),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -10978,6 +11168,7 @@ mod tests {
                 stab: Some(Arc::new(StabilizationManager::default())),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -11239,6 +11430,7 @@ mod tests {
                 stab: None,
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -11665,6 +11857,7 @@ mod tests {
                 configs: local_configs,
                 enabled_groups: vec![true, false, false, false, false, false],
             }),
+            lens_index_override: None,
             lens_group_index: None,
             video_created_at: None,
             original_video_rotation: 0.0,
@@ -12010,6 +12203,7 @@ mod tests {
                 stab: None,
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -12112,6 +12306,7 @@ mod tests {
                 stab: Some(stab),
                 base_lens_metadata: None,
                 lens_group_config_override: None,
+                lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 original_video_rotation: 0.0,
@@ -14500,5 +14695,33 @@ mod tests {
 
         // The per-job override (anamorphic off) must win: count = 0.
         assert_eq!(queue.get_anamorphic_applied_count(), 0);
+    }
+
+    // simple-mode-ux-overhaul Part 10.7: lens_index_override round-trip.
+    #[test]
+    fn lens_index_override_round_trips_through_additional_data() {
+        let mut data = String::from(r#"{"lens_index":2,"foo":"bar"}"#);
+        set_additional_data_lens_index_override(&mut data, Some(4));
+        let recovered = read_additional_data_lens_index_override(&data);
+        assert_eq!(recovered, Some(4));
+
+        // Clear via None — key must be removed entirely, not left as null.
+        set_additional_data_lens_index_override(&mut data, None);
+        assert_eq!(read_additional_data_lens_index_override(&data), None);
+        assert!(!data.contains("lens_index_override"));
+    }
+
+    #[test]
+    fn lens_index_override_absent_on_legacy_additional_data() {
+        // Pre-overhaul .gyroflow files have no `lens_index_override` key.
+        let data = r#"{"lens_index":1}"#;
+        assert_eq!(read_additional_data_lens_index_override(data), None);
+    }
+
+    #[test]
+    fn lens_index_override_rejects_out_of_range_value() {
+        // LENS_GROUP_COUNT = 6, so index 99 is invalid; treat as None.
+        let data = r#"{"lens_index_override":99}"#;
+        assert_eq!(read_additional_data_lens_index_override(data), None);
     }
 }

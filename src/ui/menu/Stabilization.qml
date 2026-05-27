@@ -718,8 +718,12 @@ MenuItem {
     }
 
     // Batch-only: framerate override
+    // simple-mode-ux-overhaul: hidden — framerate edit moved to render-queue
+    // right-click "Change framerate" (supports single + multi-select).
+    // The field stays in the tree so existing batchState sync logic + tests
+    // (App.qml:473, render_queue.rs:14575) keep working.
     Label {
-        visible: root._batchActive;
+        visible: false;
         position: Label.LeftPosition;
         text: qsTr("Frame rate (0=unchanged)");
         width: parent.width;

@@ -202,21 +202,40 @@ MenuItem {
             return 0
         return config.focal_length_mm || 0
     }
+    function anamorphicSuffix(config: var): string {
+        if (!config || !config.anamorphic_enabled) return ""
+        // Prefer preset name when configured. mixed_preset_id means multi-select
+        // disagreement -> skip name (would be misleading).
+        if (config.preset_id && !config.mixed_preset_id) {
+            for (let i = 0; i < presets.length; ++i) {
+                if (presets[i].id === config.preset_id)
+                    return " · " + presets[i].name
+            }
+        }
+        // Manual setup: show ratio + direction (H/V) when squeeze > 1.
+        const ratio = config.squeeze_ratio || 0
+        if (ratio > 1.0 && !config.mixed_squeeze_ratio) {
+            const dir = (config.squeeze_direction === "vertical") ? "V" : "H"
+            return " · " + ratio.toFixed(2).replace(/\.?0+$/, "") + "x-" + dir
+        }
+        return ""
+    }
     function lensGroupLabel(index: int): string {
         const status = statuses[index] || defaultStatus(index)
         const config = configs[index] || defaultConfig(index)
         // Prefix a bullet for groups that were detected in the current telemetry —
         // a lightweight visual cue without disabling the row.
         const badge = status.used ? "● " : ""
+        const anamorphic = anamorphicSuffix(config)
         // Part B fix D: per user request, don't tag the lens group label with
         // "- Mixed" in multi-select. Manual / auto focal labels still apply.
         if (hasManualFocusValue(config))
-            return badge + "L" + (index + 1) + " " + config.focal_length_mm.toFixed(1) + "mm"
+            return badge + "L" + (index + 1) + " " + config.focal_length_mm.toFixed(1) + "mm" + anamorphic
         if (status.has_auto_focus && status.auto_focus_length_mm > 0)
-            return badge + "L" + (index + 1) + " " + status.auto_focus_length_mm.toFixed(1) + "mm"
+            return badge + "L" + (index + 1) + " " + status.auto_focus_length_mm.toFixed(1) + "mm" + anamorphic
         if (status.has_missing_focus)
             return badge + "L" + (index + 1) + " - " + qsTr("No focus")
-        return "L" + (index + 1)
+        return "L" + (index + 1) + anamorphic
     }
     function lensGroupOptions(): var {
         let result = []
@@ -302,40 +321,38 @@ MenuItem {
         // Skip persistence during boot — NumberField default-value initial
         // change events would otherwise wipe lens_group_configs_v1 to "[]".
         if (!_bootDone) return
-        if (batchScope) {
-            const ids = selectedJobIds()
-            const nextJson = JSON.stringify(next)
-            render_queue.set_selected_lens_group_config(JSON.stringify(ids), nextJson)
-            // Single-job queue edits should refresh the main LensProfile panel,
-            // but multi-select edits don't have one representative fx/fy value.
-            if (ids.length === 1)
-                controller.preview_lens_group_config(nextJson, selectedLensIndex)
-            Qt.callLater(loadConfigs)
-        } else {
-            controller.set_lens_group_config(JSON.stringify(next))
-            // Push focal length + anamorphic squeeze of the currently-edited group into the
-            // main stabilizer so the live canvas preview actually reflects new fx/fy.
-            // Returns JSON {"w":W,"h":H} when anamorphic pushes an output dimension so we
-            // can propagate it to Export settings' output width/height NumberFields too.
-            const outJson = controller.apply_lens_group_to_main(selectedLensIndex) + ""
-            if (outJson.length > 0 && window.exportSettings) {
-                try {
-                    const dim = JSON.parse(outJson)
-                    if (dim && dim.w > 0 && dim.h > 0) {
-                        const isOriginalSize = dim.w == window.exportSettings.originalWidth && dim.h == window.exportSettings.originalHeight
-                        if (isOriginalSize) {
-                            Qt.callLater(window.exportSettings.lensProfileOutputDimensionCleared)
-                        } else if (window.exportSettings.lensProfileOutputSizeActive ||
-                                   window.exportSettings.outWidth != dim.w ||
-                                   window.exportSettings.outHeight != dim.h) {
-                            Qt.callLater(window.exportSettings.lensProfileOutputDimensionLoaded, dim.w, dim.h)
-                        }
+        // simple-mode-ux-overhaul: write goes to global config unconditionally.
+        // batchScope path removed — per-job overrides are now read-only data carried
+        // from .gyroflow load, edited via the render-queue right-click menu.
+        controller.set_lens_group_config(JSON.stringify(next))
+        // Push focal length + anamorphic squeeze of the currently-edited group into the
+        // main stabilizer so the live canvas preview actually reflects new fx/fy.
+        // Returns JSON {"w":W,"h":H} when anamorphic pushes an output dimension so we
+        // can propagate it to Export settings' output width/height NumberFields too.
+        const outJson = controller.apply_lens_group_to_main(selectedLensIndex) + ""
+        if (outJson.length > 0 && window.exportSettings) {
+            try {
+                const dim = JSON.parse(outJson)
+                if (dim && dim.w > 0 && dim.h > 0) {
+                    const isOriginalSize = dim.w == window.exportSettings.originalWidth && dim.h == window.exportSettings.originalHeight
+                    if (isOriginalSize) {
+                        Qt.callLater(window.exportSettings.lensProfileOutputDimensionCleared)
+                    } else if (window.exportSettings.lensProfileOutputSizeActive ||
+                               window.exportSettings.outWidth != dim.w ||
+                               window.exportSettings.outHeight != dim.h) {
+                        Qt.callLater(window.exportSettings.lensProfileOutputDimensionLoaded, dim.w, dim.h)
                     }
-                } catch (e) {
-                    console.warn("apply_lens_group_to_main parse error:", e, outJson)
                 }
+            } catch (e) {
+                console.warn("apply_lens_group_to_main parse error:", e, outJson)
             }
-            if (typeof render_queue !== "undefined" && render_queue.has_match_results())
+        }
+        // simple-mode-ux-overhaul: enforce global-wins by clearing the per-job
+        // override entry for every lens group on every job. Granularity is per-index
+        // (clears L1..L6 wholesale) — acceptable per design.md Decision 2.
+        if (typeof render_queue !== "undefined") {
+            render_queue.clear_all_per_job_lens_group_for_indices(JSON.stringify([0, 1, 2, 3, 4, 5]))
+            if (render_queue.has_match_results())
                 render_queue.reapply_lens_group_config()
         }
     }
@@ -358,14 +375,11 @@ MenuItem {
         persistConfigs(next)
     }
     function clearCurrentFocalLength(): void {
-        if (batchScope) {
-            render_queue.clear_selected_lens_group_config(selectedJobIdsJson(), selectedLensIndex)
-            Qt.callLater(loadConfigs)
-        } else {
-            updateCurrentConfig(config => {
-                config.focal_length_mm = null
-            })
-        }
+        // simple-mode-ux-overhaul: clearing focal length is always a global edit.
+        // persistConfigs takes care of clearing per-job overrides on all jobs.
+        updateCurrentConfig(config => {
+            config.focal_length_mm = null
+        })
         manualEditExpanded = false
     }
     onSelectedLensIndexChanged: {
@@ -487,20 +501,9 @@ MenuItem {
                 spacing: 10 * dpiScale
                 visible: root.editorVisible
 
-                // batchScope notice: edits go to the selected jobs only (per-job override),
-                // not to the global lens_group_configs_v1 in QSettings. Restart drops them.
-                // Use the "Apply globally" button below to persist for all videos.
-                // Wording is in English; translations get filled in later.
-                BasicText {
-                    visible: root.batchScope
-                    width: parent.width
-                    leftPadding: 0
-                    color: root.mutedTextColor
-                    wrapMode: Text.WordWrap
-                    text: root.selectedJobIds().length === 1
-                        ? qsTr("Changes only affect the selected video.")
-                        : qsTr("Changes only affect the %1 selected videos.").arg(root.selectedJobIds().length)
-                }
+                // simple-mode-ux-overhaul: batchScope notice removed — edits are always
+                // global now. Per-job overrides come from .gyroflow load only; users
+                // adjust them via the render-queue right-click "Change lens group" menu.
 
                 Label {
                     position: Label.LeftPosition
@@ -709,18 +712,8 @@ MenuItem {
                     }
                 }
 
-                // Promote per-job batch edits to the global persisted config.
-                // Visible only in batchScope: writes the current (post-batch-edit) configs
-                // through controller.set_lens_group_config → lens_group_configs_v1 in QSettings.
-                Button {
-                    visible: root.batchScope
-                    width: parent.width
-                    text: qsTr("Apply globally")
-                    accent: true
-                    onClicked: {
-                        controller.set_lens_group_config(JSON.stringify(root.configs))
-                    }
-                }
+                // simple-mode-ux-overhaul: "Apply globally" button removed — every edit
+                // is global by default now.
             }
         }
     }

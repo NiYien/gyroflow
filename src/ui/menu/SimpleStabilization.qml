@@ -305,8 +305,12 @@ Column {
     }
 
     // Batch-only: framerate override
+    // simple-mode-ux-overhaul: hidden — framerate edit moved to render-queue
+    // right-click "Change framerate" (supports single + multi-select).
+    // The field stays in the tree so existing batchState sync logic + tests
+    // (App.qml:485, render_queue.rs:14575) keep working.
     Label {
-        visible: root._batchActive;
+        visible: false;
         position: Label.LeftPosition;
         text: qsTr("Frame rate (0=unchanged)");
         width: parent.width;
@@ -350,14 +354,15 @@ Column {
     }
 
     // ── AI SYNC (NeuFlow v2 Burn) ──
-    // Persisted to QSettings (key: simpleAiSync). Hidden on platforms without
-    // Burn support (Linux / iOS / Android). When checked, batch sync uses
+    // Persisted to QSettings (key: simpleAiSync). When checked, batch sync uses
     // of_method=4 (NeuFlow Burn) instead of the default of_method=2 (DIS).
+    // simple-mode-ux-overhaul: visibility no longer gated on Burn support —
+    // checkbox is always visible; effective method falls back automatically when
+    // the platform lacks Burn (see Synchronization.qml::aiSyncOn && has_neuflow_support).
     // The switch is one-way QML→render_queue; loading a .gyroflow project
     // does NOT modify this UI preference.
     CheckBox {
         id: aiSyncCb;
-        visible: controller.has_neuflow_support();
         text: qsTr("AI SYNC");
         checked: settings.value("simpleAiSync", false) === true || settings.value("simpleAiSync", false) === "true";
         onCheckedChanged: {
