@@ -187,6 +187,11 @@ Ten obszar jest tylko wizualizacją i nie wpływa na końcowy render.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="744"/>
+        <source>Auto sync for plugins</source>
+        <translation>Synchronizuj automatycznie</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="749"/>
         <source>Continue</source>
         <translation>Kontynuuj</translation>
@@ -2811,6 +2816,11 @@ Otwórz &lt;b&gt;Terminal&lt;/b&gt; i wprowadź następującą komendę:</transl
 </context>
 <context>
     <name>RenderQueue</name>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1247"/>
+        <source>Change framerate</source>
+        <translation>Zmień liczbę klatek na sekundę</translation>
+    </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:

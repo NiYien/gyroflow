@@ -282,10 +282,6 @@ impl PoseEstimator {
                 .compare_exchange(false, true, SeqCst, SeqCst)
                 .is_err()
             {
-                log::debug!(
-                    "Synchronization: skipping {} NeuFlow pairs (another thread is processing)",
-                    frames_to_process.len()
-                );
                 self.recalculate_gyro_data(fps, false);
                 return;
             }
@@ -319,6 +315,7 @@ impl PoseEstimator {
                 };
                 if pairs.is_empty() {
                     log::info!(
+                        target: "lifecycle",
                         "[NeuFlow drain] exit: iter={drain_iter} elapsed={:.1}ms (no more pairs)",
                         drain_t0.elapsed().as_secs_f64() * 1000.0
                     );
@@ -330,6 +327,7 @@ impl PoseEstimator {
                 };
                 drain_iter += 1;
                 log::info!(
+                    target: "lifecycle",
                     "[NeuFlow drain] iter={drain_iter} pairs={} elapsed={:.1}ms",
                     pairs.len(),
                     drain_t0.elapsed().as_secs_f64() * 1000.0
@@ -350,6 +348,7 @@ impl PoseEstimator {
                 }
                 if done_after == done_before {
                     log::info!(
+                        target: "lifecycle",
                         "[NeuFlow drain] exit: iter={drain_iter} elapsed={:.1}ms (no rotations set, {} stuck pairs)",
                         drain_t0.elapsed().as_secs_f64() * 1000.0,
                         pairs.len()

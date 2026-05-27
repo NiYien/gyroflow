@@ -31,8 +31,6 @@ pub(super) fn neuflow_inference_burn_sampled(
         return Err("No textured grid points found".to_string());
     }
 
-    let start = std::time::Instant::now();
-
     let sampled = {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
             crate::synchronization::sync_perf::Stage::InferAndSample,
@@ -46,15 +44,6 @@ pub(super) fn neuflow_inference_burn_sampled(
             linear_indices,
         )?
     };
-
-    let elapsed = start.elapsed();
-    log::debug!(
-        "NeuFlow Burn inference+sample: {}x{} ({} pts) in {:?}",
-        proc_w,
-        proc_h,
-        sampled.grid_points.len(),
-        elapsed
-    );
 
     // Convert SampledFlow to point pairs
     let mut from_pts = Vec::with_capacity(sampled.grid_points.len());

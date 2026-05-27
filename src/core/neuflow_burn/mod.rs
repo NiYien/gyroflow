@@ -105,7 +105,6 @@ struct InferenceHandle {
 }
 
 static INFERENCE_HANDLE: OnceLock<Result<InferenceHandle, String>> = OnceLock::new();
-static QUEUE_DEPTH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Initialize cubecl's global SPIR-V pipeline cache to persist compiled kernels
 /// across runs. Without this, every `just run` recompiles all SPIR-V kernels
@@ -128,6 +127,7 @@ pub fn init_cubecl_cache() {
     let cache_root = crate::settings::data_dir().join("cubecl_cache");
     if let Err(e) = std::fs::create_dir_all(&cache_root) {
         log::warn!(
+            target: "gpu",
             "NeuFlow Burn: failed to create cubecl cache dir {:?}: {e}",
             cache_root
         );
@@ -158,10 +158,11 @@ pub fn init_cubecl_cache() {
     let result = std::panic::catch_unwind(|| CubeClRuntimeConfig::set(config));
     match result {
         Ok(_) => log::info!(
+            target: "gpu",
             "NeuFlow Burn: cubecl SPIR-V + autotune caches enabled at {:?}",
             cache_root
         ),
-        Err(_) => log::debug!("NeuFlow Burn: cubecl runtime config already set, skipping"),
+        Err(_) => log::debug!(target: "gpu", "NeuFlow Burn: cubecl runtime config already set, skipping"),
     }
     let _ = DONE.set(());
 }
@@ -177,7 +178,7 @@ fn cubecl_autotune_level() -> cubecl_runtime::config::autotune::AutotuneLevel {
         // Default to Minimal for numerical stability
         None => AutotuneLevel::Minimal,
         Some(other) => {
-            log::warn!("NeuFlow Burn: unknown CUBECL_AUTOTUNE_LEVEL={other:?}, using minimal");
+            log::warn!(target: "gpu", "NeuFlow Burn: unknown CUBECL_AUTOTUNE_LEVEL={other:?}, using minimal");
             AutotuneLevel::Minimal
         }
     }
@@ -199,7 +200,7 @@ fn spawn_inference_thread() -> Result<InferenceHandle, String> {
                     // Run warmup (autotune) before accepting inference requests,
                     // so it happens during app startup in the background.
                     if let Err(e) = run_warmup(&model, &device) {
-                        log::error!("NeuFlow Burn: warmup failed during init: {e}");
+                        log::error!(target: "gpu", "NeuFlow Burn: warmup failed during init: {e}");
                     }
                     let _ = init_tx.send(Ok(()));
                     inference_loop(model, device, rx);
@@ -409,7 +410,6 @@ fn inference_loop(
                 Err(_) => break,
             }
         };
-        QUEUE_DEPTH.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
 
         match request {
             InferRequest::Infer {
@@ -427,7 +427,6 @@ fn inference_loop(
 
                 // Overlap: readback(prev) + forward(curr) concurrently
                 if let Some(prev) = deferred.take() {
-                    let t_pipe = Instant::now();
                     match prev {
                         PendingReadback::Infer {
                             flow_tensor: prev_ft,
@@ -453,13 +452,7 @@ fn inference_loop(
                                     t_fwd = Instant::now();
                                 },
                             );
-                            let t_done = Instant::now();
                             let _ = prev_reply.send(prev_result);
-                            let pipe_ms = (t_done - t_pipe).as_secs_f64() * 1000.0;
-                            let fwd_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
-                            log::debug!(
-                                "[NeuFlow perf] #{prev_seq} PIPE readback+forward={pipe_ms:.1}ms (fwd={fwd_ms:.1}ms overlapped)"
-                            );
                         }
                         PendingReadback::Sample {
                             sampled_tensor: prev_st,
@@ -486,7 +479,6 @@ fn inference_loop(
                                     t_fwd = Instant::now();
                                 },
                             );
-                            let t_done = Instant::now();
                             let result = match prev_result {
                                 Ok(data) => {
                                     let sv: Vec<f32> =
@@ -504,10 +496,6 @@ fn inference_loop(
                                 Err(e) => Err(format!("Readback failed: {e:?}")),
                             };
                             let _ = prev_reply.send(result);
-                            let pipe_ms = (t_done - t_pipe).as_secs_f64() * 1000.0;
-                            log::debug!(
-                                "[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+forward={pipe_ms:.1}ms"
-                            );
                         }
                     }
                 } else {
@@ -536,23 +524,13 @@ fn inference_loop(
                     });
                 } else {
                     // Queue empty — readback immediately
-                    let t_rb = Instant::now();
                     let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Readback);
                     let result = readback_flow_sync(flow_tensor, h, w);
-                    let rb_ms = t_rb.elapsed().as_secs_f64() * 1000.0;
                     let _ = reply.send(result);
-                    log::debug!("[NeuFlow perf] #{seq} IMMEDIATE readback={rb_ms:.1}ms");
                 }
 
-                let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
-                let forward_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
                 neuflow_trace::record_duration(seq, DurationMetric::TensorUpload, t_tensor - t0);
                 neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
-                log::debug!(
-                    "[NeuFlow perf] #{seq} tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms deferred={} prefetched={}",
-                    deferred.is_some(),
-                    pending.is_some()
-                );
             }
             InferRequest::InferAndSample {
                 seq,
@@ -567,13 +545,11 @@ fn inference_loop(
                 let t0 = Instant::now();
                 let mut t_tensor = t0;
                 let mut t_fwd = t0;
-                let mut t_select = t0;
                 let mut sampled_out: Option<Tensor<2>> = None;
                 let num_pts = linear_indices.len();
 
                 // Overlap: readback(prev) + forward+select(curr)
                 if let Some(prev) = deferred.take() {
-                    let t_pipe = Instant::now();
                     let do_forward_select = || {
                         let _trace_guard =
                             neuflow_trace::enter(Some(seq), TracePhase::TensorUpload);
@@ -590,7 +566,6 @@ fn inference_loop(
                             &device,
                         );
                         let sampled = ft.reshape([2, plane]).select(1, idx_t);
-                        t_select = Instant::now();
                         sampled_out = Some(sampled);
                     };
                     match prev {
@@ -610,10 +585,6 @@ fn inference_loop(
                                 do_forward_select,
                             );
                             let _ = prev_reply.send(prev_result);
-                            log::debug!(
-                                "[NeuFlow perf] #{prev_seq} PIPE readback+fwd_select={:.1}ms",
-                                (Instant::now() - t_pipe).as_secs_f64() * 1000.0
-                            );
                         }
                         PendingReadback::Sample {
                             sampled_tensor: prev_st,
@@ -647,10 +618,6 @@ fn inference_loop(
                                 Err(e) => Err(format!("Readback failed: {e:?}")),
                             };
                             let _ = prev_reply.send(result);
-                            log::debug!(
-                                "[NeuFlow perf] #{prev_seq} PIPE SAMPLE readback+fwd_select={:.1}ms",
-                                (Instant::now() - t_pipe).as_secs_f64() * 1000.0
-                            );
                         }
                     }
                 } else {
@@ -668,7 +635,6 @@ fn inference_loop(
                         &device,
                     );
                     let sampled = ft.reshape([2, plane]).select(1, idx_t);
-                    t_select = Instant::now();
                     sampled_out = Some(sampled);
                 }
 
@@ -684,26 +650,13 @@ fn inference_loop(
                         seq,
                     });
                 } else {
-                    let t_rb = Instant::now();
                     let _trace_guard = neuflow_trace::enter(Some(seq), TracePhase::Readback);
                     let result = readback_sampled_sync(sampled, num_pts, grid_points);
-                    let rb_ms = t_rb.elapsed().as_secs_f64() * 1000.0;
                     let _ = reply.send(result);
-                    log::debug!(
-                        "[NeuFlow perf] #{seq} SAMPLE IMMEDIATE readback={rb_ms:.1}ms pts={num_pts}"
-                    );
                 }
 
-                let tensor_ms = (t_tensor - t0).as_secs_f64() * 1000.0;
-                let forward_ms = (t_fwd - t_tensor).as_secs_f64() * 1000.0;
-                let select_ms = (t_select - t_fwd).as_secs_f64() * 1000.0;
                 neuflow_trace::record_duration(seq, DurationMetric::TensorUpload, t_tensor - t0);
                 neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
-                log::debug!(
-                    "[NeuFlow perf] #{seq} SAMPLE tensor={tensor_ms:.1}ms forward={forward_ms:.1}ms select={select_ms:.1}ms deferred={} prefetched={}",
-                    deferred.is_some(),
-                    pending.is_some()
-                );
             }
             InferRequest::Warmup { reply } => {
                 if let Some(prev) = deferred.take() {
@@ -761,7 +714,7 @@ fn inference_loop(
             }
         }
     }
-    log::info!("NeuFlow Burn: inference thread exiting (channel closed)");
+    log::info!(target: "gpu", "NeuFlow Burn: inference thread exiting (channel closed)");
 }
 
 /// Run a dummy inference to trigger autotune caching on the inference thread.
@@ -774,7 +727,7 @@ fn run_warmup(model: &Model, device: &Device) -> Result<(), String> {
     let _flow = model.forward(img0_tensor, img1_tensor);
     let _data = _flow.into_data();
 
-    log::info!("NeuFlow Burn: warmup inference complete (autotune cached)");
+    log::info!(target: "gpu", "NeuFlow Burn: warmup inference complete (autotune cached)");
     Ok(())
 }
 
@@ -793,6 +746,7 @@ fn init_model() -> Result<(Model, Device), String> {
         "unoptimized"
     };
     log::info!(
+        target: "gpu",
         "NeuFlow Burn: loading generated_iter5 model from {} (weight_variant={weight_variant})",
         path.display()
     );
@@ -807,6 +761,7 @@ fn init_model() -> Result<(Model, Device), String> {
         .map_err(|e| format!("Failed to load model weights: {e}"))?;
 
     log::info!(
+        target: "gpu",
         "NeuFlow Burn: generated_iter5 model loaded on {:?} (weight_variant={weight_variant})",
         device
     );
@@ -846,7 +801,7 @@ fn log_trace_summary(seq: u64, kind: &str) {
         stats.readback_map_wait_ms,
         stats.channel_roundtrip_ms,
     );
-    log::debug!("{summary}");
+    log::debug!(target: "gpu", "{summary}");
     if std::env::var_os("NEUFLOW_TRACE_STDERR").is_some() {
         eprintln!("{summary}");
     }
@@ -861,7 +816,7 @@ fn log_trace_summary(seq: u64, kind: &str) {
             stats.forward_action_defer_count,
             stats.readback_get_mapped_range_ms,
         );
-        log::debug!("{summary_v2}");
+        log::debug!(target: "gpu", "{summary_v2}");
         if std::env::var_os("NEUFLOW_TRACE_STDERR").is_some() {
             eprintln!("{summary_v2}");
         }
@@ -998,9 +953,6 @@ fn infer_via_channel(
     if neuflow_trace::enabled() {
         neuflow_trace::record_duration(seq, DurationMetric::ChannelRoundtrip, t_send.elapsed());
         log_trace_summary(seq, "full");
-    } else {
-        let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
-        log::debug!("[NeuFlow perf] channel_roundtrip={roundtrip_ms:.1}ms");
     }
 
     result
@@ -1044,9 +996,6 @@ pub fn infer_and_sample(
         let seq = neuflow_trace::next_seq();
         let t_send = Instant::now();
 
-        let depth = QUEUE_DEPTH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        log::debug!("[NeuFlow perf] queue_depth_at_send={}", depth + 1);
-
         handle
             .sender
             .send(InferRequest::InferAndSample {
@@ -1068,9 +1017,6 @@ pub fn infer_and_sample(
         if neuflow_trace::enabled() {
             neuflow_trace::record_duration(seq, DurationMetric::ChannelRoundtrip, t_send.elapsed());
             log_trace_summary(seq, "sample");
-        } else {
-            let roundtrip_ms = t_send.elapsed().as_secs_f64() * 1000.0;
-            log::debug!("[NeuFlow perf] sample_channel_roundtrip={roundtrip_ms:.1}ms");
         }
 
         result
@@ -1097,7 +1043,7 @@ pub fn infer_and_sample(
 /// and autotune warmup are complete. Subsequent calls are no-ops (OnceLock).
 pub fn ensure_ready() {
     if !is_available() {
-        log::info!("NeuFlow Burn: model not found, skipping pre-init");
+        log::info!(target: "gpu", "NeuFlow Burn: model not found, skipping pre-init");
         return;
     }
 
@@ -1105,10 +1051,11 @@ pub fn ensure_ready() {
     let handle = INFERENCE_HANDLE.get_or_init(|| spawn_inference_thread());
     match handle {
         Ok(_) => log::info!(
+            target: "gpu",
             "NeuFlow Burn: pre-init + warmup complete in {:?}",
             start.elapsed()
         ),
-        Err(e) => log::error!("NeuFlow Burn: pre-init failed: {e}"),
+        Err(e) => log::error!(target: "gpu", "NeuFlow Burn: pre-init failed: {e}"),
     }
 }
 

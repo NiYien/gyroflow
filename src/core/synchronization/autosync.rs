@@ -281,11 +281,10 @@ impl AutosyncProcess {
             let uv_start = stride * height as usize;
             let total_len = uv_start + stride * (height as usize / 2);
             if pixels.len() >= total_len {
-                log::debug!("NeuFlow: passing NV12 directly ({width}x{height}, stride={stride})");
                 Some(Arc::new(pixels[..total_len].to_vec()))
             } else {
-                log::debug!(
-                    "NeuFlow: NV12 buffer incomplete (pixels.len={}, need={})",
+                log::warn!(
+                    "NeuFlow: NV12 buffer incomplete (pixels.len={}, need={}) — falling back",
                     pixels.len(),
                     total_len
                 );

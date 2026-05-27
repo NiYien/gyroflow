@@ -187,6 +187,11 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="744"/>
+        <source>Auto sync for plugins</source>
+        <translation>Oto senkronizasyon</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="749"/>
         <source>Continue</source>
         <translation>Devam</translation>
@@ -2806,6 +2811,11 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 </context>
 <context>
     <name>RenderQueue</name>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1247"/>
+        <source>Change framerate</source>
+        <translation>Kare hızını değiştir</translation>
+    </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:

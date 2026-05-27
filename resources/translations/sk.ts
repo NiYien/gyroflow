@@ -187,6 +187,11 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="744"/>
+        <source>Auto sync for plugins</source>
+        <translation>Automatická synchronizácia</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="749"/>
         <source>Continue</source>
         <translation>Pokračovať</translation>
@@ -2811,6 +2816,11 @@ Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translatio
 </context>
 <context>
     <name>RenderQueue</name>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1247"/>
+        <source>Change framerate</source>
+        <translation>Zmeniť snímkovú frekvenciu</translation>
+    </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:

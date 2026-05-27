@@ -186,6 +186,11 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="744"/>
+        <source>Auto sync for plugins</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="749"/>
         <source>Continue</source>
         <translation type="unfinished"></translation>
@@ -2782,6 +2787,11 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 </context>
 <context>
     <name>RenderQueue</name>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1247"/>
+        <source>Change framerate</source>
+        <translation type="unfinished"></translation>
+    </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:

@@ -187,6 +187,11 @@ Notez que ce n&apos;est qu&apos;un indicateur visuel, il n&apos;affecte pas le r
 <context>
     <name>App</name>
     <message>
+        <location filename="../../src/ui/App.qml" line="744"/>
+        <source>Auto sync for plugins</source>
+        <translation>Synchronization auto</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="749"/>
         <source>Continue</source>
         <translation>Continuer</translation>
@@ -2810,6 +2815,11 @@ Ouvrez &lt;b&gt;Terminal&lt;/b&gt; et entrez la commande suivante&#xa0;:</transl
 </context>
 <context>
     <name>RenderQueue</name>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1247"/>
+        <source>Change framerate</source>
+        <translation>Modifier la fréquence d'images</translation>
+    </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:

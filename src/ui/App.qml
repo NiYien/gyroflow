@@ -741,7 +741,7 @@ Rectangle {
                     Component.onCompleted: refreshQueueRowCount();
                     Button {
                         id: simpleAutoSyncBtn;
-                        text: qsTr("Auto sync");
+                        text: qsTr("Auto sync for plugins");
                         iconName: "spinner";
                         height: 36 * dpiScale;
                         leftPadding: 16 * dpiScale;
