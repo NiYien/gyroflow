@@ -373,7 +373,8 @@ Rectangle {
 
     property bool _queueBatchActive: videoArea.queue
         && videoArea.queue.shown
-        && videoArea.queue.selectedCount > 0
+        && (videoArea.queue.selectedCount > 0
+            || (window.isSimpleMode && render_queue.has_video_jobs))
 
     on_QueueBatchActiveChanged: {
         batchState.active = _queueBatchActive;
