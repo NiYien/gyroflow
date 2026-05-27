@@ -439,7 +439,11 @@ Rectangle {
     }
 
     function scheduleApplyBatchParams() {
-        if (_batchApplySuppressed || !batchState.active || !videoArea.queue || videoArea.queue.selectedCount <= 0) return;
+        if (_batchApplySuppressed || !videoArea.queue) return;
+        const hasSelection = videoArea.queue.selectedCount > 0;
+        const hasSimpleGlobalTarget = window.isSimpleMode && render_queue.has_video_jobs;
+        if (!hasSelection && !hasSimpleGlobalTarget) return;
+        if (!batchState.active && !hasSimpleGlobalTarget) return;
         batchApplyTimer.restart();
     }
 
@@ -453,11 +457,20 @@ Rectangle {
         params.lens_correction = batchState.lensCorrection;
         if (batchState.framerate > 0) params.framerate = batchState.framerate;
 
-        const jobIds = Object.keys(videoArea.queue.selectedJobs).map(Number);
-        if (jobIds.length === 0) return;
+        const selectedIds = Object.keys(videoArea.queue.selectedJobs).map(Number);
+        let effectiveJobIds = selectedIds;
+        if (selectedIds.length === 0 && window.isSimpleMode) {
+            try {
+                effectiveJobIds = JSON.parse(render_queue.get_all_video_job_ids_json());
+            } catch(e) {
+                console.log("applyBatchParams: get_all_video_job_ids_json parse error:", e);
+                effectiveJobIds = [];
+            }
+        }
+        if (effectiveJobIds.length === 0) return;
         render_queue.auto_rotate = batchState.autoRotate;
-        render_queue.set_batch_auto_rotate(JSON.stringify(jobIds), batchState.autoRotate);
-        render_queue.batch_update_params(JSON.stringify(jobIds), JSON.stringify(params));
+        render_queue.set_batch_auto_rotate(JSON.stringify(effectiveJobIds), batchState.autoRotate);
+        render_queue.batch_update_params(JSON.stringify(effectiveJobIds), JSON.stringify(params));
         videoArea.queue.matchVersion++;
     }
 
