@@ -70,8 +70,20 @@ Column {
         const selected = Object.keys(window.videoArea.queue.selectedJobs || {}).map(Number);
         if (selected.length > 0) return selected;
 
-        if (!root._queueShown || !render_queue.has_match_results()) return [];
+        if (!root._queueShown) return [];
 
+        // Simple-mode no-selection fallback: target all video jobs in the queue.
+        if (window.isSimpleMode && render_queue.has_video_jobs) {
+            try {
+                return JSON.parse(render_queue.get_all_video_job_ids_json());
+            } catch(e) {
+                console.log("autoRotateBatchJobIds (simple-global) error:", e);
+                return [];
+            }
+        }
+
+        // Existing path: full-mode batch flow, requires match results.
+        if (!render_queue.has_match_results()) return [];
         try {
             return JSON.parse(render_queue.get_assigned_gyro_job_ids_json());
         } catch(e) {
