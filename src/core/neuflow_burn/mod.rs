@@ -45,6 +45,7 @@ use std::time::Instant;
 use burn::prelude::*;
 use burn::tensor::TensorData;
 use burn_store::ModuleSnapshot;
+use cubecl_runtime::config::RuntimeConfig;
 use neuflow_trace_shared::{self as neuflow_trace, DurationMetric, TracePhase};
 
 use neuflow_v2_generated_fp16::Model;

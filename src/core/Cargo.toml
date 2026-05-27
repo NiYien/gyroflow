@@ -99,14 +99,14 @@ objc2-core-foundation = "0.3"
 objc2-foundation = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-burn = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
-burn-store = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "burnpack"], optional = true }
-cubecl-runtime = { git = "https://github.com/NiYien/cubecl", rev = "8ec71b07d9116304f038e072fa288f992c2fa2b5", default-features = false, features = ["std"], optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "ed4d313b16ac348093cfa0f979774b4312b17058", default-features = false, features = ["std", "wgpu", "metal", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "ed4d313b16ac348093cfa0f979774b4312b17058", default-features = false, features = ["std", "burnpack"], optional = true }
+cubecl-runtime = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-burn = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
-burn-store = { git = "https://github.com/NiYien/burn", rev = "946698ddcb9f4826d4d56b688a6cd7493bb607cb", default-features = false, features = ["std", "burnpack"], optional = true }
-cubecl-runtime = { git = "https://github.com/NiYien/cubecl", rev = "8ec71b07d9116304f038e072fa288f992c2fa2b5", default-features = false, features = ["std"], optional = true }
+burn = { git = "https://github.com/tracel-ai/burn", rev = "ed4d313b16ac348093cfa0f979774b4312b17058", default-features = false, features = ["std", "wgpu", "vulkan", "autotune", "fusion"], optional = true }
+burn-store = { git = "https://github.com/tracel-ai/burn", rev = "ed4d313b16ac348093cfa0f979774b4312b17058", default-features = false, features = ["std", "burnpack"], optional = true }
+cubecl-runtime = { git = "https://github.com/tracel-ai/cubecl", rev = "1d628d7e8fa6ac27c67195b35736de0b63cc2839", default-features = false, features = ["std"], optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies.windows]
 version = "0.62"
