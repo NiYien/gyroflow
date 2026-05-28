@@ -158,8 +158,6 @@ deploy *param:
         }
     }
 
-    $job = $null
-
     $QT_LIBS = "$ProjectDir\ext\{{QtVersion}}\android_arm64_v8a\lib"
     $Env:Path = "$ProjectDir\ext\{{QtVersion}}\android_arm64_v8a\bin;$ProjectDir\ext\{{QtVersion}}\mingw_64\bin\;$Env:Path"
     $Env:QMAKE = "$ProjectDir\ext\{{QtVersion}}\android_arm64_v8a\bin\qmake.bat"
@@ -320,25 +318,16 @@ deploy *param:
     "@
         $androiddeploy | Out-File -encoding utf8 -FilePath "$ProjectDir\target\android-build\android-deploy.json"
 
-        $job = Start-Job -Name "Cleanup" -ArgumentList "$ProjectDir\target\android-build\libs\arm64-v8a" -ScriptBlock {
-        for ($num = 1; $num -le 800 ; $num++) {
-            try {
-                $c = [System.IO.File]::ReadAllText("${args}\..\..\res\values\libs.xml") -replace "<item.+?(Fusion|Imagine|Universal).+?item>", ""
-                [System.IO.File]::WriteAllText("${args}\..\..\res\values\libs.xml", $c)
-                Remove-Item "${args}\*Universal*"
-                Remove-Item "${args}\*Imagine*"
-                Remove-Item "${args}\*Fusion*"
-                Remove-Item "${args}\*Particles*"
-                Remove-Item "${args}\*tooling*"
-                Remove-Item "${args}\*qgif*"
-                Remove-Item "${args}\*qico*"
-            } catch {
-
-            }
-            Start-Sleep -Milliseconds 150;
-        }
-        }
-        Get-job | Receive-Job
+        # Upstream once ran a background Start-Job loop here to strip
+        # Fusion/Imagine/Universal entries from libs.xml every 150ms while
+        # androiddeployqt was running. On Qt 6.7.3 android_arm64_v8a those
+        # style plugins are not built, so the loop deletes nothing — but its
+        # read-then-truncate-then-rewrite of libs.xml races androiddeployqt's
+        # own write of the same file, occasionally leaving libs.xml at 0 bytes
+        # and breaking gradle's packageDebugResources with "Premature end of
+        # file". Removed entirely; if those styles ever reappear, prefer an
+        # atomic write to a temp file + Move-Item -Force instead of in-place
+        # truncation.
 
         $Sign = ""
         $ApkName = "apk\debug\android-build-debug.apk"
@@ -355,12 +344,6 @@ deploy *param:
         if ("$Env:BUILD_APP_STORE_BUNDLE" -eq "true") {
             iex "$cmd --aab"
             Assert-NativeCommandSucceeded "androiddeployqt aab"
-        }
-
-        if ($job) {
-            Stop-Job $job
-            Remove-Job $job
-            $job = $null
         }
 
         New-Item -Type dir "$ProjectDir\_deployment\_binaries\" -ErrorAction SilentlyContinue
@@ -386,10 +369,6 @@ deploy *param:
             Assert-NativeCommandSucceeded "adb logcat"
         }
     } finally {
-        if ($job) {
-            Stop-Job $job -ErrorAction SilentlyContinue
-            Remove-Job $job -ErrorAction SilentlyContinue
-        }
         Restore-TemporarySourceEdits
         Assert-TemporarySourceEditsRestored
     }
