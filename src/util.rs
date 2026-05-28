@@ -867,6 +867,63 @@ pub fn peek_container_rotation_from_url(url: &str) -> i32 {
     }
 }
 
+// Probe the container frame size of an `.r3d` file via telemetry-parser's
+// mp4parse path. Returns `Some((width, height))` from the MP4 `tkhd` track
+// dimensions on success, `None` on any failure (open, parse, RED2 container,
+// zero dimension).
+//
+// Used as a defensive fallback when MDK reports a clearly sub-native size for
+// Nikon ZR `.r3d` (NR3D-codec in MP4 container) — e.g. proxy stream 249x140
+// instead of native 3984x2240. Real RED2-container R3D files fail
+// `parse_mp4` and we return `None`, so MDK's value persists for them.
+pub fn peek_container_size_from_url(url: &str) -> Option<(u32, u32)> {
+    let filename = gyroflow_core::filesystem::get_filename(url);
+    if !filename.to_ascii_lowercase().ends_with(".r3d") {
+        return None;
+    }
+    let scheme = url.split("://").next().unwrap_or("");
+    match gyroflow_core::filesystem::open_file(url, false, false) {
+        Ok(mut file) => {
+            let filesize = file.size;
+            match gyroflow_core::util::get_video_metadata(file.get_file(), filesize, url) {
+                Ok(md) => {
+                    if md.width > 0 && md.height > 0 {
+                        ::log::info!(
+                            target: "video.load",
+                            "peek_container_size: filename={} scheme={} width={} height={}",
+                            filename, scheme, md.width, md.height,
+                        );
+                        Some((md.width as u32, md.height as u32))
+                    } else {
+                        ::log::warn!(
+                            target: "video.load",
+                            "peek_container_size: telemetry-parser returned zero dimensions for filename={} scheme={} width={} height={}",
+                            filename, scheme, md.width, md.height,
+                        );
+                        None
+                    }
+                }
+                Err(e) => {
+                    ::log::warn!(
+                        target: "video.load",
+                        "peek_container_size: telemetry-parser failed for filename={} scheme={}: {}",
+                        filename, scheme, e,
+                    );
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            ::log::warn!(
+                target: "video.load",
+                "peek_container_size: open_file failed for filename={} scheme={}: {}",
+                filename, scheme, e,
+            );
+            None
+        }
+    }
+}
+
 pub fn report_lens_profile_usage(checksum: Option<String>) {
     if let Some(checksum) = checksum {
         if !checksum.is_empty() {

@@ -108,6 +108,31 @@ impl<'a> VideoProcessor<'a> {
                 }
             }
 
+            // Defensive size bypass for Nikon ZR .r3d when MDK regresses to
+            // reporting the proxy stream dimensions (e.g. 249x140 instead of
+            // native 3984x2240). All RED cameras and Nikon ZR ship at >= 2K
+            // (width >= 1920, area >= 2 MP), so the threshold below is a safe
+            // camera-class lower bound: any .r3d under 1000 wide or under
+            // 1 megapixel is unambiguously a sub-native MDK read. Real
+            // RED2-container R3D files (Komodo, V-RAPTOR) fail telemetry-parser
+            // parse_mp4 → peek returns None → MDK value preserved, zero
+            // regression for them.
+            if filename.to_lowercase().ends_with(".r3d") {
+                let (mw, mh) = {
+                    let info_b = info.borrow();
+                    (info_b.width, info_b.height)
+                };
+                if mw < 1000 || (mw as u64) * (mh as u64) < 1_000_000 {
+                    if let Some((w, h)) = crate::util::peek_container_size_from_url(url) {
+                        if w > 0 && h > 0 {
+                            let mut info_mut = info.borrow_mut();
+                            info_mut.width = w;
+                            info_mut.height = h;
+                        }
+                    }
+                }
+            }
+
             std::thread::sleep(std::time::Duration::from_millis(100));
             mdk.mdk.stopProcessing(0);
 
