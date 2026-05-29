@@ -9,6 +9,25 @@ import requests
 from .helpers import build_proxy_mapping, normalize_proxy_url
 
 
+def _raise_for_status(response) -> None:
+    """Like requests' ``raise_for_status`` but folds the response body into the
+    exception message. The Vercel env API returns the real reason (size limit,
+    invalid value, type conflict, ...) as JSON in the body; the stock
+    ``HTTPError`` only carries "400 Client Error" and threw that detail away,
+    which is what made the 400 on env upsert impossible to diagnose.
+    """
+    if response.status_code < 400:
+        return
+    body = (response.text or "").strip()
+    if len(body) > 1000:
+        body = body[:1000] + "…"
+    detail = f" :: {body}" if body else ""
+    raise requests.HTTPError(
+        f"{response.status_code} {response.reason} for url: {response.url}{detail}",
+        response=response,
+    )
+
+
 class VercelClient:
     def __init__(self, token: str, project: str, team_id: str = "", proxy_url: str = ""):
         self.token = token.strip()
@@ -44,7 +63,7 @@ class VercelClient:
             params={**self._params(), "decrypt": "true"},
             **self._request_kwargs(timeout=30),
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         payload = response.json()
         envs = payload.get("envs") if isinstance(payload, dict) else payload
         result: dict = {}
@@ -126,7 +145,7 @@ class VercelClient:
             params={**self._params(), "decrypt": "true"},
             **self._request_kwargs(timeout=30),
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         payload = response.json()
         return str(payload.get("value", ""))
 
@@ -149,7 +168,7 @@ class VercelClient:
             json=body,
             **self._request_kwargs(timeout=30),
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     def latest_production_deployment(self) -> dict | None:
@@ -173,7 +192,7 @@ class VercelClient:
             params=params,
             **self._request_kwargs(timeout=30),
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         deployments = response.json().get("deployments") or []
         return deployments[0] if deployments else None
 
@@ -217,7 +236,7 @@ class VercelClient:
             json=body,
             **self._request_kwargs(timeout=30),
         )
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
 

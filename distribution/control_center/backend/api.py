@@ -2333,17 +2333,21 @@ class Api:
         if not upsert:
             return "no resource env to upsert (scope=app only?)"
         last_err: Exception | None = None
+        attempts = 0
         for attempt in range(3):
+            attempts = attempt + 1
             try:
                 self._vercel(cfg).upsert_envs(upsert)
                 last_err = None
                 break
             except Exception as e:
                 last_err = e
-                if attempt < 2:
+                if attempt < 2 and self._is_retryable_http_error(e):
                     _time.sleep(1.5 * (2 ** attempt))
+                else:
+                    break  # deterministic 4xx → don't waste the backoff
         if last_err is not None:
-            raise RuntimeError(f"upsert resource envs failed after 3 attempts: {last_err}")
+            raise RuntimeError(f"upsert resource envs failed after {attempts} attempt(s): {last_err}")
         try:
             hook_note = self._trigger_deploy_hook(cfg)
             return f"resource envs upserted ({', '.join(upsert.keys())}); {hook_note}"
@@ -2798,6 +2802,61 @@ class Api:
         versions.append(entry)
 
     @staticmethod
+    def _prune_policy_versions(policy: dict, keep: int = 10) -> int:
+        """Cap policy.versions[] to the `keep` most-recent entries.
+
+        NIYIEN_RELEASE_POLICY_JSON is a single Vercel env var bounded by the
+        64KB env-size ceiling; with no pruning it grew ~3KB per publish and
+        eventually made the env upsert return 400. Callers sort versions
+        newest-first before serializing, so the first `keep` are the most
+        recent.
+
+        The currently-served `auto_version` is ALWAYS retained even if it
+        falls outside the window — dropping it would leave the docs manifest
+        unable to resolve the in-service build. When that happens the oldest
+        kept entry is evicted instead so the cap still holds, and newest-first
+        order is restored. Returns the number of entries removed.
+        """
+        versions = policy.get("versions")
+        if not isinstance(versions, list) or keep < 1 or len(versions) <= keep:
+            return 0
+        original = len(versions)
+        kept = versions[:keep]
+        auto_v = str(policy.get("auto_version", "")).strip()
+        if auto_v and not any(str(v.get("version", "")).strip() == auto_v for v in kept):
+            auto_entry = next(
+                (v for v in versions if str(v.get("version", "")).strip() == auto_v),
+                None,
+            )
+            if auto_entry is not None:
+                # Evict the oldest kept entry to make room, then restore the
+                # newest-first ordering callers expect.
+                kept = kept[: keep - 1] + [auto_entry]
+                kept.sort(key=lambda x: x.get("version", ""), reverse=True)
+        policy["versions"] = kept
+        return original - len(kept)
+
+    @staticmethod
+    def _is_retryable_http_error(e: Exception) -> bool:
+        """Whether an upsert failure is worth retrying.
+
+        4xx (except 408 Request Timeout / 429 Too Many Requests) are
+        deterministic client errors — the identical request will fail the same
+        way, so retrying just burns the backoff window (this is why the env
+        upsert 400 looked like it "hung" for ~5s before giving up). Missing
+        response (connection reset / timeout) and 5xx are transient → retry.
+        """
+        resp = getattr(e, "response", None)
+        status = getattr(resp, "status_code", None)
+        if status is None:
+            return True  # network/timeout error with no HTTP response
+        if status in (408, 429):
+            return True
+        if 400 <= status < 500:
+            return False
+        return True  # 5xx and anything else transient
+
+    @staticmethod
     def _canonical_plugin_key(entry: dict) -> dict | None:
         """Return a canonical {kind, ref|run_id} key for the plugin bound to
         a policy.versions[i] entry, or None if the entry has no plugin info.
@@ -3106,17 +3165,21 @@ class Api:
                     upsert_map[str(key)] = "" if value is None else str(value)
 
         last_err: Exception | None = None
+        attempts = 0
         for attempt in range(3):
+            attempts = attempt + 1
             try:
                 self._vercel(cfg).upsert_envs(upsert_map)
                 last_err = None
                 break
             except Exception as e:
                 last_err = e
-                if attempt < 2:
+                if attempt < 2 and self._is_retryable_http_error(e):
                     _time.sleep(1.5 * (2 ** attempt))  # 1.5s, 3s
+                else:
+                    break  # deterministic 4xx → don't waste the backoff
         if last_err is not None:
-            raise RuntimeError(f"upsert envs failed after 3 attempts: {last_err}")
+            raise RuntimeError(f"upsert envs failed after {attempts} attempt(s): {last_err}")
         try:
             return self._trigger_deploy_hook(cfg)
         except Exception as e:
@@ -3368,6 +3431,7 @@ class Api:
             return {"ok": False, "error": f"未知发布动作: {action}"}
 
         policy["versions"].sort(key=lambda x: x.get("version", ""), reverse=True)
+        pruned_count = self._prune_policy_versions(policy, keep=10)
         staged_policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
 
         scope_list = self._normalize_scope(payload.get("scope"))
@@ -3428,6 +3492,7 @@ class Api:
         base_message = (
             f"已执行 {action} · policy.versions 共 {len(policy['versions'])} 条 · "
             f"auto_version={policy.get('auto_version') or '(空)'}"
+            + (f" · 已裁剪 {pruned_count} 条旧版本" if pruned_count else "")
         )
         result = {
             "ok": True,
@@ -3435,6 +3500,7 @@ class Api:
             "version": version,
             "auto_version": policy.get("auto_version", ""),
             "versions_count": len(policy["versions"]),
+            "pruned_versions": pruned_count,
             "staged_until_pan123": False,
             "plan_scope": scope_list,
         }
@@ -3644,11 +3710,13 @@ class Api:
             # (no pan123 needed) or from the pan123 task success callback
             # (after upload completes, so cn clients see new manifest only
             # when 123 网盘 already has the files).
+            pruned_count = self._prune_policy_versions(policy, keep=10)
             staged_policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
 
             base_message = (
                 f"已执行 {action} · policy.versions 共 {len(policy['versions'])} 条 · "
                 f"auto_version={policy.get('auto_version') or '(空)'}"
+                + (f" · 已裁剪 {pruned_count} 条旧版本" if pruned_count else "")
             )
             result = {
                 "ok": True,
@@ -3656,6 +3724,7 @@ class Api:
                 "version": version,
                 "auto_version": policy.get("auto_version", ""),
                 "versions_count": len(policy["versions"]),
+                "pruned_versions": pruned_count,
                 "staged_until_pan123": False,
             }
 
@@ -3935,6 +4004,7 @@ class Api:
                 ]
             versions.sort(key=lambda x: x.get("version", ""), reverse=True)
             policy["versions"] = versions
+            pruned_count = self._prune_policy_versions(policy, keep=10)
 
             # Compute new hidden_plugins[]: (existing - unhide) + hide,
             # deduplicated using canonical key match.
@@ -3961,14 +4031,16 @@ class Api:
                 "app_hidden_count": len(app_to_hide),
                 "plugin_hidden_count": len(plugin_hide),
                 "plugin_unhidden_count": len(plugin_unhide),
-                "versions_count": len(versions),
+                "versions_count": len(policy["versions"]),
+                "pruned_versions": pruned_count,
                 "hidden_plugins_count": len(new_hidden),
                 "deploy_hook": hook_note,
                 "summary": (
                     f"已隐藏 {len(app_to_hide)} 个 app · "
                     f"已隐藏 {len(plugin_hide)} 个 plugin · "
                     f"已恢复 {len(plugin_unhide)} 个 plugin · "
-                    f"{hook_note}"
+                    + (f"已裁剪 {pruned_count} 条旧版本 · " if pruned_count else "")
+                    + f"{hook_note}"
                 ),
             }
         except Exception as e:
