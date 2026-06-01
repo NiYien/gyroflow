@@ -1701,27 +1701,26 @@ impl Controller {
                                 );
                                 stab.recompute_undistortion();
 
-                                // Display anchor: only set for Canon Cinema RAW Proxy
-                                // companion files (filename `*_Proxy.MP4`/`.mov` AND
-                                // detected_source starts with "Canon"). Container-layer
-                                // metadata cannot distinguish R52-style 1-frame Proxy
-                                // offsets from regular Canon H.264/HEVC encodings (both
-                                // carry elst.media_time = 1 frame for B-frame reorder),
-                                // so we hard-code the rule on filename + brand. 1 frame
-                                // duration is derived from fps so 29.97/59.94/etc all
-                                // resolve correctly.
+                                // Display anchor: only set for Canon R5 Mark II Cinema RAW
+                                // Proxy companion files (filename `*_Proxy.MP4`/`.mov` AND
+                                // detected_source contains "R5 Mark II"). Only R5 Mark II's
+                                // CRM/Proxy pair is misaligned by 1 frame across sources;
+                                // other Canon cinema bodies (e.g. C50) are frame-aligned and
+                                // must NOT get the compensation, otherwise their batch /
+                                // cross-source offsets shift by 1 frame. 1 frame duration is
+                                // derived from fps so 29.97/59.94/etc all resolve correctly.
                                 let url_lower = url.to_ascii_lowercase();
                                 let is_canon_proxy_name = url_lower.ends_with("_proxy.mp4")
                                     || url_lower.ends_with("_proxy.mov");
-                                let is_canon = stab
+                                let is_r5_mark2 = stab
                                     .gyro
                                     .read()
                                     .file_metadata
                                     .read()
                                     .detected_source
                                     .as_deref()
-                                    .is_some_and(|s| s.starts_with("Canon"));
-                                let anchor_us = if is_canon_proxy_name && is_canon && fps > 0.0 {
+                                    .is_some_and(|s| s.contains("R5 Mark II"));
+                                let anchor_us = if is_canon_proxy_name && is_r5_mark2 && fps > 0.0 {
                                     Some((1_000_000.0 / fps).round() as i64)
                                 } else {
                                     None
@@ -1729,10 +1728,10 @@ impl Controller {
                                 stab.params.write().video_display_anchor_us = anchor_us;
                                 ::log::info!(
                                     target: "video.load",
-                                    "video_display_anchor_us = {:?} (is_canon_proxy_name={} is_canon={} fps={:.6})",
+                                    "video_display_anchor_us = {:?} (is_canon_proxy_name={} is_r5_mark2={} fps={:.6})",
                                     anchor_us,
                                     is_canon_proxy_name,
-                                    is_canon,
+                                    is_r5_mark2,
                                     fps
                                 );
                             } else {
