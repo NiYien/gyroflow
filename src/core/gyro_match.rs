@@ -303,15 +303,18 @@ impl CandidateRaw {
 /// Compute offset/delay/spread for a single session.
 ///
 /// Equivalent to the legacy compute_global_offset but scoped to one
-/// (v_cluster, g_cluster) pair. Returns `Some((offset, delay, spread_ms))` when
+/// (v_cluster, g_cluster) pair. Returns
+/// `Some((offset, delay, spread_ms, cal_videos, inlier_count, coverage))` when
 /// at least one candidate pair passes the duration / adjacency filters, or
-/// `None` when no candidate survived.
+/// `None` when no candidate survived. `inlier_count` / `coverage` describe the
+/// chosen offset's support and are consumed by the multi-cluster Pass 2
+/// selector to avoid locking onto a degenerate single-inlier candidate.
 fn compute_session_offset(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     v_cluster: &[usize],
     g_cluster: &[usize],
-) -> Option<(i64, i64, i64, Vec<usize>)> {
+) -> Option<(i64, i64, i64, Vec<usize>, usize, usize)> {
     if v_cluster.len() < 2 || g_cluster.len() < 2 {
         return None;
     }
@@ -430,7 +433,7 @@ fn compute_session_offset(
         CandidateOffsetMode::Avg,
     );
 
-    if let Some((_, _, spread, _)) = &result_avg {
+    if let Some((_, _, spread, _, _, _)) = &result_avg {
         if *spread <= SYNC_CREATE_OFFSET_MAX {
             return result_avg;
         }
@@ -477,7 +480,9 @@ fn select_session_from_candidates(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     mode: CandidateOffsetMode,
-) -> Option<(i64, i64, i64, Vec<usize>)> {
+    // Returns `(offset, delay, spread, cal_videos, inlier_count, coverage)`;
+    // the last two describe the chosen offset's support for Pass 2 selection.
+) -> Option<(i64, i64, i64, Vec<usize>, usize, usize)> {
     if raw.is_empty() {
         return None;
     }
@@ -589,7 +594,20 @@ fn select_session_from_candidates(
         candidates.iter().map(|c| c.0).collect::<Vec<_>>()
     );
 
-    Some((median_offset, delay, spread, cal_video_indices))
+    // Surface the chosen offset's support metrics so the multi-cluster Pass 2
+    // selector can prefer geometric coverage / inlier count over a degenerate
+    // single-inlier spread (which is trivially 0 and otherwise wins).
+    let chosen_inlier_count = inliers.len();
+    let chosen_coverage = coverage(chosen_center);
+
+    Some((
+        median_offset,
+        delay,
+        spread,
+        cal_video_indices,
+        chosen_inlier_count,
+        chosen_coverage,
+    ))
 }
 
 /// Mini-RANSAC anchor pool: collects measured offsets from locked-in sessions
@@ -765,6 +783,11 @@ fn pair_sessions(
         g_idx: usize,
         offset: i64,
         spread: i64,
+        // Support metrics for the chosen offset, used by Pass 2 selection so a
+        // degenerate single-inlier spread=0 cannot outrank a higher-coverage,
+        // better-supported candidate (cross-day cal-cluster mis-lock repro).
+        inlier_count: usize,
+        coverage: usize,
     }
     let mut cands: Vec<Cand> = Vec::new();
     for v_idx in 0..v_with_anchor.len() {
@@ -775,17 +798,26 @@ fn pair_sessions(
                 continue;
             }
             match compute_session_offset(videos, gyros, v_cluster, g_cluster) {
-                Some((offset, _delay, spread, _cal_v)) => {
+                Some((offset, _delay, spread, _cal_v, inlier_count, coverage)) => {
                     log::info!(
-                        "[batch_match_diag] candidate_session v_idx={} g_idx={} v_anchor={} g_anchor={} offset={} spread={}",
+                        "[batch_match_diag] candidate_session v_idx={} g_idx={} v_anchor={} g_anchor={} offset={} spread={} inlier={} coverage={}",
                         v_idx,
                         g_idx,
                         v_anchor,
                         g_anchor,
                         offset,
-                        spread
+                        spread,
+                        inlier_count,
+                        coverage
                     );
-                    cands.push(Cand { v_idx, g_idx, offset, spread });
+                    cands.push(Cand {
+                        v_idx,
+                        g_idx,
+                        offset,
+                        spread,
+                        inlier_count,
+                        coverage,
+                    });
                 }
                 None => {
                     log::info!(
@@ -875,8 +907,25 @@ fn pair_sessions(
             continue;
         }
         let pick = if anchor_pool.median().is_none() {
+            // Empty-pool bootstrap: no running reference yet, so pick the
+            // candidate with the strongest geometric support. Coverage (how
+            // many videos the offset places inside a gyro window) and inlier
+            // count come FIRST; spread is only a final tie-break. A
+            // single-inlier candidate has a degenerate spread=0 that must NOT
+            // outrank a higher-coverage, multi-inlier candidate. Repro
+            // (feedback bf9c062f): cross-day cal cluster cov=3/inlier=1/
+            // spread=0 vs contemporaneous cluster cov=33/inlier=2/spread=400
+            // -> the latter is correct; the old `min_by_key(spread)` locked
+            // the former (-4.79 day offset) and starved 73/75 clips of gyro.
             *cis.iter()
-                .min_by_key(|&&ci| (cands[ci].spread, cands[ci].g_idx))
+                .min_by_key(|&&ci| {
+                    (
+                        std::cmp::Reverse(cands[ci].coverage),
+                        std::cmp::Reverse(cands[ci].inlier_count),
+                        cands[ci].spread,
+                        cands[ci].g_idx,
+                    )
+                })
                 .unwrap()
         } else {
             let median = anchor_pool.median().unwrap();
@@ -892,11 +941,13 @@ fn pair_sessions(
                 None => "none".to_string(),
             };
             log::info!(
-                "[batch_match_diag] session_locked_pass2 v_idx={} g_idx={} offset={} spread={} median={} cand_count={}",
+                "[batch_match_diag] session_locked_pass2 v_idx={} g_idx={} offset={} spread={} coverage={} inlier={} median={} cand_count={}",
                 v_idx,
                 cands[pick].g_idx,
                 pick_offset,
                 cands[pick].spread,
+                cands[pick].coverage,
+                cands[pick].inlier_count,
                 median_str,
                 cis.len()
             );
@@ -1799,7 +1850,7 @@ fn auto_match(videos: &[VideoMatchInfo], gyros: &[GyroMatchInfo]) -> BatchMatchR
 
     for s in sessions.iter_mut() {
         match compute_session_offset(videos, gyros, &s.v_cluster, &s.g_cluster) {
-            Some((off, dly, spread, cal_videos)) => {
+            Some((off, dly, spread, cal_videos, _inlier, _coverage)) => {
                 s.offset = off;
                 s.delay = dly;
                 s.cal_video_indices = cal_videos;
@@ -2032,7 +2083,7 @@ mod tests {
         // The G cluster sort ADJACENT_GYRO_GAP_MAX (60s) filter inside
         // compute_session_offset will skip the (g1, g2) cross-pair, so we
         // get two distinct candidates: 200 and 1_000_000.
-        let (offset, _delay, _spread, _cal_v) =
+        let (offset, _delay, _spread, _cal_v, _inlier, _coverage) =
             compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1, 2, 3])
                 .expect("should produce candidates");
         // Both candidates have inlier count = 1; tie-break by coverage picks
@@ -2041,6 +2092,69 @@ mod tests {
         assert_eq!(
             offset, 200,
             "coverage tie-break must pick offset whose video window matches more videos"
+        );
+    }
+
+    #[test]
+    fn pass2_empty_pool_prefers_coverage_over_degenerate_single_inlier_spread() {
+        // Regression for feedback 20260601-bf9c062f ("3 天的视频无法一次性同步").
+        //
+        // One cal V cluster (day-30 morning clips C185/C186/C187) can pair with
+        // TWO G clusters:
+        //   - FAR  (2026-05-25 cal files): a cross-day clock-skew match. Only
+        //     one inlier survives -> inlier=1, spread=0 (degenerate), and the
+        //     offset geometrically covers few videos (coverage=3).
+        //   - NEAR (2026-05-30 contemporaneous files): the correct ~6.8 min
+        //     camera<->logger skew. Two inliers -> inlier=2, spread=400, and it
+        //     covers far more videos.
+        //
+        // The old Pass-2 empty-pool rule `min_by_key(spread)` locked the FAR
+        // cluster (spread=0 trivially wins) -> the -4.79 day global offset
+        // starved 73/75 clips of gyro coverage (all `no_covering_gyro`). The fix
+        // ranks coverage / inlier_count ahead of spread, so the NEAR cluster
+        // (g_cluster [2,3,4]) is locked instead.
+        //
+        // All cal timestamps/durations are the real values from the feedback
+        // log's `[batch_match_diag] candidate ...` lines.
+        let mut videos = vec![
+            v(0, 2102.1, Some(1_780_102_687_130)), // C185
+            v(1, 1468.1, Some(1_780_102_691_190)), // C186
+            v(2, 1434.8, Some(1_780_102_694_330)), // C187
+        ];
+        // FAR gyros (2026-05-25): durations reproduce the log dur_diff 0.85/0.909.
+        let mut gyros = vec![
+            g(0, 3452.0, 1_779_688_687_000), // 2026-05-25_13-58-07
+            g(1, 2877.0, 1_779_688_693_000), // 2026-05-25_13-58-13
+        ];
+        // NEAR gyros (2026-05-30): g3/g4/g5 in the log.
+        gyros.push(g(2, 2302.0, 1_780_102_280_000)); // 2026-05-30_08-51-20
+        gyros.push(g(3, 1726.0, 1_780_102_285_000)); // 2026-05-30_08-51-25
+        gyros.push(g(4, 1726.0, 1_780_102_288_000)); // 2026-05-30_08-51-28
+
+        // Extra contemporaneous (video, gyro) pairs spread across the day. Under
+        // the NEAR offset each gyro window covers its video, lifting NEAR
+        // coverage above FAR's 3; under the FAR offset (~-4.14e8 ms) they shift
+        // out of range and are never counted. Reproduces the log's
+        // "coverage=33 vs 3" without needing all 75 clips.
+        const NEAR_OFFSET: i64 = -406_260; // g_created - v_created
+        for k in 0..6usize {
+            let v_created = 1_780_103_500_000 + (k as i64) * 500_000;
+            videos.push(v(3 + k, 2000.0, Some(v_created)));
+            gyros.push(g(5 + k, 3000.0, v_created + NEAR_OFFSET));
+        }
+
+        let v_clusters = vec![vec![0usize, 1, 2]];
+        let g_clusters = vec![vec![0usize, 1], vec![2usize, 3, 4]];
+
+        let sessions = pair_sessions(v_clusters, g_clusters, &videos, &gyros);
+
+        assert_eq!(sessions.len(), 1, "exactly one session should be locked");
+        assert_eq!(
+            sessions[0].g_cluster,
+            vec![2usize, 3, 4],
+            "Pass 2 must lock the contemporaneous NEAR gyro cluster (higher \
+             coverage / more inliers), not the degenerate-spread cross-day FAR \
+             cluster [0,1]"
         );
     }
 
@@ -2202,7 +2316,8 @@ mod tests {
             g(1, 5_500.0, 32_200),
         ];
         let result = compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1]);
-        let (offset, _delay, spread, _cal_videos) = result.expect("should succeed");
+        let (offset, _delay, spread, _cal_videos, _inlier, _coverage) =
+            result.expect("should succeed");
         assert_eq!(spread, 0); // Single avg per (vi,gi) pair -> single offset in candidates.
         // offset = (1000+1200)/2 = 1100
         assert_eq!(offset, 1100);
@@ -2246,7 +2361,7 @@ mod tests {
             g(9, 6330.0, 1_775_296_847_000), // 18:00:47
         ];
 
-        let (offset, _delay, spread, _cal_videos) = compute_session_offset(
+        let (offset, _delay, spread, _cal_videos, _inlier, _coverage) = compute_session_offset(
             &videos,
             &gyros,
             &[0, 1, 2, 3, 4],
@@ -2321,7 +2436,7 @@ mod tests {
             g(2, 5_500.0, 7_000),
             g(3, 5_500.0, 37_000),
         ];
-        let (offset, _delay, spread, _cal_videos) =
+        let (offset, _delay, spread, _cal_videos, _inlier, _coverage) =
             compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1, 2, 3])
                 .expect("should pick a winner from one of the two clusters");
         // Bucket-mode picks one of the two single-member clusters.
