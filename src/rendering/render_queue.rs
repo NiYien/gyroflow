@@ -4805,13 +4805,84 @@ impl RenderQueue {
                                         }
                                     }
                                 }
-                                // Prefer telemetry-parser's creation_date_utc over ffmpeg's creation_time
+                                // Prefer telemetry-parser's creation_date_utc over ffmpeg's
+                                // creation_time.
+                                //
+                                // Exception: a Canon Cinema RAW proxy whose gyro source is a
+                                // separate .CRM companion (CRM-proxy pairing). stab.gyro then
+                                // holds the CRM's metadata, which pollutes the proxy job two
+                                // ways: (1) Canon writes the CRM creation date in camera-LOCAL
+                                // time while the proxy MP4 container (mvhd) is UTC, so using it
+                                // shifts the video's timestamp by the camera timezone and breaks
+                                // batch gyro matching by wall-clock; (2) the CRM's
+                                // unit_pixel_focal_length / frame_readout_time are FULL-resolution
+                                // values, but the job renders the proxy, so the auto-generated
+                                // camera matrix gets fx = focal*upfl(full-res) while cx = proxy
+                                // width/2 -> fx/cx mismatch (and wrong rolling-shutter). For a
+                                // camera-native Canon proxy, replace these video-intrinsic,
+                                // resolution-dependent fields with the proxy's own. Third-party
+                                // transcodes strip the Canon metadata and fall through to the
+                                // default behaviour.
                                 {
-                                    let file_metadata =
-                                        stab.gyro.read().file_metadata.read().clone();
-                                    if let Some(ref utc_str) = file_metadata.creation_date_utc {
-                                        if let Some(ms) = parse_creation_date_to_millis(utc_str) {
-                                            stab.params.write().video_created_at = Some(ms);
+                                    let proxy_meta = if !is_main_video
+                                        && gyro_url.to_ascii_lowercase().ends_with(".crm")
+                                    {
+                                        peek_canon_native_video_metadata(&url)
+                                    } else {
+                                        None
+                                    };
+                                    match proxy_meta {
+                                        Some(proxy_md) => {
+                                            let proxy_created = proxy_md
+                                                .creation_date_utc
+                                                .as_deref()
+                                                .and_then(parse_creation_date_to_millis);
+                                            if let Some(ms) = proxy_created {
+                                                stab.params.write().video_created_at = Some(ms);
+                                            }
+                                            // else: keep info.created_at (proxy container UTC)
+                                            let crm_date = {
+                                                let gyro = stab.gyro.read();
+                                                let mut fm = gyro.file_metadata.write();
+                                                let prev = fm.creation_date_utc.clone();
+                                                fm.unit_pixel_focal_length =
+                                                    proxy_md.unit_pixel_focal_length;
+                                                fm.frame_readout_time =
+                                                    proxy_md.frame_readout_time;
+                                                fm.frame_readout_direction =
+                                                    proxy_md.frame_readout_direction.clone();
+                                                if !proxy_md.lens_params.is_empty() {
+                                                    fm.lens_params = proxy_md.lens_params.clone();
+                                                }
+                                                if proxy_md.creation_date_utc.is_some() {
+                                                    fm.creation_date_utc =
+                                                        proxy_md.creation_date_utc.clone();
+                                                }
+                                                prev
+                                            };
+                                            ::log::info!(
+                                                "[queue_add:crm_proxy_created_at] job_id={} proxy='{}' canon_native=true video_created_at={:?} unit_px_fl={:?} frame_readout_time={:?} (proxy values; bypassed CRM local creation_date={:?})",
+                                                job_id,
+                                                filesystem::get_filename(&url),
+                                                proxy_created.or(info.created_at),
+                                                proxy_md.unit_pixel_focal_length,
+                                                proxy_md.frame_readout_time,
+                                                crm_date
+                                            );
+                                        }
+                                        None => {
+                                            let file_metadata =
+                                                stab.gyro.read().file_metadata.read().clone();
+                                            if let Some(ref utc_str) =
+                                                file_metadata.creation_date_utc
+                                            {
+                                                if let Some(ms) =
+                                                    parse_creation_date_to_millis(utc_str)
+                                                {
+                                                    stab.params.write().video_created_at =
+                                                        Some(ms);
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -9311,6 +9382,33 @@ fn parse_gyro_metadata(
     };
 
     Ok((created_at, duration, md.detected_source))
+}
+
+/// Peek a video file's telemetry and return its FileMetadata when it is a
+/// camera-native Canon video (detected_source starts with "Canon"). Used by the
+/// CRM-proxy rule to recover the proxy's own creation date and resolution-
+/// dependent lens metadata: Canon Cinema RAW proxies carry the camera's CNDM
+/// metadata, so telemetry-parser detects them as "Canon ..."; third-party
+/// transcodes strip that metadata and yield None (falling back to the default
+/// behaviour). Returns None on parse failure too.
+fn peek_canon_native_video_metadata(url: &str) -> Option<FileMetadata> {
+    let mut file = filesystem::open_file(url, false, false).ok()?;
+    let filesize = file.size;
+    let md = GyroSource::parse_telemetry_file(
+        file.get_file(),
+        filesize,
+        url,
+        &core::gyro_source::FileLoadOptions::default(),
+        (0, 0),
+        0.0,
+        |_| {},
+        Arc::new(AtomicBool::new(false)),
+    )
+    .ok()?;
+    md.detected_source
+        .as_deref()
+        .is_some_and(|s| s.starts_with("Canon"))
+        .then_some(md)
 }
 
 // Rules:
