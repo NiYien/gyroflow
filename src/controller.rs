@@ -728,18 +728,16 @@ impl Controller {
                         QUrl::from(QString::from(encoded_url)),
                         QString::from(custom_decoder),
                     );
-                    // §8c.1 / 8c.4: invalidate GPU bindings AFTER MDK setUrl
-                    // so the render thread sees the new texture handle on
-                    // its next frame (epoch bump triggers thread_local LRU
-                    // clear inside the onProcessTexture closure). Goes through
-                    // `request_gpu_invalidation` so a second load_video racing
-                    // the first one within the coalesce window does not
-                    // double-bump the epoch and starve d3d11/wgpu resources.
-                    ::log::info!(
-                        target: "lifecycle",
-                        "GPU bindings invalidated (video URL changed via load_video)"
-                    );
-                    this.stabilizer.request_gpu_invalidation();
+                    // Converged to upstream: no main-thread GPU invalidation here.
+                    // The render thread rebuilds the OpenCL/wgpu backend on its
+                    // next frame because `buffers.get_checksum()` (which reflects
+                    // the new MDK surface) changes the cache key, missing
+                    // CACHED_OPENCL/CACHED_WGPU and triggering the surface_checksum
+                    // CONTEXT rebuild inside `OclWrapper::new` against the valid
+                    // current texture. The old main-thread `request_gpu_invalidation`
+                    // forced this from a thread decoupled from the render frame
+                    // cycle, driving re-init against transitional D3D11 textures
+                    // (CL_INVALID_D3D11_RESOURCE_KHR -1007 / device-removed AV).
                 }
             },
         );
@@ -2952,7 +2950,6 @@ impl Controller {
                 WaitOutcome::Idle => {
                     cancel_flag.store(false, SeqCst);
                     let _g = OpGuard::enter(&stab.in_flight_count);
-                    let prev_video_url = stab.gyro.read().file_url.clone();
                     let mut is_preset = false;
                     let result = stab.import_gyroflow_data(
                         data.to_string().as_bytes(),
@@ -2963,20 +2960,13 @@ impl Controller {
                         &mut is_preset,
                         false,
                     );
-                    // §8c.2 / 8c.4: invalidate GPU bindings when the project
-                    // brought in a different video URL. Same-URL imports
-                    // (e.g., preset loads, offset-only changes) MUST NOT
-                    // invalidate to avoid needless re-init cost.
-                    if result.is_ok() {
-                        let new_video_url = stab.gyro.read().file_url.clone();
-                        if !prev_video_url.is_empty() && prev_video_url != new_video_url {
-                            ::log::info!(
-                                target: "lifecycle",
-                                "GPU bindings invalidated (video URL changed via import_gyroflow_data)"
-                            );
-                            stab.request_gpu_invalidation();
-                        }
-                    }
+                    // Converged to upstream: no main-thread GPU invalidation on
+                    // project import. If the project brought in a different video
+                    // URL, MDK's setUrl plus the render thread's surface_checksum
+                    // cache-miss rebuild handle backend re-init naturally. The old
+                    // main-thread `request_gpu_invalidation` here was the second
+                    // half of the load+import double-invalidation that drove
+                    // render-thread re-init against transitional D3D11 textures.
                     finished(result);
                 }
                 WaitOutcome::Timeout { remaining } => {
