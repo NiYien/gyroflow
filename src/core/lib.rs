@@ -1134,16 +1134,24 @@ impl StabilizationManager {
         let backup_lens_data = if !is_main_video {
             let gyro = self.gyro.read();
             let fm = gyro.file_metadata.read();
-            // C3: Komodo main video keeps its own gyro and rejects external IMU.
-            // Komodo's internal IMU is the only RED gyro we trust, so once the
-            // main video has been classified as Komodo, any subsequent external
-            // IMU load is silently ignored (no clear, no overwrite).
-            if fm.is_komodo {
+            // A main video whose own built-in gyro is the trusted motion source
+            // (RED Komodo or a Sony body with embedded gyro) keeps that gyro and
+            // rejects any external IMU as a motion source. Once classified this
+            // way, a subsequent external IMU load is silently ignored (no clear,
+            // no overwrite); only its lens metadata is taken elsewhere (batch
+            // apply_match).
+            if fm.keep_video_gyro {
+                if fm.is_komodo {
+                    log::info!(
+                        "[red_arbitration] main video is RED Komodo, ignoring external IMU file: {url}"
+                    );
+                } else {
+                    log::info!(
+                        "[sony_arbitration] main video is Sony with built-in gyro, ignoring external IMU file: {url}"
+                    );
+                }
                 log::info!(
-                    "[red_arbitration] main video is RED Komodo, ignoring external IMU file: {url}"
-                );
-                log::info!(
-                    "[load_gyro_data] end url='{}' elapsed_ms={:.1} skipped=komodo_external_imu",
+                    "[load_gyro_data] end url='{}' elapsed_ms={:.1} skipped=builtin_gyro_external_imu",
                     url,
                     t_total.elapsed().as_secs_f64() * 1000.0
                 );

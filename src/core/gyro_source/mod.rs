@@ -1147,6 +1147,9 @@ impl GyroSource {
             imu_orientation,
             detected_source: Some(detected_source),
             is_komodo,
+            // Placeholder; the real value is computed after parsing is final
+            // (after the Sony stab block, before the metadata cache write).
+            keep_video_gyro: false,
             quaternions,
             image_orientations,
             gravity_vectors,
@@ -1360,6 +1363,17 @@ impl GyroSource {
             }
         }
 
+        // Compute the trusted-built-in-gyro flag now that parsing is final but
+        // before the metadata is cached. Stored on FileMetadata (not derived
+        // lazily) because thin() strips raw_imu/quaternions downstream, which
+        // would make a later has_motion() check read false. Covers RED Komodo
+        // (is_komodo) and any Sony body that embedded gyro/quaternion samples.
+        md.keep_video_gyro = file_metadata::compute_keep_video_gyro(
+            is_komodo,
+            &input.camera_type(),
+            !md.raw_imu.is_empty() || !md.quaternions.is_empty(),
+        );
+
         // [lens_diag] Part A2 diagnostic — print everything that feeds
         // should_use_manual_config / lens_params status on every parse_telemetry_file
         // call. The same parse path runs for both main video and external IMU/gyro
@@ -1402,6 +1416,8 @@ impl GyroSource {
         // IMU loading (telemetry sidecar / .bin) is the sole motion source.
         // Lens metadata (lens_params, lens_positions, camera_identifier,
         // unit_pixel_focal_length, frame_readout_time, etc.) is preserved.
+        // RED-specific: keep this gated on `is_komodo`, NOT `keep_video_gyro` — a
+        // Sony body with built-in gyro must never enter this IMU-clearing path.
         if input.camera_type() == "RED" && !is_komodo {
             let dropped_imu = md.raw_imu.len();
             let dropped_quat = md.quaternions.len();

@@ -46,6 +46,15 @@ pub struct FileMetadata {
     /// Used by external IMU arbitration: a Komodo main video keeps its own gyro
     /// and rejects subsequent external IMU loads (see lib.rs::load_gyro_data).
     pub is_komodo: bool,
+    /// True when the video's own built-in gyro is the trusted motion source and
+    /// must be kept instead of being overwritten by an external IMU: RED Komodo
+    /// (see `is_komodo`) or a Sony body that embedded gyro/quaternion samples.
+    /// Generalizes the Komodo arbitration to Sony; checked by external IMU
+    /// arbitration (lib.rs::load_gyro_data) and render_queue apply/auto-sync
+    /// gating. Computed once at parse and propagated through `thin()` because
+    /// `thin()` strips raw_imu/quaternions, which would make a later
+    /// `has_motion()` check read false.
+    pub keep_video_gyro: bool,
     pub frame_readout_time: Option<f64>,
     pub frame_readout_direction: ReadoutDirection,
     pub frame_rate: Option<f64>,
@@ -76,6 +85,7 @@ impl FileMetadata {
             image_orientations: Default::default(),
             detected_source: self.detected_source.clone(),
             is_komodo: self.is_komodo,
+            keep_video_gyro: self.keep_video_gyro,
             frame_readout_time: self.frame_readout_time.clone(),
             frame_readout_direction: self.frame_readout_direction.clone(),
             frame_rate: self.frame_rate.clone(),
@@ -146,3 +156,66 @@ impl<'de> serde::Deserialize<'de> for ReadOnlyFileMetadata {
     }
 }
 // ------------- ReadOnlyFileMetadata -------------
+
+/// Decide whether a video's own built-in gyro is the trusted motion source and
+/// must be kept instead of being overwritten by an external IMU. See
+/// `FileMetadata::keep_video_gyro`. Pure predicate so it stays unit-testable
+/// without a telemetry-parser `Input`.
+///
+/// - RED Komodo / Komodo-X: `is_komodo` is already true.
+/// - Sony bodies that embedded gyro/quaternion samples: trusted when motion is
+///   present (`has_gyro_samples`). A non-Komodo RED with samples is intentionally
+///   NOT trusted here (its internal IMU is cleared separately).
+pub(crate) fn compute_keep_video_gyro(
+    is_komodo: bool,
+    camera_type: &str,
+    has_gyro_samples: bool,
+) -> bool {
+    is_komodo || (camera_type == "Sony" && has_gyro_samples)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::Quat64;
+
+    #[test]
+    fn keep_video_gyro_sony_with_samples_is_true() {
+        assert!(compute_keep_video_gyro(false, "Sony", true));
+    }
+
+    #[test]
+    fn keep_video_gyro_sony_without_samples_is_false() {
+        assert!(!compute_keep_video_gyro(false, "Sony", false));
+    }
+
+    #[test]
+    fn keep_video_gyro_komodo_is_true() {
+        // RED Komodo is trusted regardless of the Sony clause / sample presence.
+        assert!(compute_keep_video_gyro(true, "RED", false));
+    }
+
+    #[test]
+    fn keep_video_gyro_other_cameras_are_false() {
+        // Plain bodies and non-Komodo RED (even with samples) are not trusted.
+        assert!(!compute_keep_video_gyro(false, "Canon", true));
+        assert!(!compute_keep_video_gyro(false, "RED", true));
+    }
+
+    #[test]
+    fn thin_preserves_keep_video_gyro_after_stripping_motion() {
+        let mut md = FileMetadata {
+            keep_video_gyro: true,
+            ..Default::default()
+        };
+        md.quaternions.insert(0, Quat64::identity());
+        assert!(!md.quaternions.is_empty());
+
+        // thin() strips raw_imu/quaternions but must carry the trusted-gyro flag,
+        // which is why the flag is stored rather than derived via has_motion().
+        let thin = md.thin();
+        assert!(thin.keep_video_gyro, "thin() must preserve keep_video_gyro");
+        assert!(thin.quaternions.is_empty(), "thin() must strip quaternions");
+        assert!(thin.raw_imu.is_empty(), "thin() must strip raw_imu");
+    }
+}

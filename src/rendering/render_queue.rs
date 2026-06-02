@@ -1398,7 +1398,10 @@ impl RenderQueue {
                 .filter_map(|job_id| {
                     let job = self.jobs.get(&job_id)?;
                     let stab = job.stab.as_ref()?;
-                    (!stab.gyro.read().file_metadata.read().is_komodo).then_some(job_id)
+                    // Videos whose built-in gyro is trusted (RED Komodo or Sony
+                    // with embedded gyro) keep that gyro and skip sync, so they
+                    // are excluded from batch sync point collection / repair.
+                    (!stab.gyro.read().file_metadata.read().keep_video_gyro).then_some(job_id)
                 })
                 .collect::<Vec<_>>();
             (job_ids, batch_sync_job_ids)
@@ -4181,7 +4184,9 @@ impl RenderQueue {
     }
 
     fn estimated_sync_frames_for_stab(stab: &StabilizationManager) -> usize {
-        if stab.gyro.read().file_metadata.read().is_komodo {
+        // Trusted built-in gyro (RED Komodo or Sony with embedded gyro) skips
+        // auto-sync entirely, so it contributes zero estimated sync frames.
+        if stab.gyro.read().file_metadata.read().keep_video_gyro {
             return 0;
         }
 
@@ -5084,13 +5089,22 @@ impl RenderQueue {
         job_id: u32,
         collect_batch_points: bool,
     ) -> QueueAutosyncStats {
-        // C3: Komodo trusts its own internal IMU; auto-sync against external IMU
-        // is unnecessary and would compute a meaningless offset. Skip entirely.
-        if stab.gyro.read().file_metadata.read().is_komodo {
+        // A video whose built-in gyro is the trusted motion source (RED Komodo or
+        // Sony with embedded gyro) is already aligned to its own frames; auto-sync
+        // against an external IMU is unnecessary and would compute a meaningless
+        // offset. Skip entirely.
+        let (keep_video_gyro, is_komodo) = {
+            let gyro = stab.gyro.read();
+            let fm = gyro.file_metadata.read();
+            (fm.keep_video_gyro, fm.is_komodo)
+        };
+        if keep_video_gyro {
             let url = stab.input_file.read().url.clone();
-            ::log::info!(
-                "[red_arbitration] Komodo main video, skipping auto-sync: {url}"
-            );
+            if is_komodo {
+                ::log::info!("[red_arbitration] Komodo main video, skipping auto-sync: {url}");
+            } else {
+                ::log::info!("[sony_arbitration] Sony built-in gyro, skipping auto-sync: {url}");
+            }
             return QueueAutosyncStats::default();
         }
 
@@ -7710,12 +7724,18 @@ impl RenderQueue {
             }
             let auto_rotation_results = Arc::new(auto_rotation_results);
             apply_items.par_iter_mut().enumerate().for_each(|(idx, item)| {
-                // C3: Komodo main video keeps its own internal gyro + camera identity.
-                // We still run the niyien lens flow (index detection, focal length,
-                // lens profile) but skip the IMU/quaternion + camera_id overwrites —
-                // those would replace Komodo's trusted state with matched external
-                // data. Auto-sync is gated separately in do_autosync.
-                let main_is_komodo = item.stab.gyro.read().file_metadata.read().is_komodo;
+                // A main video with a trusted built-in gyro (RED Komodo or a Sony
+                // body with embedded gyro) keeps its own internal gyro + camera
+                // identity. We still run the niyien lens flow (index detection,
+                // focal length, lens profile) but skip the IMU/quaternion +
+                // camera_id overwrites — those would replace the trusted state with
+                // matched external data. Auto-sync is gated separately in
+                // do_autosync. `main_is_komodo` is kept only to label the log line.
+                let (main_keep_video_gyro, main_is_komodo) = {
+                    let gyro = item.stab.gyro.read();
+                    let fm = gyro.file_metadata.read();
+                    (fm.keep_video_gyro, fm.is_komodo)
+                };
                 let t_item = std::time::Instant::now();
                 let requested_range = normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
                 if let Some(cached_entries) = gyro_cache.get(&item.gyro_files_idx) {
@@ -7828,8 +7848,9 @@ impl RenderQueue {
                             None
                         };
 
-                        if main_is_komodo {
-                            // Komodo: keep video gyro (raw_imu/quaternions) + camera_id,
+                        if main_keep_video_gyro {
+                            // Trusted built-in gyro (Komodo / Sony): keep video gyro
+                            // (raw_imu/quaternions) + camera_id,
                             // but merge .bin's lens-related metadata into stab so the
                             // niyien lens flow (metadata_snapshot_for_job →
                             // extract_video_focus_length_mm / extract_lens_index +
@@ -7864,10 +7885,17 @@ impl RenderQueue {
                                     fm.frame_readout_time = md.frame_readout_time;
                                 }
                             }
-                            ::log::info!(
-                                "[red_arbitration] job[{}] Komodo: kept video gyro + camera_id, merged .bin lens metadata",
-                                idx
-                            );
+                            if main_is_komodo {
+                                ::log::info!(
+                                    "[red_arbitration] job[{}] Komodo: kept video gyro + camera_id, merged .bin lens metadata",
+                                    idx
+                                );
+                            } else {
+                                ::log::info!(
+                                    "[sony_arbitration] job[{}] Sony: kept video gyro + camera_id, merged .bin lens metadata",
+                                    idx
+                                );
+                            }
                         } else {
                             {
                                 let params = item.stab.params.read();
@@ -10697,7 +10725,32 @@ mod tests {
         {
             let job = queue.jobs.get(&1).unwrap();
             let stab = job.stab.as_ref().unwrap();
-            stab.gyro.write().file_metadata.write().is_komodo = true;
+            // A real RED Komodo parse sets both is_komodo and keep_video_gyro;
+            // the arbitration gate now keys off keep_video_gyro.
+            let gyro = stab.gyro.write();
+            let mut fm = gyro.file_metadata.write();
+            fm.is_komodo = true;
+            fm.keep_video_gyro = true;
+        }
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.start_batch_autosync();
+
+        assert_eq!(queue.export_project, 2);
+        assert!(!queue.batch_sync_job_ids.contains(&1));
+        assert_eq!(batch_status(&queue, 1)["color"], "none");
+    }
+
+    #[test]
+    fn render_queue_start_batch_autosync_runs_sony_builtin_gyro_jobs_without_sync_confirmation() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        {
+            let job = queue.jobs.get(&1).unwrap();
+            let stab = job.stab.as_ref().unwrap();
+            // Simulate a Sony body with built-in gyro: keep_video_gyro is the
+            // generalized arbitration gate; is_komodo stays false (not a RED body).
+            stab.gyro.write().file_metadata.write().keep_video_gyro = true;
         }
 
         queue.pause_flag.store(true, SeqCst);
