@@ -692,6 +692,40 @@ fn lens_profile_metadata_for_group_build(metadata: &FileMetadata) -> FileMetadat
     snapshot
 }
 
+/// Build the base metadata snapshot fed to `build_lens_profile` during a
+/// lens-group reapply, restoring the retained video-stream
+/// `unit_pixel_focal_length` (upfl) for `keep_video_gyro` clips.
+///
+/// `keep_video_gyro` clips (RED Komodo / Komodo-X, Sony built-in gyro, and any
+/// future body promoted by `compute_keep_video_gyro`) carry the camera upfl on
+/// the retained video stream, not on the matched `.bin` backup.
+/// `JobLensMetadataBackup::overwrite_metadata` unconditionally writes the
+/// backup's upfl (`None` for these clips), so capture the video-stream value
+/// before the overwrite and restore it after — both on `md` itself (persisted
+/// on the gyro file_metadata so repeated reapplies don't degrade to an empty
+/// matrix) and on the returned snapshot — letting `build_lens_profile` rebuild
+/// `camera_matrix` (= focal_mm x upfl) on every reapply. Gate on
+/// `keep_video_gyro`, not `is_komodo`, so Sony / future bodies are covered
+/// automatically. Non-`keep_video_gyro` clips skip both branches and stay
+/// byte-identical to a plain double `overwrite_metadata`.
+fn build_reapply_base_metadata(
+    md: &mut FileMetadata,
+    base_lens_metadata: &JobLensMetadataBackup,
+) -> FileMetadata {
+    let keep = md.keep_video_gyro;
+    let video_upfl = md.unit_pixel_focal_length;
+    base_lens_metadata.overwrite_metadata(md);
+    if keep && md.unit_pixel_focal_length.is_none() {
+        md.unit_pixel_focal_length = video_upfl;
+    }
+    let mut snapshot = md.thin();
+    base_lens_metadata.overwrite_metadata(&mut snapshot);
+    if keep && snapshot.unit_pixel_focal_length.is_none() {
+        snapshot.unit_pixel_focal_length = video_upfl;
+    }
+    snapshot
+}
+
 fn effective_lens_group_configs(
     job: &Job,
     global_configs: &[niyien_lens_presets::LensGroupConfig],
@@ -6939,10 +6973,11 @@ impl RenderQueue {
                             let mut base_metadata = {
                                 let gyro = stab.gyro.read();
                                 let mut md = gyro.file_metadata.write();
-                                base_lens_metadata.overwrite_metadata(&mut md);
-                                let mut snapshot = md.thin();
-                                base_lens_metadata.overwrite_metadata(&mut snapshot);
-                                snapshot
+                                // Restores the retained video-stream upfl for
+                                // keep_video_gyro clips (overwrite_metadata wipes it with
+                                // the .bin backup's None) so build_lens_profile can rebuild
+                                // camera_matrix on every reapply. See helper doc.
+                                build_reapply_base_metadata(&mut md, base_lens_metadata)
                             };
                             // Preserve sync_settings across lens profile replacement
                             let saved_sync_settings = stab.lens.read().sync_settings.clone();
@@ -7933,6 +7968,41 @@ impl RenderQueue {
                         let clean_lens = item.stab.lens.read().clone();
                         item.base_lens_metadata =
                             Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &clean_lens));
+
+                        // a3818466 moved the lens-group calibration build out of this
+                        // batch apply (apply_main_video_telemetry_without_lens_group skips
+                        // it) into reapply_lens_group_config_filtered, which only runs on
+                        // later lens-group edits — so the first batch-exported .gyroflow had
+                        // an empty camera_matrix for clips whose ONLY matrix source is
+                        // build_lens_profile. RED Komodo carries unit_pixel_focal_length but
+                        // no telemetry focal/lens_params, so its focal comes from the lens
+                        // group and the matrix (= focal x upfl) is built only here. Rebuild
+                        // it for clips that resolve to a lens group, mirroring reapply. Read
+                        // the gyro's own metadata: keep_video_gyro clips keep the camera upfl
+                        // on the video gyro, not on the matched .bin `md`. Only stab.lens is
+                        // replaced — output size and correction amount stay owned by the
+                        // existing batch paths above.
+                        if let Some(lens_index) = lens_index {
+                            if item.effective_lens_group_configs.get(lens_index).is_some() {
+                                let build_md =
+                                    item.stab.gyro.read().file_metadata.read().thin();
+                                // build_lens_profile replaces stab.lens wholesale, which
+                                // clears the per-clip batch_match sync_settings; the t_sync
+                                // pass below rewrites them, but save/restore keeps this block
+                                // order-independent.
+                                let saved_sync_settings =
+                                    item.stab.lens.read().sync_settings.clone();
+                                if let Some(profile) = niyien_lens_presets::build_lens_profile(
+                                    &build_md,
+                                    size,
+                                    cfg_for_build.as_ref(),
+                                    Some(&clean_lens),
+                                ) {
+                                    *item.stab.lens.write() = profile;
+                                }
+                                item.stab.lens.write().sync_settings = saved_sync_settings;
+                            }
+                        }
 
                         if let Some(rotation) = auto_rotation {
                             ::log::info!(
@@ -12543,6 +12613,124 @@ mod tests {
         assert_eq!(profile.focal_length, Some(31.0));
         assert_eq!(profile.fisheye_params.camera_matrix[0], [3100.0, 0.0, 1277.0]);
         assert_eq!(profile.fisheye_params.camera_matrix[1], [0.0, 3100.0, 540.0]);
+    }
+
+    // Replicates the live state after a batch apply on a keep_video_gyro clip
+    // (RED Komodo / Sony built-in gyro): the retained video gyro keeps the
+    // camera unit_pixel_focal_length and empty lens_params, while the job's
+    // base_lens_metadata backup was reset from the matched .bin (no upfl).
+    fn keep_video_gyro_reapply_inputs() -> (FileMetadata, JobLensMetadataBackup) {
+        let live_md = FileMetadata {
+            keep_video_gyro: true,
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            unit_pixel_focal_length: Some(170.0),
+            ..Default::default()
+        };
+        // Backup derived from the matched .bin: it has no upfl, so a plain
+        // overwrite_metadata would wipe the live value.
+        let backup_md = FileMetadata {
+            unit_pixel_focal_length: None,
+            ..Default::default()
+        };
+        let backup = JobLensMetadataBackup::from_metadata_and_lens(
+            &backup_md,
+            &core::lens_profile::LensProfile::default(),
+        );
+        (live_md, backup)
+    }
+
+    #[test]
+    fn reapply_base_metadata_restores_video_upfl_for_keep_video_gyro() {
+        let (mut live_md, backup) = keep_video_gyro_reapply_inputs();
+
+        let snapshot = build_reapply_base_metadata(&mut live_md, &backup);
+
+        // Snapshot fed to build_lens_profile carries the captured video upfl.
+        assert_eq!(snapshot.unit_pixel_focal_length, Some(170.0));
+        // Persisted back onto the live gyro file_metadata so repeated reapplies
+        // don't degrade, and so export_gyroflow_data serializes the right upfl
+        // into gyro_source.file_metadata (reload fallback chain).
+        assert_eq!(live_md.unit_pixel_focal_length, Some(170.0));
+    }
+
+    #[test]
+    fn reapply_base_metadata_keep_video_gyro_rebuilds_camera_matrix() {
+        let (mut live_md, backup) = keep_video_gyro_reapply_inputs();
+        let snapshot = build_reapply_base_metadata(&mut live_md, &backup);
+
+        // Manual lens-group focal length (Komodo 28mm); the matrix is built only
+        // from focal_mm x upfl because telemetry carries no lens_params.
+        let config = niyien_lens_presets::LensGroupConfig {
+            focal_length_mm: Some(28.0),
+            ..Default::default()
+        };
+        let cfg_for_build =
+            niyien_lens_presets::effective_lens_group_config_for_build(true, &config, &snapshot)
+                .unwrap();
+        let profile = niyien_lens_presets::build_lens_profile(
+            &snapshot,
+            (6144, 3240),
+            Some(&cfg_for_build),
+            Some(&core::lens_profile::LensProfile::default()),
+        )
+        .expect("keep_video_gyro reapply must rebuild a non-empty camera_matrix");
+
+        assert!(!profile.fisheye_params.camera_matrix.is_empty());
+        assert!((profile.fisheye_params.camera_matrix[0][0] - 28.0 * 170.0).abs() < 1e-6);
+        assert!((profile.fisheye_params.camera_matrix[1][1] - 28.0 * 170.0).abs() < 1e-6);
+
+        // Contrast: without the upfl restore (snapshot upfl None, default
+        // fallback lens has no matrix to derive from) build_lens_profile bails.
+        let mut no_upfl = snapshot.clone();
+        no_upfl.unit_pixel_focal_length = None;
+        assert!(niyien_lens_presets::build_lens_profile(
+            &no_upfl,
+            (6144, 3240),
+            Some(&cfg_for_build),
+            Some(&core::lens_profile::LensProfile::default()),
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn reapply_base_metadata_non_keep_video_gyro_is_byte_equivalent() {
+        // Non-keep_video_gyro clip: the backup carries no upfl, and there must be
+        // no restore branch — the result must match a plain double overwrite.
+        let mut live_md = FileMetadata {
+            keep_video_gyro: false,
+            additional_data: serde_json::json!({ "lens_index": 0 }),
+            unit_pixel_focal_length: Some(170.0),
+            ..Default::default()
+        };
+        let backup_md = FileMetadata {
+            unit_pixel_focal_length: None,
+            ..Default::default()
+        };
+        let backup = JobLensMetadataBackup::from_metadata_and_lens(
+            &backup_md,
+            &core::lens_profile::LensProfile::default(),
+        );
+
+        // Expected = the pre-change behavior (no restore branch).
+        let mut expected_md = live_md.clone();
+        backup.overwrite_metadata(&mut expected_md);
+        let mut expected_snapshot = expected_md.thin();
+        backup.overwrite_metadata(&mut expected_snapshot);
+
+        let snapshot = build_reapply_base_metadata(&mut live_md, &backup);
+
+        assert_eq!(live_md.unit_pixel_focal_length, None);
+        assert_eq!(snapshot.unit_pixel_focal_length, None);
+        // FileMetadata lacks PartialEq; compare the serialized form for byte
+        // equivalence with the pre-change double overwrite.
+        assert_eq!(
+            serde_json::to_string(&snapshot).unwrap(),
+            serde_json::to_string(&expected_snapshot).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_string(&live_md).unwrap(),
+            serde_json::to_string(&expected_md).unwrap()
+        );
     }
 
     fn default_exts() -> Vec<String> {

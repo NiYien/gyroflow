@@ -257,7 +257,29 @@ impl CameraIdentifier {
                                     if let Some(v) = v.get("lens_type").and_then(|v| v.as_str()) {
                                         id.lens_model = v.to_string();
                                     }
-                                    if let Some(v) =
+                                    // RED Komodo lens profiles are keyed by the sensor
+                                    // name ("S35"), not the resolution format ("6K 2.4:1").
+                                    // Scoped to Komodo only: derive camera_setting from
+                                    // `sensor_name` ("KOMODO S35" -> "S35"). Every other
+                                    // camera keeps using `resolution_format_name` unchanged.
+                                    let is_komodo = id.brand.eq_ignore_ascii_case("RED")
+                                        && id.model.to_ascii_uppercase().starts_with("KOMODO");
+                                    let sensor_setting = if is_komodo {
+                                        v.get("sensor_name")
+                                            .and_then(|v| v.as_str())
+                                            .map(|s| {
+                                                s.strip_prefix(id.model.as_str())
+                                                    .unwrap_or(s)
+                                                    .trim()
+                                                    .to_string()
+                                            })
+                                            .filter(|s| !s.is_empty())
+                                    } else {
+                                        None
+                                    };
+                                    if let Some(s) = sensor_setting {
+                                        id.camera_setting = s;
+                                    } else if let Some(v) =
                                         v.get("resolution_format_name").and_then(|v| v.as_str())
                                     {
                                         id.camera_setting = v.to_string();
