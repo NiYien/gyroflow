@@ -4,7 +4,12 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-const CROSS_VIDEO_SUPPORT_MS: f64 = 1500.0;
+// NiYien tuning for external-IMU low-motion batches (e.g. S1H + SenseFlow):
+// widen the cross-video consensus band to ±1.8s and raise the per-point
+// confidence floor to 0.18. The consensus band (offset span ≤ this value, see
+// `coarse_consistency_bands`) is what gates each clip green/yellow; raising the
+// floor only drops points strictly below 0.18.
+const CROSS_VIDEO_SUPPORT_MS: f64 = 3000.0;
 pub const MIN_BATCH_SYNC_POINT_RANK: f32 = 12.0;
 pub const MIN_BATCH_SYNC_POINT_CONFIDENCE: f64 = 0.15;
 
@@ -568,14 +573,16 @@ mod tests {
     }
 
     #[test]
-    fn coarse_bands_do_not_chain_offsets_beyond_1500ms_span() {
+    fn coarse_bands_do_not_chain_offsets_beyond_1800ms_span() {
+        // Consensus band widened to 1800ms span. Adjacent pair 1700..3500
+        // (span exactly 1800) stays in a band, but 0..3500 must not chain.
         let bands = coarse_consistency_bands(&[
             point(1, 1000.0, 0.0, 0.9).with_id(0),
-            point(2, 1000.0, 1400.0, 0.9).with_id(1),
-            point(3, 1000.0, 2800.0, 0.9).with_id(2),
+            point(2, 1000.0, 1700.0, 0.9).with_id(1),
+            point(3, 1000.0, 3500.0, 0.9).with_id(2),
         ]);
 
-        assert!(bands.iter().all(|band| band.offset_span_ms <= 1500.0));
+        assert!(bands.iter().all(|band| band.offset_span_ms <= 1800.0));
         assert!(!bands.iter().any(|band| band.point_ids.len() == 3));
     }
 
@@ -700,14 +707,19 @@ mod tests {
         );
 
         assert_eq!(result.batch_status, BatchSyncBatchStatus::Mixed);
-        for job_id in [2033394524, 826836314, 1217710009, 845094404] {
+        // conf floor raised to 0.18: job 826836314 (conf 0.160) now falls below
+        // the floor and is discarded as low_confidence, so it is no longer green.
+        // The remaining eligible band still confirms despite the missing jobs.
+        for job_id in [2033394524, 1217710009, 845094404] {
             assert_eq!(result.video_state(job_id).unwrap().color, BatchSyncVideoColor::Green);
         }
         assert_eq!(result.video_state(845094404).unwrap().confirmed_points.len(), 2);
-        assert_eq!(result.video_state(45336309).unwrap().color, BatchSyncVideoColor::Yellow);
-        assert!(result.video_state(45336309).unwrap().discarded_points[0]
-            .diagnostic
-            .low_confidence);
+        for job_id in [826836314, 45336309] {
+            assert_eq!(result.video_state(job_id).unwrap().color, BatchSyncVideoColor::Yellow);
+            assert!(result.video_state(job_id).unwrap().discarded_points[0]
+                .diagnostic
+                .low_confidence);
+        }
     }
 
     #[test]
