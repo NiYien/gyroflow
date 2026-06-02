@@ -350,14 +350,13 @@ impl Stabilization {
         let cl_taken = false;
         let wgpu_taken = wgpu.is_some();
 
-        log::info!(
-            target: "lifecycle",
-            "Stabilization GPU bindings invalidated (cl_taken={} wgpu_taken={})",
-            cl_taken,
-            wgpu_taken,
-        );
-
         if cl_taken || wgpu_taken {
+            log::info!(
+                target: "lifecycle",
+                "Stabilization GPU bindings invalidated (cl_taken={} wgpu_taken={})",
+                cl_taken,
+                wgpu_taken,
+            );
             Some(TakenGpuBindings {
                 #[cfg(feature = "use-opencl")]
                 cl,
@@ -365,6 +364,34 @@ impl Stabilization {
             })
         } else {
             None
+        }
+    }
+
+    /// Drop the GPU wrappers moved out by [`Stabilization::take_gpu_bindings`]
+    /// on a one-shot background thread instead of the calling thread.
+    ///
+    /// Releasing an OpenCL `Mem` backed by a D3D11 texture
+    /// (`Image::from_d3d11_texture2d`) re-enters the platform GPU driver and
+    /// blocks on the shared D3D11 device. Doing that synchronously on the
+    /// main/QML thread during a video switch — while the Qt scene-graph render
+    /// thread is mid-frame on the same device — deadlocks both threads (hard UI
+    /// hang, observed 2026-06-02 on a hot OpenCL backend + R3D→R3D switch).
+    /// Returning immediately keeps the caller (and the stabilization write lock)
+    /// free so the render thread can finish its transitional frame and release
+    /// the device, after which this background Drop completes. Mirrors
+    /// `ThreadLocalWgpuCache::Drop` (Vulkan device-destroy hang) and the
+    /// `gpu-invalidate-drop` worker in `lib.rs`.
+    fn spawn_drop_gpu_bindings(taken: Option<TakenGpuBindings>) {
+        if let Some(taken) = taken {
+            if std::thread::Builder::new()
+                .name("gpu-wrapper-drop".to_string())
+                .spawn(move || drop(taken))
+                .is_err()
+            {
+                // Worker spawn failed (rare): `taken` was moved into the closure
+                // and Drops synchronously on the caller as it unwinds — the
+                // resources are still freed, just without the off-thread move.
+            }
         }
     }
 
@@ -638,12 +665,12 @@ impl Stabilization {
     }
 
     pub fn init_size(&mut self, size: (usize, usize), output_size: (usize, usize)) {
-        self.initialized_backend = BackendType::None;
-        #[cfg(feature = "use-opencl")]
-        {
-            self.cl = None;
-        }
-        self.wgpu = None;
+        // Move the previous OpenCL / wgpu wrappers out (this also resets
+        // initialized_backend / next_backend / stab_data) and Drop them on a
+        // background thread rather than synchronously here. Releasing an OpenCL
+        // Mem backed by a D3D11 texture on the main/QML thread during a video
+        // switch deadlocks with the render thread on the shared D3D11 device.
+        Self::spawn_drop_gpu_bindings(self.take_gpu_bindings());
 
         self.size = size;
         self.output_size = output_size;
@@ -660,8 +687,6 @@ impl Stabilization {
                 (size.1 as f64 / 720.0).max(1.0) as usize,
             );
         }
-
-        self.stab_data.clear();
     }
 
     pub fn clear_stab_data(&mut self) {
@@ -698,14 +723,10 @@ impl Stabilization {
     }
 
     pub fn update_device(&mut self, i: isize, buffers: &Buffers) -> bool {
-        self.stab_data.clear();
-        self.next_backend = None;
-        self.initialized_backend = BackendType::None;
-        #[cfg(feature = "use-opencl")]
-        {
-            self.cl = None;
-        }
-        self.wgpu = None;
+        // Reset backend state and Drop the previous GPU wrappers off this thread
+        // (same D3D11-teardown deadlock hazard as `init_size`; a manual device
+        // switch can hit it too). See `spawn_drop_gpu_bindings`.
+        Self::spawn_drop_gpu_bindings(self.take_gpu_bindings());
 
         let hash = self.get_current_checksum(buffers);
         if i < 0 {
