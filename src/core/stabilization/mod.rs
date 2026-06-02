@@ -723,10 +723,21 @@ impl Stabilization {
     }
 
     pub fn update_device(&mut self, i: isize, buffers: &Buffers) -> bool {
-        // Reset backend state and Drop the previous GPU wrappers off this thread
-        // (same D3D11-teardown deadlock hazard as `init_size`; a manual device
-        // switch can hit it too). See `spawn_drop_gpu_bindings`.
-        Self::spawn_drop_gpu_bindings(self.take_gpu_bindings());
+        // Reset backend state and Drop the previous GPU wrappers INLINE on this
+        // thread. `update_device` runs inside the per-frame processing path
+        // (`ensure_ready_for_processing` -> `process_pixels`, call sites below at
+        // ~944/963/984) on the device-owning thread: the Qt scene-graph render
+        // thread for live preview, the ffmpeg render worker for batch. Releasing
+        // a D3D11-shared OpenCL Mem here re-acquires the D3D11 device critical
+        // section recursively on the SAME thread, so there is no cross-thread
+        // contention. Deferring this Drop to a separate background thread instead
+        // races the render thread on the shared D3D11 device and hard-deadlocks
+        // the UI (dump 2026-06-02: render thread owned the device CS inside the
+        // mdk D3D11 draw while the `gpu-wrapper-drop` worker blocked entering the
+        // same CS from clReleaseMemObject). Keep it inline; only the possibly
+        // main/QML-thread `init_size` path needs deferral. See
+        // `spawn_drop_gpu_bindings`.
+        drop(self.take_gpu_bindings());
 
         let hash = self.get_current_checksum(buffers);
         if i < 0 {
