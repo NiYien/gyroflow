@@ -423,7 +423,11 @@ MenuItem {
     Label {
         id: focalLengthLabel;
         text: qsTr("Focal length (mm)");
-        visible: root.hasUnitPixelFocalLength && !root.hasFocalLength && root.distortionCoeffs.length < 4;
+        // NiYien: focal length comes from the niyien lens group (by lens index)
+        // or is derived from unit_pixel_focal_length, so this manual focal input
+        // is redundant and always hidden (was: hasUnitPixelFocalLength &&
+        // !hasFocalLength && distortionCoeffs.length < 4).
+        visible: false;
 
         NumberField {
             id: userFocalLength;
