@@ -62,20 +62,49 @@ pub fn register_panic_hook() {
     let _ = PREVIOUS_HOOK.set(prev);
 
     std::panic::set_hook(Box::new(|info| {
-        // The hook itself must never panic. Wrap dump dispatch in catch_unwind
-        // so a defect in the dedup path cannot recurse into the panic hook.
-        let dump_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            write_dump(info)
-        }));
-        match dump_res {
-            Ok(Ok(_)) => {}
-            Ok(Err(e)) => eprintln!("crash: failed to write panic dump: {e}"),
-            Err(_)     => eprintln!("crash: panic hook itself panicked, suppressed"),
+        // Skip the crash zip for known, fully-recoverable panics that the app
+        // already handles (e.g. ocl-core's panic on the cl_*_d3d11_sharing
+        // status codes, which the OpenCL-init firewall catches and falls back
+        // to wgpu). Still chain to the previous hook so the terminal backtrace
+        // is not lost. See `is_suppressed_panic`.
+        if !is_suppressed_panic(info) {
+            // The hook itself must never panic. Wrap dump dispatch in catch_unwind
+            // so a defect in the dedup path cannot recurse into the panic hook.
+            let dump_res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                write_dump(info)
+            }));
+            match dump_res {
+                Ok(Ok(_)) => {}
+                Ok(Err(e)) => eprintln!("crash: failed to write panic dump: {e}"),
+                Err(_)     => eprintln!("crash: panic hook itself panicked, suppressed"),
+            }
         }
         if let Some(prev) = PREVIOUS_HOOK.get() {
             prev(info);
         }
     }));
+}
+
+/// Returns true for panics that the application already recovers from, so the
+/// crash-zip dump (and its upload prompt) should be skipped.
+///
+/// The only case today: ocl-core 0.11.5 `panic!`s in `err_status`
+/// (`functions.rs`) on any OpenCL status code it doesn't enumerate — including
+/// the `cl_nv_d3d11_sharing` / `cl_khr_d3d11_sharing` extension codes
+/// `CL_INVALID_D3D11_RESOURCE_KHR` (-1007) and neighbours (-1006..-1009) that
+/// the NVIDIA driver returns when a D3D11-backed CL image is bound to a
+/// transitional texture during a video/project switch. gyroflow's OpenCL-init
+/// firewall catches this unwind and falls back to wgpu, so it is not a crash —
+/// the `[ERROR] Failed to initialize OpenCL` log line already records it.
+/// Matching on the ocl-core source location + the generic "Invalid error code"
+/// message keeps this scoped to that one library panic and future-proofs it
+/// against new vendor codes without masking real panics elsewhere.
+fn is_suppressed_panic(info: &PanicHookInfo<'_>) -> bool {
+    let loc_in_ocl_core = info
+        .location()
+        .map(|l| l.file().replace('\\', "/").contains("ocl-core"))
+        .unwrap_or(false);
+    loc_in_ocl_core && panic_payload(info).contains("Invalid error code")
 }
 
 fn write_dump(info: &PanicHookInfo<'_>) -> std::io::Result<PathBuf> {
