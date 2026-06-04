@@ -284,6 +284,14 @@ pub struct Stabilization {
     pub share_wgpu_instances: bool,
     pub cache_frame_transform: bool,
     next_backend: Option<&'static str>,
+
+    // GPU wrappers moved out by `init_size()` (which can run on the QML/main
+    // thread) and deferred for Drop on the device-owning render thread inside
+    // `update_device`. Releasing a D3D11-shared OpenCL `Mem` re-enters the
+    // D3D11 device critical section; doing that off the render thread races
+    // the Qt scene-graph render thread and hard-deadlocks the driver (dump
+    // 2026-06-04). Draining here keeps the teardown serialized with rendering.
+    pending_gpu_drop: Vec<TakenGpuBindings>,
 }
 
 #[derive(Debug)]
@@ -364,34 +372,6 @@ impl Stabilization {
             })
         } else {
             None
-        }
-    }
-
-    /// Drop the GPU wrappers moved out by [`Stabilization::take_gpu_bindings`]
-    /// on a one-shot background thread instead of the calling thread.
-    ///
-    /// Releasing an OpenCL `Mem` backed by a D3D11 texture
-    /// (`Image::from_d3d11_texture2d`) re-enters the platform GPU driver and
-    /// blocks on the shared D3D11 device. Doing that synchronously on the
-    /// main/QML thread during a video switch — while the Qt scene-graph render
-    /// thread is mid-frame on the same device — deadlocks both threads (hard UI
-    /// hang, observed 2026-06-02 on a hot OpenCL backend + R3D→R3D switch).
-    /// Returning immediately keeps the caller (and the stabilization write lock)
-    /// free so the render thread can finish its transitional frame and release
-    /// the device, after which this background Drop completes. Mirrors
-    /// `ThreadLocalWgpuCache::Drop` (Vulkan device-destroy hang) and the
-    /// `gpu-invalidate-drop` worker in `lib.rs`.
-    fn spawn_drop_gpu_bindings(taken: Option<TakenGpuBindings>) {
-        if let Some(taken) = taken {
-            if std::thread::Builder::new()
-                .name("gpu-wrapper-drop".to_string())
-                .spawn(move || drop(taken))
-                .is_err()
-            {
-                // Worker spawn failed (rare): `taken` was moved into the closure
-                // and Drops synchronously on the caller as it unwinds — the
-                // resources are still freed, just without the off-thread move.
-            }
         }
     }
 
@@ -666,11 +646,20 @@ impl Stabilization {
 
     pub fn init_size(&mut self, size: (usize, usize), output_size: (usize, usize)) {
         // Move the previous OpenCL / wgpu wrappers out (this also resets
-        // initialized_backend / next_backend / stab_data) and Drop them on a
-        // background thread rather than synchronously here. Releasing an OpenCL
-        // Mem backed by a D3D11 texture on the main/QML thread during a video
-        // switch deadlocks with the render thread on the shared D3D11 device.
-        Self::spawn_drop_gpu_bindings(self.take_gpu_bindings());
+        // initialized_backend / next_backend / stab_data synchronously) but
+        // DEFER their Drop to the next `update_device`, which runs inline on
+        // the device-owning render thread. `init_size` can run on the QML/main
+        // thread (MDK `surfaceSizeUpdated` -> `onResize` queued callback on a
+        // preview resize). Releasing a D3D11-shared OpenCL `Mem` re-enters the
+        // D3D11 device critical section; doing that here — or on a detached
+        // `gpu-wrapper-drop` worker — races the scene-graph render thread on
+        // the shared device and hard-deadlocks the driver (dump 2026-06-04:
+        // the render thread and the worker were both parked in nvwgf2umx at the
+        // same device-CS wait). Stashing keeps the QML thread free AND lets the
+        // teardown happen serialized with rendering on the render thread.
+        if let Some(taken) = self.take_gpu_bindings() {
+            self.pending_gpu_drop.push(taken);
+        }
 
         self.size = size;
         self.output_size = output_size;
@@ -734,9 +723,19 @@ impl Stabilization {
         // races the render thread on the shared D3D11 device and hard-deadlocks
         // the UI (dump 2026-06-02: render thread owned the device CS inside the
         // mdk D3D11 draw while the `gpu-wrapper-drop` worker blocked entering the
-        // same CS from clReleaseMemObject). Keep it inline; only the possibly
-        // main/QML-thread `init_size` path needs deferral. See
-        // `spawn_drop_gpu_bindings`.
+        // same CS from clReleaseMemObject). Keep it inline.
+        //
+        // First drain wrappers deferred by `init_size()` (which may have run on
+        // the QML/main thread and stashed them instead of dropping): Drop them
+        // INLINE here too, on this device-owning render thread, so the D3D11
+        // teardown stays serialized with rendering. A detached worker doing the
+        // same Drop concurrently with this render thread re-creates the exact
+        // hang above (dump 2026-06-04). `update_device` is the first thing the
+        // render path runs after `init_size` invalidates the backend, so the
+        // stash never lingers more than one frame on the live-preview path.
+        for taken in self.pending_gpu_drop.drain(..) {
+            drop(taken);
+        }
         drop(self.take_gpu_bindings());
 
         let hash = self.get_current_checksum(buffers);
