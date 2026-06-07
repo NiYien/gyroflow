@@ -683,14 +683,20 @@ fn apply_effective_frame_rate(params: &mut StabilizationParams, effective_fps: f
         return false;
     }
 
-    // Only apply fps_scale when it indicates real slow-motion playback
-    // (record_fps >> playback_fps, e.g. 60->30 scale=2.0, 120->24 scale=5.0).
-    // NTSC micro-adjustments (e.g. 30/29.97 ≈ 1.001) are rejected because
-    // some cameras (e.g. Fujifilm X-H2S, no internal IMU) emit a bogus
-    // RecordFrameRate=30 tag against a true 29.97 container, which would
-    // otherwise drag the gyro timeline by 0.1% and break sync on external IMU.
+    // Only apply fps_scale when it indicates real slow-motion (overcranked)
+    // playback (record_fps > playback_fps, e.g. 40->24 scale=1.667,
+    // 60->24 scale=2.5). The 1.3 threshold admits genuine overcrank such as
+    // the common RED KOMODO 40->24 mode: its internal IMU is timestamped in
+    // recording time, so without scaling the gyro only covers
+    // playback_fps/record_fps = 60% of the playback timeline (the orientation
+    // graph stops ~60% across and the tail freezes). NTSC micro-adjustments
+    // (e.g. 30/29.97 ≈ 1.001) are still rejected because some cameras (e.g.
+    // Fujifilm X-H2S, no internal IMU) emit a bogus RecordFrameRate=30 tag
+    // against a true 29.97 container, which would otherwise drag the gyro
+    // timeline by 0.1% and break sync on external IMU. Note: 30->24 (1.25)
+    // stays below the threshold and is left unscaled.
     let scale = effective_fps / params.fps;
-    if scale > 1.8 {
+    if scale > 1.3 {
         params.fps_scale = Some(scale);
     } else {
         params.fps_scale = None;
