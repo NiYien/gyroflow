@@ -2822,6 +2822,11 @@ Otwórz &lt;b&gt;Terminal&lt;/b&gt; i wprowadź następującą komendę:</transl
         <translation>Zmień liczbę klatek na sekundę</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <source>Change lens group</source>
+        <translation>Zmień grupę obiektywów</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 

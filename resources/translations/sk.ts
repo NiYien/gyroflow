@@ -2822,6 +2822,11 @@ Otvorte &lt;b&gt;Terminál&lt;/b&gt; a zadajte nasledujúci príkaz:</translatio
         <translation>Zmeniť snímkovú frekvenciu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <source>Change lens group</source>
+        <translation>Zmeniť skupinu objektívov</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 

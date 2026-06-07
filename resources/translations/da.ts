@@ -2822,6 +2822,11 @@ På grund af sandkassebegrænsninger skal du oprette det selv.
         <translation>Skift billedhastighed</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <source>Change lens group</source>
+        <translation>Skift objektivgruppe</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 

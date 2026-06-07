@@ -2821,6 +2821,11 @@ Abra &lt;b&gt;Terminal&lt;/b&gt; e digite o seguinte comando:</translation>
         <translation>Alterar taxa de quadros</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <source>Change lens group</source>
+        <translation>Alterar grupo de lentes</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 

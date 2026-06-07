@@ -2822,6 +2822,11 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Изменить частоту кадров</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <source>Change lens group</source>
+        <translation>Изменить группу объективов</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 

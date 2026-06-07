@@ -1259,9 +1259,12 @@ Item {
                     }
                 }
                 // simple-mode-ux-overhaul: per-job lens index override, Manual edit ONLY.
-                // Hidden entirely when Manual edit is OFF (using QQC.MenuItem.visible —
-                // bare Action lacks a visible property). Disabled for Calibration jobs.
-                QQC.MenuItem {
+                // Use the Menu's own styled MenuItem so it matches the sibling Action
+                // items: a bare QQC.MenuItem skips the Menu delegate and renders the
+                // Controls default indicator column (leading blank space). MenuItem keeps
+                // the `visible` property a bare Action lacks. Disabled for Calibration jobs.
+                Menu.MenuItem {
+                    parentMenu: contextMenu;
                     text: qsTr("Change lens group");
                     visible: controller.lens_group_manual_edit;
                     height: visible ? implicitHeight : 0;

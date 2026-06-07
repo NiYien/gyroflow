@@ -2822,6 +2822,11 @@ På grunn av sandkassebegrensninger må du lage den selv.
         <translation>Endre bildefrekvens</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <source>Change lens group</source>
+        <translation>Endre objektivgruppe</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 
