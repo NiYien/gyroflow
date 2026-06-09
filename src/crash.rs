@@ -307,6 +307,64 @@ fn build_meta_json(now: &chrono::DateTime<chrono::Local>) -> String {
     serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
 }
 
+/// Package a breakpad OS-level crash dump (`.dmp`) into a crash zip under
+/// `logs/crashes/`, so the fork's existing feedback pickup uploads it to our
+/// own 123/R2 — never to upstream `api.gyroflow.xyz`. The zip lands next to
+/// the Rust-panic crash zips and is picked up identically by
+/// `feedback::crash_pickup::scan`. Returns the zip path on success; the caller
+/// removes the original `.dmp` only then.
+pub fn package_os_dump(dmp_path: &Path) -> std::io::Result<PathBuf> {
+    let dir = logger::log_dir()
+        .map(|p| p.join("crashes"))
+        .ok_or_else(|| std::io::Error::other("logger::log_dir() not initialized"))?;
+    std::fs::create_dir_all(&dir)?;
+
+    let dump_bytes = std::fs::read(dmp_path)?;
+    let now_dt = chrono::Local::now();
+    let ts = now_dt.format("%Y%m%dT%H%M%S").to_string();
+    let sid = logger::session_id();
+    // `-osdump` suffix distinguishes these from Rust-panic zips; any `*.zip`
+    // under crashes/ is accepted by the pickup scan — names only drive ordering.
+    let file_name = format!("{ts}-{sid}-osdump.zip");
+    let final_path = dir.join(&file_name);
+    let dump_name = dmp_path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("dump.dmp");
+
+    let mut zip_bytes: Vec<u8> = Vec::with_capacity(dump_bytes.len() + 4096);
+    {
+        let cursor = std::io::Cursor::new(&mut zip_bytes);
+        let mut zw = zip::ZipWriter::new(cursor);
+        let opts: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(6));
+        zw.start_file(dump_name, opts)?;
+        zw.write_all(&dump_bytes)?;
+        let meta = build_os_dump_meta_json(&now_dt, dump_name);
+        zw.start_file("meta.json", opts)?;
+        zw.write_all(meta.as_bytes())?;
+        zw.finish()?;
+    }
+    std::fs::write(&final_path, &zip_bytes)?;
+    Ok(final_path)
+}
+
+fn build_os_dump_meta_json(now: &chrono::DateTime<chrono::Local>, dump_name: &str) -> String {
+    // OS-level dumps are picked up on a later launch, so the panic-time TLS
+    // LogContext is gone — emit a minimal, self-describing meta instead.
+    let value = serde_json::json!({
+        "session_id": logger::session_id(),
+        "app_version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "ts": now.to_rfc3339(),
+        "source": "breakpad_os_crash",
+        "original_dump": dump_name,
+    });
+    serde_json::to_string_pretty(&value).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// If `GYROFLOW_CRASH_TEST=1` is set, panic immediately so the dump path can
 /// be exercised without trying to repro a real bug.
 pub fn maybe_trigger_test_panic() {

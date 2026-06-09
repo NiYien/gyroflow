@@ -427,19 +427,33 @@ pub fn init_logging() {
 /// endianness / data-model only — it does not bind to gyroflow's build, shader source,
 /// or Controller QMetaObject layout. A cache from a previous build can corrupt heap
 /// during deserialization and crash V4 in unrelated places (e.g. AV in
-/// QV4::warnAboutCoercionToVoid). Wipe both caches whenever CARGO_PKG_VERSION moves.
+/// QV4::warnAboutCoercionToVoid). Wipe the caches whenever the build changes (binary mtime).
 ///
 /// Must run before Qt's first RHI-aware QQuickWindow is shown (which is when the
 /// cache files are read). Currently invoked right after init_logging — comfortably
 /// ahead of QmlEngine::new() and main_window.qml load.
 pub fn invalidate_qt_cache_if_version_changed() {
     const VERSION: &str = env!("CARGO_PKG_VERSION");
+    // Build identity = version + this binary's mtime. Every fresh build — incl.
+    // dev rebuilds where VERSION stays the same (e.g. 1.6.3 across many `just
+    // run`s) — relinks the exe and bumps its mtime, yielding a new stamp that
+    // wipes the stale Qt RHI PSO / QML-bytecode blobs which otherwise crash the
+    // renderer on the next video load. A shipped binary the user never
+    // recompiles keeps a stable mtime, so its caches survive as before. Falls
+    // back to version-only when the exe mtime can't be read.
+    let build_id = std::env::current_exe()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| format!("{VERSION}-{}", d.as_secs()))
+        .unwrap_or_else(|| VERSION.to_string());
     let cache_dir = gyroflow_core::settings::data_dir().join("cache");
     let stamp_file = cache_dir.join(".gyroflow-qt-cache-stamp");
     let prev = std::fs::read_to_string(&stamp_file)
         .ok()
         .unwrap_or_default();
-    if prev.trim() == VERSION {
+    if prev.trim() == build_id {
         return;
     }
     let mut wiped: Vec<String> = Vec::new();
@@ -475,15 +489,15 @@ pub fn invalidate_qt_cache_if_version_changed() {
     // leave us retrying every launch with no progress. The warn above gives the user
     // a signal that something needs manual cleanup (e.g. another Gyroflow instance
     // holding the files open).
-    let _ = std::fs::write(&stamp_file, VERSION);
+    let _ = std::fs::write(&stamp_file, &build_id);
     if had_failures {
         ::log::warn!(
-            "Qt cache partially invalidated (stamp {prev:?} -> {VERSION:?}); wiped {wiped:?} under {} — some entries could not be removed, see warnings above",
+            "Qt cache partially invalidated (stamp {prev:?} -> {build_id:?}); wiped {wiped:?} under {} — some entries could not be removed, see warnings above",
             cache_dir.display()
         );
     } else {
         ::log::info!(
-            "Qt cache invalidated (stamp {prev:?} -> {VERSION:?}); wiped {wiped:?} under {}",
+            "Qt cache invalidated (stamp {prev:?} -> {build_id:?}); wiped {wiped:?} under {}",
             cache_dir.display()
         );
     }
@@ -542,21 +556,35 @@ pub fn install_crash_handler() -> std::io::Result<()> {
         }
     }
 
-    // Upload crash dumps
+    // Crash dump handling (niyien fork). Upstream POSTed every local *.dmp to
+    // api.gyroflow.xyz and deleted it on success — leaking crash data upstream
+    // and wiping the dumps before they could be inspected. Instead, package
+    // each breakpad OS dump into a crash zip under logs/crashes/ so the fork's
+    // OWN feedback pickup uploads it to our 123/R2 (next to the Rust-panic
+    // crash zips, same FeedbackDialog flow). Never touches api.gyroflow.xyz.
+    // The original .dmp is removed only once packaging succeeds; on failure it
+    // is left in place so nothing is lost.
     crate::core::run_threaded(move || {
         if let Ok(files) = std::fs::read_dir(cur_dir) {
             for path in files.flatten() {
                 let path = path.path();
                 if path.to_string_lossy().ends_with(".dmp") {
-                    if let Ok(content) = std::fs::read(&path) {
-                        if let Ok(Ok(body)) =
-                            crate::network::post("https://api.gyroflow.xyz/upload_dump")
-                                .header("Content-Type", "application/octet-stream")
-                                .send(&content)
-                                .map(|x| x.into_body().read_to_string())
-                        {
-                            ::log::debug!("Minidump uploaded: {}", body.as_str());
-                            let _ = std::fs::remove_file(path);
+                    match crate::crash::package_os_dump(&path) {
+                        Ok(zip) => {
+                            ::log::info!(
+                                target: "lifecycle",
+                                "OS crash dump packaged for local feedback upload: {} -> {}",
+                                path.display(),
+                                zip.display()
+                            );
+                            let _ = std::fs::remove_file(&path);
+                        }
+                        Err(e) => {
+                            ::log::warn!(
+                                target: "lifecycle",
+                                "Failed to package OS crash dump {} ({e}); left in place",
+                                path.display()
+                            );
                         }
                     }
                 }
@@ -924,19 +952,9 @@ pub fn peek_container_size_from_url(url: &str) -> Option<(u32, u32)> {
     }
 }
 
-pub fn report_lens_profile_usage(checksum: Option<String>) {
-    if let Some(checksum) = checksum {
-        if !checksum.is_empty() {
-            gyroflow_core::run_threaded(move || {
-                let url = format!("https://api.gyroflow.xyz/usage?checksum={checksum}");
-
-                if let Ok(body) = crate::network::get(url).call() {
-                    ::log::debug!(
-                        "Lens profile usage stats: {:?}",
-                        body.into_body().read_to_string()
-                    );
-                }
-            });
-        }
-    }
+pub fn report_lens_profile_usage(_checksum: Option<String>) {
+    // niyien fork: lens-profile usage telemetry to api.gyroflow.xyz is
+    // disabled. The fork ships its own lens-data pipeline (niyien-lens-data)
+    // and never reports usage upstream. Signature kept so the call sites
+    // (export / render paths) stay untouched.
 }
