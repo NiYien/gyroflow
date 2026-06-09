@@ -93,10 +93,6 @@ enum InferRequest {
         linear_indices: Vec<i32>,
         reply: mpsc::Sender<Result<SampledFlow, String>>,
     },
-    /// Warm up the model (dummy inference to trigger autotune caching).
-    Warmup {
-        reply: mpsc::Sender<Result<(), String>>,
-    },
 }
 
 /// Handle to the inference thread, holding the sender end of the channel.
@@ -657,36 +653,6 @@ fn inference_loop(
 
                 neuflow_trace::record_duration(seq, DurationMetric::TensorUpload, t_tensor - t0);
                 neuflow_trace::record_duration(seq, DurationMetric::ForwardTotal, t_fwd - t_tensor);
-            }
-            InferRequest::Warmup { reply } => {
-                if let Some(prev) = deferred.take() {
-                    match prev {
-                        PendingReadback::Infer {
-                            flow_tensor,
-                            h,
-                            w,
-                            reply: prev_reply,
-                            ..
-                        } => {
-                            let _ = prev_reply.send(readback_flow_sync(flow_tensor, h, w));
-                        }
-                        PendingReadback::Sample {
-                            sampled_tensor,
-                            num_pts,
-                            grid_points,
-                            reply: prev_reply,
-                            ..
-                        } => {
-                            let _ = prev_reply.send(readback_sampled_sync(
-                                sampled_tensor,
-                                num_pts,
-                                grid_points,
-                            ));
-                        }
-                    }
-                }
-                let result = run_warmup(&model, &device);
-                let _ = reply.send(result);
             }
         }
     }
