@@ -1800,6 +1800,17 @@ impl Controller {
                         .as_ref()
                         .map(|y| y.is_object())
                         .unwrap_or_default();
+                    // Canon clips defer all auto lens to the batch senseflow apply; a
+                    // single-video load stays fully bare, so the camera-id autoload
+                    // below is suppressed too. Keyed on the Canon body alone (NOT
+                    // keep_video_gyro): some Canon clips fail to parse gyro (raw_imu=0)
+                    // yet must still defer. lens_profile is None until the batch apply
+                    // injects the opencv_standard profile.
+                    let canon_defer_lens = file_metadata.lens_profile.is_none()
+                        && file_metadata
+                            .detected_source
+                            .as_deref()
+                            .map_or(false, |s| s.starts_with("Canon"));
                     let has_lens_params = !file_metadata.lens_params.is_empty();
                     let has_focal_length = file_metadata
                         .lens_params
@@ -1880,7 +1891,7 @@ impl Controller {
                         .as_ref()
                         .map(|v| v.get_identifier_for_autoload())
                         .unwrap_or_default();
-                    if is_main_video && !id_str.is_empty() && !has_builtin_profile {
+                    if is_main_video && !id_str.is_empty() && !has_builtin_profile && !canon_defer_lens {
                         let needs_load = {
                             let mut db = stab.lens_profile_db.write();
                             db.on_loaded(move |db| {

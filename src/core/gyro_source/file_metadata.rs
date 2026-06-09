@@ -61,6 +61,12 @@ pub struct FileMetadata {
     pub record_frame_rate: Option<f64>,
     pub camera_identifier: Option<CameraIdentifier>,
     pub lens_profile: Option<serde_json::Value>,
+    /// Canon synthetic opencv_standard lens, computed at parse time but held off
+    /// plain load. Activated only after a batch senseflow match assigns external
+    /// gyro to the job (see render_queue apply_match). Lets single-video loads
+    /// stay bare while the batch flow reproduces the pre-change behaviour.
+    /// See canon::build_synthetic_canon_lens_profile.
+    pub canon_auto_lens_profile: Option<serde_json::Value>,
     pub lens_positions: BTreeMap<i64, f64>,
     pub lens_params: BTreeMap<i64, LensParams>,
     pub unit_pixel_focal_length: Option<f64>,
@@ -92,6 +98,7 @@ impl FileMetadata {
             record_frame_rate: self.record_frame_rate.clone(),
             camera_identifier: self.camera_identifier.clone(),
             lens_profile: self.lens_profile.clone(),
+            canon_auto_lens_profile: self.canon_auto_lens_profile.clone(),
             lens_positions: Default::default(),
             lens_params: Default::default(),
             unit_pixel_focal_length: self.unit_pixel_focal_length.clone(),
@@ -233,5 +240,20 @@ mod tests {
         assert!(thin.keep_video_gyro, "thin() must preserve keep_video_gyro");
         assert!(thin.quaternions.is_empty(), "thin() must strip quaternions");
         assert!(thin.raw_imu.is_empty(), "thin() must strip raw_imu");
+    }
+
+    #[test]
+    fn thin_preserves_canon_auto_lens_profile() {
+        // The deferred Canon opencv_standard lens must survive thin() (used when
+        // caching/cloning keep_video_gyro metadata for batch jobs), otherwise the
+        // batch apply could not activate it.
+        let mut md = FileMetadata::default();
+        md.canon_auto_lens_profile =
+            Some(serde_json::json!({ "distortion_model": "opencv_standard" }));
+        let thin = md.thin();
+        assert!(
+            thin.canon_auto_lens_profile.is_some(),
+            "thin() must preserve canon_auto_lens_profile"
+        );
     }
 }

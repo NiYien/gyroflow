@@ -87,26 +87,82 @@ fn build_synthetic_canon_lens_profile(
     let video_rotation = info.video_rotation.unwrap_or_default().abs();
     let is_vertical = video_rotation == 90 || video_rotation == 270;
 
-    let focal_length_str = tag_map
+    let focal_length = tag_map
         .get(&GroupId::Lens)
         .and_then(|x| x.get_t(TagId::FocalLength) as Option<&f32>)
-        .map(|x| format!("{:.2} mm", *x));
+        .copied();
 
-    let mut lens_name = String::new();
-    if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| {
-        map.get_t(TagId::DisplayName) as Option<&String>
-    }) {
-        lens_name = v.clone();
-    }
-    md.lens_profile = Some(serde_json::json!({
+    let lens_name = tag_map
+        .get(&GroupId::Lens)
+        .and_then(|map| map.get_t(TagId::DisplayName) as Option<&String>)
+        .cloned()
+        .unwrap_or_default();
+
+    let camera_model = input
+        .camera_model()
+        .map(|x| x.to_string())
+        .unwrap_or_default();
+
+    // Held in canon_auto_lens_profile (not lens_profile) so plain load stays bare;
+    // the batch senseflow apply activates it. See FileMetadata::canon_auto_lens_profile.
+    md.canon_auto_lens_profile = Some(build_canon_lens_json(
+        &camera_model,
+        &lens_name,
+        focal_length,
+        size,
+        is_vertical,
+        md.frame_readout_time,
+        fx,
+        fy,
+    ));
+}
+
+pub fn get_time_offset(
+    md: &FileMetadata,
+    _input: &telemetry_parser::Input,
+    tag_map: &GroupedTagMap,
+    sample_rate: f64,
+    fps: f64,
+) -> Option<f64> {
+    let exposure = (tag_map.get(&GroupId::Imager)?.get_t(TagId::ExposureTime) as Option<&f64>)?;
+    let frame_time = 1000.0 / md.frame_rate.unwrap_or(fps);
+    let frame_readout_time = md.frame_readout_time.unwrap_or(14.0); // better approx than nothing
+    let dt = 1000.0 / sample_rate.max(1.0);
+    Some(frame_time + frame_readout_time / 2.0 - (*exposure) / 2.0 - dt / 2.0)
+}
+
+/// Pure builder for the synthetic Canon opencv_standard lens JSON. Split out of
+/// `build_synthetic_canon_lens_profile` so the JSON shape (camera_matrix from
+/// fx/fy in pixels, pinhole distortion, auto-sync disabled, official) is
+/// unit-testable without a telemetry-parser `Input`.
+fn build_canon_lens_json(
+    camera_model: &str,
+    lens_name: &str,
+    focal_length_mm: Option<f32>,
+    size: (usize, usize),
+    is_vertical: bool,
+    frame_readout_time: Option<f64>,
+    fx: f32,
+    fy: f32,
+) -> serde_json::Value {
+    let focal_length_str = focal_length_mm.map(|x| format!("{:.2} mm", x));
+    let lens_model = if !lens_name.is_empty() {
+        match &focal_length_str {
+            Some(f) => format!("{lens_name} ({f})"),
+            None => lens_name.to_string(),
+        }
+    } else {
+        focal_length_str.clone().unwrap_or_default()
+    };
+    serde_json::json!({
         "calibrated_by": "Canon",
         "camera_brand": "Canon",
-        "camera_model": input.camera_model().map(|x| x.as_str()).unwrap_or(&""),
-        "lens_model":   if !lens_name.is_empty() && focal_length_str.is_some() { format!("{lens_name} ({})", focal_length_str.unwrap()) } else if !lens_name.is_empty() { lens_name } else { focal_length_str.unwrap_or_default() },
+        "camera_model": camera_model,
+        "lens_model": lens_model,
         "calib_dimension":  { "w": size.0, "h": size.1 },
         "orig_dimension":   { "w": size.0, "h": size.1 },
         "output_dimension": { "w": if is_vertical { size.1 } else { size.0 }, "h": if is_vertical { size.0 } else { size.1 } },
-        "frame_readout_time": md.frame_readout_time,
+        "frame_readout_time": frame_readout_time,
         "official": true,
         "asymmetrical": false,
         "note": "",
@@ -129,19 +185,52 @@ fn build_synthetic_canon_lens_profile(
             "do_autosync": false
         },
         "calibrator_version": "---"
-    }));
+    })
 }
 
-pub fn get_time_offset(
-    md: &FileMetadata,
-    _input: &telemetry_parser::Input,
-    tag_map: &GroupedTagMap,
-    sample_rate: f64,
-    fps: f64,
-) -> Option<f64> {
-    let exposure = (tag_map.get(&GroupId::Imager)?.get_t(TagId::ExposureTime) as Option<&f64>)?;
-    let frame_time = 1000.0 / md.frame_rate.unwrap_or(fps);
-    let frame_readout_time = md.frame_readout_time.unwrap_or(14.0); // better approx than nothing
-    let dt = 1000.0 / sample_rate.max(1.0);
-    Some(frame_time + frame_readout_time / 2.0 - (*exposure) / 2.0 - dt / 2.0)
+#[cfg(test)]
+mod tests {
+    use super::build_canon_lens_json;
+
+    #[test]
+    fn canon_lens_json_is_opencv_standard() {
+        let v = build_canon_lens_json(
+            "EOS R5 Mark II",
+            "RF24-70mm F2.8",
+            Some(50.0),
+            (1920, 1080),
+            false,
+            Some(15.0),
+            1000.0,
+            1000.0,
+        );
+        assert_eq!(v["distortion_model"], "opencv_standard");
+        assert_eq!(v["calibrated_by"], "Canon");
+        assert_eq!(v["official"], true);
+        // Auto-sync stays off: the built-in gyro is frame-aligned, never sync it.
+        assert_eq!(v["sync_settings"]["do_autosync"], false);
+        assert_eq!(v["camera_model"], "EOS R5 Mark II");
+        assert_eq!(v["lens_model"], "RF24-70mm F2.8 (50.00 mm)");
+        // Principal point is size / 2.
+        assert_eq!(v["fisheye_params"]["camera_matrix"][0][2], 960);
+        assert_eq!(v["fisheye_params"]["camera_matrix"][1][2], 540);
+    }
+
+    #[test]
+    fn canon_lens_json_vertical_swaps_output_dimension() {
+        let v = build_canon_lens_json(
+            "EOS R5 Mark II",
+            "",
+            None,
+            (1920, 1080),
+            true,
+            None,
+            1000.0,
+            1000.0,
+        );
+        assert_eq!(v["output_dimension"]["w"], 1080);
+        assert_eq!(v["output_dimension"]["h"], 1920);
+        // Empty lens name + no focal: lens_model degrades to an empty string.
+        assert_eq!(v["lens_model"], "");
+    }
 }

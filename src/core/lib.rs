@@ -921,6 +921,20 @@ impl StabilizationManager {
             let p = self.params.read();
             p.size
         };
+        // Canon clips defer ALL auto lens generation to the batch senseflow apply:
+        // the opencv_standard profile is held in canon_auto_lens_profile (not
+        // lens_profile), and the generic synthetic build is suppressed here too, so
+        // a single-video / pre-batch load stays fully bare (lens profile entirely
+        // empty). Keyed on the Canon body alone (NOT keep_video_gyro): some Canon
+        // clips fail to parse gyro samples (raw_imu=0) yet must still defer.
+        // lens_profile is None pre-batch and Some (injected) in the batch path, and
+        // the matched md there is SenseFlow, so this never fires during batch apply.
+        let canon_defer_lens = md.lens_profile.is_none()
+            && md
+                .detected_source
+                .as_deref()
+                .map_or(false, |s| s.starts_with("Canon"));
+
         let can_build_synthetic =
             !md.lens_params.is_empty() || md.unit_pixel_focal_length.is_some();
         let mut should_build_synthetic = false;
@@ -948,13 +962,16 @@ impl StabilizationManager {
                 let db = self.lens_profile_db.read();
                 l.resolve_interpolations(&db);
             }
-        } else if can_build_synthetic {
+        } else if can_build_synthetic && !canon_defer_lens {
             should_build_synthetic = true;
         }
 
         if should_build_synthetic {
             let synthetic = build_synthetic_lens_profile(md, size);
             *self.lens.write() = synthetic;
+        } else if canon_defer_lens {
+            // Clear any residual lens from a previous load so the panel stays bare.
+            *self.lens.write() = LensProfile::default();
         }
 
         // Lens-group profile build. Pass the group config only when it should fill
@@ -1287,38 +1304,11 @@ impl StabilizationManager {
                 is_komodo
             );
 
-            // Canon R5 Mark II built-in gyro is ~1 frame off from its own video
-            // frames. Auto-sync used to absorb this, but a keep_video_gyro clip
-            // skips auto-sync, so apply the fixed 1-frame correction explicitly.
-            // Applies to BOTH proxy and non-proxy R5 Mark II (the gyro<->video
-            // offset is intrinsic to the body); the separate proxy<->CRM
-            // cross-source frame is handled by the display anchor
-            // (video_display_anchor_us) and is orthogonal to this. Negative: the
-            // gyro leads the video by one frame.
-            if is_main_video
-                && detected_source
-                    .as_deref()
-                    .is_some_and(|s| s.contains("R5 Mark II"))
-            {
-                let (keep_video_gyro, fps, duration_ms) = {
-                    let keep = self.gyro.read().file_metadata.read().keep_video_gyro;
-                    let p = self.params.read();
-                    (keep, p.fps, p.duration_ms)
-                };
-                if keep_video_gyro && fps > 0.0 {
-                    let offset_ms = -(1000.0 / fps);
-                    // Single constant offset (one entry => constant across the
-                    // clip). Key mirrors the sync convention: (video_ts - offset).
-                    let ts_us = (((duration_ms / 2.0) - offset_ms) * 1000.0).round() as i64;
-                    self.set_offset(ts_us, offset_ms);
-                    log::info!(
-                        "[canon_r5m2] built-in gyro 1-frame offset applied: {:.3} ms (fps={:.6}) at ts_us={}",
-                        offset_ms,
-                        fps,
-                        ts_us
-                    );
-                }
-            }
+            // R5 Mark II built-in-gyro 1-frame offset is no longer applied on plain
+            // load. It is deferred to the batch senseflow apply (render_queue
+            // apply_match) so single-video loads stay bare. The proxy<->CRM display
+            // anchor (video_display_anchor_us) is a separate, orthogonal mechanism
+            // and is unaffected.
         } else {
             log::info!(
                 "[load_gyro_data] end url='{}' elapsed_ms={:.1} canceled=true",

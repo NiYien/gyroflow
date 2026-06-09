@@ -1173,6 +1173,9 @@ impl GyroSource {
             frame_rate,
             record_frame_rate,
             lens_profile,
+            // Filled later by canon::init_lens_profile for Canon bodies; activated
+            // only in the batch senseflow apply (see FileMetadata::canon_auto_lens_profile).
+            canon_auto_lens_profile: None,
             camera_identifier,
             has_accurate_timestamps,
             creation_date,

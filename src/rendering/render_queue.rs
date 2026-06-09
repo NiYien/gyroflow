@@ -4971,11 +4971,18 @@ impl RenderQueue {
                                 let has_builtin_profile = {
                                     let gyro = stab.gyro.read();
                                     let file_metadata = gyro.file_metadata.read();
+                                    // Canon's deferred opencv_standard lens counts as a built-in
+                                    // profile here so batch queue_add skips camera-id autoload
+                                    // exactly as it did pre-change (when the lens sat on
+                                    // lens_profile). Keeps batch original_output_size /
+                                    // frame_readout_time off the camera-db path; the lens itself
+                                    // is activated later in apply_match.
                                     file_metadata
                                         .lens_profile
                                         .as_ref()
                                         .map(|y| y.is_object())
                                         .unwrap_or_default()
+                                        || file_metadata.canon_auto_lens_profile.is_some()
                                 };
 
                                 let id_str = camera_id
@@ -7851,6 +7858,25 @@ impl RenderQueue {
                         if let Some(base_lens_metadata) = item.base_lens_metadata.as_ref() {
                             base_lens_metadata.apply_missing_to_metadata(&mut md);
                         }
+                        // Activate the deferred Canon opencv_standard lens now that this job
+                        // got a batch senseflow assignment. Injecting it into the matched md
+                        // (before the status read + apply below) lets the existing
+                        // apply_main_video_telemetry + merge(fm) + base_lens_metadata chain
+                        // reproduce the pre-change batch behaviour. The read guard is dropped
+                        // immediately (clone) to avoid deadlocking the fm.write() further down.
+                        if md.lens_profile.is_none() {
+                            let auto = item
+                                .stab
+                                .gyro
+                                .read()
+                                .file_metadata
+                                .read()
+                                .canon_auto_lens_profile
+                                .clone();
+                            if let Some(auto) = auto {
+                                md.lens_profile = Some(auto);
+                            }
+                        }
                         {
                             let mut statuses = lens_group_status.lock();
                             niyien_lens_presets::update_status_from_metadata(&mut statuses, &md);
@@ -7977,6 +8003,46 @@ impl RenderQueue {
                                     "[sony_arbitration] job[{}] Sony: kept video gyro + camera_id, merged .bin lens metadata",
                                     idx
                                 );
+                            }
+
+                            // R5 Mark II built-in gyro leads its own video by ~1 frame.
+                            // Deferred from plain load (removed from load_gyro_data) to
+                            // here so it applies only after a batch senseflow assignment.
+                            // keep_video_gyro stays true (motion = the body's own gyro),
+                            // so the fixed correction still applies. Formula matches the
+                            // removed load_gyro_data block.
+                            if main_is_canon {
+                                let detected = item
+                                    .stab
+                                    .gyro
+                                    .read()
+                                    .file_metadata
+                                    .read()
+                                    .detected_source
+                                    .clone();
+                                if detected
+                                    .as_deref()
+                                    .is_some_and(|s| s.contains("R5 Mark II"))
+                                {
+                                    let (fps, duration_ms) = {
+                                        let p = item.stab.params.read();
+                                        (p.fps, p.duration_ms)
+                                    };
+                                    if fps > 0.0 {
+                                        let offset_ms = -(1000.0 / fps);
+                                        let ts_us = (((duration_ms / 2.0) - offset_ms)
+                                            * 1000.0)
+                                            .round()
+                                            as i64;
+                                        item.stab.set_offset(ts_us, offset_ms);
+                                        ::log::info!(
+                                            "[canon_r5m2] built-in gyro 1-frame offset applied at batch apply: {:.3} ms (fps={:.6}) at ts_us={}",
+                                            offset_ms,
+                                            fps,
+                                            ts_us
+                                        );
+                                    }
+                                }
                             }
                         } else {
                             {
@@ -10868,6 +10934,31 @@ mod tests {
             // Simulate a Sony body with built-in gyro: keep_video_gyro is the
             // generalized arbitration gate; is_komodo stays false (not a RED body).
             stab.gyro.write().file_metadata.write().keep_video_gyro = true;
+        }
+
+        queue.pause_flag.store(true, SeqCst);
+        queue.start_batch_autosync();
+
+        assert_eq!(queue.export_project, 2);
+        assert!(!queue.batch_sync_job_ids.contains(&1));
+        assert_eq!(batch_status(&queue, 1)["color"], "none");
+    }
+
+    #[test]
+    fn render_queue_start_batch_autosync_runs_canon_builtin_gyro_jobs_without_sync_confirmation() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        {
+            let job = queue.jobs.get(&1).unwrap();
+            let stab = job.stab.as_ref().unwrap();
+            // Canon body with built-in CNDM gyro: keep_video_gyro gates arbitration
+            // the same as Sony/Komodo, so it must stay out of batch sync. This is what
+            // keeps the R5 Mark II 1-frame offset (set in apply_match) from being
+            // cleared by a batch-sync pass.
+            let gyro = stab.gyro.write();
+            let mut fm = gyro.file_metadata.write();
+            fm.keep_video_gyro = true;
+            fm.detected_source = Some("Canon EOS R5 Mark II".to_string());
         }
 
         queue.pause_flag.store(true, SeqCst);
