@@ -25,6 +25,9 @@ pub struct RenderQueueItem {
     pub job_id: u32,
     pub input_file: QString,
     pub input_filename: QString,
+    // Source video full duration in milliseconds (unaffected by trim), shown next
+    // to the filename in the render queue. 0 when not yet known / unavailable.
+    pub duration_ms: f64,
     pub output_filename: QString,
     pub output_folder: QString,
     pub display_output_path: QString,
@@ -2166,6 +2169,7 @@ impl RenderQueue {
                 itm.display_output_path = QString::from(filesystem::display_folder_filename(render_options.output_folder.as_str(), render_options.output_filename.as_str()));
                 itm.export_settings = QString::from(render_options.settings_string(params.get_scaled_fps()));
                 itm.thumbnail_url = thumbnail_url;
+                itm.duration_ms = params.duration_ms;
                 itm.current_frame = 0;
                 itm.total_frames = (params.frame_count as f64 * trim_ratio).ceil() as u64;
                 itm.start_timestamp = 0;
@@ -2183,6 +2187,7 @@ impl RenderQueue {
                 job_id,
                 input_file: QString::from(video_url.as_str()),
                 input_filename: QString::from(filesystem::get_filename(&video_url)),
+                duration_ms: params.duration_ms,
                 output_folder: QString::from(render_options.output_folder.as_str()),
                 output_filename: QString::from(render_options.output_filename.as_str()),
                 display_output_path: QString::from(filesystem::display_folder_filename(
@@ -4926,6 +4931,41 @@ impl RenderQueue {
                                     }
                                 }
 
+                                // Display anchor (B: proxy<->CRM frame) for batch jobs that use
+                                // the clip's OWN built-in gyro (is_main_video). Parity with the
+                                // single-video path (controller::load_telemetry) so a
+                                // batch-exported R5 Mark II _proxy .gyroflow bakes the 1-frame
+                                // proxy<->CRM offset for CRM use, exactly like single-video. The
+                                // gyro<->video frame (A) is a separate gyro offset set in
+                                // load_gyro_data; A is the real offset the bake acts on. Non-R5
+                                // / non-proxy clips resolve to None (no-op).
+                                if is_main_video {
+                                    let detected_source = stab
+                                        .gyro
+                                        .read()
+                                        .file_metadata
+                                        .read()
+                                        .detected_source
+                                        .clone();
+                                    let anchor_us =
+                                        core::stabilization_params::compute_video_display_anchor_us(
+                                            &url,
+                                            detected_source.as_deref(),
+                                            info.fps,
+                                        );
+                                    stab.params.write().video_display_anchor_us = anchor_us;
+                                    if anchor_us.is_some() {
+                                        ::log::info!(
+                                            "[queue_add:display_anchor] job_id={} file='{}' video_display_anchor_us={:?} detected={:?} fps={:.6}",
+                                            job_id,
+                                            filesystem::get_filename(&url),
+                                            anchor_us,
+                                            detected_source,
+                                            info.fps
+                                        );
+                                    }
+                                }
+
                                 let camera_id = stab.camera_id.read();
 
                                 let has_builtin_profile = {
@@ -5127,15 +5167,17 @@ impl RenderQueue {
         // Sony with embedded gyro) is already aligned to its own frames; auto-sync
         // against an external IMU is unnecessary and would compute a meaningless
         // offset. Skip entirely.
-        let (keep_video_gyro, is_komodo) = {
+        let (keep_video_gyro, is_komodo, is_canon) = {
             let gyro = stab.gyro.read();
             let fm = gyro.file_metadata.read();
-            (fm.keep_video_gyro, fm.is_komodo)
+            (fm.keep_video_gyro, fm.is_komodo, fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon")))
         };
         if keep_video_gyro {
             let url = stab.input_file.read().url.clone();
             if is_komodo {
                 ::log::info!("[red_arbitration] Komodo main video, skipping auto-sync: {url}");
+            } else if is_canon {
+                ::log::info!("[canon_arbitration] Canon built-in gyro, skipping auto-sync: {url}");
             } else {
                 ::log::info!("[sony_arbitration] Sony built-in gyro, skipping auto-sync: {url}");
             }
@@ -7765,11 +7807,11 @@ impl RenderQueue {
                 // focal length, lens profile) but skip the IMU/quaternion +
                 // camera_id overwrites — those would replace the trusted state with
                 // matched external data. Auto-sync is gated separately in
-                // do_autosync. `main_is_komodo` is kept only to label the log line.
-                let (main_keep_video_gyro, main_is_komodo) = {
+                // do_autosync. `main_is_komodo` / `main_is_canon` only label the log line.
+                let (main_keep_video_gyro, main_is_komodo, main_is_canon) = {
                     let gyro = item.stab.gyro.read();
                     let fm = gyro.file_metadata.read();
-                    (fm.keep_video_gyro, fm.is_komodo)
+                    (fm.keep_video_gyro, fm.is_komodo, fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon")))
                 };
                 let t_item = std::time::Instant::now();
                 let requested_range = normalize_time_range_ms(item.gyro_start_ms.zip(item.gyro_end_ms));
@@ -7923,6 +7965,11 @@ impl RenderQueue {
                             if main_is_komodo {
                                 ::log::info!(
                                     "[red_arbitration] job[{}] Komodo: kept video gyro + camera_id, merged .bin lens metadata",
+                                    idx
+                                );
+                            } else if main_is_canon {
+                                ::log::info!(
+                                    "[canon_arbitration] job[{}] Canon: kept video gyro + camera_id, merged .bin lens metadata",
                                     idx
                                 );
                             } else {

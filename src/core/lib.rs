@@ -1147,9 +1147,14 @@ impl StabilizationManager {
             // no overwrite); only its lens metadata is taken elsewhere (batch
             // apply_match).
             if fm.keep_video_gyro {
+                let is_canon = fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon"));
                 if fm.is_komodo {
                     log::info!(
                         "[red_arbitration] main video is RED Komodo, ignoring external IMU file: {url}"
+                    );
+                } else if is_canon {
+                    log::info!(
+                        "[canon_arbitration] main video is Canon with built-in gyro, ignoring external IMU file: {url}"
                     );
                 } else {
                     log::info!(
@@ -1281,6 +1286,39 @@ impl StabilizationManager {
                 detected_source,
                 is_komodo
             );
+
+            // Canon R5 Mark II built-in gyro is ~1 frame off from its own video
+            // frames. Auto-sync used to absorb this, but a keep_video_gyro clip
+            // skips auto-sync, so apply the fixed 1-frame correction explicitly.
+            // Applies to BOTH proxy and non-proxy R5 Mark II (the gyro<->video
+            // offset is intrinsic to the body); the separate proxy<->CRM
+            // cross-source frame is handled by the display anchor
+            // (video_display_anchor_us) and is orthogonal to this. Negative: the
+            // gyro leads the video by one frame.
+            if is_main_video
+                && detected_source
+                    .as_deref()
+                    .is_some_and(|s| s.contains("R5 Mark II"))
+            {
+                let (keep_video_gyro, fps, duration_ms) = {
+                    let keep = self.gyro.read().file_metadata.read().keep_video_gyro;
+                    let p = self.params.read();
+                    (keep, p.fps, p.duration_ms)
+                };
+                if keep_video_gyro && fps > 0.0 {
+                    let offset_ms = -(1000.0 / fps);
+                    // Single constant offset (one entry => constant across the
+                    // clip). Key mirrors the sync convention: (video_ts - offset).
+                    let ts_us = (((duration_ms / 2.0) - offset_ms) * 1000.0).round() as i64;
+                    self.set_offset(ts_us, offset_ms);
+                    log::info!(
+                        "[canon_r5m2] built-in gyro 1-frame offset applied: {:.3} ms (fps={:.6}) at ts_us={}",
+                        offset_ms,
+                        fps,
+                        ts_us
+                    );
+                }
+            }
         } else {
             log::info!(
                 "[load_gyro_data] end url='{}' elapsed_ms={:.1} canceled=true",

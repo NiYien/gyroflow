@@ -39,67 +39,97 @@ pub fn init_lens_profile(
     }
 
     if md.lens_profile.is_none() {
-        if let Some(im) = tag_map.get(&GroupId::Imager) {
-            if let Some(_w) = im.get_t(TagId::PixelWidth) as Option<&u32> {
-                if let Some(_h) = im.get_t(TagId::PixelHeight) as Option<&u32> {
-                    if let Some(map) = tag_map.get(&GroupId::Lens) {
-                        if let Some(v) = map.get_t(TagId::PixelFocalLength) as Option<&Vec<f32>> {
-                            if v.len() == 2 {
-                                let (fx, fy) = (v[0], v[1]);
-
-                                let video_rotation = info.video_rotation.unwrap_or_default().abs();
-                                let is_vertical = video_rotation == 90 || video_rotation == 270;
-
-                                let focal_length_str = tag_map
-                                    .get(&GroupId::Lens)
-                                    .and_then(|x| x.get_t(TagId::FocalLength) as Option<&f32>)
-                                    .map(|x| format!("{:.2} mm", *x));
-
-                                let mut lens_name = String::new();
-                                if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| {
-                                    map.get_t(TagId::DisplayName) as Option<&String>
-                                }) {
-                                    lens_name = v.clone();
-                                }
-                                md.lens_profile = Some(serde_json::json!({
-                                    "calibrated_by": "Canon",
-                                    "camera_brand": "Canon",
-                                    "camera_model": input.camera_model().map(|x| x.as_str()).unwrap_or(&""),
-                                    "lens_model":   if !lens_name.is_empty() && focal_length_str.is_some() { format!("{lens_name} ({})", focal_length_str.unwrap()) } else if !lens_name.is_empty() { lens_name } else { focal_length_str.unwrap_or_default() },
-                                    "calib_dimension":  { "w": size.0, "h": size.1 },
-                                    "orig_dimension":   { "w": size.0, "h": size.1 },
-                                    "output_dimension": { "w": if is_vertical { size.1 } else { size.0 }, "h": if is_vertical { size.0 } else { size.1 } },
-                                    "frame_readout_time": md.frame_readout_time,
-                                    "official": true,
-                                    "asymmetrical": false,
-                                    "note": "",
-                                    "fisheye_params": {
-                                        "camera_matrix": [
-                                            [ fx, 0.0, size.0 / 2 ],
-                                            [ 0.0, fy, size.1 / 2 ],
-                                            [ 0.0, 0.0, 1.0 ]
-                                        ],
-                                        "distortion_coeffs": []
-                                    },
-                                    "distortion_model": "opencv_standard",
-                                    "sync_settings": {
-                                        "initial_offset": 0,
-                                        "initial_offset_inv": false,
-                                        "search_size": 0.3,
-                                        "max_sync_points": 5,
-                                        "every_nth_frame": 1,
-                                        "time_per_syncpoint": 0.5,
-                                        "do_autosync": false
-                                    },
-                                    "calibrator_version": "---"
-                                }));
-                            }
-                        }
+        // (fx, fy) for the synthetic camera_matrix, in priority order:
+        //  Tier 1 — RF lens: CNDM PixelFocalLength [fx, fy] (electronic RF only).
+        //  Tier 2 — EF-adapted / other electronic lens without PixelFocalLength:
+        //           derive from FocalLength(mm) and the effective sensor size(mm),
+        //           fx = focal / sensor_w * width_px. Pinhole (no distortion).
+        //  Tier 3 (manual focal, no FocalLength) is applied later by
+        //  StabilizationManager::set_user_focal_length via camera_db upfl.
+        let lens = tag_map.get(&GroupId::Lens);
+        let pixel_fl = lens.and_then(|m| m.get_t(TagId::PixelFocalLength) as Option<&Vec<f32>>);
+        let fxfy: Option<(f32, f32)> = match pixel_fl {
+            Some(v) if v.len() == 2 && v[0] > 1.0 && v[1] > 1.0 => Some((v[0], v[1])),
+            _ => {
+                let focal = lens.and_then(|m| m.get_t(TagId::FocalLength) as Option<&f32>).copied();
+                let def = tag_map.get(&GroupId::Default);
+                let sw = def.and_then(|m| m.get_t(TagId::SensorWidth) as Option<&f32>).copied();
+                let sh = def.and_then(|m| m.get_t(TagId::SensorHeight) as Option<&f32>).copied();
+                match (focal, sw, sh) {
+                    (Some(focal), Some(sw), Some(sh))
+                        if focal > 1.0 && sw > 0.0 && sh > 0.0 && size.0 > 0 && size.1 > 0 =>
+                    {
+                        Some((focal / sw * size.0 as f32, focal / sh * size.1 as f32))
                     }
+                    _ => None,
                 }
             }
+        };
+        if let Some((fx, fy)) = fxfy {
+            build_synthetic_canon_lens_profile(md, input, tag_map, size, info, fx, fy);
         }
     }
+}
+
+/// Build the synthetic Canon lens profile (camera_matrix from fx/fy in pixels) and
+/// store it on `md.lens_profile`. Shared by the PixelFocalLength (RF) path and the
+/// FocalLength + sensor-size derivation so both produce an identical profile shape
+/// (auto-sync disabled, official, pinhole distortion).
+fn build_synthetic_canon_lens_profile(
+    md: &mut FileMetadata,
+    input: &telemetry_parser::Input,
+    tag_map: &GroupedTagMap,
+    size: (usize, usize),
+    info: &telemetry_parser::util::SampleInfo,
+    fx: f32,
+    fy: f32,
+) {
+    let video_rotation = info.video_rotation.unwrap_or_default().abs();
+    let is_vertical = video_rotation == 90 || video_rotation == 270;
+
+    let focal_length_str = tag_map
+        .get(&GroupId::Lens)
+        .and_then(|x| x.get_t(TagId::FocalLength) as Option<&f32>)
+        .map(|x| format!("{:.2} mm", *x));
+
+    let mut lens_name = String::new();
+    if let Some(v) = tag_map.get(&GroupId::Lens).and_then(|map| {
+        map.get_t(TagId::DisplayName) as Option<&String>
+    }) {
+        lens_name = v.clone();
+    }
+    md.lens_profile = Some(serde_json::json!({
+        "calibrated_by": "Canon",
+        "camera_brand": "Canon",
+        "camera_model": input.camera_model().map(|x| x.as_str()).unwrap_or(&""),
+        "lens_model":   if !lens_name.is_empty() && focal_length_str.is_some() { format!("{lens_name} ({})", focal_length_str.unwrap()) } else if !lens_name.is_empty() { lens_name } else { focal_length_str.unwrap_or_default() },
+        "calib_dimension":  { "w": size.0, "h": size.1 },
+        "orig_dimension":   { "w": size.0, "h": size.1 },
+        "output_dimension": { "w": if is_vertical { size.1 } else { size.0 }, "h": if is_vertical { size.0 } else { size.1 } },
+        "frame_readout_time": md.frame_readout_time,
+        "official": true,
+        "asymmetrical": false,
+        "note": "",
+        "fisheye_params": {
+            "camera_matrix": [
+                [ fx, 0.0, size.0 / 2 ],
+                [ 0.0, fy, size.1 / 2 ],
+                [ 0.0, 0.0, 1.0 ]
+            ],
+            "distortion_coeffs": []
+        },
+        "distortion_model": "opencv_standard",
+        "sync_settings": {
+            "initial_offset": 0,
+            "initial_offset_inv": false,
+            "search_size": 0.3,
+            "max_sync_points": 5,
+            "every_nth_frame": 1,
+            "time_per_syncpoint": 0.5,
+            "do_autosync": false
+        },
+        "calibrator_version": "---"
+    }));
 }
 
 pub fn get_time_offset(

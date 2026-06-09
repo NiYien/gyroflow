@@ -163,15 +163,17 @@ impl<'de> serde::Deserialize<'de> for ReadOnlyFileMetadata {
 /// without a telemetry-parser `Input`.
 ///
 /// - RED Komodo / Komodo-X: `is_komodo` is already true.
-/// - Sony bodies that embedded gyro/quaternion samples: trusted when motion is
-///   present (`has_gyro_samples`). A non-Komodo RED with samples is intentionally
-///   NOT trusted here (its internal IMU is cleared separately).
+/// - Sony / Canon bodies that embedded gyro/quaternion samples: trusted when
+///   motion is present (`has_gyro_samples`). Canon (R5 II / R6 II / R1 …) writes
+///   a per-frame CNDM gyro burst frame-aligned to the video, like Sony, so it is
+///   treated the same. A non-Komodo RED with samples is intentionally NOT trusted
+///   here (its internal IMU is cleared separately).
 pub(crate) fn compute_keep_video_gyro(
     is_komodo: bool,
     camera_type: &str,
     has_gyro_samples: bool,
 ) -> bool {
-    is_komodo || (camera_type == "Sony" && has_gyro_samples)
+    is_komodo || ((camera_type == "Sony" || camera_type == "Canon") && has_gyro_samples)
 }
 
 #[cfg(test)]
@@ -196,10 +198,24 @@ mod tests {
     }
 
     #[test]
+    fn keep_video_gyro_canon_with_samples_is_true() {
+        // Canon bodies with embedded per-frame gyro (R5 II / R6 II / R1 …) are
+        // trusted, same as Sony.
+        assert!(compute_keep_video_gyro(false, "Canon", true));
+    }
+
+    #[test]
+    fn keep_video_gyro_canon_without_samples_is_false() {
+        // A Canon clip with no embedded motion keeps the external-IMU override path.
+        assert!(!compute_keep_video_gyro(false, "Canon", false));
+    }
+
+    #[test]
     fn keep_video_gyro_other_cameras_are_false() {
-        // Plain bodies and non-Komodo RED (even with samples) are not trusted.
-        assert!(!compute_keep_video_gyro(false, "Canon", true));
+        // Non-Komodo RED (even with samples) and unrelated bodies are not trusted
+        // by the generic clause (RED's own IMU is cleared separately).
         assert!(!compute_keep_video_gyro(false, "RED", true));
+        assert!(!compute_keep_video_gyro(false, "Nikon", true));
     }
 
     #[test]

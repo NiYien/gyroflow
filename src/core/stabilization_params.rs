@@ -199,6 +199,31 @@ impl Default for StabilizationParams {
     }
 }
 
+/// Compute the per-clip display anchor (microseconds) for the proxy<->CRM frame
+/// offset (B) of a Canon R5 Mark II Cinema RAW pair. Used to bake/unbake the
+/// .gyroflow `offsets` so a project synced on the `_Proxy.MP4` aligns on the
+/// `.CRM` (which has no `elst` padding) and vice-versa.
+///
+/// Gated on both the proxy filename AND `detected_source` containing
+/// "R5 Mark II" — only that body's proxy is 1 frame ahead across sources. Every
+/// other clip (incl. other Canon cinema bodies such as the C50, which are
+/// frame-aligned) resolves to `None`. The frame duration is derived from `fps`.
+///
+/// Single source of truth shared by the single-video load path
+/// (controller::load_telemetry) and the batch queue-add path so both bake the
+/// same value; this avoids the cross-path 1-frame drift seen historically (C50).
+pub fn compute_video_display_anchor_us(url: &str, detected_source: Option<&str>, fps: f64) -> Option<i64> {
+    let url_lower = url.to_ascii_lowercase();
+    let is_canon_proxy_name =
+        url_lower.ends_with("_proxy.mp4") || url_lower.ends_with("_proxy.mov");
+    let is_r5_mark2 = detected_source.is_some_and(|s| s.contains("R5 Mark II"));
+    if is_canon_proxy_name && is_r5_mark2 && fps > 0.0 {
+        Some((1_000_000.0 / fps).round() as i64)
+    } else {
+        None
+    }
+}
+
 impl StabilizationParams {
     pub fn get_trim_ratio(&self) -> f64 {
         if self.trim_ranges.is_empty() {
@@ -352,6 +377,70 @@ mod tests {
         p.size = size;
         p.output_size = output_size;
         p
+    }
+
+    #[test]
+    fn display_anchor_r5_mark2_proxy_resolves_one_frame() {
+        assert_eq!(
+            super::compute_video_display_anchor_us(
+                "file:///x/CLIP_Proxy.MP4",
+                Some("Canon R5 Mark II"),
+                29.97
+            ),
+            Some(33367)
+        );
+    }
+
+    #[test]
+    fn display_anchor_proxy_mov_is_fps_aware() {
+        assert_eq!(
+            super::compute_video_display_anchor_us(
+                "file:///x/clip_proxy.mov",
+                Some("Canon R5 Mark II"),
+                59.94
+            ),
+            Some(16683)
+        );
+    }
+
+    #[test]
+    fn display_anchor_r5_mark2_non_proxy_is_none() {
+        assert_eq!(
+            super::compute_video_display_anchor_us(
+                "file:///x/CLIP.CRM",
+                Some("Canon R5 Mark II"),
+                29.97
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn display_anchor_other_canon_proxy_is_none() {
+        assert_eq!(
+            super::compute_video_display_anchor_us(
+                "file:///x/C50_Proxy.MP4",
+                Some("Canon C50"),
+                29.97
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn display_anchor_non_canon_or_missing_source_is_none() {
+        assert_eq!(
+            super::compute_video_display_anchor_us(
+                "file:///x/CLIP_Proxy.MP4",
+                Some("Sony FX3"),
+                29.97
+            ),
+            None
+        );
+        assert_eq!(
+            super::compute_video_display_anchor_us("file:///x/CLIP_Proxy.MP4", None, 29.97),
+            None
+        );
     }
 
     #[test]

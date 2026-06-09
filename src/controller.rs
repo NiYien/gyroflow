@@ -1707,29 +1707,26 @@ impl Controller {
                                 // must NOT get the compensation, otherwise their batch /
                                 // cross-source offsets shift by 1 frame. 1 frame duration is
                                 // derived from fps so 29.97/59.94/etc all resolve correctly.
-                                let url_lower = url.to_ascii_lowercase();
-                                let is_canon_proxy_name = url_lower.ends_with("_proxy.mp4")
-                                    || url_lower.ends_with("_proxy.mov");
-                                let is_r5_mark2 = stab
+                                let detected_source = stab
                                     .gyro
                                     .read()
                                     .file_metadata
                                     .read()
                                     .detected_source
-                                    .as_deref()
-                                    .is_some_and(|s| s.contains("R5 Mark II"));
-                                let anchor_us = if is_canon_proxy_name && is_r5_mark2 && fps > 0.0 {
-                                    Some((1_000_000.0 / fps).round() as i64)
-                                } else {
-                                    None
-                                };
+                                    .clone();
+                                let anchor_us =
+                                    core::stabilization_params::compute_video_display_anchor_us(
+                                        &url,
+                                        detected_source.as_deref(),
+                                        fps,
+                                    );
                                 stab.params.write().video_display_anchor_us = anchor_us;
                                 ::log::info!(
                                     target: "video.load",
-                                    "video_display_anchor_us = {:?} (is_canon_proxy_name={} is_r5_mark2={} fps={:.6})",
+                                    "video_display_anchor_us = {:?} (url='{}' detected={:?} fps={:.6})",
                                     anchor_us,
-                                    is_canon_proxy_name,
-                                    is_r5_mark2,
+                                    url,
+                                    detected_source,
                                     fps
                                 );
                             } else {
@@ -4088,18 +4085,10 @@ impl Controller {
                 match profile.save_to_file(&url) {
                     Ok(json) => {
                         ::log::debug!("Lens profile json: {}", json);
-                        if upload {
-                            core::run_threaded(move || {
-                                if let Ok(Ok(body)) =
-                                    crate::network::post("https://api.gyroflow.xyz/upload_profile")
-                                        .header("Content-Type", "application/json; charset=utf-8")
-                                        .send(&json)
-                                        .map(|x| x.into_body().read_to_string())
-                                {
-                                    ::log::debug!("Lens profile uploaded: {}", body.as_str());
-                                }
-                            });
-                        }
+                        // niyien fork: uploading calibrated lens profiles to the
+                        // upstream community DB (api.gyroflow.xyz/upload_profile)
+                        // is disabled — the profile is saved locally only.
+                        let _ = upload;
                     }
                     Err(e) => {
                         self.error(
@@ -4271,40 +4260,13 @@ impl Controller {
         }
     }
 
-    fn rate_profile(&self, name: QString, json: QString, checksum: QString, is_good: bool) {
-        core::run_threaded(move || {
-            let mut url = url::Url::parse(&format!(
-                "https://api.gyroflow.xyz/rate?good={}&checksum={}",
-                is_good, checksum
-            ))
-            .unwrap();
-            url.query_pairs_mut()
-                .append_pair("filename", &name.to_string());
-
-            if let Ok(Ok(body)) = crate::network::post(url.to_string())
-                .header("Content-Type", "application/json; charset=utf-8")
-                .send(&json.to_string())
-                .map(|x| x.into_body().read_to_string())
-            {
-                ::log::debug!("Lens profile rated: {}", body.as_str());
-            }
-        });
+    fn rate_profile(&self, _name: QString, _json: QString, _checksum: QString, _is_good: bool) {
+        // niyien fork: lens-profile community rating (api.gyroflow.xyz/rate) is
+        // disabled. Kept as a no-op so the QML call site does not break.
     }
     fn request_profile_ratings(&self) {
-        let update = util::qt_queued_callback_mut(QPointer::from(self as &Self), |this, _| {
-            this.lens_profiles_updated(false);
-        });
-        let db = self.stabilizer.lens_profile_db.clone();
-        core::run_threaded(move || {
-            if let Ok(Ok(body)) =
-                crate::network::get("https://api.gyroflow.xyz/rate?get_ratings=1")
-                    .call()
-                    .map(|x| x.into_body().read_to_string())
-            {
-                db.write().set_profile_ratings(body.as_str());
-                update(());
-            }
-        });
+        // niyien fork: fetching community lens-profile ratings from
+        // api.gyroflow.xyz is disabled. No-op; local profiles are unaffected.
     }
 
     fn list_gpu_devices(&self) {
