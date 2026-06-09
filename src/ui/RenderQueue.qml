@@ -1799,7 +1799,9 @@ Item {
                     width: Math.max(1 * dpiScale, dlg.textRightLimit - x - 10 * dpiScale);
                     height: childrenRect.height;
                     BasicText {
-                        text: input_filename;
+                        // Append the source video full duration (e.g. "5.3s") after the
+                        // filename. duration_ms is 0 until the video info is known.
+                        text: input_filename + (duration_ms > 0 ? " <small>(" + (duration_ms / 1000).toFixed(1) + "s)</small>" : "");
                         font.bold: true;
                         font.pixelSize: 14 * dpiScale;
                         width: parent.width;
