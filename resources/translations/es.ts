@@ -2866,6 +2866,11 @@ Para los vídeos sin emparejar, puedes hacerlo manualmente: clic derecho en el v
         <translation>Emparejar con giroscopio</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Desemparejar giroscopio</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

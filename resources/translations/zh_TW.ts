@@ -2868,6 +2868,11 @@ For any unpaired video, you can pair manually: right-click the video → **"Pair
         <translation>與陀螺儀配對</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>取消配對</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

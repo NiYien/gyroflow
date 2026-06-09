@@ -1315,7 +1315,17 @@ Item {
                     onClosed: clearDynamicGyroActions()
                     Component.onDestruction: clearDynamicGyroActions()
                 }
-                // [queue-pair-ux T2] Unpair 选项已移除，Rust 端 unpair_video() 保留
+                // [queue-pair-ux] Re-added unpair entry; only for manually paired jobs.
+                // Uses Menu.MenuItem (not a bare Action) because it needs `visible` to
+                // dynamically show/hide based on whether the job is manually paired.
+                Menu.MenuItem {
+                    parentMenu: contextMenu;
+                    text: qsTr("Unpair gyro");
+                    visible: dlg.manualGyroIndex >= 0;
+                    height: visible ? implicitHeight : 0;
+                    enabled: !isInProgress;
+                    onTriggered: render_queue.unpair_video(job_id);
+                }
             }
 
             Rectangle {
@@ -1901,14 +1911,15 @@ Item {
                         }
                     }
                     // T5+T6: Match status annotation with gyro filename.
-                    // simple-mode-ux-overhaul: Matched / Manual branches are hidden in Simple
-                    // mode (users don't need developer-facing filename / detected_source).
-                    // Calibration branch stays visible because it carries genuine signal.
+                    // simple-mode-ux-overhaul: in Simple mode the auto-Matched branch stays
+                    // hidden (users don't need developer-facing detected_source), but the
+                    // manual-pair branch is now shown so users can see the gyro file they
+                    // explicitly paired. Calibration branch stays visible too.
                     BasicText {
                         property bool isCalibrationBranch: dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime" && dlg.matchState !== "Matched" && dlg.manualGyroIndex < 0;
                         visible: root.hasGyroFiles
                             && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"))
-                            && (!window.isSimpleMode || isCalibrationBranch);
+                            && (!window.isSimpleMode || isCalibrationBranch || dlg.manualGyroIndex >= 0);
                         width: parent.width;
                         wrapMode: Text.WordWrap;
                         color: dlg.manualGyroIndex >= 0 ? root.manualStatusColor

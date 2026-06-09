@@ -2868,6 +2868,11 @@ Du kan pare manuelt: høyreklikk på videoen → **"Par med gyro"** og velg tilh
         <translation>Par med gyro</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Opphev paring med gyro</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

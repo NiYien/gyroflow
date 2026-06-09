@@ -2868,6 +2868,11 @@ Nespárované video můžete spárovat ručně: klikněte na video pravým tlač
         <translation>Spárovat s gyroskopem</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Zrušit spárování s gyroskopem</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

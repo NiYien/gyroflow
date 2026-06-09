@@ -2865,6 +2865,11 @@ Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: kli
         <translation>Pasangkan dengan Giroskop</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Lepaskan pasangan Giroskop</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

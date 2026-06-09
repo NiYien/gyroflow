@@ -2866,6 +2866,11 @@ Per i video non accoppiati puoi farlo manualmente: clic destro sul video → **"
         <translation>Abbina al giroscopio</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Annulla abbinamento giroscopio</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

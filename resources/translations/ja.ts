@@ -2869,6 +2869,11 @@ For any unpaired video, you can pair manually: right-click the video → **"Pair
         <translation>ジャイロと対応付け</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>ジャイロの対応付けを解除</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

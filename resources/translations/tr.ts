@@ -2863,6 +2863,11 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
         <translation>Jiroskopla eşleştir</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Jiroskop eşleştirmesini kaldır</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

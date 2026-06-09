@@ -2867,6 +2867,11 @@ Nicht zugeordnete Videos kannst du manuell zuordnen: Rechtsklick auf das Video â
         <translation>Mit Gyro koppeln</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Gyro-Kopplung aufheben</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

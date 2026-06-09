@@ -2868,6 +2868,11 @@ For any unpaired video, you can pair manually: right-click the video → **"Pair
         <translation>Σύζευξη με γυροσκόπιο</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Κατάργηση σύζευξης με γυροσκόπιο</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

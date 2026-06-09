@@ -2867,6 +2867,11 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **"Yhdistä 
         <translation>Yhdistä gyroon</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Pura gyron yhdistäminen</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>

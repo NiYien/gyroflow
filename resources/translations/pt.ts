@@ -2868,6 +2868,11 @@ Para vídeos não emparelhados, pode emparelhar manualmente: clique com o botão
         <translation>Emparelhar com giroscópio</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
+        <source>Unpair gyro</source>
+        <translation>Desemparelhar giroscópio</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
         <source>Sync complete</source>
