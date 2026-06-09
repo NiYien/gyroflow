@@ -44,10 +44,10 @@ MenuItem {
     readonly property bool batchScope: !!(window.videoArea
         && window.videoArea.queue
         && window.videoArea.queue.selectedCount > 0)
-    // Editor (lens group selector + focal/anamorphic fields) is only shown when the
-    // global Manual edit toggle is on. When off, calibration follows telemetry auto
-    // path and the editing UI is irrelevant, so we hide it entirely.
-    readonly property bool editorVisible: !!controller.lens_group_manual_edit
+    // Lens-group fields are editable at all times — the Manual edit flag only decides whether
+    // the values are *applied* (manual focal auto-fills telemetry gaps regardless; anamorphic
+    // needs the flag, which persistConfigs raises automatically once a group has a manual value).
+    readonly property bool editorVisible: true
 
     readonly property bool lightTheme: style === "light"
     readonly property color cardColor: root.lightTheme ? "#ffffff" : styleButtonColor
@@ -321,6 +321,13 @@ MenuItem {
         // Skip persistence during boot — NumberField default-value initial
         // change events would otherwise wipe lens_group_configs_v1 to "[]".
         if (!_bootDone) return
+        // "Manual" tracks whether any group actually carries a manual value: setting a focal
+        // length / anamorphic enters manual mode (so anamorphic applies and the value reaches
+        // queued jobs); clearing them all returns to telemetry auto. The fields stay editable
+        // regardless of this flag (editorVisible is always true).
+        const anyManual = next.some(c => root.hasManualFocusValue(c) || !!c.anamorphic_enabled)
+        if (controller.lens_group_manual_edit !== anyManual)
+            controller.lens_group_manual_edit = anyManual
         // simple-mode-ux-overhaul: write goes to global config unconditionally.
         // batchScope path removed — per-job overrides are now read-only data carried
         // from .gyroflow load, edited via the render-queue right-click menu.
