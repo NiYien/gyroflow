@@ -184,6 +184,42 @@ fn dump_correlation_curves(
     }
 }
 
+/// Default cap on |rs_argmin - cluster centroid| for the rs_argmin shortcut.
+/// The shortcut exists to recover the sub-grid precision the 5ms candidate
+/// scan quantization (±2.5ms) takes away from the centroid, so a legitimate
+/// correction is bounded by that scale. Override: `GYROFLOW_SYNC_RS_SHORTCUT_MAX_DEV_MS`
+/// (set 30 to restore the pre-2026-06-10 CLUSTER_MERGE_MS-wide guard).
+pub(super) const RS_SHORTCUT_MAX_DEV_MS_DEFAULT: f64 = 3.0;
+
+/// Decide whether the rs_argmin shortcut may replace the cluster centroid.
+///
+/// A deviation beyond `max_dev_ms` means rs_argmin genuinely disagrees with
+/// the consensus rather than refining its quantization — and on a flat
+/// Pearson curve the absolute `r > 0.85` guard cannot tell the two apart
+/// (observed 2026-06-10, C50 truth=0ms: r=0.851 at rs_argmin vs 0.853 at
+/// peak let a +5.8ms parallax-biased argmin replace a +1.8ms consensus).
+/// Free function so unit tests can exercise it without the fusion pipeline.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn should_use_rs_shortcut(
+    quality_warn_none: bool,
+    cluster_frac_pre: f64,
+    r_rs: f64,
+    pearson_peak_r: f64,
+    pearson_second_r: f64,
+    rs_argmin_ms: f64,
+    coarse_ms: f64,
+    max_dev_ms: f64,
+) -> bool {
+    let unimodal_ok = pearson_peak_r > 1e-9 && pearson_second_r < 0.7 * pearson_peak_r;
+    quality_warn_none
+        && cluster_frac_pre >= 0.999
+        && r_rs.is_finite()
+        && r_rs > 0.85
+        && rs_argmin_ms.is_finite()
+        && unimodal_ok
+        && (rs_argmin_ms - coarse_ms).abs() < max_dev_ms
+}
+
 pub struct FindOffsetsRssync<'a> {
     sync: SyncProblem<'a>,
     gyro_source: Arc<RwLock<GyroSource>>,
@@ -216,6 +252,14 @@ pub(super) enum ConfPath {
     /// [0.05, 0.5] so downstream rank filtering can distinguish "borrowed
     /// from anchor" from self-evidenced consensus.
     AnchorPrior,
+    /// A near-twin local minimum (within ±TWIN_RADIUS_MS, near-equal cost,
+    /// both valleys shallow) was detected next to the chosen one — picking
+    /// between them is a coin flip (parallax/foreground contamination).
+    /// Confidence is ceiled to 0.3 so the controller conf≥0.4 bypass and
+    /// batch rank filter treat the point as unreliable. Applied AFTER all
+    /// other paths as a ceiling, never changes the offset.
+    /// Spec: `openspec/changes/sync-parallax-suppression/specs/find-offset-confidence/`.
+    TwinAmbiguity,
 }
 
 impl ConfPath {
@@ -227,6 +271,7 @@ impl ConfPath {
             ConfPath::Normal => "normal",
             ConfPath::LegacyCeiling => "legacy_ceiling",
             ConfPath::AnchorPrior => "anchor_prior",
+            ConfPath::TwinAmbiguity => "twin_ambiguity",
         }
     }
 }
@@ -1285,6 +1330,7 @@ impl FindOffsetsRssync<'_> {
                     f64::NAN,
                     "fallback_initial",
                     Some("motion_too_weak"),
+                    None,
                 );
                 continue;
             }
@@ -1327,6 +1373,7 @@ impl FindOffsetsRssync<'_> {
                         f64::NAN,
                         "fallback_initial",
                         Some("ncc_fft_failed"),
+                        None,
                     );
                     continue;
                 }
@@ -1786,14 +1833,46 @@ impl FindOffsetsRssync<'_> {
             // is safer in that case. Fall back whenever unanimity breaks, signal
             // is weak, or the cost surface is multi-modal.
             let r_rs_for_shortcut = pearson_at(rs_argmin_ms);
-            let unimodal_ok = pearson_peak_r > 1e-9 && pearson_second_r < 0.7 * pearson_peak_r;
-            let use_rs_shortcut = quality_warn.is_none()
-                && cluster_frac_pre >= 0.999
-                && r_rs_for_shortcut.is_finite()
-                && r_rs_for_shortcut > 0.85
-                && rs_argmin_ms.is_finite()
-                && unimodal_ok
-                && (rs_argmin_ms - coarse_ms).abs() < CLUSTER_MERGE_MS;
+            let shortcut_max_dev_ms: f64 = std::env::var("GYROFLOW_SYNC_RS_SHORTCUT_MAX_DEV_MS")
+                .ok()
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite() && *v > 0.0)
+                .unwrap_or(RS_SHORTCUT_MAX_DEV_MS_DEFAULT);
+            let use_rs_shortcut = should_use_rs_shortcut(
+                quality_warn.is_none(),
+                cluster_frac_pre,
+                r_rs_for_shortcut,
+                pearson_peak_r,
+                pearson_second_r,
+                rs_argmin_ms,
+                coarse_ms,
+                shortcut_max_dev_ms,
+            );
+            // Traceability for the tightened guard: emit when the distance cap
+            // is the sole reason the shortcut no longer fires (it would have
+            // fired under the old CLUSTER_MERGE_MS-wide rule).
+            if !use_rs_shortcut
+                && should_use_rs_shortcut(
+                    quality_warn.is_none(),
+                    cluster_frac_pre,
+                    r_rs_for_shortcut,
+                    pearson_peak_r,
+                    pearson_second_r,
+                    rs_argmin_ms,
+                    coarse_ms,
+                    CLUSTER_MERGE_MS,
+                )
+            {
+                log::info!(
+                    target: "sync",
+                    "[ncc-fuse] seg {}: rs_shortcut suppressed: |rs_argmin({:.1}) - coarse({:.1})| = {:.1}ms >= max_dev {:.1}ms",
+                    i,
+                    rs_argmin_ms,
+                    coarse_ms,
+                    (rs_argmin_ms - coarse_ms).abs(),
+                    shortcut_max_dev_ms
+                );
+            }
             let cluster_output_ms = if use_rs_shortcut {
                 rs_argmin_ms
             } else {
@@ -1923,6 +2002,45 @@ impl FindOffsetsRssync<'_> {
                 (raw_confidence, raw_path)
             };
 
+            // ── Twin-minimum ambiguity guard (sync-parallax-suppression M3) ──
+            // Applied last, as a pure confidence ceiling: a near-twin local
+            // minimum within ±TWIN_RADIUS_MS with near-equal cost and shallow
+            // sharpness means the fusion output is a coin flip between two
+            // valleys (parallax-contaminated aggregate decision surface) —
+            // periodic_ambiguity's second-peak search (min_sep = max(FWHM,
+            // 50ms)) structurally cannot see this. Offset is never changed.
+            let twin_params = super::twin_guard::params();
+            let twin_info = if twin_params.enabled && !minima_ref.is_empty() {
+                // Associate the fusion output with its nearest cost-curve
+                // minimum (same 50ms association radius as the anchor pool)
+                // to get the chosen valley's cost/sharpness.
+                minima_ref
+                    .iter()
+                    .filter(|m| (m.offset_ms - output_ms).abs() <= 50.0)
+                    .min_by(|a, b| {
+                        (a.offset_ms - output_ms)
+                            .abs()
+                            .partial_cmp(&(b.offset_ms - output_ms).abs())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .and_then(|cm| {
+                        super::twin_guard::detect_twin_minimum(
+                            minima_ref,
+                            cm.offset_ms,
+                            cm.cost,
+                            cm.sharpness,
+                            &twin_params,
+                        )
+                    })
+            } else {
+                None
+            };
+            let (confidence, conf_path) = if twin_info.is_some() {
+                (confidence.min(0.3), ConfPath::TwinAmbiguity)
+            } else {
+                (confidence, conf_path)
+            };
+
             let path_str_owned = if use_rs_shortcut {
                 format!("v2_consensus[{}]|rs_shortcut", cluster_signals)
             } else {
@@ -1952,8 +2070,20 @@ impl FindOffsetsRssync<'_> {
                 }
                 None => String::new(),
             };
+            // Twin-guard tail — empty when no twin so the log line stays
+            // byte-identical to the pre-change format.
+            let twin_tail = match &twin_info {
+                Some(t) => format!(
+                    ", twin=@{:.1}ms margin={:.1}% sharp=[{:.1}/{:.1}]",
+                    t.offset_ms,
+                    t.margin * 100.0,
+                    t.sharp_chosen,
+                    t.sharp_twin
+                ),
+                None => String::new(),
+            };
             log::info!(
-                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], sf=[rs={:.2}/rs_cost={:.2}/ncc={:.2}/p={:.2}/p2={:.2}], cost_sharp={:.2} (old={:.2}, sf_rs={:.2}), cfrac={:.2}, max_r={:.3}, conf={:.3}, conf_path={}{})",
+                "[ncc-fuse] seg {}: {} coarse={:.1}ms → output={:.1}ms r={:.3} (r_rs={:.3}/{:.3}, r_ncc={:.3}, pearson_peak={:.1}ms r={:.3} prom={:.3}, w=[rs={:.3}/rs_cost={:.3}/ncc={:.3}/p={:.3}], sf=[rs={:.2}/rs_cost={:.2}/ncc={:.2}/p={:.2}/p2={:.2}], cost_sharp={:.2} (old={:.2}, sf_rs={:.2}), cfrac={:.2}, max_r={:.3}, conf={:.3}, conf_path={}{}{})",
                 i,
                 path_str_owned,
                 coarse_ms,
@@ -1981,7 +2111,8 @@ impl FindOffsetsRssync<'_> {
                 max_pearson_r,
                 confidence,
                 conf_path.as_str(),
-                prior_tail
+                prior_tail,
+                twin_tail
             );
 
             let total_seg_ms = seg_t0.elapsed().as_secs_f64() * 1000.0;
@@ -2022,6 +2153,7 @@ impl FindOffsetsRssync<'_> {
                 output_ms,
                 &path_str_owned,
                 combined_fb.as_deref(),
+                twin_info.map(|t| (t.offset_ms, t.margin, t.sharp_chosen.min(t.sharp_twin))),
             );
         }
 
@@ -2122,6 +2254,48 @@ fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {
         timestamps.push(*ts);
     }
     sync.set_gyro_quaternions(&timestamps, &quats);
+}
+
+#[cfg(test)]
+mod rs_shortcut_tests {
+    use super::{RS_SHORTCUT_MAX_DEV_MS_DEFAULT, should_use_rs_shortcut};
+
+    /// Regression: 2026-06-10 C50 (truth 0ms) — flat Pearson curve, r=0.851
+    /// at rs_argmin(+5.8) vs 0.853 at peak(+1.7), coarse consensus +1.8ms.
+    /// Old 30ms-wide guard fired and replaced 1.8 with 5.8; the 3ms cap must not.
+    #[test]
+    fn flat_pearson_far_argmin_does_not_fire() {
+        assert!(!should_use_rs_shortcut(
+            true, 1.0, 0.851, 0.853, 0.3, 5.8, 1.8,
+            RS_SHORTCUT_MAX_DEV_MS_DEFAULT
+        ));
+        // Same inputs under the old-width guard (env rollback) do fire.
+        assert!(should_use_rs_shortcut(true, 1.0, 0.851, 0.853, 0.3, 5.8, 1.8, 30.0));
+    }
+
+    /// Legitimate quantization refinement: rs_argmin 1.5ms from the centroid
+    /// (within the ±2.5ms scan quantization) keeps firing.
+    #[test]
+    fn close_argmin_still_fires() {
+        assert!(should_use_rs_shortcut(
+            true, 1.0, 0.90, 0.91, 0.3, 3.3, 1.8,
+            RS_SHORTCUT_MAX_DEV_MS_DEFAULT
+        ));
+    }
+
+    #[test]
+    fn other_guards_unchanged() {
+        // quality_warn present → no shortcut.
+        assert!(!should_use_rs_shortcut(false, 1.0, 0.90, 0.91, 0.3, 2.0, 1.8, 3.0));
+        // broken unanimity → no shortcut.
+        assert!(!should_use_rs_shortcut(true, 0.8, 0.90, 0.91, 0.3, 2.0, 1.8, 3.0));
+        // weak r at argmin → no shortcut.
+        assert!(!should_use_rs_shortcut(true, 1.0, 0.70, 0.91, 0.3, 2.0, 1.8, 3.0));
+        // multi-modal Pearson (2nd peak ≥ 0.7×main) → no shortcut.
+        assert!(!should_use_rs_shortcut(true, 1.0, 0.90, 0.91, 0.80, 2.0, 1.8, 3.0));
+        // non-finite argmin → no shortcut.
+        assert!(!should_use_rs_shortcut(true, 1.0, 0.90, 0.91, 0.3, f64::NAN, 1.8, 3.0));
+    }
 }
 
 #[cfg(test)]
