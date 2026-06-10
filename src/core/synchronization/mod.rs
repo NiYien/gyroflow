@@ -20,6 +20,7 @@ pub use estimate_pose::*;
 mod find_offset {
     pub mod essential_matrix;
     pub mod rs_sync;
+    pub mod twin_guard;
     pub mod visual_features;
 }
 

@@ -220,6 +220,290 @@ pub(super) fn should_use_rs_shortcut(
         && (rs_argmin_ms - coarse_ms).abs() < max_dev_ms
 }
 
+/// M1 axis-quality weighting on/off (`GYROFLOW_SYNC_AXIS_WEIGHT`, default on).
+/// `0` reverts every aggregation point (pearson_at, Pearson scan, NCC) to the
+/// legacy equal-weight mean. OnceLock-cached; first resolve logs to
+/// `target="lifecycle"` (sync-parallax-suppression M1).
+fn axis_weight_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_AXIS_WEIGHT").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None => (true, "default"),
+            Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_AXIS_WEIGHT={} invalid, falling back to default",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "axis_weight resolved enabled={} source={}", v, source);
+        v
+    })
+}
+
+/// Derive per-axis aggregation weights from full-window axis qualities
+/// (sync-parallax-suppression M1, design D2): `w_i = clamp(q_i,0,1)²` floored
+/// at 0.05, normalized to Σw = 1. Squaring suppresses mid-quality axes
+/// (r=0.5 → 0.25 weight ratio); the floor keeps all-weak segments close to
+/// equal-weight (and guards the division). Free function for unit tests.
+pub(super) fn axis_weights_from_quality(q: [f64; 3]) -> [f64; 3] {
+    let mut w = [0.0f64; 3];
+    for i in 0..3 {
+        let qi = if q[i].is_finite() { q[i].clamp(0.0, 1.0) } else { 0.0 };
+        w[i] = (qi * qi).max(0.05);
+    }
+    let sum: f64 = w.iter().sum();
+    [w[0] / sum, w[1] / sum, w[2] / sum]
+}
+
+// ═══ M2 gyro-prior two-pass reweighting (sync-parallax-suppression) ════════
+
+/// Pass-2 mode (`GYROFLOW_SYNC_PRIOR_REWEIGHT`): `0` never, `1` on
+/// twin/low-conf trigger (default), `always` unconditionally per segment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Pass2Mode {
+    Off,
+    On,
+    Always,
+}
+
+impl Pass2Mode {
+    /// Parse the env value; `None` for invalid input (caller falls back + warns).
+    pub(super) fn parse(raw: &str) -> Option<Pass2Mode> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "0" | "false" | "no" | "off" => Some(Pass2Mode::Off),
+            "1" | "true" | "yes" | "on" => Some(Pass2Mode::On),
+            "always" => Some(Pass2Mode::Always),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Pass2Params {
+    pub mode: Pass2Mode,
+    /// MAD multiplier for the residual gate (`GYROFLOW_SYNC_PRIOR_REWEIGHT_K`).
+    pub k: f64,
+    /// Pass-2 confidence trigger threshold (`GYROFLOW_SYNC_PASS2_CONF`).
+    pub conf_thresh: f64,
+    /// Minimum removed-point fraction for the re-solve to be meaningful
+    /// (`GYROFLOW_SYNC_PASS2_MIN_REMOVED`, default 0.02). Below this the
+    /// problem is essentially unchanged and LBFGS just jumps between
+    /// near-equal basins (observed: removing 5-155 points sent argmin to
+    /// ±15ms while pass-1 sat at the truth) — instead, clean residuals are
+    /// treated as evidence FOR pass-1 (rs twin is noise-intrinsic, the
+    /// correlation-led consensus stands).
+    pub min_removed_frac: f64,
+}
+
+/// Resolve pass-2 params from env (cached; restart to change).
+pub(super) fn pass2_params() -> Pass2Params {
+    static RESOLVED: std::sync::OnceLock<Pass2Params> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let mut p = Pass2Params {
+            mode: Pass2Mode::On,
+            k: 4.0,
+            conf_thresh: 0.5,
+            min_removed_frac: 0.02,
+        };
+        let mut overrides: Vec<&'static str> = Vec::new();
+        if let Ok(raw) = std::env::var("GYROFLOW_SYNC_PRIOR_REWEIGHT") {
+            if !raw.is_empty() {
+                match Pass2Mode::parse(&raw) {
+                    Some(m) => {
+                        p.mode = m;
+                        overrides.push("GYROFLOW_SYNC_PRIOR_REWEIGHT");
+                    }
+                    None => log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_PRIOR_REWEIGHT={} invalid, falling back to default",
+                        raw
+                    ),
+                }
+            }
+        }
+        let mut read_f64 = |name: &'static str, dst: &mut f64| {
+            if let Ok(raw) = std::env::var(name) {
+                if !raw.is_empty() {
+                    match raw.trim().parse::<f64>().ok().filter(|v| v.is_finite() && *v > 0.0) {
+                        Some(v) => {
+                            *dst = v;
+                            overrides.push(name);
+                        }
+                        None => log::warn!(
+                            target: "lifecycle",
+                            "{}={} invalid, falling back to default",
+                            name,
+                            raw
+                        ),
+                    }
+                }
+            }
+        };
+        read_f64("GYROFLOW_SYNC_PRIOR_REWEIGHT_K", &mut p.k);
+        read_f64("GYROFLOW_SYNC_PASS2_CONF", &mut p.conf_thresh);
+        read_f64("GYROFLOW_SYNC_PASS2_MIN_REMOVED", &mut p.min_removed_frac);
+        log::info!(
+            target: "lifecycle",
+            "pass2_reweight resolved mode={:?} k={:.1} conf_thresh={:.2} min_removed={:.3} source={}",
+            p.mode,
+            p.k,
+            p.conf_thresh,
+            p.min_removed_frac,
+            if overrides.is_empty() { "default".to_string() } else { format!("env[{}]", overrides.join(",")) }
+        );
+        p
+    })
+}
+
+/// Robust residual gate: `median + k × MAD` (design D3; the additive-median
+/// form keeps the gate safe when pass-1's offset error shifts the whole
+/// residual distribution by a common ~0.09° bias). Returns INFINITY for
+/// degenerate inputs (nothing gets filtered).
+pub(super) fn pass2_threshold(residuals: &[f64], k: f64) -> f64 {
+    let mut v: Vec<f64> = residuals.iter().copied().filter(|r| r.is_finite()).collect();
+    if v.len() < 10 {
+        return f64::INFINITY;
+    }
+    let median = |s: &mut [f64]| -> f64 {
+        s.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        let n = s.len();
+        if n % 2 == 0 { (s[n / 2 - 1] + s[n / 2]) / 2.0 } else { s[n / 2] }
+    };
+    let med = median(&mut v);
+    let mut dev: Vec<f64> = v.iter().map(|r| (r - med).abs()).collect();
+    let mad = median(&mut dev);
+    // MAD floor at 5% of the median guards against quantized / near-constant
+    // residual sets collapsing the gate onto the bulk itself.
+    med + k * mad.max(med * 0.05)
+}
+
+/// Adoption rule (design D3): pass-2 replaces pass-1 only when strictly more
+/// confident. NaN pass-2 confidence never wins.
+pub(super) fn adopt_pass2(pass1_conf: f64, pass2_conf: f64) -> bool {
+    pass2_conf.is_finite() && pass2_conf > pass1_conf
+}
+
+/// Indices passing the residual gate; when fewer than `min_keep` survive,
+/// degrade to the `min_keep` lowest-residual points (tie-break by index) so
+/// rs-sync still has a usable ray set for the pair.
+pub(super) fn pass2_keep_indices(residuals: &[f64], threshold: f64, min_keep: usize) -> Vec<usize> {
+    let pass: Vec<usize> = (0..residuals.len())
+        .filter(|&i| residuals[i].is_finite() && residuals[i] <= threshold)
+        .collect();
+    if pass.len() >= min_keep || residuals.len() <= min_keep {
+        return pass;
+    }
+    let mut idx: Vec<usize> = (0..residuals.len())
+        .filter(|&i| residuals[i].is_finite())
+        .collect();
+    idx.sort_by(|&a, &b| {
+        residuals[a]
+            .partial_cmp(&residuals[b])
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.cmp(&b))
+    });
+    idx.truncate(min_keep);
+    idx.sort_unstable();
+    idx
+}
+
+/// Pure-rotation angular residuals (degrees) for one pair's rays at the given
+/// external offset, replicating rs-sync's `opt_compute_problem` geometry:
+/// both rays are rotated into the gyro/world frame by the conjugated spline
+/// quat — which, given `set_quats` feeds `conj(q_src · rot_PI_x)`, equals
+/// `q_src(t + delay) · rot_PI_x` — and a rotation-consistent point has
+/// `ar ∥ br`. Parallax / foreground points violate this by 0.2-1° while a
+/// ±10ms pass-1 offset error mismatches true points by only ~|ω|·0.01s.
+fn rotation_residuals_deg(
+    quats: &crate::gyro_source::TimeQuat,
+    pair: &PairTracks,
+    offset_external_ms: f64,
+    frt_offset_ms: f64,
+) -> Vec<f64> {
+    // External → internal rs-sync delay: external = -d_s·1000 − frt/2.
+    let d_s = -(offset_external_ms + frt_offset_ms) / 1000.0;
+    let rot = Quat64::from_scaled_axis(Vector3::new(PI, 0.0, 0.0));
+    pair.tss_a
+        .iter()
+        .zip(pair.tss_b.iter())
+        .zip(pair.rays_a.iter().zip(pair.rays_b.iter()))
+        .map(|((&ts_a, &ts_b), (&ra, &rb))| {
+            let q_a = GyroSource::clamped_quat_at_gyro_timestamp(quats, (ts_a + d_s) * 1000.0);
+            let q_b = GyroSource::clamped_quat_at_gyro_timestamp(quats, (ts_b + d_s) * 1000.0);
+            let ar = (q_a * rot).transform_vector(&Vector3::new(ra.0, ra.1, ra.2));
+            let br = (q_b * rot).transform_vector(&Vector3::new(rb.0, rb.1, rb.2));
+            ar.angle(&br).to_degrees()
+        })
+        .collect()
+}
+
+/// Result of a successful pass-2 segment rebuild (M2).
+struct Pass2Rebuild {
+    new_argmin_ext_ms: f64,
+    new_cost: f64,
+    kept: usize,
+    total: usize,
+}
+
+/// Outcome of the pass-2 residual analysis for a segment (M2).
+enum Pass2Outcome {
+    /// Substantial parallax suspects removed; the problem was re-solved and
+    /// the fusion body should re-run on the cleaned curve.
+    Rebuilt(Pass2Rebuild),
+    /// The rotation model found (almost) nothing to remove — the data is
+    /// clean, the rs twin is noise-intrinsic, and re-solving a near-identical
+    /// problem only adds LBFGS basin jitter. Evidence FOR pass-1.
+    CleanResiduals { removed: usize, total: usize },
+    /// Too few points / degenerate gate / re-solve failure — no information.
+    NotApplicable,
+}
+
+/// Confidence cap for twin ambiguities resolved by pass-2 cross-validation:
+/// the point passes the controller's 0.4 drop gate but ranks below
+/// self-evidenced full-confidence consensus.
+const TWIN_RESOLVED_CONF_CAP: f64 = 0.6;
+/// Confidence cap when the two passes DISAGREE and the Pearson-anchored
+/// arbitration picks a side — weaker evidence than agreement, still above
+/// the 0.4 drop gate.
+const TWIN_ARBITRATED_CONF_CAP: f64 = 0.5;
+
+/// Pass-1 fusion result snapshot for the M2 adoption rule.
+struct Pass1Snapshot {
+    output_ms: f64,
+    output_cost: f64,
+    confidence: f64,
+    conf_path: ConfPath,
+    /// Confidence/path before the twin ceiling — restored (capped) when
+    /// pass-2 cross-validation resolves the twin ambiguity.
+    pre_twin_conf: f64,
+    pre_twin_path: ConfPath,
+    /// Pass-1 axis-weighted Pearson peak — the anchor for the disagreement
+    /// arbitration (the most truth-correlated single signal post-M1).
+    pearson_peak_ms: f64,
+    path_str: String,
+    twin: Option<super::twin_guard::TwinInfo>,
+}
+
+/// One frame-pair's tracks exactly as fed to `SyncProblem::set_track_result`
+/// (sync-parallax-suppression M2 keeps a copy so a segment's problem can be
+/// rebuilt with gyro-prior-filtered points and re-solved in pass 2).
+struct PairTracks {
+    timestamp_us: i64,
+    tss_a: Vec<f64>,
+    tss_b: Vec<f64>,
+    rays_a: Vec<(f64, f64, f64)>,
+    rays_b: Vec<(f64, f64, f64)>,
+}
+
 pub struct FindOffsetsRssync<'a> {
     sync: SyncProblem<'a>,
     gyro_source: Arc<RwLock<GyroSource>>,
@@ -235,6 +519,11 @@ pub struct FindOffsetsRssync<'a> {
     /// Each inner Vec is `(cost, delay_s)` in scan order — reused by
     /// `scan_cost_curve_per_seg` to avoid re-scanning the same grid.
     presync_curves: Vec<Vec<(f64, f64)>>,
+
+    /// Per-range copies of the tracks fed to `SyncProblem` in `new()`,
+    /// aligned with `sync_points` (M2). ~200 pts × ~90 pairs × 5×f64 < 1MB
+    /// per segment.
+    track_data: Vec<Vec<PairTracks>>,
 }
 
 /// Confidence path classification — emitted to `[ncc-fuse]` log line for
@@ -369,6 +658,7 @@ impl FindOffsetsRssync<'_> {
             current_sync_point: Arc::new(AtomicUsize::new(0)),
             current_orientation: Arc::new(AtomicUsize::new(0)),
             presync_curves: Vec::new(),
+            track_data: Vec::new(),
         };
 
         {
@@ -399,6 +689,7 @@ impl FindOffsetsRssync<'_> {
 
             let mut from_ts = -1;
             let mut to_ts = 0;
+            let mut seg_tracks: Vec<PairTracks> = Vec::new();
             for (((a_t, a_p), (b_t, b_p)), frame_size) in range {
                 if from_ts == -1 {
                     from_ts = a_t;
@@ -433,8 +724,18 @@ impl FindOffsetsRssync<'_> {
 
                 ret.sync
                     .set_track_result(a_t, &tss_a, &tss_b, &points3d_a, &points3d_b);
+                // M2: keep a copy so pass 2 can rebuild this segment's problem
+                // from gyro-prior-filtered points.
+                seg_tracks.push(PairTracks {
+                    timestamp_us: a_t,
+                    tss_a,
+                    tss_b,
+                    rays_a: points3d_a,
+                    rays_b: points3d_b,
+                });
             }
             ret.sync_points.push((from_ts, to_ts));
+            ret.track_data.push(seg_tracks);
         }
         ret
     }
@@ -608,6 +909,175 @@ impl FindOffsetsRssync<'_> {
             );
         }
         offsets
+    }
+
+    /// M2 pass-2 core (sync-parallax-suppression): compute pure-rotation
+    /// residuals for the segment's stored tracks at the pass-1 offset, drop
+    /// points above `median + k×MAD` (parallax / foreground suspects that FB
+    /// checking cannot catch — they roundtrip consistently but violate the
+    /// rotation model), re-feed the filtered tracks into the live
+    /// `SyncProblem` and re-solve the segment with `full_sync_with_curve`.
+    ///
+    /// On success `self.presync_curves[curve_idx]` holds the pass-2 curve and
+    /// the problem holds the filtered tracks — caller re-runs the fusion body
+    /// and restores both via the returned state if pass 2 is not adopted.
+    /// On failure the original tracks are restored before returning `None`.
+    fn pass2_rebuild_segment(
+        &mut self,
+        curve_idx: usize,
+        sp_from: i64,
+        sp_to: i64,
+        pass1_output_ms: f64,
+    ) -> Pass2Outcome {
+        let range_idx =
+            match self.sync_points.iter().position(|sp| *sp == (sp_from, sp_to)) {
+                Some(r) => r,
+                None => return Pass2Outcome::NotApplicable,
+            };
+        if range_idx >= self.track_data.len() || self.track_data[range_idx].is_empty() {
+            return Pass2Outcome::NotApplicable;
+        }
+        let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
+
+        // Phase 1 (immutable): residuals → global gate → owned filtered tracks.
+        let (filtered, kept, total) = {
+            let gyro = self.gyro_source.read();
+            let quats = &gyro.quaternions;
+            if quats.len() < 2 {
+                return Pass2Outcome::NotApplicable;
+            }
+            let tracks = &self.track_data[range_idx];
+            let per_pair_residuals: Vec<Vec<f64>> = tracks
+                .iter()
+                .map(|p| rotation_residuals_deg(quats, p, pass1_output_ms, frt_offset_ms))
+                .collect();
+            let all: Vec<f64> = per_pair_residuals.iter().flatten().copied().collect();
+            let total = all.len();
+            if total < 30 {
+                log::info!(
+                    "[pass2] seg {}: skipped — only {} ray pairs (need ≥30)",
+                    curve_idx,
+                    total
+                );
+                return Pass2Outcome::NotApplicable;
+            }
+            let threshold = pass2_threshold(&all, pass2_params().k);
+            let mut filtered: Vec<PairTracks> = Vec::with_capacity(tracks.len());
+            let mut kept = 0usize;
+            for (pair, residuals) in tracks.iter().zip(per_pair_residuals.iter()) {
+                let keep = pass2_keep_indices(residuals, threshold, 10);
+                kept += keep.len();
+                filtered.push(PairTracks {
+                    timestamp_us: pair.timestamp_us,
+                    tss_a: keep.iter().map(|&j| pair.tss_a[j]).collect(),
+                    tss_b: keep.iter().map(|&j| pair.tss_b[j]).collect(),
+                    rays_a: keep.iter().map(|&j| pair.rays_a[j]).collect(),
+                    rays_b: keep.iter().map(|&j| pair.rays_b[j]).collect(),
+                });
+            }
+            let removed = total - kept;
+            let min_removed =
+                ((total as f64) * pass2_params().min_removed_frac).ceil() as usize;
+            if removed < min_removed.max(1) {
+                // Clean residuals: no meaningful parallax evidence. Skip the
+                // re-solve entirely (it would be the same problem + LBFGS
+                // basin jitter) and report the cleanliness as pass-1 evidence.
+                return Pass2Outcome::CleanResiduals { removed, total };
+            }
+            if (kept as f64) < (total as f64) * 0.3 {
+                log::warn!(
+                    "[pass2] seg {}: skipped — gate would drop {}/{} points (>70%), residual model unreliable here",
+                    curve_idx,
+                    removed,
+                    total
+                );
+                return Pass2Outcome::NotApplicable;
+            }
+            (filtered, kept, total)
+        };
+
+        // Phase 2 (mutable): feed filtered tracks and re-solve the segment.
+        for p in &filtered {
+            self.sync
+                .set_track_result(p.timestamp_us, &p.tss_a, &p.tss_b, &p.rays_a, &p.rays_b);
+        }
+        let initial_delay = -self.sync_params.initial_offset;
+        let presync_radius = self.sync_params.search_size;
+        let resync_t0 = std::time::Instant::now();
+        let delay_res = self.sync.full_sync_with_curve(
+            initial_delay / 1000.0,
+            sp_from,
+            sp_to,
+            5.0 / 1000.0,
+            presync_radius / 1000.0,
+            2,
+        );
+        let resync_ms = resync_t0.elapsed().as_secs_f64() * 1000.0;
+        match delay_res {
+            Some((delay, curve)) => {
+                let offset = delay.1 * 1000.0;
+                if (offset - initial_delay).abs() >= presync_radius * 0.9 {
+                    log::warn!(
+                        "[pass2] seg {}: re-solve LBFGS out of bounds ({:.1}ms) — restoring pass1 problem",
+                        curve_idx,
+                        offset
+                    );
+                    self.restore_segment_tracks(range_idx);
+                    return Pass2Outcome::NotApplicable;
+                }
+                let new_argmin_ext_ms = -offset - frt_offset_ms;
+                if crate::synchronization::sync_diag::is_enabled() {
+                    // Pass-2 curve dumped under range_idx + 1000 so it can be
+                    // compared against the pass-1 curve of the same segment.
+                    let curve_ext: Vec<(f64, f64)> = curve
+                        .iter()
+                        .filter(|(c, _)| c.is_finite())
+                        .map(|&(c, d_s)| (-d_s * 1000.0 - frt_offset_ms, c))
+                        .collect();
+                    crate::synchronization::sync_diag::record_cost_curve_rssync(
+                        1000 + curve_idx,
+                        &curve_ext,
+                    );
+                }
+                if curve_idx < self.presync_curves.len() {
+                    self.presync_curves[curve_idx] = curve;
+                }
+                log::info!(
+                    "[pass2] seg {}: re-solved in {:.0}ms with {}/{} points → rs_argmin {:.1}ms (cost {:.2})",
+                    curve_idx,
+                    resync_ms,
+                    kept,
+                    total,
+                    new_argmin_ext_ms,
+                    delay.0
+                );
+                Pass2Outcome::Rebuilt(Pass2Rebuild {
+                    new_argmin_ext_ms,
+                    new_cost: delay.0,
+                    kept,
+                    total,
+                })
+            }
+            None => {
+                log::warn!(
+                    "[pass2] seg {}: full_sync_with_curve returned None — restoring pass1 problem",
+                    curve_idx
+                );
+                self.restore_segment_tracks(range_idx);
+                Pass2Outcome::NotApplicable
+            }
+        }
+    }
+
+    /// Re-feed the original (unfiltered) tracks of a segment into the live
+    /// `SyncProblem` (`set_track_result` overwrites by frame timestamp key).
+    fn restore_segment_tracks(&mut self, range_idx: usize) {
+        let tracks = std::mem::take(&mut self.track_data[range_idx]);
+        for p in &tracks {
+            self.sync
+                .set_track_result(p.timestamp_us, &p.tss_a, &p.tss_b, &p.rays_a, &p.rays_b);
+        }
+        self.track_data[range_idx] = tracks;
     }
 
     /// Read rs-sync cost curve cached from `full_sync_with_curve` and return
@@ -929,6 +1399,14 @@ impl FindOffsetsRssync<'_> {
         const MIN_AXIS_ANGLE_DEG: f64 = 0.10;
         const FINE_STEP_S: f64 = 0.0001; // 0.1ms
         const W_MULTIPLIER: f64 = 1.5;
+        // Pairing tolerance for est↔raw Pearson (shared by the V2 candidate
+        // closures below and the M1 axis-quality scan).
+        const NEAREST_TOL_MS_V2: f64 = 10.0;
+        // M1 (sync-parallax-suppression): per-axis quality is the max |r_axis|
+        // over a coarse full-window scan — decoupled from any specific offset
+        // so the weights cannot self-reinforce a wrong candidate.
+        const AXIS_SCAN_STEP_MS: f64 = 25.0;
+        let axis_weighting = axis_weight_enabled();
 
         let estimated_map = estimator.estimated_gyro.read();
         let gyro = params.gyro.read();
@@ -978,15 +1456,13 @@ impl FindOffsetsRssync<'_> {
         // shared by both the anchor pool (Phase A) and the main fusion loop
         // below. Avoids running find_local_minima twice per segment.
         // Each entry is (curve_external, max_sharp_ref, minima).
+        // `mut` + extracted builder: M2 pass-2 re-solves a segment's curve and
+        // rebuilds its cache entry in place before re-running the fusion body.
         use crate::synchronization::sync_metric::{
             find_local_minima as _find_local_minima, CostMinimum as _CostMinimum,
         };
-        let curve_cache: Vec<(Vec<(f64, f64)>, f64, Vec<_CostMinimum>)> = (0..offsets.len())
-            .map(|idx| {
-                if idx >= self.presync_curves.len() {
-                    return (Vec::new(), 0.0_f64, Vec::new());
-                }
-                let curve_internal = &self.presync_curves[idx];
+        let build_curve_entry =
+            |curve_internal: &[(f64, f64)]| -> (Vec<(f64, f64)>, f64, Vec<_CostMinimum>) {
                 if curve_internal.is_empty() {
                     return (Vec::new(), 0.0_f64, Vec::new());
                 }
@@ -1001,6 +1477,13 @@ impl FindOffsetsRssync<'_> {
                     .map(|m| m.sharpness)
                     .fold(0.0_f64, f64::max);
                 (curve_external, max_sharp_ref, minima)
+            };
+        let mut curve_cache: Vec<(Vec<(f64, f64)>, f64, Vec<_CostMinimum>)> = (0..offsets.len())
+            .map(|idx| {
+                if idx >= self.presync_curves.len() {
+                    return (Vec::new(), 0.0_f64, Vec::new());
+                }
+                build_curve_entry(&self.presync_curves[idx])
             })
             .collect();
 
@@ -1120,7 +1603,7 @@ impl FindOffsetsRssync<'_> {
             .and_then(|v| v.trim().parse::<f64>().ok())
             .unwrap_or(200.0);
 
-        for i in 0..offsets.len() {
+        'seg: for i in 0..offsets.len() {
             // Reverted aaaa3e1f's cost ≤ fusion_cost_threshold bypass: rs-sync
             // cost surface in low-motion / rotation-dominated cases is not a
             // reliable basin indicator (wrong basin cost can be lower than true
@@ -1128,6 +1611,17 @@ impl FindOffsetsRssync<'_> {
             // based correlation signals (NCC, Pearson) that recover the true
             // offset. Anchor-pool gate above still uses fusion_cost_threshold
             // for cross-prior anchor selection, which is correct usage.
+            //
+            // M2 (sync-parallax-suppression): the body below runs once (pass 1);
+            // when the pass-2 trigger fires, the segment's problem is rebuilt
+            // with gyro-prior-filtered tracks and the body re-runs (pass 2),
+            // then the adoption rule picks the better of the two results.
+            // Bare `continue` inside the body MUST target 'seg, never 'pass.
+            let mut pass: u8 = 1;
+            let mut pass1_snapshot: Option<Pass1Snapshot> = None;
+            let mut pass1_curve_backup: Option<Vec<(f64, f64)>> = None;
+            let mut pass2_note: Option<(usize, usize)> = None; // (kept, total)
+            'pass: loop {
             let seg_t0 = std::time::Instant::now();
             let mut tik_ns: u64 = 0;
             let cost_scan_ns: u64;
@@ -1139,7 +1633,7 @@ impl FindOffsetsRssync<'_> {
 
             let (from_us, to_us) = match ranges.iter().find(|(f, t)| mid_us >= *f && mid_us <= *t) {
                 Some(r) => *r,
-                None => continue,
+                None => continue 'seg,
             };
             let sp_match = self.sync_points.iter().find(|(f, t)| {
                 let mid_sp = (*f + *t) / 2;
@@ -1147,7 +1641,7 @@ impl FindOffsetsRssync<'_> {
             });
             let (sp_from, sp_to) = match sp_match {
                 Some(s) => *s,
-                None => continue,
+                None => continue 'seg,
             };
 
             // estimated / raw sequences
@@ -1156,7 +1650,7 @@ impl FindOffsetsRssync<'_> {
                 .filter_map(|(_, imu)| imu.gyro.map(|g| (imu.timestamp_ms, g)))
                 .collect();
             if est.len() < 10 {
-                continue;
+                continue 'seg;
             }
 
             // Compute max angular magnitude BEFORE smoothing (used for both
@@ -1290,7 +1784,7 @@ impl FindOffsetsRssync<'_> {
                 .collect();
             raw_pairs.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
             if raw_pairs.len() < 10 {
-                continue;
+                continue 'seg;
             }
 
             let from_ms = from_us as f64 / 1000.0;
@@ -1332,8 +1826,56 @@ impl FindOffsetsRssync<'_> {
                     Some("motion_too_weak"),
                     None,
                 );
-                continue;
+                continue 'seg;
             }
+
+            // ── M1 axis-quality scan (sync-parallax-suppression) ────────
+            // Coarse 25ms-step sweep of the full search window; per-axis
+            // quality = max |r_axis| anywhere in the window. Healthy axes
+            // (flow pattern not degenerate with parallax/foreground
+            // translation, e.g. roll) keep r high; contaminated pan/tilt
+            // axes stay low everywhere. Weights derived BEFORE any candidate
+            // is evaluated — no self-reinforcement.
+            let mut axis_q = [f64::NAN; 3];
+            let axis_w: Option<[f64; 3]> = if axis_weighting {
+                let mut q = [0.0f64; 3];
+                let mut any = false;
+                let scan_radius = self.sync_params.search_size;
+                let n_steps = ((scan_radius * 2.0) / AXIS_SCAN_STEP_MS) as i32;
+                for k in 0..=n_steps {
+                    let off = initial_offset - scan_radius + (k as f64) * AXIS_SCAN_STEP_MS;
+                    let (rx, ry, rz, _rm, n) =
+                        crate::synchronization::sync_diag::compute_triaxis_correlation(
+                            &est,
+                            &raw_pairs,
+                            off,
+                            NEAREST_TOL_MS_V2,
+                        );
+                    if n >= 10 {
+                        for (qi, r) in q.iter_mut().zip([rx, ry, rz]) {
+                            if r.is_finite() {
+                                *qi = qi.max(r.abs());
+                                any = true;
+                            }
+                        }
+                    }
+                }
+                if any {
+                    axis_q = q;
+                    let w = axis_weights_from_quality(q);
+                    log::debug!(
+                        "[axis-w] seg {}: q=[{:.3}/{:.3}/{:.3}] w=[{:.3}/{:.3}/{:.3}]",
+                        i, q[0], q[1], q[2], w[0], w[1], w[2]
+                    );
+                    crate::synchronization::sync_diag::record_axis_weights(i, q, w);
+                    Some(w)
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let _ = axis_q; // surfaced via [axis-w] log + axis_weights.csv
 
             // ── Path 0: NCC FFT localization ────────────────────────────
             let ncc_fft_t0 = std::time::Instant::now();
@@ -1347,6 +1889,7 @@ impl FindOffsetsRssync<'_> {
                     from_ms,
                     to_ms,
                     self.sync_params.search_size,
+                    axis_w,
                 )
             };
             ncc_fft_ns = ncc_fft_t0.elapsed().as_nanos() as u64;
@@ -1375,7 +1918,7 @@ impl FindOffsetsRssync<'_> {
                         Some("ncc_fft_failed"),
                         None,
                     );
-                    continue;
+                    continue 'seg;
                 }
             };
 
@@ -1471,20 +2014,34 @@ impl FindOffsetsRssync<'_> {
             //                   when peak is far from initial_offset)
             //
             // 1D clustering + weighted mean → pre_sync 0.1ms refine.
-            const NEAREST_TOL_MS_V2: f64 = 10.0;
+            // (NEAREST_TOL_MS_V2 hoisted to fn scope — shared with the M1
+            // axis-quality scan above.)
             const CLUSTER_MERGE_MS: f64 = 30.0;
 
+            // M1: when axis weights are active every Pearson aggregation point
+            // (single-point candidates, the full scan below, best_r_refined)
+            // uses the weighted mean — healthy axes decide the shape match.
             let pearson_at = |offset_ms: f64| -> f64 {
                 if !offset_ms.is_finite() {
                     return 0.0;
                 }
-                let (_, _, _, r, n) =
-                    crate::synchronization::sync_diag::compute_triaxis_correlation(
+                let (_, _, _, r, n) = match axis_w {
+                    Some(w) => {
+                        crate::synchronization::sync_diag::compute_triaxis_correlation_weighted(
+                            &est,
+                            &raw_pairs,
+                            offset_ms,
+                            NEAREST_TOL_MS_V2,
+                            w,
+                        )
+                    }
+                    None => crate::synchronization::sync_diag::compute_triaxis_correlation(
                         &est,
                         &raw_pairs,
                         offset_ms,
                         NEAREST_TOL_MS_V2,
-                    );
+                    ),
+                };
                 if n >= 10 && r.is_finite() { r } else { 0.0 }
             };
             let r_at_rs_argmin = pearson_at(rs_argmin_ms);
@@ -2035,6 +2592,10 @@ impl FindOffsetsRssync<'_> {
             } else {
                 None
             };
+            // Pre-ceiling values kept for the M2 cross-validation resolution:
+            // when pass-2 independently lands in the same valley, the twin is
+            // resolved and this confidence is restored (capped).
+            let (pre_twin_conf, pre_twin_path) = (confidence, conf_path);
             let (confidence, conf_path) = if twin_info.is_some() {
                 (confidence.min(0.3), ConfPath::TwinAmbiguity)
             } else {
@@ -2046,6 +2607,203 @@ impl FindOffsetsRssync<'_> {
             } else {
                 format!("v2_consensus[{}]", cluster_signals)
             };
+
+            // ── M2 pass-2 trigger (sync-parallax-suppression) ────────────
+            // After pass 1 produced (output, confidence, twin): rebuild the
+            // segment's problem with gyro-prior-filtered tracks and re-run
+            // the body when ambiguity or low confidence indicates the rs
+            // cost surface may be parallax-contaminated.
+            let p2 = pass2_params();
+            let p2_trigger: Option<&'static str> = if pass != 1 {
+                None
+            } else {
+                match p2.mode {
+                    Pass2Mode::Off => None,
+                    Pass2Mode::Always => Some("always"),
+                    Pass2Mode::On => {
+                        if twin_info.is_some() {
+                            Some("twin_ambiguity")
+                        } else if confidence < p2.conf_thresh {
+                            Some("low_confidence")
+                        } else {
+                            None
+                        }
+                    }
+                }
+            };
+            let mut twin_clean_residuals: Option<(usize, usize)> = None;
+            if let Some(reason) = p2_trigger {
+                log::info!(
+                    "[pass2] seg {}: trigger={} (pass1 output={:.1}ms conf={:.3}) — gyro-prior reweight attempt",
+                    i,
+                    reason,
+                    output_ms,
+                    confidence
+                );
+                let curve_backup = self.presync_curves.get(i).cloned().unwrap_or_default();
+                match self.pass2_rebuild_segment(i, sp_from, sp_to, output_ms) {
+                    Pass2Outcome::Rebuilt(rb) => {
+                        log::info!(
+                            "[pass2] seg {}: removed {}/{} rotation-model violators, re-running fusion",
+                            i,
+                            rb.total - rb.kept,
+                            rb.total
+                        );
+                        pass1_snapshot = Some(Pass1Snapshot {
+                            output_ms,
+                            output_cost,
+                            confidence,
+                            conf_path,
+                            pre_twin_conf,
+                            pre_twin_path,
+                            pearson_peak_ms,
+                            path_str: path_str_owned.clone(),
+                            twin: twin_info,
+                        });
+                        pass1_curve_backup = Some(curve_backup);
+                        pass2_note = Some((rb.kept, rb.total));
+                        // Mimic full_sync's per-segment output so the body re-reads
+                        // the pass-2 rs argmin from offsets[i] at the top.
+                        offsets[i] = (mid_ms, rb.new_argmin_ext_ms, rb.new_cost, 0.5);
+                        if i < curve_cache.len() {
+                            curve_cache[i] = build_curve_entry(&self.presync_curves[i]);
+                        }
+                        pass = 2;
+                        continue 'pass;
+                    }
+                    Pass2Outcome::CleanResiduals { removed, total } => {
+                        twin_clean_residuals = Some((removed, total));
+                    }
+                    Pass2Outcome::NotApplicable => {}
+                }
+            }
+
+            // ── M2 adoption rule: pass 2 replaces pass 1 only when strictly
+            // more confident; otherwise restore the pass-1 problem state.
+            // When both passes carry the twin ceiling but landed in the SAME
+            // valley from independently filtered data, the ambiguity is
+            // resolved by cross-validation (a genuine coin flip would land in
+            // the other valley, ≥1.5×scan-step away) — the pre-twin
+            // confidence is restored (capped) instead of dropping the point.
+            let (output_ms, output_cost, confidence, conf_path, path_str_owned, twin_info) =
+                if pass == 2 {
+                    let snap = pass1_snapshot.take().expect("pass2 requires pass1 snapshot");
+                    let (kept, total) = pass2_note.unwrap_or((0, 0));
+                    // Adoption must compare NATURAL confidences: when pass 1
+                    // was twin-ceiled, its 0.3 is an artificial handicap —
+                    // comparing pass 2's un-ceiled conf against it let a
+                    // wrong-basin pass-2 re-solve replace a correct pass-1
+                    // output (observed: pass1 −0.0ms/pre-twin ~0.9 ceiled to
+                    // 0.3, pass2 LBFGS jumped to the +10 valley, conf 0.810
+                    // "won" → the exact disease this change exists to fix).
+                    if adopt_pass2(snap.pre_twin_conf, confidence) {
+                        log::info!(
+                            "[pass2] seg {}: ADOPTED (kept {}/{}): offset {:.1} → {:.1}ms, conf {:.3} (pre-twin {:.3}) → {:.3}",
+                            i, kept, total, snap.output_ms, output_ms, snap.confidence, snap.pre_twin_conf, confidence
+                        );
+                        (
+                            output_ms,
+                            output_cost,
+                            confidence,
+                            conf_path,
+                            format!("{}|pass2", path_str_owned),
+                            twin_info,
+                        )
+                    } else {
+                        // Keep pass-1 output: restore the pass-1 problem state.
+                        if let Some(c) = pass1_curve_backup.take() {
+                            if i < self.presync_curves.len() {
+                                self.presync_curves[i] = c;
+                            }
+                        }
+                        if let Some(range_idx) =
+                            self.sync_points.iter().position(|sp| *sp == (sp_from, sp_to))
+                        {
+                            self.restore_segment_tracks(range_idx);
+                        }
+                        if i < curve_cache.len() && i < self.presync_curves.len() {
+                            curve_cache[i] = build_curve_entry(&self.presync_curves[i]);
+                        }
+                        let resolve_ms = twin_params.resolve_dist_ms;
+                        let agree_d = (output_ms - snap.output_ms).abs();
+                        let twin_handicapped =
+                            snap.twin.is_some() && snap.pre_twin_conf > snap.confidence;
+                        if twin_handicapped && resolve_ms > 0.0 && agree_d <= resolve_ms {
+                            let restored_conf = snap.pre_twin_conf.min(TWIN_RESOLVED_CONF_CAP);
+                            log::info!(
+                                "[pass2] seg {}: twin RESOLVED by cross-validation (pass1 {:.1}ms vs pass2 {:.1}ms, d={:.1} ≤ {:.1}ms) — conf {:.3} → {:.3}",
+                                i, snap.output_ms, output_ms, agree_d, resolve_ms, snap.confidence, restored_conf
+                            );
+                            (
+                                snap.output_ms,
+                                snap.output_cost,
+                                restored_conf,
+                                snap.pre_twin_path,
+                                format!("{}|twin_resolved(d={:.1}ms)", snap.path_str, agree_d),
+                                snap.twin,
+                            )
+                        } else if twin_handicapped && resolve_ms > 0.0 {
+                            // The two passes landed in DIFFERENT valleys.
+                            // Keep pass-1 (full-data fusion, the reference
+                            // everywhere else) at a reduced cap — never let
+                            // an unstable re-solve overwrite it. (An earlier
+                            // Pearson-anchored arbitration was dropped: with
+                            // the anchor sitting mid-way between valleys it
+                            // picked the wrong side in live testing.)
+                            let arb_conf = snap.pre_twin_conf.min(TWIN_ARBITRATED_CONF_CAP);
+                            log::info!(
+                                "[pass2] seg {}: twin UNRESOLVED (passes disagree: pass1 {:.1}ms vs pass2 {:.1}ms, d={:.1} > {:.1}ms) — keeping pass1 at conf {:.3}",
+                                i, snap.output_ms, output_ms, agree_d, resolve_ms, arb_conf
+                            );
+                            (
+                                snap.output_ms,
+                                snap.output_cost,
+                                arb_conf,
+                                snap.pre_twin_path,
+                                format!("{}|twin_unresolved(d={:.1}ms)", snap.path_str, agree_d),
+                                snap.twin,
+                            )
+                        } else {
+                            log::info!(
+                                "[pass2] seg {}: NOT adopted (pass2 {:.1}ms conf {:.3} ≤ pass1 {:.1}ms pre-twin conf {:.3}, kept {}/{}) — keeping pass1",
+                                i, output_ms, confidence, snap.output_ms, snap.pre_twin_conf, kept, total
+                            );
+                            (
+                                snap.output_ms,
+                                snap.output_cost,
+                                snap.confidence,
+                                snap.conf_path,
+                                format!("{}|pass2_rejected", snap.path_str),
+                                snap.twin,
+                            )
+                        }
+                    }
+                } else if let Some((removed, total)) = twin_clean_residuals {
+                    // Twin fired but the gyro-prior residual analysis found
+                    // (almost) nothing violating the rotation model — the rs
+                    // twin is noise-intrinsic, not parallax, and the
+                    // correlation-led consensus stands. Restore confidence.
+                    if twin_info.is_some() && pre_twin_conf > confidence {
+                        let restored = pre_twin_conf.min(TWIN_RESOLVED_CONF_CAP);
+                        log::info!(
+                            "[pass2] seg {}: twin CLEAN residuals ({}/{} removable) — rotation model holds, restoring conf {:.3} → {:.3}",
+                            i, removed, total, confidence, restored
+                        );
+                        (
+                            output_ms,
+                            output_cost,
+                            restored,
+                            pre_twin_path,
+                            format!("{}|twin_clean_residuals", path_str_owned),
+                            twin_info,
+                        )
+                    } else {
+                        (output_ms, output_cost, confidence, conf_path, path_str_owned, twin_info)
+                    }
+                } else {
+                    (output_ms, output_cost, confidence, conf_path, path_str_owned, twin_info)
+                };
+
             offsets[i] = (mid_ms, output_ms, output_cost, confidence);
 
             // Prior-state tail for log traceability. Only emit when prior is
@@ -2155,6 +2913,8 @@ impl FindOffsetsRssync<'_> {
                 combined_fb.as_deref(),
                 twin_info.map(|t| (t.offset_ms, t.margin, t.sharp_chosen.min(t.sharp_twin))),
             );
+            break 'pass;
+            } // 'pass loop (M2 two-pass body)
         }
 
         log::info!(
@@ -2295,6 +3055,198 @@ mod rs_shortcut_tests {
         assert!(!should_use_rs_shortcut(true, 1.0, 0.90, 0.91, 0.80, 2.0, 1.8, 3.0));
         // non-finite argmin → no shortcut.
         assert!(!should_use_rs_shortcut(true, 1.0, 0.90, 0.91, 0.3, f64::NAN, 1.8, 3.0));
+    }
+}
+
+#[cfg(test)]
+mod pass2_tests {
+    use super::*;
+
+    #[test]
+    fn pass2_mode_parse_tristate() {
+        assert_eq!(Pass2Mode::parse("0"), Some(Pass2Mode::Off));
+        assert_eq!(Pass2Mode::parse("off"), Some(Pass2Mode::Off));
+        assert_eq!(Pass2Mode::parse("1"), Some(Pass2Mode::On));
+        assert_eq!(Pass2Mode::parse("ALWAYS"), Some(Pass2Mode::Always));
+        assert_eq!(Pass2Mode::parse("junk"), None);
+    }
+
+    #[test]
+    fn adoption_rule_requires_strictly_higher_finite_conf() {
+        assert!(adopt_pass2(0.3, 0.8));
+        assert!(!adopt_pass2(0.8, 0.8)); // tie keeps pass1
+        assert!(!adopt_pass2(0.8, 0.3));
+        assert!(!adopt_pass2(0.3, f64::NAN));
+    }
+
+    #[test]
+    fn mad_threshold_separates_parallax_band() {
+        // Bulk spread over 0.02-0.08° (rotation-consistent noise incl. a
+        // 0.09°-scale systematic shift from a wrong-valley pass-1 offset),
+        // outliers at 0.5° (parallax). Gate must sit between the bands.
+        let mut residuals: Vec<f64> = (0..90).map(|i| 0.02 + 0.06 * ((i % 10) as f64) / 9.0).collect();
+        for r in residuals.iter_mut().take(8) {
+            *r = 0.5;
+        }
+        let t = pass2_threshold(&residuals, 4.0);
+        assert!(t > 0.09, "true points must survive, t={}", t);
+        assert!(t < 0.5, "parallax points must be cut, t={}", t);
+        let keep = pass2_keep_indices(&residuals, t, 10);
+        assert_eq!(keep.len(), 90 - 8);
+        assert!(!keep.contains(&0));
+        assert!(keep.contains(&89));
+    }
+
+    #[test]
+    fn mad_threshold_degenerate_inputs_filter_nothing() {
+        assert!(pass2_threshold(&[0.1; 5], 4.0).is_infinite());
+        let keep = pass2_keep_indices(&[0.1; 5], f64::INFINITY, 10);
+        assert_eq!(keep.len(), 5);
+    }
+
+    #[test]
+    fn keep_indices_degrades_to_min_keep_lowest() {
+        // Gate so tight only 3 pass → degrade to the 10 lowest residuals.
+        let residuals: Vec<f64> = (0..30).map(|i| 0.01 * (i as f64 + 1.0)).collect();
+        let keep = pass2_keep_indices(&residuals, 0.035, 10);
+        assert_eq!(keep, (0..10).collect::<Vec<_>>());
+    }
+
+    /// Oscillating rotation (time-VARYING angular velocity). Constant-ω data
+    /// is useless here: relative rotation over a fixed window is then
+    /// time-shift invariant, so residuals would not react to offset error —
+    /// the same reason real sync needs varying motion.
+    fn make_oscillating_quats(amp_deg: f64, freq_hz: f64) -> TimeQuat {
+        let mut quats = TimeQuat::new();
+        let axis = Vector3::new(0.3f64, 1.0, -0.2).normalize();
+        let mut t_ms = -1000i64;
+        while t_ms <= 3000 {
+            let t_s = t_ms as f64 / 1000.0;
+            let angle = amp_deg.to_radians() * (std::f64::consts::TAU * freq_hz * t_s).sin();
+            quats.insert(t_ms * 1000, Quat64::from_scaled_axis(axis * angle));
+            t_ms += 1;
+        }
+        quats
+    }
+
+    /// Build a pair whose rays are exactly rotation-consistent with the quats
+    /// (points at infinity): ray(t) = (q(t)·rot_PI_x)⁻¹ · v_world.
+    fn make_consistent_pair(quats: &TimeQuat, ts_a: f64, ts_b: f64, n: usize) -> PairTracks {
+        let rot = Quat64::from_scaled_axis(Vector3::new(PI, 0.0, 0.0));
+        let q_a = GyroSource::clamped_quat_at_gyro_timestamp(quats, ts_a * 1000.0);
+        let q_b = GyroSource::clamped_quat_at_gyro_timestamp(quats, ts_b * 1000.0);
+        let mut pair = PairTracks {
+            timestamp_us: (ts_a * 1e6) as i64,
+            tss_a: Vec::new(),
+            tss_b: Vec::new(),
+            rays_a: Vec::new(),
+            rays_b: Vec::new(),
+        };
+        for k in 0..n {
+            let v = Vector3::new(
+                (k as f64 * 0.37).sin() * 0.4,
+                (k as f64 * 0.73).cos() * 0.4,
+                1.0,
+            )
+            .normalize();
+            let ra = (q_a * rot).inverse().transform_vector(&v);
+            let rb = (q_b * rot).inverse().transform_vector(&v);
+            pair.tss_a.push(ts_a);
+            pair.tss_b.push(ts_b);
+            pair.rays_a.push((ra.x, ra.y, ra.z));
+            pair.rays_b.push((rb.x, rb.y, rb.z));
+        }
+        pair
+    }
+
+    #[test]
+    fn residuals_zero_for_rotation_consistent_rays() {
+        let quats = make_oscillating_quats(20.0, 1.0);
+        let pair = make_consistent_pair(&quats, 1.0, 1.04, 20);
+        // frt term passed as 0 so offset 0 ⇔ internal delay 0.
+        let r = rotation_residuals_deg(&quats, &pair, 0.0, 0.0);
+        assert_eq!(r.len(), 20);
+        for v in &r {
+            assert!(*v < 0.01, "residual {} should be ≈0", v);
+        }
+    }
+
+    /// Residual grows monotonically with offset error — same trend as the
+    /// rs-sync cost surface around the true alignment.
+    #[test]
+    fn residuals_grow_with_offset_error_like_rs_cost() {
+        let quats = make_oscillating_quats(20.0, 1.0);
+        let pair = make_consistent_pair(&quats, 1.0, 1.04, 20);
+        let mean = |off: f64| -> f64 {
+            let r = rotation_residuals_deg(&quats, &pair, off, 0.0);
+            r.iter().sum::<f64>() / r.len() as f64
+        };
+        let r0 = mean(0.0);
+        let r25 = mean(25.0);
+        let r50 = mean(50.0);
+        assert!(r0 < r25 && r25 < r50, "r0={} r25={} r50={}", r0, r25, r50);
+        assert!(r50 > 0.01 && r50 < 10.0, "r50={}", r50);
+    }
+
+    /// Parallax-like rays (violating the rotation model) stand out from
+    /// rotation-consistent ones even when pass-1 is 10ms off the truth —
+    /// the spec scenario's robustness argument (0.09° ≪ gate ≪ 0.2-1°).
+    #[test]
+    fn parallax_points_filtered_at_wrong_pass1_offset() {
+        // Peak |ω| = amp·2πf ≈ 25°/s — same order as the C50 segments.
+        let quats = make_oscillating_quats(4.0, 1.0);
+        let mut pair = make_consistent_pair(&quats, 1.0, 1.04, 80);
+        // Inject 12 parallax points: bend ray_b by 0.5°.
+        let bend = Quat64::from_scaled_axis(Vector3::new(0.0, 0.5f64.to_radians(), 0.0));
+        for k in 0..12 {
+            let (x, y, z) = pair.rays_b[k];
+            let v = bend.transform_vector(&Vector3::new(x, y, z));
+            pair.rays_b[k] = (v.x, v.y, v.z);
+        }
+        // Pass-1 offset 10ms off the truth.
+        let residuals = rotation_residuals_deg(&quats, &pair, 10.0, 0.0);
+        let t = pass2_threshold(&residuals, 4.0);
+        let keep = pass2_keep_indices(&residuals, t, 10);
+        for k in 0..12 {
+            assert!(!keep.contains(&k), "parallax point {} must be cut", k);
+        }
+        assert!(keep.len() >= 60, "true points must survive, kept {}", keep.len());
+    }
+}
+
+#[cfg(test)]
+mod axis_weight_tests {
+    use super::axis_weights_from_quality;
+
+    /// Design D2 numbers (C50 bad window): q_x=0.26, q_y=0.78, q_z=0.955.
+    /// Squared: 0.0676 / 0.6084 / 0.912 → w_z : w_x ≈ 0.912 : 0.068 (≈13.5×).
+    #[test]
+    fn c50_bad_window_z_dominates() {
+        let w = axis_weights_from_quality([0.26, 0.78, 0.955]);
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!(w[2] > w[1] && w[1] > w[0]);
+        let ratio = w[2] / w[0];
+        assert!((ratio - 0.912025 / 0.0676).abs() < 0.1, "ratio={}", ratio);
+    }
+
+    /// All-weak segment: every q² < floor → exact equal weights, so the
+    /// weighted aggregate degenerates to the legacy equal-weight mean.
+    #[test]
+    fn all_weak_floors_to_equal_weights() {
+        let w = axis_weights_from_quality([0.05, 0.08, 0.09]);
+        for wi in w {
+            assert!((wi - 1.0 / 3.0).abs() < 1e-12);
+        }
+    }
+
+    /// NaN / out-of-range qualities are clamped, never poison the weights.
+    #[test]
+    fn nan_and_overrange_quality_handled() {
+        let w = axis_weights_from_quality([f64::NAN, 1.7, -0.3]);
+        assert!((w.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!(w.iter().all(|wi| wi.is_finite() && *wi > 0.0));
+        // NaN → floor; 1.7 → clamp(1)² = 1; −0.3 → floor.
+        assert!((w[1] - 1.0 / 1.1).abs() < 1e-12);
     }
 }
 

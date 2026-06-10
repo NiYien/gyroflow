@@ -50,6 +50,7 @@ struct DiagSession {
     correlation_summary: Vec<CorrelationSummaryRecord>,
     fusion_decisions: Vec<FusionDecisionRecord>,
     flow_quality: Vec<FlowQualityRecord>,
+    axis_weights: Vec<AxisWeightRecord>,
 }
 
 struct FlowQualityRecord {
@@ -139,6 +140,13 @@ struct LocalMinRecord {
     is_sharpest: u8,
 }
 
+/// Per-segment axis quality + derived weights (sync-parallax-suppression M1).
+struct AxisWeightRecord {
+    range_idx: usize,
+    q: [f64; 3],
+    w: [f64; 3],
+}
+
 struct CorrelationCurvePoint {
     range_idx: usize,
     offset_ms: f64,
@@ -210,7 +218,19 @@ pub fn init_session() {
         correlation_summary: Vec::new(),
         fusion_decisions: Vec::new(),
         flow_quality: Vec::new(),
+        axis_weights: Vec::new(),
     });
+}
+
+/// Record one segment's axis quality scan + derived weights (M1).
+#[inline]
+pub fn record_axis_weights(range_idx: usize, q: [f64; 3], w: [f64; 3]) {
+    if !is_enabled() {
+        return;
+    }
+    if let Some(s) = SESSION.lock().as_mut() {
+        s.axis_weights.push(AxisWeightRecord { range_idx, q, w });
+    }
 }
 
 /// Record one optical-flow pair's quality-gate stats (see flow_gate.rs).
@@ -624,6 +644,35 @@ pub fn compute_triaxis_correlation(
     (rx, ry, rz, rm, px.len())
 }
 
+/// Axis-quality-weighted variant of [`compute_triaxis_correlation`]
+/// (sync-parallax-suppression M1). Returns `(r_x, r_y, r_z, r_weighted,
+/// n_paired)` where `r_weighted = Σ w_i·r_i` — healthy axes dominate the
+/// aggregate while parallax-contaminated axes are de-weighted. `weights`
+/// is expected normalized (Σw = 1); a NaN per-axis r contributes 0 with its
+/// weight excluded from the renormalization.
+pub fn compute_triaxis_correlation_weighted(
+    estimated: &[(f64, [f64; 3])],
+    raw: &[(f64, [f64; 3])],
+    offset_ms: f64,
+    tol_ms: f64,
+    weights: [f64; 3],
+) -> (f64, f64, f64, f64, usize) {
+    let (rx, ry, rz, _rm, n) = compute_triaxis_correlation(estimated, raw, offset_ms, tol_ms);
+    if n < 10 {
+        return (rx, ry, rz, f64::NAN, n);
+    }
+    let mut acc = 0.0f64;
+    let mut wsum = 0.0f64;
+    for (r, w) in [(rx, weights[0]), (ry, weights[1]), (rz, weights[2])] {
+        if r.is_finite() && w.is_finite() && w > 0.0 {
+            acc += w * r;
+            wsum += w;
+        }
+    }
+    let rw = if wsum > 1e-12 { acc / wsum } else { f64::NAN };
+    (rx, ry, rz, rw, n)
+}
+
 fn nearest_raw(raw: &[(f64, [f64; 3])], ts_ms: f64, tol_ms: f64) -> Option<[f64; 3]> {
     if raw.is_empty() {
         return None;
@@ -769,7 +818,24 @@ fn write_all(s: &DiagSession) -> std::io::Result<()> {
     write_correlation_curves(s)?;
     write_fusion_decisions(s)?;
     write_flow_quality(s)?;
+    write_axis_weights(s)?;
     write_summary(s)?;
+    Ok(())
+}
+
+fn write_axis_weights(s: &DiagSession) -> std::io::Result<()> {
+    if s.axis_weights.is_empty() {
+        return Ok(());
+    }
+    let mut w = open_csv(&s.out_dir, "axis_weights.csv")?;
+    writeln!(w, "range_idx,q_x,q_y,q_z,w_x,w_y,w_z")?;
+    for r in &s.axis_weights {
+        writeln!(
+            w,
+            "{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            r.range_idx, r.q[0], r.q[1], r.q[2], r.w[0], r.w[1], r.w[2]
+        )?;
+    }
     Ok(())
 }
 
@@ -1066,12 +1132,18 @@ pub struct NccResult {
 /// `search_radius_ms` limits the τ range considered during peak search —
 /// typically set to rs-sync's search_size_ms to avoid FFT wrap-around being
 /// mistaken for a peak.
+///
+/// `axis_weights` (sync-parallax-suppression M1): `Some(w)` aggregates the
+/// per-axis NCC curves as `Σ w_i·axis_i` (w expected normalized, Σw = 1) so
+/// parallax-contaminated axes stop diluting healthy ones; `None` keeps the
+/// legacy equal-weight mean `(a0+a1+a2)/3` byte-for-byte.
 pub fn ncc_fft_align(
     estimated: &[(f64, [f64; 3])],
     raw: &[(f64, [f64; 3])],
     t_start_ms: f64,
     t_end_ms: f64,
     search_radius_ms: f64,
+    axis_weights: Option<[f64; 3]>,
 ) -> Option<NccResult> {
     use rustfft::FftPlanner;
     use rustfft::num_complex::Complex;
@@ -1219,12 +1291,25 @@ pub fn ncc_fft_align(
         ncc_per_axis[axis] = axis_ncc;
     }
 
-    // Sum across axes: NCC_total(k) = Σ_axis NCC_axis(k)
-    // Note: per-axis values are normalized, so total ∈ [-3, 3]. Divide by 3 to
-    // restore to [-1, 1].
+    // Aggregate across axes.
+    // - None: legacy equal-weight mean (a0+a1+a2)/3, total restored to [-1, 1].
+    // - Some(w): weighted sum Σ w_i·axis_i (w normalized by caller) — healthy
+    //   axes dominate, contaminated axes contribute ~nothing (M1).
     let mut ncc_total: Vec<f64> = vec![0.0; n_fft];
-    for k in 0..n_fft {
-        ncc_total[k] = (ncc_per_axis[0][k] + ncc_per_axis[1][k] + ncc_per_axis[2][k]) / 3.0;
+    match axis_weights {
+        Some(w) => {
+            for k in 0..n_fft {
+                ncc_total[k] = w[0] * ncc_per_axis[0][k]
+                    + w[1] * ncc_per_axis[1][k]
+                    + w[2] * ncc_per_axis[2][k];
+            }
+        }
+        None => {
+            for k in 0..n_fft {
+                ncc_total[k] =
+                    (ncc_per_axis[0][k] + ncc_per_axis[1][k] + ncc_per_axis[2][k]) / 3.0;
+            }
+        }
     }
 
     // Map k → τ_samples (with sign), confine peak search within search_radius.
@@ -1364,6 +1449,79 @@ mod tests {
         assert!(SESSION.lock().is_none());
     }
 
+    /// M1 (sync-parallax-suppression): the weighted Pearson aggregate's argmax
+    /// follows the dominant axis. Axis x carries a +100ms true offset, axis z
+    /// 0ms, axis y an uncorrelated different-frequency sine. Weighting z →
+    /// peak at ~0; weighting x → peak at ~+100.
+    #[test]
+    fn weighted_triaxis_correlation_follows_dominant_axis() {
+        use std::f64::consts::TAU;
+        // Multi-tone signal so the autocorrelation decays quickly off-peak —
+        // a single sine's cos-shaped plateau lets low-weight axes drag the
+        // weighted argmax sideways.
+        let tone = |t: f64| {
+            (TAU * 1.1 * t / 1000.0).sin()
+                + 0.8 * (TAU * 2.3 * t / 1000.0 + 1.0).sin()
+                + 0.6 * (TAU * 3.7 * t / 1000.0 + 2.0).sin()
+        };
+        let est: Vec<(f64, [f64; 3])> = (0..300)
+            .map(|i| {
+                let t = i as f64 * 10.0; // 10ms grid, 3s window
+                // Per-axis true offsets: x = +100ms, y = −47ms, z = 0ms.
+                (t, [tone(t - 100.0), tone(t + 47.0), tone(t)])
+            })
+            .collect();
+        let raw: Vec<(f64, [f64; 3])> = (-250..1750)
+            .map(|i| {
+                let t = i as f64 * 2.0; // 2ms grid, covers the ±300ms scan
+                (t, [tone(t), tone(t), tone(t)])
+            })
+            .collect();
+        let argmax = |w: [f64; 3]| -> f64 {
+            let mut best = (f64::NAN, f64::NEG_INFINITY);
+            let mut off = -300.0f64;
+            while off <= 300.0 {
+                let (_, _, _, r, n) =
+                    compute_triaxis_correlation_weighted(&est, &raw, off, 10.0, w);
+                if n >= 10 && r.is_finite() && r > best.1 {
+                    best = (off, r);
+                }
+                off += 10.0;
+            }
+            best.0
+        };
+        let peak_z = argmax([0.05, 0.05, 0.90]);
+        assert!(peak_z.abs() <= 10.0, "z-dominant peak at {}", peak_z);
+        let peak_x = argmax([0.90, 0.05, 0.05]);
+        assert!((peak_x - 100.0).abs() <= 10.0, "x-dominant peak at {}", peak_x);
+    }
+
+    /// Equal weights `Some([1/3; 3])` must match the legacy `None` aggregation
+    /// (up to fp rounding) — the AXIS_WEIGHT=0 rollback path passes None.
+    #[test]
+    fn ncc_equal_weights_match_legacy_mean() {
+        use std::f64::consts::TAU;
+        let est: Vec<(f64, [f64; 3])> = (0..400)
+            .map(|i| {
+                let t = i as f64 * 10.0;
+                let v = (TAU * 1.1 * t / 1000.0).sin() + 0.4 * (TAU * 2.3 * t / 1000.0).sin();
+                (t, [v, 0.6 * v, -0.8 * v])
+            })
+            .collect();
+        let raw: Vec<(f64, [f64; 3])> = (-300..2300)
+            .map(|i| {
+                let t = i as f64 * 2.0;
+                let s = t + 120.0;
+                let v = (TAU * 1.1 * s / 1000.0).sin() + 0.4 * (TAU * 2.3 * s / 1000.0).sin();
+                (t, [v, 0.6 * v, -0.8 * v])
+            })
+            .collect();
+        let a = ncc_fft_align(&est, &raw, 0.0, 4000.0, 500.0, None).unwrap();
+        let b = ncc_fft_align(&est, &raw, 0.0, 4000.0, 500.0, Some([1.0 / 3.0; 3])).unwrap();
+        assert!((a.peak_offset_ms - b.peak_offset_ms).abs() < 1e-6);
+        assert!((a.peak_height - b.peak_height).abs() < 1e-9);
+    }
+
     /// Synthesize signals with a known delay (τ_true = -120ms, i.e. offset = +120ms)
     /// and verify ncc_fft_align's peak_offset_ms within ±1ms, peak_height close to 1.
     #[test]
@@ -1392,7 +1550,7 @@ mod tests {
             raw.push((t, raw_xyz));
         }
 
-        let r = ncc_fft_align(&est, &raw, 0.0, duration_ms, 500.0)
+        let r = ncc_fft_align(&est, &raw, 0.0, duration_ms, 500.0, None)
             .expect("ncc_fft_align should return a peak for clean synthetic signal");
         assert!(
             (r.peak_offset_ms - offset_ms).abs() < 5.0,
@@ -1433,7 +1591,7 @@ mod tests {
             est.push((t, est_xyz));
             raw.push((t, raw_xyz));
         }
-        let r = ncc_fft_align(&est, &raw, 0.0, duration_ms, 500.0);
+        let r = ncc_fft_align(&est, &raw, 0.0, duration_ms, 500.0, None);
         if let Some(res) = r {
             assert!(
                 res.peak_height < 0.3,
