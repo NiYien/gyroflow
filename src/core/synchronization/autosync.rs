@@ -222,6 +222,7 @@ impl AutosyncProcess {
             .unwrap();
 
         crate::synchronization::sync_perf::reset();
+        crate::synchronization::flow_gate::reset_stats();
         crate::synchronization::sync_diag::init_session();
 
         Ok(Self {
@@ -720,6 +721,7 @@ impl AutosyncProcess {
             "[autosync timing] finished_feeding_frames: find_offsets total done in {:.1}ms",
             t_find.elapsed().as_secs_f64() * 1000.0
         );
+        crate::synchronization::flow_gate::dump_and_reset_stats();
         crate::synchronization::sync_perf::dump_and_reset();
         crate::synchronization::sync_diag::flush_and_close();
     }

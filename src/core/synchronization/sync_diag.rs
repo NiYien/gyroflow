@@ -49,6 +49,19 @@ struct DiagSession {
     correlation_curves: Vec<CorrelationCurvePoint>,
     correlation_summary: Vec<CorrelationSummaryRecord>,
     fusion_decisions: Vec<FusionDecisionRecord>,
+    flow_quality: Vec<FlowQualityRecord>,
+}
+
+struct FlowQualityRecord {
+    pair_ts_us: i64,
+    method: &'static str,
+    candidates: usize,
+    texture_pass: usize,
+    fb_pass: usize,
+    kept: usize,
+    fb_p50: f32,
+    fb_p95: f32,
+    degraded: u8,
 }
 
 struct FusionDecisionRecord {
@@ -67,6 +80,10 @@ struct FusionDecisionRecord {
     rs_refined_ms: f64,    // Path B fine-search result (otherwise NaN)
     path_taken: String, // "rssync_trusted" | "ncc_window_refine" | "ncc_peak_only" | "fallback_initial" | "motion_too_weak" | "ncc_fft_failed" | "weak_signal" | ...
     fallback_reason: Option<String>,
+    // Twin-minimum guard (sync-parallax-suppression M3). NaN when no twin.
+    twin_offset_ms: f64,
+    twin_margin: f64,
+    twin_sharp: f64, // min(sharpness(chosen), sharpness(twin)) — the gating quantity
 }
 
 struct PoseFrameRecord {
@@ -192,7 +209,40 @@ pub fn init_session() {
         correlation_curves: Vec::new(),
         correlation_summary: Vec::new(),
         fusion_decisions: Vec::new(),
+        flow_quality: Vec::new(),
     });
+}
+
+/// Record one optical-flow pair's quality-gate stats (see flow_gate.rs).
+#[inline]
+#[allow(clippy::too_many_arguments)]
+pub fn record_flow_quality(
+    pair_ts_us: i64,
+    method: &'static str,
+    candidates: usize,
+    texture_pass: usize,
+    fb_pass: usize,
+    kept: usize,
+    fb_p50: f32,
+    fb_p95: f32,
+    degraded: bool,
+) {
+    if !is_enabled() {
+        return;
+    }
+    if let Some(s) = SESSION.lock().as_mut() {
+        s.flow_quality.push(FlowQualityRecord {
+            pair_ts_us,
+            method,
+            candidates,
+            texture_pass,
+            fb_pass,
+            kept,
+            fb_p50,
+            fb_p95,
+            degraded: degraded as u8,
+        });
+    }
 }
 
 #[inline]
@@ -645,11 +695,15 @@ pub fn record_fusion_decision(
     rs_refined_ms: f64,
     path_taken: &str,
     fallback_reason: Option<&str>,
+    // (twin_offset_ms, margin, min_sharp) — None when no twin was detected.
+    twin: Option<(f64, f64, f64)>,
 ) {
     if !is_enabled() {
         return;
     }
     if let Some(s) = SESSION.lock().as_mut() {
+        let (twin_offset_ms, twin_margin, twin_sharp) =
+            twin.unwrap_or((f64::NAN, f64::NAN, f64::NAN));
         s.fusion_decisions.push(FusionDecisionRecord {
             range_idx,
             ncc_peak_ms,
@@ -665,6 +719,9 @@ pub fn record_fusion_decision(
             rs_refined_ms,
             path_taken: path_taken.to_string(),
             fallback_reason: fallback_reason.map(|s| s.to_string()),
+            twin_offset_ms,
+            twin_margin,
+            twin_sharp,
         });
     }
 }
@@ -684,7 +741,7 @@ pub fn flush_and_close() {
         log::warn!("[SyncDiag] flush error: {}", e);
     } else {
         log::info!(
-            "[SyncDiag] session closed: {} pose, {} est_vs_raw, {} init_off, {} essmat_pts, {} rssync_pts, {} summary, {} local_min, {} sharp_summary, {} corr_pts, {} corr_summary, {} fusion_dec -> {}",
+            "[SyncDiag] session closed: {} pose, {} est_vs_raw, {} init_off, {} essmat_pts, {} rssync_pts, {} summary, {} local_min, {} sharp_summary, {} corr_pts, {} corr_summary, {} fusion_dec, {} flow_quality -> {}",
             session.pose_frames.len(),
             session.estimated_vs_raw.len(),
             session.initial_offsets.len(),
@@ -696,6 +753,7 @@ pub fn flush_and_close() {
             session.correlation_curves.len(),
             session.correlation_summary.len(),
             session.fusion_decisions.len(),
+            session.flow_quality.len(),
             dir.display()
         );
     }
@@ -710,7 +768,36 @@ fn write_all(s: &DiagSession) -> std::io::Result<()> {
     write_local_minima(s)?;
     write_correlation_curves(s)?;
     write_fusion_decisions(s)?;
+    write_flow_quality(s)?;
     write_summary(s)?;
+    Ok(())
+}
+
+fn write_flow_quality(s: &DiagSession) -> std::io::Result<()> {
+    let mut w = open_csv(&s.out_dir, "flow_quality.csv")?;
+    writeln!(
+        w,
+        "pair_ts_us,method,candidates,texture_pass,fb_pass,kept,fb_p50,fb_p95,degraded"
+    )?;
+    // Pairs are recorded from rayon workers in completion order — sort by
+    // timestamp so the CSV reads chronologically.
+    let mut rows: Vec<&FlowQualityRecord> = s.flow_quality.iter().collect();
+    rows.sort_by_key(|r| r.pair_ts_us);
+    for r in rows {
+        writeln!(
+            w,
+            "{},{},{},{},{},{},{:.4},{:.4},{}",
+            r.pair_ts_us,
+            r.method,
+            r.candidates,
+            r.texture_pass,
+            r.fb_pass,
+            r.kept,
+            r.fb_p50,
+            r.fb_p95,
+            r.degraded
+        )?;
+    }
     Ok(())
 }
 
@@ -718,12 +805,12 @@ fn write_fusion_decisions(s: &DiagSession) -> std::io::Result<()> {
     let mut w = open_csv(&s.out_dir, "fusion_decision.csv")?;
     writeln!(
         w,
-        "range_idx,ncc_peak_ms,ncc_peak_height,fwhm_ms,window_ms,second_peak_ratio,cost_final_ms,fused_offset_ms,refined_cost,rs_argmin_ms,rs_2nd_over_best,rs_refined_ms,path_taken,fallback_reason"
+        "range_idx,ncc_peak_ms,ncc_peak_height,fwhm_ms,window_ms,second_peak_ratio,cost_final_ms,fused_offset_ms,refined_cost,rs_argmin_ms,rs_2nd_over_best,rs_refined_ms,path_taken,fallback_reason,twin_offset_ms,twin_margin,twin_sharp"
     )?;
     for r in &s.fusion_decisions {
         writeln!(
             w,
-            "{},{:.4},{:.6},{:.4},{:.4},{:.6},{:.4},{:.4},{:.6},{:.4},{:.4},{:.4},{},{}",
+            "{},{:.4},{:.6},{:.4},{:.4},{:.6},{:.4},{:.4},{:.6},{:.4},{:.4},{:.4},{},{},{:.4},{:.6},{:.4}",
             r.range_idx,
             r.ncc_peak_ms,
             r.ncc_peak_height,
@@ -738,6 +825,9 @@ fn write_fusion_decisions(s: &DiagSession) -> std::io::Result<()> {
             r.rs_refined_ms,
             r.path_taken,
             r.fallback_reason.as_deref().unwrap_or(""),
+            r.twin_offset_ms,
+            r.twin_margin,
+            r.twin_sharp,
         )?;
     }
     Ok(())

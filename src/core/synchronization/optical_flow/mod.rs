@@ -4,6 +4,8 @@
 use super::OpticalFlowPair;
 use std::sync::Arc;
 
+pub mod flow_gate;
+
 mod akaze;
 pub use self::akaze::*;
 mod opencv_dis;
