@@ -6885,8 +6885,65 @@ impl RenderQueue {
             Some(resolved_pairs.as_slice())
         };
 
+        // render-queue-deep-gyro-match 7.2: pass accepted deep-match results as
+        // session anchors. `deep_match_results` stores gyro_files (pool)
+        // indices, while `gyros` above is the filtered (parsed && created_at &&
+        // duration) subset — map each pool index to the filtered index that
+        // gyro_match will see. Video created_at comes from the same `videos`
+        // entry built above (same source as VideoMatchInfo).
+        let pool_to_filtered: HashMap<usize, usize> = self
+            .gyro_files
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.parsed && g.created_at_ms.is_some() && g.duration_ms.is_some())
+            .enumerate()
+            .map(|(filtered_idx, (pool_idx, _))| (pool_idx, filtered_idx))
+            .collect();
+        // HashMap iteration order is unstable; sort by job_id so anchor
+        // application order (and any same-cluster override outcome) is
+        // deterministic across runs.
+        let mut deep_entries: Vec<(u32, &DeepMatchResult)> =
+            self.deep_match_results.iter().map(|(k, v)| (*k, v)).collect();
+        deep_entries.sort_by_key(|(job_id, _)| *job_id);
+        let mut deep_anchors: Vec<core::gyro_match::DeepMatchAnchor> = Vec::new();
+        for (job_id, r) in deep_entries {
+            let Some(video_index) = job_ids.iter().position(|&id| id == job_id) else {
+                ::log::warn!(
+                    target: "sync",
+                    "[deep-match] anchor skipped: job_id={} not found in queue",
+                    job_id
+                );
+                continue;
+            };
+            let Some(&gyro_index) = pool_to_filtered.get(&r.gyro_index) else {
+                ::log::warn!(
+                    target: "sync",
+                    "[deep-match] anchor skipped: job_id={} gyro pool index {} not in parsed gyro set",
+                    job_id,
+                    r.gyro_index
+                );
+                continue;
+            };
+            let video_created_at_ms = videos.get(video_index).and_then(|v| v.created_at_ms);
+            ::log::info!(
+                target: "sync",
+                "[deep-match] anchor input: job_id={} video_index={} gyro_index={} (pool {}) offset_ms={:.1} video_created_at={:?}",
+                job_id,
+                video_index,
+                gyro_index,
+                r.gyro_index,
+                r.offset_ms,
+                video_created_at_ms
+            );
+            deep_anchors.push(core::gyro_match::DeepMatchAnchor {
+                gyro_index,
+                offset_ms: r.offset_ms,
+                video_created_at_ms,
+            });
+        }
+
         let t1 = std::time::Instant::now();
-        let mut result = core::gyro_match::batch_match(&videos, &gyros, manual);
+        let mut result = core::gyro_match::batch_match(&videos, &gyros, manual, &deep_anchors);
         ::log::info!(
             "[batch_match] algorithm: {:.1}ms (offset={:?}, error={:?})",
             t1.elapsed().as_secs_f64() * 1000.0,

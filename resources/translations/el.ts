@@ -2772,21 +2772,21 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
         <source>No zooming</source>
         <translation>Χωρίς μεγέθυνση</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
         <source>Dynamic zooming</source>
         <translation>Δυναμική μεγέθυνση</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
         <source>Static zoom</source>
         <translation>Στατική μεγέθυνση</translation>
     </message>
@@ -2806,37 +2806,37 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Οπτικά χαρακτηριστικά</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2566"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2586"/>
         <source>Do nothing</source>
         <translation>Καμία ενέργεια</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2567"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2587"/>
         <source>Shut down the computer</source>
         <translation>Τερματισμός λειτουργίας του υπολογιστή</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2568"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2588"/>
         <source>Restart the computer</source>
         <translation>Επανεκκινήστε τον υπολογιστή σας</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2569"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2589"/>
         <source>Sleep</source>
         <translation>Αναστολή</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2570"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2590"/>
         <source>Hibernate</source>
         <translation>Αδρανοποίηση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2571"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2591"/>
         <source>Logout</source>
         <translation>Αποσύνδεση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2572"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2592"/>
         <source>Close Gyroflow</source>
         <translation>Κλείσιμο Gyroflow</translation>
     </message>
@@ -2872,12 +2872,12 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1316"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1336"/>
         <source>Change framerate</source>
         <translation>Αλλαγή ρυθμού καρέ</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1337"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1357"/>
         <source>Change lens group</source>
         <translation>Αλλαγή ομάδας φακών</translation>
     </message>
@@ -2917,69 +2917,69 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>%1 βίντεο θα χρησιμοποιήσουν ανάμορφο φακό</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1349"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1369"/>
         <source>Pair with Gyro</source>
         <translation>Σύζευξη με γυροσκόπιο</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1437"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1457"/>
         <source>Unpair gyro</source>
         <translation>Κατάργηση σύζευξης με γυροσκόπιο</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2060"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2115"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2080"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2135"/>
         <source>Sync complete</source>
         <translation>Ο συγχρονισμός ολοκληρώθηκε</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1931"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1951"/>
         <source>Sync complete: %1</source>
         <translation>Ο συγχρονισμός ολοκληρώθηκε: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation>Τα αρχεία Canon CRM πρέπει να φορτωθούν μαζί με ένα ομώνυμο proxy βίντεο.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="712"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="732"/>
         <source>Pause</source>
         <translation>Παύση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="439"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="459"/>
         <source>Render queue</source>
         <translation>Ουρά αποτύπωσης</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2184"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
         <source>Selected: %1</source>
         <translation>Επιλεγμένο: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2192"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2212"/>
         <source>Select all</source>
         <translation>Επιλογή όλων</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2198"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2218"/>
         <source>Deselect</source>
         <translation>Αποεπιλογή</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2224"/>
         <source>Done</source>
         <translation>Ολοκληρώθηκε</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2574"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2594"/>
         <source>When rendering is finished: %1</source>
         <translation>Όταν η απόδοση έχει ολοκληρωθεί: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="572"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2111"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="592"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2131"/>
         <source> @ %1fps</source>
         <translation> @ %1fps</translation>
     </message>
@@ -2988,170 +2988,171 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">Δεν βρέθηκε ζεύγος βαθμονόμησης για %1 βίντεο. Παρακαλώ ζεύξη χειροκίνητα.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="583"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="603"/>
         <source>Elapsed: %1</source>
         <translation>Έχουν παρέλθει: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="601"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="621"/>
         <source>Remaining: %1</source>
         <translation>Απομένει: %1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="291"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="382"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="386"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="632"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="664"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2397"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="302"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="402"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="652"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="684"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2417"/>
         <source>Ok</source>
         <translation>Εντάξει</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="648"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
         <source>Rendering %1...</source>
         <translation>Αποτύπωση %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="648"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
         <source>Converting to %1 %2...</source>
         <translation>Μετατροπή σε %1 %2...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="666"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="686"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation>Η αποτύπωση ολοκληρώθηκε. Το αρχείο γράφτηκε σε: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="659"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2150"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="679"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2170"/>
         <source>Open rendered file</source>
         <translation>Άνοιγμα αρχείου αποτύπωσης</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="376"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="396"/>
         <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
         <translation>Ορισμένα βίντεο δεν συγχρονίστηκαν αξιόπιστα. Να γίνει αυτόματη επιδιόρθωση;</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="377"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="397"/>
         <source>Repair</source>
         <translation>Επιδιόρθωση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="378"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="398"/>
         <source>Skip</source>
         <translation>Παράλειψη</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="385"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="405"/>
         <source>Some videos are still not reliably synchronized after repair.</source>
         <translation>Ορισμένα βίντεο εξακολουθούν να μην συγχρονίζονται αξιόπιστα μετά την επιδιόρθωση.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="461"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="481"/>
         <source>Choose files</source>
         <translation>Επιλογή αρχείων</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
         <source>Video files</source>
         <translation>Αρχεία πολυμέσων</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="478"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="498"/>
         <source>Choose folder</source>
         <translation>Επιλογή φακέλου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="511"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="531"/>
         <source>0s</source>
         <translation>0 δ</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="662"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2156"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="682"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2176"/>
         <source>Open file location</source>
         <translation>Άνοιγμα τοποθεσίας αρχείου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="681"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1800"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1822"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="701"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1820"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1842"/>
         <source>Render using CPU</source>
         <translation>Αποτύπωση με χρήση του επεξεργαστή</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="266"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="688"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="763"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="270"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="708"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="783"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
         <source>Cancel</source>
         <translation>Ακύρωση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="690"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation>Η επιτάχυνση κωδικοποίησης της κάρτας γραφικών σας δεν υποστηρίζει αυτή τη μορφή εικονοστοιχείων (%1).
 Θέλετε να μετατρέψετε σε διαφορετική μορφή εικονοστοιχείων ή να κρατήσετε την αρχική και να αποτυπώσετε με τον επεξεργαστή;</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="730"/>
         <source>Start exporting</source>
         <translation>Έναρξη Εξαγωγής</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="731"/>
         <source>Resume</source>
         <translation>Συνέχιση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="826"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="846"/>
         <source>Add files</source>
         <translation>Προσθήκη αρχείων</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="844"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="864"/>
         <source>Add folder</source>
         <translation>Προσθήκη φακέλου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1269"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1289"/>
         <source>Render now</source>
         <translation>Αποτύπωση τώρα</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1279"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1299"/>
         <source>Edit</source>
         <translation>Επεξεργασία</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1297"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
         <source>Reset status</source>
         <translation>Επαναφορά κατάστασης</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1297"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
         <source>Stop</source>
         <translation>Διακοπή</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1776"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1796"/>
         <source>Missing required components.</source>
         <translation>Λείπουν τα απαιτούμενα εξαρτήματα.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1788"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
         <source>Applying pixel format: %1</source>
         <translation>Εφαρμογή μορφής pixel: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1828"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
@@ -3160,106 +3161,111 @@ This choice applies to all remaining jobs in this batch.</source>
 Η επιλογή ισχύει για όλες τις υπόλοιπες εργασίες σε αυτή τη δέσμη.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1811"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1831"/>
         <source>Waiting for pixel format selection…</source>
         <translation>Αναμονή για επιλογή μορφής pixel…</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1835"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2699"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1855"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2719"/>
         <source>Yes</source>
         <translation>Ναί</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1836"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1856"/>
         <source>Rename</source>
         <translation>Μετονομασία</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1837"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2706"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2726"/>
         <source>No</source>
         <translation>Όχι</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1930"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
         <source>ETA %1</source>
         <translation>ETA %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1932"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1952"/>
         <source>Synchronizing: %1</source>
         <translation>Συγχρονισμός: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1933"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1953"/>
         <source>Rendering: %1</source>
         <translation>Απόδοση: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
         <source>Mode</source>
         <translation>Λειτουργία</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
         <source>Local</source>
         <translation>Τοπικό</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
         <source>Global</source>
         <translation>Καθολικό</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2015"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2035"/>
         <source>Lens</source>
         <translation>Φακός</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2020"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Focal</source>
         <translation>Εστίαση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2025"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2045"/>
         <source>Anamorphic</source>
         <translation>Αναμορφικό</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1994"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2052"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2014"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
         <source>Manual</source>
         <translation>Εγχειρίδιο</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
         <source>Failed to load the gyro file.</source>
         <translation>Αποτυχία φόρτωσης του αρχείου γυροσκοπίου.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="265"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="269"/>
         <source>Deep matching gyro data...</source>
         <translation>Βαθιά αντιστοίχιση δεδομένων γυροσκοπίου...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>Deep match succeeded. Offset: %1 s</source>
+        <translation>Η βαθιά αντιστοίχιση ολοκληρώθηκε με επιτυχία. Αντιστάθμιση: %1 δ</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
         <source>The video has too little camera motion for deep matching. Try a video with more movement.</source>
         <translation>Το βίντεο έχει πολύ λίγη κίνηση κάμερας για βαθιά αντιστοίχιση. Δοκιμάστε ένα βίντεο με περισσότερη κίνηση.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="291"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
         <source>Couldn&apos;t find this video&apos;s time range in the selected gyro file. Make sure you picked the correct gyro file.</source>
         <translation>Δεν ήταν δυνατή η εύρεση του χρονικού εύρους αυτού του βίντεο στο επιλεγμένο αρχείο γυροσκοπίου. Βεβαιωθείτε ότι επιλέξατε το σωστό αρχείο γυροσκοπίου.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="353"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="373"/>
         <source>No calibration pair found for %1 video(s). Pair manually, or right-click the video → &quot;Deep match with gyro&quot; to search the whole gyro file.</source>
         <translation>Δεν βρέθηκε ζεύγος βαθμονόμησης για %1 βίντεο. Κάντε ζεύξη χειροκίνητα ή δεξί κλικ στο βίντεο → &quot;Βαθιά αντιστοίχιση με γυροσκόπιο&quot; για αναζήτηση σε ολόκληρο το αρχείο γυροσκοπίου.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="381"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="401"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 
 **1. Calibration videos are loaded**
@@ -3294,187 +3300,187 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
 - Ή ξανακινηματογραφήστε βίντεο βαθμονόμησης και προσθέστε τα ξανά.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1251"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished">Ρυθμός καρέ (0=αμετάβλητο)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
         <source>OK</source>
         <translation type="unfinished">ΟΚ</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1392"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1412"/>
         <source>Deep match with gyro</source>
         <translation>Βαθιά αντιστοίχιση με γυροσκόπιο</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2050"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2070"/>
         <source>Deep</source>
         <translation>Βαθιά</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2055"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2075"/>
         <source>Calibration</source>
         <translation>Προσαρμογή</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2059"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2079"/>
         <source>Sync confirmed</source>
         <translation>Ο συγχρονισμός επιβεβαιώθηκε</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2061"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2081"/>
         <source>Sync not confirmed</source>
         <translation>Ο συγχρονισμός δεν επιβεβαιώθηκε</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2071"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
         <source>Skipped - no gyro data</source>
         <translation>Παράβλεψη - δεν υπάρχουν δεδομένα γυροσκοπίου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2092"/>
         <source>Skipped - calibration pair</source>
         <translation>Παράλειψη - ζεύγος βαθμονόμησης</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2231"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2242"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2262"/>
         <source>Matching...</source>
         <translation>Ταίριασμα...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
         <source>Auto match</source>
         <translation>Αυτόματη αντιστοίχιση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2255"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2275"/>
         <source>Clear</source>
         <translation>Καθαρό</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2272"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2292"/>
         <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Drop video files or gyroscope data here</source>
         <translation>Αποθέστε αρχεία βίντεο ή δεδομένα γυροσκόπιου εδώ</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2396"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2416"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>Λόγω περιορισμών πρόσβασης στα αρχεία, πρέπει να επιλέξετε τον φάκελο προορισμού με μη αυτόματο τρόπο.
 Κάντε κλικ στο Ok και επιλέξτε το φάκελο προορισμού.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2596"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2616"/>
         <source>Queue settings</source>
         <translation>Ρυθμίσεις ουράς</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2652"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2672"/>
         <source>Number of parallel renders</source>
         <translation>Αριθμός παράλληλων αποδόσεων</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2663"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2683"/>
         <source>Default overwrite action</source>
         <translation>Προεπιλεγμένη ενέργεια αντικατάστασης</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2664"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2684"/>
         <source>Ask</source>
         <translation>Ρωτήστε</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2666"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2686"/>
         <source>Overwrite file</source>
         <translation>Αντικατάσταση αρχείου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2667"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
         <source>Rename file</source>
         <translation>Μετονομασία αρχείου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2668"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
         <source>Skip file</source>
         <translation>Παράλειψη αρχείου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2707"/>
         <source>Export mode</source>
         <translation>Λειτουργία εξαγωγής</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2708"/>
         <source>Stabilized video</source>
         <translation>Σταθεροποιημένο βίντεο</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2689"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2709"/>
         <source>Project file</source>
         <translation>Αρχείο έργου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2690"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2710"/>
         <source>Project file (including gyro data)</source>
         <translation>Αρχείο έργου (συμπεριλαμβανομένων των δεδομένων γυροσκοπίου)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2691"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2711"/>
         <source>Project file (including processed gyro data)</source>
         <translation>Αρχείο έργου (συμπεριλαμβανομένων των επεξεργασμένων δεδομένων γυροσκοπίου)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2692"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2712"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation>Σταθεροποιημένο αρχείο βίντεο + Project με δεδομένα γυροσκοπίου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2696"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2716"/>
         <source>Show queue when adding an item</source>
         <translation>Εμφάνιση ουράς κατά την προσθήκη ενός στοιχείου</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2697"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
         <source>Clear render queue</source>
         <translation>Εκκαθάριση ουράς απόδοσης</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2698"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2718"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Είστε βέβαιοι ότι θέλετε να αφαιρέσετε όλα τα στοιχεία από την ουρά απόδοσης;</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1832"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1837"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
         <source>Output file already exists.</source>
         <translation>Το αρχείο υπάρχει ήδη.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="757"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="777"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation>Σύζευξη: %1 — Κάντε κλικ σε ένα βίντεο για σύζευξη</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2116"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2136"/>
         <source>Synchronizing...</source>
         <translation>Συγχρονισμός...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2117"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2137"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>Έχουν παρέλθει: %1. Απομένει: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2160"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
         <source>Remove</source>
         <translation>Αφαίρεση</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1939"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1959"/>
         <source>Save to: %1</source>
         <translation>Αποθήκευση σε: %1</translation>
     </message>
@@ -3858,7 +3864,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1970"/>
         <source>Smoothness</source>
         <translation>Ομαλότητα</translation>
     </message>
@@ -4038,7 +4044,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1954"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1974"/>
         <source>Lock horizon</source>
         <translation>Κλείδωμα ορίζοντα</translation>
     </message>
@@ -4051,7 +4057,7 @@ Click Ok and select the destination folder.</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1958"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1978"/>
         <source>Auto rotate</source>
         <translation>Αυτόματη περιστροφή</translation>
     </message>

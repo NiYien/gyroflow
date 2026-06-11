@@ -2770,21 +2770,21 @@ Abra &lt;b&gt;Terminal&lt;/b&gt; e ingrese el siguiente comando:</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
         <source>No zooming</source>
         <translation>Sin zoom</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
         <source>Dynamic zooming</source>
         <translation>Zoom dinámico</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
         <source>Static zoom</source>
         <translation>Zoom estático</translation>
     </message>
@@ -2804,37 +2804,37 @@ Abra &lt;b&gt;Terminal&lt;/b&gt; e ingrese el siguiente comando:</translation>
         <translation>Características visuales</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2566"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2586"/>
         <source>Do nothing</source>
         <translation>No hacer nada</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2567"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2587"/>
         <source>Shut down the computer</source>
         <translation>Apagar el equipo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2568"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2588"/>
         <source>Restart the computer</source>
         <translation>Reiniciar el equipo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2569"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2589"/>
         <source>Sleep</source>
         <translation>Suspender</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2570"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2590"/>
         <source>Hibernate</source>
         <translation>Hibernar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2571"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2591"/>
         <source>Logout</source>
         <translation>Cerrar sesión</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2572"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2592"/>
         <source>Close Gyroflow</source>
         <translation>Cerrar Gyroflow</translation>
     </message>
@@ -2870,12 +2870,12 @@ Abra &lt;b&gt;Terminal&lt;/b&gt; e ingrese el siguiente comando:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1316"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1336"/>
         <source>Change framerate</source>
         <translation>Cambiar velocidad de fotogramas</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1337"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1357"/>
         <source>Change lens group</source>
         <translation>Cambiar grupo de objetivos</translation>
     </message>
@@ -2915,69 +2915,69 @@ Para los vídeos sin emparejar, puedes hacerlo manualmente: clic derecho en el v
         <translation>%1 vídeo(s) usarán óptica anamórfica</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1349"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1369"/>
         <source>Pair with Gyro</source>
         <translation>Emparejar con giroscopio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1437"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1457"/>
         <source>Unpair gyro</source>
         <translation>Desemparejar giroscopio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2060"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2115"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2080"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2135"/>
         <source>Sync complete</source>
         <translation>Sincronización completada</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1931"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1951"/>
         <source>Sync complete: %1</source>
         <translation>Sincronización completada: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation>Los archivos Canon CRM deben cargarse junto con un vídeo proxy del mismo nombre.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="712"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="732"/>
         <source>Pause</source>
         <translation>Pausa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="439"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="459"/>
         <source>Render queue</source>
         <translation>Cola de renderizado</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2184"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
         <source>Selected: %1</source>
         <translation>Seleccionado: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2192"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2212"/>
         <source>Select all</source>
         <translation>Seleccionar todo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2198"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2218"/>
         <source>Deselect</source>
         <translation>Deseleccionar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2224"/>
         <source>Done</source>
         <translation>Hecho</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2574"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2594"/>
         <source>When rendering is finished: %1</source>
         <translation>Cuando el renderizado termine: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="572"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2111"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="592"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2131"/>
         <source> @ %1fps</source>
         <translation> @ %1fps</translation>
     </message>
@@ -2986,170 +2986,171 @@ Para los vídeos sin emparejar, puedes hacerlo manualmente: clic derecho en el v
         <translation type="vanished">No se encontró ningún par de calibración para los videos %1. Por favor empareje manualmente.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="583"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="603"/>
         <source>Elapsed: %1</source>
         <translation>Transcurrido: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="601"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="621"/>
         <source>Remaining: %1</source>
         <translation>Restante: %1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="291"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="382"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="386"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="632"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="664"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2397"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="302"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="402"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="652"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="684"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2417"/>
         <source>Ok</source>
         <translation>Aceptar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="648"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
         <source>Rendering %1...</source>
         <translation>Renderizando %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="648"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
         <source>Converting to %1 %2...</source>
         <translation>Convirtiendo a %1 %2...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="666"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="686"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation>Renderizado completado. Archivo de salida: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="659"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2150"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="679"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2170"/>
         <source>Open rendered file</source>
         <translation>Abrir archivo renderizado</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="376"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="396"/>
         <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
         <translation>Algunos vídeos no se pudieron sincronizar de forma fiable. ¿Intentar repararlos automáticamente?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="377"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="397"/>
         <source>Repair</source>
         <translation>Reparar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="378"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="398"/>
         <source>Skip</source>
         <translation>Omitir</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="385"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="405"/>
         <source>Some videos are still not reliably synchronized after repair.</source>
         <translation>Algunos vídeos siguen sin estar sincronizados de forma fiable tras la reparación.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="461"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="481"/>
         <source>Choose files</source>
         <translation>Elegir archivos</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
         <source>Video files</source>
         <translation>Archivos de vídeo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="478"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="498"/>
         <source>Choose folder</source>
         <translation>Elegir carpeta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="511"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="531"/>
         <source>0s</source>
         <translation>0 s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="662"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2156"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="682"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2176"/>
         <source>Open file location</source>
         <translation>Abrir la ubicación del archivo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="681"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1800"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1822"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="701"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1820"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1842"/>
         <source>Render using CPU</source>
         <translation>Renderizar usando la CPU</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="266"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="688"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="763"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="270"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="708"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="783"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
         <source>Cancel</source>
         <translation>Cancelar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="690"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation>El codificador acelerado de GPU no soporta este formato de píxel (%1).
 ¿Desea convertir a otro formato de píxeles válido o mantener el original y renderizar usando la CPU?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="730"/>
         <source>Start exporting</source>
         <translation>Iniciar exportación</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="731"/>
         <source>Resume</source>
         <translation>Continuar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="826"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="846"/>
         <source>Add files</source>
         <translation>Agregar archivos</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="844"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="864"/>
         <source>Add folder</source>
         <translation>Agregar carpeta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1269"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1289"/>
         <source>Render now</source>
         <translation>Renderizar ahora</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1279"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1299"/>
         <source>Edit</source>
         <translation>Editar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1297"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
         <source>Reset status</source>
         <translation>Reiniciar estado</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1297"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
         <source>Stop</source>
         <translation>Detener</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1776"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1796"/>
         <source>Missing required components.</source>
         <translation>Faltan componentes requeridos.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1788"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
         <source>Applying pixel format: %1</source>
         <translation>Aplicando formato de píxel: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1828"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
@@ -3158,106 +3159,111 @@ Elige un formato de píxel de destino o renderiza con la CPU.
 Esta elección se aplicará a todos los trabajos restantes de este lote.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1811"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1831"/>
         <source>Waiting for pixel format selection…</source>
         <translation>Esperando selección de formato de píxel…</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1835"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2699"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1855"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2719"/>
         <source>Yes</source>
         <translation>Si</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1836"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1856"/>
         <source>Rename</source>
         <translation>Renombrar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1837"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2706"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2726"/>
         <source>No</source>
         <translation>No</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1930"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
         <source>ETA %1</source>
         <translation>Tiempo estimado %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1932"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1952"/>
         <source>Synchronizing: %1</source>
         <translation>Sincronizando: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1933"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1953"/>
         <source>Rendering: %1</source>
         <translation>Renderizando %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
         <source>Mode</source>
         <translation>Modo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
         <source>Local</source>
         <translation>Local</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
         <source>Global</source>
         <translation>Global</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2015"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2035"/>
         <source>Lens</source>
         <translation>Lente</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2020"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Focal</source>
         <translation>Focal</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2025"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2045"/>
         <source>Anamorphic</source>
         <translation>Anamórfico</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1994"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2052"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2014"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
         <source>Manual</source>
         <translation>manuales</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
         <source>Failed to load the gyro file.</source>
         <translation>No se pudo cargar el archivo del giroscopio.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="265"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="269"/>
         <source>Deep matching gyro data...</source>
         <translation>Realizando emparejamiento profundo de datos del giroscopio...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>Deep match succeeded. Offset: %1 s</source>
+        <translation>Emparejamiento profundo realizado con éxito. Desplazamiento: %1 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
         <source>The video has too little camera motion for deep matching. Try a video with more movement.</source>
         <translation>El vídeo tiene muy poco movimiento de cámara para el emparejamiento profundo. Prueba con un vídeo con más movimiento.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="291"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
         <source>Couldn&apos;t find this video&apos;s time range in the selected gyro file. Make sure you picked the correct gyro file.</source>
         <translation>No se encontró el rango de tiempo de este vídeo en el archivo de giroscopio seleccionado. Asegúrate de haber elegido el archivo de giroscopio correcto.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="353"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="373"/>
         <source>No calibration pair found for %1 video(s). Pair manually, or right-click the video → &quot;Deep match with gyro&quot; to search the whole gyro file.</source>
         <translation>No se encontró ningún par de calibración para los videos %1. Empareje manualmente o haga clic derecho en el vídeo → &quot;Emparejamiento profundo con giroscopio&quot; para buscar en todo el archivo del giroscopio.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="381"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="401"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 
 **1. Calibration videos are loaded**
@@ -3292,187 +3298,187 @@ Si no hay ningún dato de sincronización de tiempo utilizable, haz clic derecho
 - O graba nuevos vídeos de calibración y añádelos a la cola.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1251"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished">Velocidad de fotogramas (0=sin cambios)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
         <source>OK</source>
         <translation type="unfinished">bien</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1392"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1412"/>
         <source>Deep match with gyro</source>
         <translation>Emparejamiento profundo con giroscopio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2050"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2070"/>
         <source>Deep</source>
         <translation>Profundo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2055"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2075"/>
         <source>Calibration</source>
         <translation>Calibración</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2059"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2079"/>
         <source>Sync confirmed</source>
         <translation>Sincronización confirmada</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2061"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2081"/>
         <source>Sync not confirmed</source>
         <translation>Sincronización no confirmada</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2071"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
         <source>Skipped - no gyro data</source>
         <translation>Omitido: no hay datos del giroscopio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2092"/>
         <source>Skipped - calibration pair</source>
         <translation>Omitido: par de calibración</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2231"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2242"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2262"/>
         <source>Matching...</source>
         <translation>Coincidencia...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
         <source>Auto match</source>
         <translation>coincidencia automática</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2255"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2275"/>
         <source>Clear</source>
         <translation>Borrar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2272"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2292"/>
         <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Drop video files or gyroscope data here</source>
         <translation>Suelte archivos de vídeo o datos de giroscopio aquí</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2396"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2416"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>Debido a las restricciones de acceso al archivo, debe seleccionar la carpeta de destino manualmente.
 Haga clic en Ok y seleccione la carpeta de destino.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2596"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2616"/>
         <source>Queue settings</source>
         <translation>Ajustes de cola</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2652"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2672"/>
         <source>Number of parallel renders</source>
         <translation>Número de renderizados paralelos</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2663"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2683"/>
         <source>Default overwrite action</source>
         <translation>Acción de sobrescritura por defecto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2664"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2684"/>
         <source>Ask</source>
         <translation>Preguntar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2666"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2686"/>
         <source>Overwrite file</source>
         <translation>Sobrescribir archivo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2667"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
         <source>Rename file</source>
         <translation>Renombrar archivo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2668"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
         <source>Skip file</source>
         <translation>Omitir archivo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2707"/>
         <source>Export mode</source>
         <translation>Modo de exportación</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2708"/>
         <source>Stabilized video</source>
         <translation>Vídeo estabilizado</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2689"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2709"/>
         <source>Project file</source>
         <translation>Archivo de proyecto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2690"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2710"/>
         <source>Project file (including gyro data)</source>
         <translation>Archivo de proyecto (incluyendo datos de giroscopio)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2691"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2711"/>
         <source>Project file (including processed gyro data)</source>
         <translation>Archivo de proyecto (incluyendo datos de giroscopio procesados)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2692"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2712"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation>Vídeo estabilizado + Archivo de proyecto con datos de giro</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2696"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2716"/>
         <source>Show queue when adding an item</source>
         <translation>Mostrar cola al agregar un elemento</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2697"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
         <source>Clear render queue</source>
         <translation>Limpiar cola de procesamiento</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2698"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2718"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>¿Está seguro que desea eliminar todos los elementos de la cola de renderización?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1832"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1837"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
         <source>Output file already exists.</source>
         <translation>El archivo de salida ya existe.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="757"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="777"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation>Emparejamiento: %1 — Haga clic en un video para emparejar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2116"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2136"/>
         <source>Synchronizing...</source>
         <translation>Sincronizando...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2117"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2137"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>Transcurrido: %1. Restante: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2160"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
         <source>Remove</source>
         <translation>Eliminar</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1939"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1959"/>
         <source>Save to: %1</source>
         <translation>Guardar en: %1</translation>
     </message>
@@ -3855,7 +3861,7 @@ Haga clic en Ok y seleccione la carpeta de destino.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1970"/>
         <source>Smoothness</source>
         <translation>Suavizado</translation>
     </message>
@@ -4035,7 +4041,7 @@ Haga clic en Ok y seleccione la carpeta de destino.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1954"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1974"/>
         <source>Lock horizon</source>
         <translation>Fijar horizonte</translation>
     </message>
@@ -4048,7 +4054,7 @@ Haga clic en Ok y seleccione la carpeta de destino.</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1958"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1978"/>
         <source>Auto rotate</source>
         <translation>Rotación automática</translation>
     </message>

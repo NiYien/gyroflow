@@ -250,10 +250,11 @@ Item {
     // Modal progress dialog for a running deep match. Root-scoped (not inside
     // the delegate) so root.startDeepMatch can resolve the component id.
     // Cancel requests the abort; the dialog only closes when the backend
-    // confirms via deep_match_finished. Failures close this dialog and show a
-    // plain-language messageBox instead of mutating it in place — Modal only
-    // applies iconType when it becomes visible, so an in-place Info → Warning
-    // switch would keep the stale icon.
+    // confirms via deep_match_finished. Success switches this dialog in place
+    // to a success state (offset + Ok) instead of closing silently. Failures
+    // close this dialog and show a plain-language messageBox instead of
+    // mutating it in place — Modal only applies iconType when it becomes
+    // visible, so an in-place Info → Warning switch would keep the stale icon.
     Component {
         id: deepMatchDialogComponent;
         Modal {
@@ -261,10 +262,17 @@ Item {
             property int jobId: -1;
             property string videoName: "";
             property string gyroName: "";
+            // Set on acceptance: the dialog switches to its success state and
+            // the single button becomes [Ok] (close + destroy).
+            property bool succeeded: false;
             iconType: Modal.Info;
             text: qsTr("Deep matching gyro data...") + "\n" + videoName + "\n⟷ " + gyroName;
             buttons: [qsTr("Cancel")];
             onClicked: {
+                if (deepMatchDialog.succeeded) {
+                    deepMatchDialog.close();
+                    return;
+                }
                 // Request cancellation; the dialog closes when
                 // deep_match_finished(cancelled) arrives.
                 render_queue.cancel_deep_gyro_match(jobId);
@@ -283,8 +291,20 @@ Item {
                 }
                 function onDeep_match_finished(job_id: int, success: bool, error_kind: string, offset_ms: real): void {
                     if (job_id !== deepMatchDialog.jobId) return;
+                    if (success) {
+                        // Success must be explicitly visible (spec): keep the
+                        // modal open, show the found offset, switch to [Ok].
+                        if (deepMatchDialog.loader) {
+                            deepMatchDialog.loader.active = false;
+                            deepMatchDialog.loader.visible = false;
+                        }
+                        deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3));
+                        deepMatchDialog.buttons = [qsTr("Ok")];
+                        deepMatchDialog.succeeded = true;
+                        return;
+                    }
                     deepMatchDialog.close();
-                    if (success || error_kind === "cancelled") return;
+                    if (error_kind === "cancelled") return;
                     if (error_kind === "low_motion") {
                         messageBox(Modal.Warning, qsTr("The video has too little camera motion for deep matching. Try a video with more movement."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "not_in_range") {

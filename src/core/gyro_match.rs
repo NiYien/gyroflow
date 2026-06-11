@@ -38,6 +38,20 @@ pub struct ManualCalibrationPair {
     pub gyro_index: usize,
 }
 
+/// Input: an accepted deep-match result acting as a session-offset anchor
+/// (render-queue-deep-gyro-match 7.2/7.3).
+pub struct DeepMatchAnchor {
+    /// Index into the `gyros` array passed to `batch_match` (the caller maps
+    /// its gyro-pool index to this filtered index).
+    pub gyro_index: usize,
+    /// Deep-match offset in milliseconds, gyroflow sync convention: the video
+    /// content start sits at gyro file-relative `-offset_ms`.
+    pub offset_ms: f64,
+    /// created_at of the deep-matched video (camera clock). `None` degrades
+    /// the anchor to self-only: it does not influence any other video.
+    pub video_created_at_ms: Option<i64>,
+}
+
 /// Status of a match result.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum MatchStatus {
@@ -1019,6 +1033,36 @@ fn compute_clip_window(
     (gyro_start_ms, gyro_end_ms, front_comp, calib_anchor_ms)
 }
 
+// --- render-queue-deep-gyro-match 7.1: deep-match session anchor conversion ---
+
+/// Convert an accepted deep-match offset into the session-offset domain used
+/// by the batch matcher.
+///
+/// Sign conventions involved:
+///   - `deep_offset_ms` is the gyroflow sync offset of the deep-matched video
+///     against the WHOLE gyro file (same convention as the batch per-clip
+///     `init_offset_ms = -front_comp`): the video content start (video t=0)
+///     sits at gyro file-relative time `-deep_offset_ms`.
+///   - A session offset lives in the wall-clock domain,
+///     `offset = gyro.created_at_ms - video.created_at_ms` for a perfectly
+///     timed pair (see `compute_session_offset` candidates), and
+///     `compute_clip_window` projects `video_start = g.created_at - offset`
+///     (with `delay = 0`).
+///
+/// Derivation: the content start that `compute_clip_window` assigns to the
+/// deep-matched video is `v_created - (g.created_at - session_offset)`; deep
+/// match measured it as `-deep_offset_ms`, hence
+/// `session_offset = g.created_at + (-deep_offset_ms) - v_created`.
+/// Validated against `compute_clip_window` by
+/// `deep_anchor_session_offset_places_content_at_minus_deep_offset`.
+pub(crate) fn derive_session_offset_from_deep_match(
+    gyro_created_at_ms: i64,
+    video_created_at_ms: i64,
+    deep_offset_ms: f64,
+) -> i64 {
+    gyro_created_at_ms + (-deep_offset_ms).round() as i64 - video_created_at_ms
+}
+
 /// Layer-3 gate: does the video-content portion of the clip window actually
 /// land inside `[0, gyro_duration_ms]` enough to extract usable IMU samples?
 ///
@@ -1756,14 +1800,27 @@ fn compute_from_manual_pairs(
 /// goes through the legacy single-session path. Otherwise, runs the
 /// multi-session pipeline: cluster -> pair -> compute_session_offset ->
 /// coverage assign -> +/- 24h fallback.
+///
+/// `deep_anchors` (render-queue-deep-gyro-match): deep-match-derived session
+/// anchors consumed by the auto path; an empty slice is a strict no-op. The
+/// legacy manual-pairs path ignores anchors (manual pairs already pin the
+/// single-session offset explicitly).
 pub fn batch_match(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     manual_pairs: Option<&[ManualCalibrationPair]>,
+    deep_anchors: &[DeepMatchAnchor],
 ) -> BatchMatchResult {
     if let Some(pairs) = manual_pairs
         && !pairs.is_empty()
     {
+        if !deep_anchors.is_empty() {
+            log::info!(
+                target: "sync",
+                "[deep-match] {} anchor(s) ignored: manual calibration pairs take the legacy single-session path",
+                deep_anchors.len()
+            );
+        }
         return match compute_from_manual_pairs(videos, gyros, pairs) {
             Ok(or) => {
                 let results = assign_gyro_to_videos(
@@ -1782,7 +1839,7 @@ pub fn batch_match(
             Err(e) => unmatched_results(videos, e),
         };
     }
-    auto_match(videos, gyros)
+    auto_match(videos, gyros, deep_anchors)
 }
 
 /// Build an "everything unmatched" result for failure cases.
@@ -1812,8 +1869,104 @@ fn unmatched_results(videos: &[VideoMatchInfo], error: MatchError) -> BatchMatch
     }
 }
 
+/// render-queue-deep-gyro-match 7.3: fold accepted deep-match anchors into the
+/// session list. For each anchor (in caller-supplied order):
+///   - locate its cluster: first the session whose G cluster contains the
+///     anchored gyro (covers cal-gyro anchors and previously created anchor
+///     sessions), otherwise a creation-time-derived reliable session whose
+///     offset is consistent with the derived one (same camera<->IMU clock
+///     pair, within MULTI_SESSION_OFFSET_TOLERANCE_MS);
+///   - override that session's offset (millisecond-accurate anchor outranks
+///     the +/-1.5s creation-time candidate; delay reset to 0 because the
+///     anchor measures content alignment directly) and force it reliable,
+///     bypassing compute_session_offset's two-calibration-pair requirement;
+///   - or, with no matching session, append a synthetic reliable session so
+///     gyro ownership / coverage / fallback treat the anchor exactly like a
+///     calibration-derived session.
+/// Anchors without video created_at degrade to self-only (logged, no effect
+/// on the batch); an empty anchor slice leaves `sessions` untouched.
+fn apply_deep_anchors(
+    sessions: &mut Vec<Session>,
+    anchors: &[DeepMatchAnchor],
+    gyros: &[GyroMatchInfo],
+) {
+    for a in anchors {
+        let Some(g) = gyros.get(a.gyro_index) else {
+            log::warn!(
+                target: "sync",
+                "[deep-match] anchor skipped: gyro_index={} out of range ({} gyros)",
+                a.gyro_index,
+                gyros.len()
+            );
+            continue;
+        };
+        let Some(v_created) = a.video_created_at_ms else {
+            log::info!(
+                target: "sync",
+                "[deep-match] anchor degraded to self-only: gyro_index={} (video has no created_at)",
+                a.gyro_index
+            );
+            continue;
+        };
+        let derived =
+            derive_session_offset_from_deep_match(g.created_at_ms, v_created, a.offset_ms);
+        let sid = sessions
+            .iter()
+            .position(|s| s.g_cluster.contains(&a.gyro_index))
+            .or_else(|| {
+                // Restricted to creation-time-derived sessions (non-empty V
+                // cluster) so a second anchor never hijacks another anchor's
+                // synthetic session - each long gyro keeps its own anchor.
+                sessions.iter().position(|s| {
+                    !s.v_cluster.is_empty()
+                        && s.reliable
+                        && (s.offset - derived).abs() <= MULTI_SESSION_OFFSET_TOLERANCE_MS
+                })
+            });
+        match sid {
+            Some(i) => {
+                let s = &mut sessions[i];
+                log::info!(
+                    target: "sync",
+                    "[deep-match] anchor override: cluster={} session_offset={}ms (creation-time candidate was {}ms, reliable={}, delay={}ms)",
+                    i,
+                    derived,
+                    s.offset,
+                    s.reliable,
+                    s.delay
+                );
+                s.offset = derived;
+                s.delay = 0;
+                s.reliable = true;
+            }
+            None => {
+                log::info!(
+                    target: "sync",
+                    "[deep-match] anchor session created: gyro_index={} session_offset={}ms anchor_ms={}",
+                    a.gyro_index,
+                    derived,
+                    v_created
+                );
+                sessions.push(Session {
+                    v_cluster: Vec::new(),
+                    cal_video_indices: Vec::new(),
+                    g_cluster: vec![a.gyro_index],
+                    anchor_ms: v_created,
+                    offset: derived,
+                    delay: 0,
+                    reliable: true,
+                });
+            }
+        }
+    }
+}
+
 /// Multi-session automatic calibration pipeline.
-fn auto_match(videos: &[VideoMatchInfo], gyros: &[GyroMatchInfo]) -> BatchMatchResult {
+fn auto_match(
+    videos: &[VideoMatchInfo],
+    gyros: &[GyroMatchInfo],
+    deep_anchors: &[DeepMatchAnchor],
+) -> BatchMatchResult {
     let v_clusters = find_calibration_videos(videos);
     let g_clusters = find_calibration_gyros(gyros);
 
@@ -1838,13 +1991,25 @@ fn auto_match(videos: &[VideoMatchInfo], gyros: &[GyroMatchInfo]) -> BatchMatchR
         );
     }
 
-    if v_clusters.is_empty() || g_clusters.is_empty() {
-        return unmatched_results(videos, MatchError::NoCalibrationPairsFound);
-    }
+    // Deep anchors able to influence the batch (valid gyro index + video
+    // created_at) can build sessions even without any calibration cluster,
+    // so the two early-outs below only fire when no such anchor exists -
+    // with an empty anchor slice this is byte-equivalent to the pre-anchor
+    // flow.
+    let has_usable_anchor = deep_anchors
+        .iter()
+        .any(|a| a.video_created_at_ms.is_some() && a.gyro_index < gyros.len());
 
-    let mut sessions = pair_sessions(v_clusters, g_clusters, videos, gyros);
+    let mut sessions = if v_clusters.is_empty() || g_clusters.is_empty() {
+        if !has_usable_anchor {
+            return unmatched_results(videos, MatchError::NoCalibrationPairsFound);
+        }
+        Vec::new()
+    } else {
+        pair_sessions(v_clusters, g_clusters, videos, gyros)
+    };
 
-    if sessions.is_empty() {
+    if sessions.is_empty() && !has_usable_anchor {
         return unmatched_results(videos, MatchError::NoCalibrationPairsFound);
     }
 
@@ -1873,6 +2038,8 @@ fn auto_match(videos: &[VideoMatchInfo], gyros: &[GyroMatchInfo]) -> BatchMatchR
             }
         }
     }
+
+    apply_deep_anchors(&mut sessions, deep_anchors, gyros);
 
     let reliable_count = sessions.iter().filter(|s| s.reliable).count();
     if reliable_count == 0 {
@@ -2678,7 +2845,7 @@ mod tests {
             g(1, 5_500.0, 32_000),
             g(2, 70_000.0, 2_000),
         ];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         assert!(result.global_offset_ms.is_some());
         assert_eq!(result.results.len(), 3);
         // v0/v1 are calibration, v2 should be Matched.
@@ -2712,7 +2879,7 @@ mod tests {
             g(4, 5_500.0, 36_000 + day),
             g(5, 70_000.0, 6_000 + day),
         ];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         // Two reliable sessions -> top-level global_offset_ms is None.
         assert!(
             result.global_offset_ms.is_none(),
@@ -2732,7 +2899,7 @@ mod tests {
         // Single video, no calibration clips.
         let videos = vec![v(0, 60_000.0, Some(5_000))];
         let gyros = vec![g(0, 60_000.0, 5_000)];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         assert!(result.global_offset_ms.is_none());
         assert_eq!(result.results[0].status, MatchStatus::Unmatched);
     }
@@ -2774,7 +2941,7 @@ mod tests {
             g(4, 1_800_000.0, 1763702254000),
         ];
 
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         let offset = result
             .global_offset_ms
             .expect("single session should be reliable with bucket-mode");
@@ -2811,7 +2978,7 @@ mod tests {
             g(1, 2302.0, 1763527968000),
             g(2, 1_800_000.0, 1763527973000),
         ];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         let offset = result
             .global_offset_ms
             .expect("day-1 session should be reliable");
@@ -2847,7 +3014,7 @@ mod tests {
             g(1, g_dur_long, g_t + 5_000),
             g(2, 1_800_000.0, g_t + 10_000), // long IMU
         ];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         // Real cal videos: CalibrationPair
         assert_eq!(result.results[0].status, MatchStatus::CalibrationPair,
             "v0 (2.2s) duration matches g[0] (2.3s) -> CalibrationPair");
@@ -2914,7 +3081,7 @@ mod tests {
             // g5 deliberately omitted: v6/v7 have no covering gyro at 37h.
         ];
 
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
 
         // 1 reliable session (day-1).
         assert_eq!(
@@ -3091,7 +3258,7 @@ mod tests {
             g(9, 2_400_000.0, 1763527973000),
         ];
 
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
 
         // Two reliable sessions -> multi-session, no single global offset.
         assert!(
@@ -3206,7 +3373,7 @@ mod tests {
             g(8, 1_800_000.0, day2_night_imu_t),
         ];
 
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         assert!(
             result.global_offset_ms.is_none(),
             "multi-session run should not have a single global offset"
@@ -3309,7 +3476,7 @@ mod tests {
             g(6, 1_800_000.0, day + 7 * 3_600_000 - 185_000),
         ];
 
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
 
         // Two reliable sessions -> top-level global_offset_ms is None.
         assert!(
@@ -3401,7 +3568,7 @@ mod tests {
                 gyro_index: 1,
             },
         ];
-        let result = batch_match(&videos, &gyros, Some(&pairs));
+        let result = batch_match(&videos, &gyros, Some(&pairs), &[]);
         assert!(result.global_offset_ms.is_some());
         // The manual path uses assign_gyro_to_videos -> v0/v1 should be CalibrationPair, v2 Matched.
         assert_eq!(result.results[0].status, MatchStatus::CalibrationPair);
@@ -3562,7 +3729,7 @@ mod tests {
             ManualCalibrationPair { job_id: 0, video_index: 0, gyro_index: 0 },
             ManualCalibrationPair { job_id: 1, video_index: 1, gyro_index: 1 },
         ];
-        let result = batch_match(&videos, &gyros, Some(&pairs));
+        let result = batch_match(&videos, &gyros, Some(&pairs), &[]);
         // v0/v1 cal pair, fine.
         assert_eq!(result.results[0].status, MatchStatus::CalibrationPair);
         assert_eq!(result.results[1].status, MatchStatus::CalibrationPair);
@@ -3598,7 +3765,7 @@ mod tests {
             // Day-2 long IMU - offset-compensated so it covers v2.
             g(3, 5_400_000.0, day + 5 * 60_000 - 60_000 + day1_offset),
         ];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         // 1 reliable session (day-1).
         assert_eq!(result.global_offset_ms, Some(day1_offset));
         // v2 day-2 content matched via day-2 IMU (g3) - either Matched (single
@@ -3633,7 +3800,7 @@ mod tests {
             // Day-1 long IMU - only 30 minutes long, doesn't reach 12h.
             g(2, 1_800_000.0, day1_offset + 10_000),
         ];
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
         assert_eq!(result.global_offset_ms, Some(day1_offset));
         let v2 = &result.results[2];
         assert_eq!(
@@ -3815,7 +3982,7 @@ mod tests {
             g(8, 540324.0, 1778921503000),
         ];
 
-        let result = batch_match(&videos, &gyros, None);
+        let result = batch_match(&videos, &gyros, None, &[]);
 
         // 4 reliable sessions expected -> global_offset is None (multi-session).
         assert!(
@@ -3878,6 +4045,190 @@ mod tests {
                         "v{} unmatched must have no global_offset_ms", r.video_index);
                 }
             }
+        }
+    }
+
+    // --- render-queue-deep-gyro-match 7.1: anchor conversion sign convention ---
+
+    #[test]
+    fn deep_anchor_session_offset_places_content_at_minus_deep_offset() {
+        // Field-test shape (2026-06-11): deep match accepted -344530.715ms,
+        // i.e. the video content starts at gyro file-relative +344530.715ms.
+        // Feeding the derived session offset through compute_clip_window must
+        // place the video-content portion of the clip window (gyro_start_ms +
+        // front_comp) back at exactly -deep_offset_ms (up to the i64 rounding
+        // of the session-offset domain, < 0.5ms). No pre_recording or
+        // COMP_TIME correction term is involved: COMP_TIME pads the window
+        // symmetrically (cancelled by adding front_comp back) and
+        // pre_recording only participates in duration filters.
+        let cases: &[f64] = &[-344_530.715, 344_530.715, -12.0, 0.0];
+        for &deep_offset_ms in cases {
+            let g_created: i64 = 1_780_000_000_000;
+            let v_created: i64 = 1_780_000_700_000; // arbitrary camera clock
+            let video = v(0, 60_000.0, Some(v_created));
+            let gyro = g(0, 7_200_000.0, g_created);
+
+            let session_offset =
+                derive_session_offset_from_deep_match(g_created, v_created, deep_offset_ms);
+
+            // Anchored sessions use delay = 0, so video_offset == session_offset.
+            let (gyro_start_ms, gyro_end_ms, front_comp, _calib_anchor) = compute_clip_window(
+                &video,
+                &gyro,
+                v_created,
+                session_offset,
+                &[],
+                std::slice::from_ref(&video),
+            );
+            let content_start_ms = gyro_start_ms + front_comp;
+            assert!(
+                (content_start_ms - (-deep_offset_ms)).abs() <= 0.5,
+                "deep_offset={}ms: content start {}ms must equal -deep_offset {}ms (±0.5ms i64 rounding)",
+                deep_offset_ms,
+                content_start_ms,
+                -deep_offset_ms
+            );
+            // Window stays a sane superset of the content range.
+            assert!(gyro_start_ms < content_start_ms);
+            assert!(gyro_end_ms > content_start_ms + video.duration_ms);
+        }
+    }
+
+    // --- render-queue-deep-gyro-match 7.3: anchor integration ---
+
+    #[test]
+    fn deep_anchor_alone_builds_session_and_assigns_whole_batch() {
+        // Spec scenario "One deep match anchors the whole day's batch": long
+        // content videos + one long gyro file, no calibration clusters at all.
+        // Without an anchor this is NoCalibrationPairsFound; with one anchored
+        // job, every video covered by the gyro gets its segment via the
+        // anchor-derived session offset.
+        let deep_offset_ms = -344_530.7f64;
+        let g_created: i64 = 1_000_000_000_000;
+        let gyros = vec![g(0, 2_000_000.0, g_created)]; // 33min gyro, no cal cluster
+
+        let v0_created: i64 = 1_000_000_500_000;
+        let derived =
+            derive_session_offset_from_deep_match(g_created, v0_created, deep_offset_ms);
+        // Camera-clock time of the gyro file start under the derived offset.
+        let video_start = g_created - derived;
+        let videos = vec![
+            v(0, 60_000.0, Some(v0_created)), // deep-matched job (content at gyro +344530.7ms)
+            v(1, 60_000.0, Some(video_start + 100_000)), // same session, near gyro start
+            v(2, 60_000.0, Some(video_start + 1_900_000)), // same session, near gyro end
+        ];
+
+        // Without an anchor: nothing matches.
+        let bare = batch_match(&videos, &gyros, None, &[]);
+        assert_eq!(bare.error, Some(MatchError::NoCalibrationPairsFound));
+
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 0,
+            offset_ms: deep_offset_ms,
+            video_created_at_ms: Some(v0_created),
+        }];
+        let result = batch_match(&videos, &gyros, None, &anchors);
+        assert_eq!(result.error, None);
+        assert_eq!(result.global_offset_ms, Some(derived));
+        for r in &result.results {
+            assert_eq!(
+                r.status,
+                MatchStatus::Matched,
+                "v{} expected Matched via the anchor session, got {:?}",
+                r.video_index,
+                r.status
+            );
+            assert_eq!(r.gyro_index, Some(0));
+            assert_eq!(r.global_offset_ms, Some(derived));
+        }
+        // The deep-matched job itself goes through normal assignment and its
+        // content start must land back at gyro file-relative -deep_offset_ms.
+        let r0 = &result.results[0];
+        let content_start = r0.gyro_start_ms.unwrap() - r0.init_offset_ms.unwrap();
+        assert!(
+            (content_start - (-deep_offset_ms)).abs() <= 0.5,
+            "deep job content start {}ms must equal -deep_offset {}ms",
+            content_start,
+            -deep_offset_ms
+        );
+    }
+
+    #[test]
+    fn deep_anchor_overrides_creation_time_session() {
+        // Spec scenario "Deep anchor outranks creation-time candidates": a
+        // calibration-pair session exists (offset 1100, +/-1.5s class), and a
+        // deep anchor on a long gyro of the same clock pair measures 1500.
+        // The anchor must override the session offset (no extra session).
+        let videos = vec![
+            v(0, 5_000.0, Some(1_000)),   // cal pair
+            v(1, 5_000.0, Some(31_000)),  // cal pair
+            v(2, 60_000.0, Some(248_500)), // deep-matched content video
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 2_000),
+            g(1, 5_500.0, 32_200),
+            g(2, 600_000.0, 200_000), // long gyro, deep-matched against v2
+        ];
+        // True offset 1500 => gyro start at camera clock 198500, v2 content
+        // at gyro file-relative 50000 => deep_offset = -50000.
+        let deep_offset_ms = -50_000.0f64;
+        let derived = derive_session_offset_from_deep_match(
+            gyros[2].created_at_ms,
+            videos[2].created_at_ms.unwrap(),
+            deep_offset_ms,
+        );
+        assert_eq!(derived, 1_500);
+
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 2,
+            offset_ms: deep_offset_ms,
+            video_created_at_ms: videos[2].created_at_ms,
+        }];
+        let result = batch_match(&videos, &gyros, None, &anchors);
+        assert_eq!(result.error, None);
+        // Single session, overridden offset: global offset is the derived one.
+        assert_eq!(
+            result.global_offset_ms,
+            Some(derived),
+            "anchor must override the creation-time session offset (1100)"
+        );
+        assert_eq!(result.results[0].status, MatchStatus::CalibrationPair);
+        assert_eq!(result.results[1].status, MatchStatus::CalibrationPair);
+        let r2 = &result.results[2];
+        assert_eq!(r2.status, MatchStatus::Matched);
+        assert_eq!(r2.gyro_index, Some(2));
+        assert_eq!(r2.global_offset_ms, Some(derived));
+        let content_start = r2.gyro_start_ms.unwrap() - r2.init_offset_ms.unwrap();
+        assert!(
+            (content_start - 50_000.0).abs() <= 0.5,
+            "v2 content start {}ms must equal 50000ms under the overridden offset",
+            content_start
+        );
+    }
+
+    #[test]
+    fn deep_anchor_without_created_at_degrades_to_self_only() {
+        // Spec scenario "Anchor without creation time degrades to self-only":
+        // the batch result must be identical to a run without any anchor.
+        let g_created: i64 = 1_000_000_000_000;
+        let gyros = vec![g(0, 2_000_000.0, g_created)];
+        let videos = vec![
+            v(0, 60_000.0, Some(1_000_000_500_000)),
+            v(1, 60_000.0, Some(1_000_000_600_000)),
+        ];
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 0,
+            offset_ms: -344_530.7,
+            video_created_at_ms: None,
+        }];
+        let with_anchor = batch_match(&videos, &gyros, None, &anchors);
+        let without = batch_match(&videos, &gyros, None, &[]);
+        assert_eq!(with_anchor.error, without.error);
+        assert_eq!(with_anchor.global_offset_ms, without.global_offset_ms);
+        for (a, b) in with_anchor.results.iter().zip(without.results.iter()) {
+            assert_eq!(a.status, b.status);
+            assert_eq!(a.gyro_index, b.gyro_index);
+            assert_eq!(a.global_offset_ms, b.global_offset_ms);
         }
     }
 }
