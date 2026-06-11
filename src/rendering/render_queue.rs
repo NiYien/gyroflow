@@ -3494,6 +3494,14 @@ impl RenderQueue {
             };
             let allow_finished_project_file_reference = finished_export_project != 2;
             let job_is_batch_sync = self.batch_sync_job_ids.contains(&job_id);
+            // Captured at launch so it only covers THIS run: the deep-match
+            // probe run must not rebuild project_data (its stab holds the
+            // whole gyro pool file — serializing it on the finished tick
+            // blocks the UI for seconds, and batch_motion_ready would then
+            // re-parse that giant JSON on every QML binding re-evaluation).
+            // A later real run of the same job captures false and rebuilds
+            // project_data normally.
+            let job_is_deep_match = self.deep_match_pending.contains_key(&job_id);
             let progress = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this,
@@ -3571,16 +3579,20 @@ impl RenderQueue {
                     if finished {
                         let keep_stab_for_batch_sync = finished_export_project == 2
                             && this.batch_sync_job_ids.contains(&job_id);
-                        // Update project_data with sync offsets before releasing stab
+                        // Update project_data with sync offsets before releasing stab.
+                        // Deep-match probe runs skip this entirely (see the
+                        // job_is_deep_match capture above).
                         if let Some(job) = this.jobs.get_mut(&job_id) {
-                            if let Some(ref stab) = job.stab {
-                                job.project_data = Self::get_gyroflow_data_internal_with_type(
-                                    stab,
-                                    &job.additional_data,
-                                    &job.render_options,
-                                    finished_project_type.clone(),
-                                    allow_finished_project_file_reference,
-                                );
+                            if !job_is_deep_match {
+                                if let Some(ref stab) = job.stab {
+                                    job.project_data = Self::get_gyroflow_data_internal_with_type(
+                                        stab,
+                                        &job.additional_data,
+                                        &job.render_options,
+                                        finished_project_type.clone(),
+                                        allow_finished_project_file_reference,
+                                    );
+                                }
                             }
                             job.last_finished_export_project = Some(finished_export_project);
                         }
@@ -3806,7 +3818,7 @@ impl RenderQueue {
                 self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2;
             // Deep match runs must leave no .gyroflow residue on disk — the
             // per-window offsets are search probes, not sync points.
-            let job_is_deep_match = self.deep_match_pending.contains_key(&job_id);
+            // (job_is_deep_match is captured above, next to job_is_batch_sync.)
             let batch_sync_done = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot): (
@@ -3855,7 +3867,13 @@ impl RenderQueue {
                     sample.sync_frames = sync_stats.frames;
                     sample.sync_ms = sync_start.elapsed().as_secs_f64() * 1000.0;
                 }
-                stab.recompute_blocking();
+                // Deep match never consumes the recompute output (the run is
+                // rolled back or reduced to a coarse offset either way) and
+                // recompute_blocking can take seconds on long clips — which
+                // reads as "progress stuck at 100%" in the modal. Skip it.
+                if !job_is_deep_match {
+                    stab.recompute_blocking();
+                }
 
                 if defer_batch_sync_confirmation {
                     let points = sync_stats.points;
@@ -8731,7 +8749,6 @@ impl RenderQueue {
     }
 
     fn start_deep_gyro_match(&mut self, job_id: u32, gyro_index: usize) -> bool {
-        use gyroflow_core::synchronization::deep_match;
         // One deep match at a time; QML also guards, this is the backstop.
         if !self.deep_match_pending.is_empty() {
             return false;
@@ -8762,28 +8779,81 @@ impl RenderQueue {
         let cancel_flag = job.cancel_flag.clone();
         cancel_flag.store(false, SeqCst);
 
-        // Load the full gyro file into the job's stabilizer (no time range —
-        // the offset is unknown, that's the point).
+        // Register as pending before the async load so the single-flight
+        // guard and cancel_deep_gyro_match cover the whole load+search span.
+        self.deep_match_pending.insert(
+            job_id,
+            DeepMatchState {
+                gyro_index,
+                original_additional_data,
+                original_sync_settings,
+            },
+        );
+
+        // Parse the full gyro file off the UI thread — it can take over a
+        // second on big files and the progress modal must appear instantly.
+        // The search setup continues on the UI thread once the load lands.
+        let on_loaded = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, loaded: bool| {
+                this.continue_deep_gyro_match(job_id, loaded);
+            },
+        );
         let gyro_url = gyro_info.path.clone();
-        let loaded = match filesystem::open_file(&gyro_url, false, false) {
-            Ok(mut file) => {
-                let filesize = file.size;
-                stab.load_gyro_data(
-                    file.get_file(),
-                    filesize,
-                    &gyro_url,
-                    false,
-                    &Default::default(),
-                    |_| (),
-                    cancel_flag.clone(),
-                )
-                .is_ok()
-            }
-            Err(_) => false,
+        let load_stab = stab.clone();
+        core::run_threaded(move || {
+            let loaded = match filesystem::open_file(&gyro_url, false, false) {
+                Ok(mut file) => {
+                    let filesize = file.size;
+                    load_stab
+                        .load_gyro_data(
+                            file.get_file(),
+                            filesize,
+                            &gyro_url,
+                            false,
+                            &Default::default(),
+                            |_| (),
+                            cancel_flag,
+                        )
+                        .is_ok()
+                }
+                Err(_) => false,
+            };
+            on_loaded(loaded);
+        });
+        true
+    }
+
+    // UI-thread continuation of start_deep_gyro_match, invoked after the
+    // threaded gyro load lands: validates the gyro span, injects the one-shot
+    // search params and launches the sync-only run.
+    fn continue_deep_gyro_match(&mut self, job_id: u32, loaded: bool) {
+        use gyroflow_core::synchronization::deep_match;
+        let Some(gyro_index) = self.deep_match_pending.get(&job_id).map(|s| s.gyro_index) else {
+            return;
         };
-        if !loaded {
+        let (stab, cancelled) = match self.jobs.get(&job_id) {
+            Some(job) => (job.stab.clone(), job.cancel_flag.load(SeqCst)),
+            None => (None, false),
+        };
+        let Some(stab) = stab else {
+            self.deep_match_pending.remove(&job_id);
             self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
-            return false;
+            return;
+        };
+        // Cancelled mid-load, or the queue went active while loading (the
+        // export_project flip below would corrupt active renders) — roll
+        // back silently.
+        if cancelled || self.status.to_string() == "active" {
+            self.deep_match_pending.remove(&job_id);
+            stab.gyro.write().clear();
+            self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
+            return;
+        }
+        if !loaded {
+            self.deep_match_pending.remove(&job_id);
+            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            return;
         }
         let gyro_span = {
             let gyro = stab.gyro.read();
@@ -8797,9 +8867,10 @@ impl RenderQueue {
             }
         };
         let Some((g_start, g_end)) = gyro_span else {
+            self.deep_match_pending.remove(&job_id);
             stab.gyro.write().clear();
             self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
-            return false;
+            return;
         };
 
         let video_duration_ms = stab.params.read().duration_ms;
@@ -8843,20 +8914,17 @@ impl RenderQueue {
             itm.error_string = QString::default();
         });
 
+        let gyro_filename = self
+            .gyro_files
+            .get(gyro_index)
+            .map(|g| g.filename.clone())
+            .unwrap_or_default();
         ::log::info!(
             target: "sync",
             "[deep-match] start: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
-            job_id, gyro_info.filename, g_start, g_end, init_ms, search_ms, pattern
+            job_id, gyro_filename, g_start, g_end, init_ms, search_ms, pattern
         );
         deep_match::arm();
-        self.deep_match_pending.insert(
-            job_id,
-            DeepMatchState {
-                gyro_index,
-                original_additional_data,
-                original_sync_settings,
-            },
-        );
         // Run the job through the same sync-only path batch repair uses:
         // export_project=2 + expected membership routes the worker into the
         // defer branch (sync, then stop — no encode); batch_sync_job_ids
@@ -8870,7 +8938,6 @@ impl RenderQueue {
         // the queue, but deep match must act on the clicked job alone.
         self.render_job(job_id);
         self.deep_match_progress(job_id, 0.0);
-        true
     }
 
     fn cancel_deep_gyro_match(&mut self, job_id: u32) {

@@ -231,12 +231,15 @@ Item {
         });
     }
     // Deep gyro match (render-queue-deep-gyro-match): single job × one pool
-    // gyro file, whole-file coarse offset search. Backend refusal (another
-    // deep match pending / gyro load failed — details in the log) never opens
-    // the progress modal, so give immediate feedback here instead.
+    // gyro file, whole-file coarse offset search. Synchronous backend refusal
+    // (another deep match pending / queue active) never opens the progress
+    // modal, so give immediate feedback here instead.
     function startDeepMatch(jobId: int, gyroIdx: int, videoName: string): void {
+        // start_deep_gyro_match returns false only for synchronous refusals
+        // (another deep match in flight / queue active / job or gyro gone);
+        // gyro load failures now arrive asynchronously via deep_match_finished.
         if (!render_queue.start_deep_gyro_match(jobId, gyroIdx)) {
-            messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
+            messageBox(Modal.Warning, qsTr("Cannot start deep match while the queue is busy."), [{ text: qsTr("Ok") }]);
             return;
         }
         const gyroName = gyroIdx < gyroFilesInfo.length ? gyroFilesInfo[gyroIdx].filename : "";
@@ -271,6 +274,10 @@ Item {
             onClicked: {
                 if (deepMatchDialog.succeeded) {
                     deepMatchDialog.close();
+                    // Chain straight into Auto match so the accepted deep-match
+                    // anchor is distributed to the whole queue without an
+                    // extra click.
+                    if (autoMatchBtn.enabled) autoMatchBtn.beginMatch();
                     return;
                 }
                 // Request cancellation; the dialog closes when
@@ -281,7 +288,9 @@ Item {
                 const l = deepMatchDialog.addLoader();
                 l.visible = true;
                 l.active = true;
-                l.progress = 0;
+                // progress stays -1 (busy spinner) while the gyro file is
+                // parsed in the background; the first deep_match_progress
+                // signal switches it to a determinate bar.
             }
             Connections {
                 target: render_queue;
@@ -298,7 +307,8 @@ Item {
                             deepMatchDialog.loader.active = false;
                             deepMatchDialog.loader.visible = false;
                         }
-                        deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3));
+                        deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3))
+                                             + "\n" + qsTr("Click Ok to run Auto match and assign the data.");
                         deepMatchDialog.buttons = [qsTr("Ok")];
                         deepMatchDialog.succeeded = true;
                         return;
@@ -306,9 +316,9 @@ Item {
                     deepMatchDialog.close();
                     if (error_kind === "cancelled") return;
                     if (error_kind === "low_motion") {
-                        messageBox(Modal.Warning, qsTr("The video has too little camera motion for deep matching. Try a video with more movement."), [{ text: qsTr("Ok") }]);
+                        messageBox(Modal.Warning, qsTr("Not enough camera motion. Try a video with more movement."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "not_in_range") {
-                        messageBox(Modal.Warning, qsTr("Couldn't find this video's time range in the selected gyro file. Make sure you picked the correct gyro file."), [{ text: qsTr("Ok") }]);
+                        messageBox(Modal.Warning, qsTr("No match found in this gyro file. Try another gyro file."), [{ text: qsTr("Ok") }]);
                     } else {
                         messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
                     }
@@ -370,7 +380,7 @@ Item {
                     }
                 }
                 if (unmatchedCount > 0) {
-                    root.matchWarning = qsTr("No calibration pair found for %1 video(s). Pair manually, or right-click the video → \"Deep match with gyro\" to search the whole gyro file.").arg(unmatchedCount);
+                    root.matchWarning = qsTr("No match found for %1 video(s). Try a deep search: pick a video with camera motion, right-click it → \"Deep match with gyro\", then select a gyro file.").arg(unmatchedCount);
                 }
             });
         }

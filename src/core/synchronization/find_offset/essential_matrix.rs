@@ -98,12 +98,26 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                     let _g = crate::synchronization::sync_perf::StageGuard::new(
                         crate::synchronization::sync_perf::Stage::FindOffCoarse,
                     );
+                    // Whole-file scans (deep match) take seconds per window
+                    // with no other progress source, which reads as a stuck
+                    // bar in the UI — report sub-window progress from inside
+                    // the scan, throttled to 1% buckets (~100 fires/window).
+                    let scan_done = std::sync::atomic::AtomicUsize::new(0);
+                    let scan_bucket = std::sync::atomic::AtomicUsize::new(0);
                     (0..steps)
                         .into_par_iter()
-                        .map(|i| {
+                        .map(|j| {
                             let offs =
-                                sync_params.initial_offset - sync_params.search_size + (i as f64);
-                            (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                                sync_params.initial_offset - sync_params.search_size + (j as f64);
+                            let cost = calculate_cost(offs, &of_item, &gyro_bintree);
+                            let done = scan_done.fetch_add(1, Relaxed) + 1;
+                            let bucket = done * 100 / steps.max(1);
+                            if scan_bucket.fetch_max(bucket, Relaxed) < bucket {
+                                progress_cb(
+                                    (i as f64 + done as f64 / steps.max(1) as f64) / ranges_len,
+                                );
+                            }
+                            (offs, cost)
                         })
                         .reduce_with(find_min)
                 };
