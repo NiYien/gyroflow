@@ -15,7 +15,7 @@ MenuItem {
 
     Item {
         id: sett;
-        property alias processingResolution: processingResolution.currentIndex;
+        // processingResolution is intentionally not persisted: always start at 1080p on app launch
         property alias initialOffset: initialOffset.value;
         property alias syncSearchSize: syncSearchSize.value;
         property alias maxSyncPoints: maxSyncPoints.value;
@@ -339,7 +339,7 @@ MenuItem {
                 model: [QT_TRANSLATE_NOOP("Popup", "Full"), "4k", "1080p", "720p", "480p"];
                 font.pixelSize: 12 * dpiScale;
                 width: parent.width;
-                currentIndex: 3;
+                currentIndex: 2;
                 onCurrentIndexChanged: {
                     let target_height = -1; // Full
                     switch (currentIndex) {

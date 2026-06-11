@@ -500,7 +500,7 @@ impl Controller {
     pub fn new() -> Self {
         let mut this = Self {
             preview_resolution: -1,
-            processing_resolution: 720,
+            processing_resolution: 1080,
             ota_state: QString::from("none"),
             device_connection_status: QString::from(DeviceConnectionStatus::Idle.as_str()),
             ..Default::default()

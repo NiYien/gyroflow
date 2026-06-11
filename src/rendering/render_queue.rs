@@ -1063,7 +1063,7 @@ impl RenderQueue {
         Self {
             status: QString::from("stopped"),
             default_suffix: QString::from("_stabilized"),
-            processing_resolution: 720,
+            processing_resolution: 1080,
             stabilizer,
             ..Default::default()
         }
