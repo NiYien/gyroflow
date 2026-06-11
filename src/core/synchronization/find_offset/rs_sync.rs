@@ -522,9 +522,6 @@ struct Pass1Snapshot {
     /// pass-2 cross-validation resolves the twin ambiguity.
     pre_twin_conf: f64,
     pre_twin_path: ConfPath,
-    /// Pass-1 axis-weighted Pearson peak — the anchor for the disagreement
-    /// arbitration (the most truth-correlated single signal post-M1).
-    pearson_peak_ms: f64,
     path_str: String,
     twin: Option<super::twin_guard::TwinInfo>,
 }
@@ -2692,7 +2689,6 @@ impl FindOffsetsRssync<'_> {
                             conf_path,
                             pre_twin_conf,
                             pre_twin_path,
-                            pearson_peak_ms,
                             path_str: path_str_owned.clone(),
                             twin: twin_info,
                         });
