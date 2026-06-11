@@ -504,10 +504,12 @@ pub fn invalidate_qt_cache_if_version_changed() {
 }
 
 pub fn install_crash_handler() -> std::io::Result<()> {
-    let cur_dir = std::env::current_dir()?;
-
+    // Breakpad and `crate::crash` are desktop-only (`pub mod crash` is cfg-gated
+    // out on android/ios in gyroflow.rs), so this handler is a no-op on mobile.
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
+        let cur_dir = std::env::current_dir()?;
+
         let os_str = cur_dir.as_os_str();
         let path: Vec<breakpad_sys::PathChar> = {
             #[cfg(windows)]
@@ -554,43 +556,43 @@ pub fn install_crash_handler() -> std::io::Result<()> {
                 breakpad_sys::INSTALL_BOTH_HANDLERS,
             );
         }
-    }
 
-    // Crash dump handling (niyien fork). Upstream POSTed every local *.dmp to
-    // api.gyroflow.xyz and deleted it on success — leaking crash data upstream
-    // and wiping the dumps before they could be inspected. Instead, package
-    // each breakpad OS dump into a crash zip under logs/crashes/ so the fork's
-    // OWN feedback pickup uploads it to our 123/R2 (next to the Rust-panic
-    // crash zips, same FeedbackDialog flow). Never touches api.gyroflow.xyz.
-    // The original .dmp is removed only once packaging succeeds; on failure it
-    // is left in place so nothing is lost.
-    crate::core::run_threaded(move || {
-        if let Ok(files) = std::fs::read_dir(cur_dir) {
-            for path in files.flatten() {
-                let path = path.path();
-                if path.to_string_lossy().ends_with(".dmp") {
-                    match crate::crash::package_os_dump(&path) {
-                        Ok(zip) => {
-                            ::log::info!(
-                                target: "lifecycle",
-                                "OS crash dump packaged for local feedback upload: {} -> {}",
-                                path.display(),
-                                zip.display()
-                            );
-                            let _ = std::fs::remove_file(&path);
-                        }
-                        Err(e) => {
-                            ::log::warn!(
-                                target: "lifecycle",
-                                "Failed to package OS crash dump {} ({e}); left in place",
-                                path.display()
-                            );
+        // Crash dump handling (niyien fork). Upstream POSTed every local *.dmp to
+        // api.gyroflow.xyz and deleted it on success — leaking crash data upstream
+        // and wiping the dumps before they could be inspected. Instead, package
+        // each breakpad OS dump into a crash zip under logs/crashes/ so the fork's
+        // OWN feedback pickup uploads it to our 123/R2 (next to the Rust-panic
+        // crash zips, same FeedbackDialog flow). Never touches api.gyroflow.xyz.
+        // The original .dmp is removed only once packaging succeeds; on failure it
+        // is left in place so nothing is lost.
+        crate::core::run_threaded(move || {
+            if let Ok(files) = std::fs::read_dir(cur_dir) {
+                for path in files.flatten() {
+                    let path = path.path();
+                    if path.to_string_lossy().ends_with(".dmp") {
+                        match crate::crash::package_os_dump(&path) {
+                            Ok(zip) => {
+                                ::log::info!(
+                                    target: "lifecycle",
+                                    "OS crash dump packaged for local feedback upload: {} -> {}",
+                                    path.display(),
+                                    zip.display()
+                                );
+                                let _ = std::fs::remove_file(&path);
+                            }
+                            Err(e) => {
+                                ::log::warn!(
+                                    target: "lifecycle",
+                                    "Failed to package OS crash dump {} ({e}); left in place",
+                                    path.display()
+                                );
+                            }
                         }
                     }
                 }
             }
-        }
-    });
+        });
+    }
     Ok(())
 }
 
