@@ -44,6 +44,7 @@ Item {
     readonly property color matchedStatusColor: lightTheme ? "#256c3f" : "#70e574"
     readonly property color manualStatusColor: lightTheme ? "#9a5f00" : "#f0c040"
     readonly property color calibrationStatusColor: lightTheme ? "#1f6fa8" : "#76baed"
+    readonly property color deepMatchStatusColor: lightTheme ? "#6a3fa8" : "#b88ef0"
     readonly property color skippedStatusColor: lightTheme ? "#5b6470" : "#888888"
     readonly property color finishedStatusColor: lightTheme ? "#2a8a4c" : "#70e574"
     readonly property color errorStatusColor: lightTheme ? "#d16b6b" : "#ed7676"
@@ -229,6 +230,72 @@ Item {
             }
         });
     }
+    // Deep gyro match (render-queue-deep-gyro-match): single job × one pool
+    // gyro file, whole-file coarse offset search. Backend refusal (another
+    // deep match pending / gyro load failed — details in the log) never opens
+    // the progress modal, so give immediate feedback here instead.
+    function startDeepMatch(jobId: int, gyroIdx: int, videoName: string): void {
+        if (!render_queue.start_deep_gyro_match(jobId, gyroIdx)) {
+            messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
+            return;
+        }
+        const gyroName = gyroIdx < gyroFilesInfo.length ? gyroFilesInfo[gyroIdx].filename : "";
+        const dlg = deepMatchDialogComponent.createObject(window, {
+            "jobId": jobId,
+            "videoName": videoName,
+            "gyroName": gyroName
+        });
+        if (dlg) dlg.opened = true;
+    }
+    // Modal progress dialog for a running deep match. Root-scoped (not inside
+    // the delegate) so root.startDeepMatch can resolve the component id.
+    // Cancel requests the abort; the dialog only closes when the backend
+    // confirms via deep_match_finished. Failures close this dialog and show a
+    // plain-language messageBox instead of mutating it in place — Modal only
+    // applies iconType when it becomes visible, so an in-place Info → Warning
+    // switch would keep the stale icon.
+    Component {
+        id: deepMatchDialogComponent;
+        Modal {
+            id: deepMatchDialog;
+            property int jobId: -1;
+            property string videoName: "";
+            property string gyroName: "";
+            iconType: Modal.Info;
+            text: qsTr("Deep matching gyro data...") + "\n" + videoName + "\n⟷ " + gyroName;
+            buttons: [qsTr("Cancel")];
+            onClicked: {
+                // Request cancellation; the dialog closes when
+                // deep_match_finished(cancelled) arrives.
+                render_queue.cancel_deep_gyro_match(jobId);
+            }
+            Component.onCompleted: {
+                const l = deepMatchDialog.addLoader();
+                l.visible = true;
+                l.active = true;
+                l.progress = 0;
+            }
+            Connections {
+                target: render_queue;
+                function onDeep_match_progress(job_id: int, progress: real): void {
+                    if (job_id !== deepMatchDialog.jobId || !deepMatchDialog.loader) return;
+                    deepMatchDialog.loader.progress = progress;
+                }
+                function onDeep_match_finished(job_id: int, success: bool, error_kind: string, offset_ms: real): void {
+                    if (job_id !== deepMatchDialog.jobId) return;
+                    deepMatchDialog.close();
+                    if (success || error_kind === "cancelled") return;
+                    if (error_kind === "low_motion") {
+                        messageBox(Modal.Warning, qsTr("The video has too little camera motion for deep matching. Try a video with more movement."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "not_in_range") {
+                        messageBox(Modal.Warning, qsTr("Couldn't find this video's time range in the selected gyro file. Make sure you picked the correct gyro file."), [{ text: qsTr("Ok") }]);
+                    } else {
+                        messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
+                    }
+                }
+            }
+        }
+    }
     onWidthChanged: requestQueueLayout();
     onShownChanged: requestQueueLayout();
 
@@ -283,7 +350,7 @@ Item {
                     }
                 }
                 if (unmatchedCount > 0) {
-                    root.matchWarning = qsTr("No calibration pair found for %1 video(s). Please pair manually.").arg(unmatchedCount);
+                    root.matchWarning = qsTr("No calibration pair found for %1 video(s). Pair manually, or right-click the video → \"Deep match with gyro\" to search the whole gyro file.").arg(unmatchedCount);
                 }
             });
         }
@@ -311,7 +378,7 @@ Item {
                     { text: qsTr("Skip"), clicked: () => render_queue.skip_batch_sync_repair() }
                 ]);
             } else if (kind === "all_yellow") {
-                messageBox(Modal.Warning, qsTr("**Batch synchronization did not produce a reliable result.** Please check:\n\n**1. Calibration videos are loaded**\n\nShort videos (under 10 seconds) recorded simultaneously with the gyro file.\n\n**2. Videos and gyro files are correctly paired**\n\nFor any unpaired video, you can pair manually: right-click the video → **\"Pair with Gyro\"**, then select the matching gyro file.\n\n**3. If there are not 2 calibration videos for the day**\n\n- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.\n- Or re-shoot calibration videos and re-add to the queue."), [
+                messageBox(Modal.Warning, qsTr("**Batch synchronization did not produce a reliable result.** Please check:\n\n**1. Calibration videos are loaded**\n\nShort videos (under 10 seconds) recorded simultaneously with the gyro file.\n\n**2. Videos and gyro files are correctly paired**\n\nFor any unpaired video, you can pair manually: right-click the video → **\"Pair with Gyro\"**, then select the matching gyro file.\n\nIf there is no usable time-sync data at all, right-click the video → **\"Deep match with gyro\"** to search the whole gyro file for this video's position.\n\n**3. If there are not 2 calibration videos for the day**\n\n- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.\n- Or re-shoot calibration videos and re-add to the queue."), [
                     { text: qsTr("Ok") }
                 ], undefined, Text.MarkdownText);
             } else if (kind === "finished_with_yellow") {
@@ -964,6 +1031,8 @@ Item {
             property color matchColor: matchGyroIndex >= 0 ? root.gyroColors[matchGyroIndex % root.gyroColors.length] : "transparent"
             property string gyroFilename: matchStatus.gyro_filename || ""
             property int manualGyroIndex: { root.matchVersion; return render_queue.get_manual_pair_gyro_index(job_id); }
+            // Deep gyro match: -1 when the job has no accepted deep match.
+            property int deepMatchGyroIndex: { root.matchVersion; return root.hasGyroFiles ? render_queue.get_deep_match_gyro_index(job_id) : -1; }
             // [queue-gyro-column T8, T14] Dual display mode: matched vs. unmatched.
             // isMatched now follows the global matchExecuted flag.
             property bool isMatched: root.matchExecuted
@@ -1315,13 +1384,58 @@ Item {
                     onClosed: clearDynamicGyroActions()
                     Component.onDestruction: clearDynamicGyroActions()
                 }
+                // Deep gyro match sub-menu (render-queue-deep-gyro-match): single
+                // job × one pool gyro file, whole-file coarse offset search.
+                // Mirrors the T14 dynamic-Action pattern above.
+                Menu {
+                    id: deepMatchSubMenu;
+                    title: qsTr("Deep match with gyro");
+                    enabled: root.hasGyroFiles && root.allGyroParsed && !isInProgress && dlg.matchState !== "CalibrationPair";
+                    width: 300 * dpiScale;
+                    property var dynamicGyroActions: []
+                    function clearDynamicGyroActions(): void {
+                        for (let i = 0; i < dynamicGyroActions.length; ++i) {
+                            const action = dynamicGyroActions[i];
+                            if (action) {
+                                deepMatchSubMenu.removeAction(action);
+                                action.destroy();
+                            }
+                        }
+                        dynamicGyroActions = [];
+                    }
+                    onAboutToShow: {
+                        clearDynamicGyroActions();
+                        let actions = [];
+                        // Add items for each gyro file
+                        for (let i = 0; i < root.gyroFilesInfo.length; i++) {
+                            const info = root.gyroFilesInfo[i];
+                            const label = info.filename + (info.duration_ms ? " (" + (info.duration_ms / 1000).toFixed(1) + "s)" : "");
+                            const action = gyroPairActionComponent.createObject(deepMatchSubMenu, {
+                                text: label,
+                                gyroIdx: i
+                            });
+                            if (!action)
+                                continue;
+                            action.triggered.connect(function() {
+                                root.startDeepMatch(job_id, action.gyroIdx, input_filename);
+                            });
+                            deepMatchSubMenu.addAction(action);
+                            actions.push(action);
+                        }
+                        dynamicGyroActions = actions;
+                    }
+                    onClosed: clearDynamicGyroActions()
+                    Component.onDestruction: clearDynamicGyroActions()
+                }
                 // [queue-pair-ux] Re-added unpair entry; only for manually paired jobs.
                 // Uses Menu.MenuItem (not a bare Action) because it needs `visible` to
                 // dynamically show/hide based on whether the job is manually paired.
+                // Also shown for deep-matched jobs: unpair_video clears the
+                // DeepMatched registry entry along with the gyro data.
                 Menu.MenuItem {
                     parentMenu: contextMenu;
                     text: qsTr("Unpair gyro");
-                    visible: dlg.manualGyroIndex >= 0;
+                    visible: dlg.manualGyroIndex >= 0 || dlg.deepMatchGyroIndex >= 0;
                     height: visible ? implicitHeight : 0;
                     enabled: !isInProgress;
                     onTriggered: render_queue.unpair_video(job_id);
@@ -1918,18 +2032,23 @@ Item {
                     // manual-pair branch is now shown so users can see the gyro file they
                     // explicitly paired. Calibration branch stays visible too.
                     BasicText {
-                        property bool isCalibrationBranch: dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime" && dlg.matchState !== "Matched" && dlg.manualGyroIndex < 0;
+                        // Deep match takes precedence over the manual / matched /
+                        // calibration branches (it supersedes a manual pair backend-side).
+                        property bool isCalibrationBranch: dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime" && dlg.matchState !== "Matched" && dlg.manualGyroIndex < 0 && dlg.deepMatchGyroIndex < 0;
                         visible: root.hasGyroFiles
-                            && (dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"))
-                            && (!window.isSimpleMode || isCalibrationBranch || dlg.manualGyroIndex >= 0);
+                            && (dlg.deepMatchGyroIndex >= 0 || dlg.manualGyroIndex >= 0 || (dlg.matchState !== "none" && dlg.matchState !== "Unmatched" && dlg.matchState !== "NoCreationTime"))
+                            && (!window.isSimpleMode || isCalibrationBranch || dlg.manualGyroIndex >= 0 || dlg.deepMatchGyroIndex >= 0);
                         width: parent.width;
                         wrapMode: Text.WordWrap;
-                        color: dlg.manualGyroIndex >= 0 ? root.manualStatusColor
+                        color: dlg.deepMatchGyroIndex >= 0 ? root.deepMatchStatusColor
+                            : dlg.manualGyroIndex >= 0 ? root.manualStatusColor
                             : dlg.matchState === "Matched" ? root.matchedStatusColor
                             : root.calibrationStatusColor;
                         font.pixelSize: basicTextSize;
                         font.bold: true;
-                        text: dlg.manualGyroIndex >= 0
+                        text: dlg.deepMatchGyroIndex >= 0
+                            ? qsTr("Deep") + " ⚡ " + (dlg.deepMatchGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.deepMatchGyroIndex].filename : "")
+                            : dlg.manualGyroIndex >= 0
                             ? qsTr("Manual") + " ⚡ " + (dlg.manualGyroIndex >= 0 && dlg.manualGyroIndex < root.gyroFilesInfo.length ? root.gyroFilesInfo[dlg.manualGyroIndex].filename : "")
                             : dlg.matchState === "Matched"
                                 ? "✓ " + dlg.gyroFilename + (dlg.matchStatus.detected_source ? " (" + dlg.matchStatus.detected_source + ")" : "")

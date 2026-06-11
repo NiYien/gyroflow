@@ -30,6 +30,7 @@ mod autosync;
 pub mod optimsync;
 pub mod sync_repair;
 pub mod sync_diag;
+pub mod deep_match;
 pub mod sync_metric;
 pub mod sync_perf;
 use crate::util::MapClosest;

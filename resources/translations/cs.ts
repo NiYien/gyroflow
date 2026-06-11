@@ -34,7 +34,7 @@
         <translation>Vykreslit vrstvu pozadí</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1558"/>
+        <location filename="../../src/ui/App.qml" line="1667"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="174"/>
         <source>Theme</source>
         <translation>Motiv</translation>
@@ -45,7 +45,7 @@
         <translation>Škálování uživatelského rozhraní</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1540"/>
+        <location filename="../../src/ui/App.qml" line="1649"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="215"/>
         <source>Language</source>
         <translation>Jazyk</translation>
@@ -63,7 +63,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 Obdélník je pouze vizuální pomůcka, která NEMÁ vliv na vykreslování.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1579"/>
+        <location filename="../../src/ui/App.qml" line="1690"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="270"/>
         <source>Use GPU decoding</source>
         <translation>Použít dekódování pomocí GPU</translation>
@@ -99,7 +99,7 @@ Obdélník je pouze vizuální pomůcka, která NEMÁ vliv na vykreslování.</t
         <translation>Náhled pipeline</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1599"/>
+        <location filename="../../src/ui/App.qml" line="1710"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="374"/>
         <source>Device for video processing</source>
         <translation>Zařízení pro zpracování videa</translation>
@@ -187,126 +187,125 @@ Obdélník je pouze vizuální pomůcka, která NEMÁ vliv na vykreslování.</t
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="744"/>
+        <location filename="../../src/ui/App.qml" line="788"/>
         <source>Auto sync for plugins</source>
         <translation>Automatická synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="749"/>
+        <location filename="../../src/ui/App.qml" line="816"/>
         <source>Continue</source>
         <translation>Pokračovat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2136"/>
+        <location filename="../../src/ui/App.qml" line="2253"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
         <translation>Soubory Canon CRM jsou podporovány pouze prostřednictvím proxy workflow.
 Exportujte projektový soubor a použijte ho ve svém RAW workflow.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="541"/>
         <source>Choose a video file</source>
-        <translation>Vyberte video soubor</translation>
+        <translation type="vanished">Vyberte video soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="542"/>
         <source>Video files</source>
-        <translation>Video soubory</translation>
+        <translation type="vanished">Video soubory</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="684"/>
+        <location filename="../../src/ui/App.qml" line="749"/>
         <source>Output path:</source>
         <translation>Cesta výstupu:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="848"/>
+        <location filename="../../src/ui/App.qml" line="939"/>
         <source>Export</source>
         <translation>Export</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="846"/>
+        <location filename="../../src/ui/App.qml" line="937"/>
         <source>Add to render queue</source>
         <translation>Přidat do fronty renderování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="904"/>
+        <location filename="../../src/ui/App.qml" line="999"/>
         <source>This format is not available for rendering.
 The recommended workflow is to export project file and use one of [video editor plugins] (%1).</source>
         <translation>Tento formát není k dispozici pro renderování.
 Doporučený postup je exportovat soubor projektu a použít [pluginy video editoru] (%1).</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="948"/>
-        <location filename="../../src/ui/App.qml" line="2057"/>
+        <location filename="../../src/ui/App.qml" line="1043"/>
+        <location filename="../../src/ui/App.qml" line="2194"/>
         <source>Output file already exists, do you want to overwrite it?</source>
         <translation>Výstupní soubor již existuje, chcete ho přepsat?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="911"/>
-        <location filename="../../src/ui/App.qml" line="919"/>
-        <location filename="../../src/ui/App.qml" line="949"/>
-        <location filename="../../src/ui/App.qml" line="1100"/>
+        <location filename="../../src/ui/App.qml" line="1006"/>
+        <location filename="../../src/ui/App.qml" line="1014"/>
+        <location filename="../../src/ui/App.qml" line="1044"/>
+        <location filename="../../src/ui/App.qml" line="1195"/>
         <source>Yes</source>
         <translation>Ano</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="950"/>
-        <location filename="../../src/ui/App.qml" line="2133"/>
+        <location filename="../../src/ui/App.qml" line="1045"/>
+        <location filename="../../src/ui/App.qml" line="2282"/>
         <source>Rename</source>
         <translation>Přejmenovat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="912"/>
-        <location filename="../../src/ui/App.qml" line="920"/>
-        <location filename="../../src/ui/App.qml" line="951"/>
-        <location filename="../../src/ui/App.qml" line="1105"/>
+        <location filename="../../src/ui/App.qml" line="1007"/>
+        <location filename="../../src/ui/App.qml" line="1015"/>
+        <location filename="../../src/ui/App.qml" line="1046"/>
+        <location filename="../../src/ui/App.qml" line="1200"/>
         <source>No</source>
         <translation>Ne</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1949"/>
-        <location filename="../../src/ui/App.qml" line="1956"/>
-        <location filename="../../src/ui/App.qml" line="1965"/>
+        <location filename="../../src/ui/App.qml" line="2075"/>
+        <location filename="../../src/ui/App.qml" line="2082"/>
+        <location filename="../../src/ui/App.qml" line="2091"/>
         <source>Select file destination</source>
         <translation>Vyberte destinaci</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="846"/>
+        <location filename="../../src/ui/App.qml" line="937"/>
         <source>Save</source>
         <translation>Uložit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="910"/>
+        <location filename="../../src/ui/App.qml" line="1005"/>
         <source>Lens profile is not loaded, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation>Profil objektivů není načten, výsledek bude nesprávný. Jste si jisti, že chcete vykreslit tento soubor?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="918"/>
+        <location filename="../../src/ui/App.qml" line="1013"/>
         <source>There are no sync points present, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation>Nejsou žádné body synchronizace, výsledek bude nesprávný. Jste si jisti, že chcete vykreslit tento soubor?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1126"/>
+        <location filename="../../src/ui/App.qml" line="1221"/>
         <source>Render queue</source>
         <translation>Fronta renderování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="905"/>
-        <location filename="../../src/ui/App.qml" line="960"/>
-        <location filename="../../src/ui/App.qml" line="970"/>
-        <location filename="../../src/ui/App.qml" line="977"/>
-        <location filename="../../src/ui/App.qml" line="988"/>
-        <location filename="../../src/ui/App.qml" line="1052"/>
+        <location filename="../../src/ui/App.qml" line="1000"/>
         <location filename="../../src/ui/App.qml" line="1055"/>
-        <location filename="../../src/ui/App.qml" line="1881"/>
-        <location filename="../../src/ui/App.qml" line="1884"/>
-        <location filename="../../src/ui/App.qml" line="1990"/>
-        <location filename="../../src/ui/App.qml" line="1992"/>
+        <location filename="../../src/ui/App.qml" line="1065"/>
+        <location filename="../../src/ui/App.qml" line="1072"/>
+        <location filename="../../src/ui/App.qml" line="1083"/>
+        <location filename="../../src/ui/App.qml" line="1147"/>
+        <location filename="../../src/ui/App.qml" line="1150"/>
+        <location filename="../../src/ui/App.qml" line="2007"/>
+        <location filename="../../src/ui/App.qml" line="2010"/>
+        <location filename="../../src/ui/App.qml" line="2120"/>
+        <location filename="../../src/ui/App.qml" line="2122"/>
+        <location filename="../../src/ui/App.qml" line="2254"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="966"/>
+        <location filename="../../src/ui/App.qml" line="1061"/>
         <source>Some AMD GPU encoders have a bug where it limits the bitrate to 20 Mbps, if the target bitrate is greater than 100 Mbps.
 
 Please check the file bitrate after rendering and if you&apos;re affected by this bug, you can either:
@@ -319,299 +318,314 @@ Prosím zkontrolujte bitrate souboru po renderování a pokud jste &apos; posti�
 - Použijte &quot; vlastní nastavení enkodéru&quot;: `-rc cqp -qp_i 28 -qp_p 28`</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2110"/>
+        <location filename="../../src/ui/App.qml" line="2259"/>
         <source>Saving...</source>
         <translation>Ukládání...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1049"/>
-        <location filename="../../src/ui/App.qml" line="1060"/>
-        <location filename="../../src/ui/App.qml" line="1972"/>
+        <location filename="../../src/ui/App.qml" line="1144"/>
+        <location filename="../../src/ui/App.qml" line="1155"/>
+        <location filename="../../src/ui/App.qml" line="2098"/>
         <source>Preset saved to %1</source>
         <translation>Předvolba uložena do %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1777"/>
-        <location filename="../../src/ui/App.qml" line="1815"/>
-        <location filename="../../src/ui/App.qml" line="1833"/>
-        <location filename="../../src/ui/App.qml" line="1868"/>
-        <location filename="../../src/ui/App.qml" line="1927"/>
-        <location filename="../../src/ui/App.qml" line="1933"/>
+        <location filename="../../src/ui/App.qml" line="1903"/>
+        <location filename="../../src/ui/App.qml" line="1941"/>
+        <location filename="../../src/ui/App.qml" line="1959"/>
+        <location filename="../../src/ui/App.qml" line="1994"/>
+        <location filename="../../src/ui/App.qml" line="2053"/>
+        <location filename="../../src/ui/App.qml" line="2059"/>
         <source>Close</source>
         <translation>Zavřít</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2129"/>
+        <location filename="../../src/ui/App.qml" line="2278"/>
         <source>`.gyroflow` file already exists, what do you want to do?</source>
         <translation>Soubor `.gyroflow` již existuje, co chcete udělat?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2130"/>
+        <location filename="../../src/ui/App.qml" line="2279"/>
         <source>Overwrite</source>
         <translation>Přepsat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2148"/>
+        <location filename="../../src/ui/App.qml" line="2297"/>
         <source>Choose a different location</source>
         <translation>Zvolte jiné umístění</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1062"/>
-        <location filename="../../src/ui/App.qml" line="2034"/>
-        <location filename="../../src/ui/App.qml" line="2153"/>
+        <location filename="../../src/ui/App.qml" line="815"/>
+        <location filename="../../src/ui/App.qml" line="1157"/>
+        <location filename="../../src/ui/App.qml" line="2171"/>
+        <location filename="../../src/ui/App.qml" line="2302"/>
         <source>Cancel</source>
         <translation>Zrušit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="202"/>
+        <location filename="../../src/ui/App.qml" line="206"/>
         <source>Version: %1</source>
         <translation>Verze: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="716"/>
         <source>Auto sync</source>
-        <translation>Automatická synchronizace</translation>
+        <translation type="vanished">Automatická synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="750"/>
+        <location filename="../../src/ui/App.qml" line="833"/>
         <source>Stop</source>
         <translation>Zastavit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="750"/>
+        <location filename="../../src/ui/App.qml" line="833"/>
         <source>Export stabilized video</source>
         <translation>Exportovat stabilizované video</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="844"/>
-        <location filename="../../src/ui/App.qml" line="942"/>
-        <location filename="../../src/ui/App.qml" line="946"/>
+        <location filename="../../src/ui/App.qml" line="935"/>
+        <location filename="../../src/ui/App.qml" line="1037"/>
+        <location filename="../../src/ui/App.qml" line="1041"/>
         <source>Added to queue</source>
         <translation>Přidáno do fronty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="942"/>
+        <location filename="../../src/ui/App.qml" line="1037"/>
         <source>file %1 will be overwritten</source>
         <translation>soubor %1 bude přepsán</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="946"/>
+        <location filename="../../src/ui/App.qml" line="1041"/>
         <source>file will be rendered to %1</source>
         <translation>soubor bude vyrenderován do %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="959"/>
+        <location filename="../../src/ui/App.qml" line="1054"/>
         <source>Gyroflow will use REDline to convert .R3D to ProRes before stabilizing in order to export from Gyroflow directly.
 If you want to work on RAW data instead, export project file (Ctrl+S) and use one of [video editor plugins] (%1).</source>
         <translation>Gyroflow použije REDline k převodu .R3D do ProRes před stabilizací, aby bylo možné exportovat přímo z Gyroflow.
 Pokud chcete místo toho pracovat s RAW daty, exportujte soubor projektu (Ctrl+S) a použijte jeden z [pluginů pro video editory] (%1).</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="976"/>
+        <location filename="../../src/ui/App.qml" line="1071"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>Kvůli omezení přístupu k souborům musíte cílovou složku vybrat ručně.
 Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="987"/>
+        <location filename="../../src/ui/App.qml" line="1082"/>
         <source>Keep this app in the foreground and don&apos;t lock the screen.
 Due to limitations of the system video encoders, rendering in the background is not supported.</source>
         <translation>Ponechte tuto aplikaci v popředí a nezamykejte obrazovku.
 Z důvodu omezení systémových kodérů není vykreslování na pozadí podporováno.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1051"/>
+        <location filename="../../src/ui/App.qml" line="1146"/>
         <source>Enter the name for the preset: </source>
         <translation>Zadejte název předvolby:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1055"/>
+        <location filename="../../src/ui/App.qml" line="1150"/>
         <source>Name cannot be empty.</source>
         <translation>Název nemůže být prázdný.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1097"/>
+        <location filename="../../src/ui/App.qml" line="1192"/>
         <source>Clear render queue</source>
         <translation>Vymazat frontu renderování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1099"/>
+        <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Opravdu chcete odstranit všechny položky z fronty renderování?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1301"/>
+        <location filename="../../src/ui/App.qml" line="1396"/>
         <source>Batch settings (%1)</source>
         <translation>Dávková nastavení (%1)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1310"/>
+        <location filename="../../src/ui/App.qml" line="1405"/>
         <source>Apply</source>
         <translation>Aplikovat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1318"/>
+        <location filename="../../src/ui/App.qml" line="1413"/>
         <source>Exit</source>
         <translation>Zavřít</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1432"/>
+        <location filename="../../src/ui/App.qml" line="1528"/>
         <source>Sensor &amp;&amp; Lens</source>
         <translation>Senzor &amp;&amp; Objektiv</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1525"/>
+        <location filename="../../src/ui/App.qml" line="1634"/>
         <source>Settings</source>
         <translation>Nastavení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1618"/>
+        <location filename="../../src/ui/App.qml" line="1730"/>
         <source>Check for updates</source>
         <translation>Zkontrolovat aktualizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1269"/>
-        <location filename="../../src/ui/App.qml" line="1279"/>
-        <location filename="../../src/ui/App.qml" line="1646"/>
+        <location filename="../../src/ui/App.qml" line="1364"/>
+        <location filename="../../src/ui/App.qml" line="1374"/>
+        <location filename="../../src/ui/App.qml" line="1772"/>
         <source>Full mode →</source>
         <translation>Plný režim →</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1185"/>
-        <location filename="../../src/ui/App.qml" line="1195"/>
-        <location filename="../../src/ui/App.qml" line="1205"/>
-        <location filename="../../src/ui/App.qml" line="1373"/>
+        <location filename="../../src/ui/App.qml" line="606"/>
+        <source>Choose a video or motion data file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="607"/>
+        <source>Supported files</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1280"/>
+        <location filename="../../src/ui/App.qml" line="1290"/>
+        <location filename="../../src/ui/App.qml" line="1300"/>
+        <location filename="../../src/ui/App.qml" line="1468"/>
         <source>← Simple mode</source>
         <translation>← Jednoduchý režim</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1624"/>
+        <location filename="../../src/ui/App.qml" line="1646"/>
+        <source>Other settings</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1736"/>
         <source>Report a problem</source>
         <translation>Nahlásit problém</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1776"/>
-        <location filename="../../src/ui/App.qml" line="1914"/>
+        <location filename="../../src/ui/App.qml" line="1902"/>
+        <location filename="../../src/ui/App.qml" line="2040"/>
         <source>Downloading update...</source>
         <translation>Stahování aktualizace...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1788"/>
+        <location filename="../../src/ui/App.qml" line="1914"/>
         <source>Manual test version</source>
         <translation>Ručně vybraná testovací verze</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1788"/>
+        <location filename="../../src/ui/App.qml" line="1914"/>
         <source>Stable update</source>
         <translation>Stabilní aktualizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1798"/>
+        <location filename="../../src/ui/App.qml" line="1924"/>
         <source>Test version available: %1.</source>
         <translation>Dostupná testovací verze: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1799"/>
+        <location filename="../../src/ui/App.qml" line="1925"/>
         <source>Stable update available: %1.</source>
         <translation>Dostupná stabilní aktualizace: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1814"/>
+        <location filename="../../src/ui/App.qml" line="1940"/>
         <source>Available updates</source>
         <translation>Dostupné aktualizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1832"/>
-        <location filename="../../src/ui/App.qml" line="1932"/>
+        <location filename="../../src/ui/App.qml" line="1958"/>
+        <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>
         <translation>Aktualizace selhala: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1867"/>
+        <location filename="../../src/ui/App.qml" line="1993"/>
         <source>You are already on the latest version.</source>
         <translation>Již používáte nejnovější verzi.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1913"/>
+        <location filename="../../src/ui/App.qml" line="2039"/>
         <source>Downloading update... %1%</source>
         <translation>Stahování aktualizace... %1%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1921"/>
+        <location filename="../../src/ui/App.qml" line="2047"/>
         <source>Installing the update will quit Gyroflow. Make sure your project is saved before continuing.</source>
         <translation>Instalace aktualizace ukončí Gyroflow. Před pokračováním se ujistěte, že je projekt uložen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1923"/>
+        <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Po otevření DMG přetáhněte Gyroflow(NiYien).app do složky Applications.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1925"/>
+        <location filename="../../src/ui/App.qml" line="2051"/>
         <source>Update is ready.</source>
         <translation>Aktualizace je připravena.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1926"/>
+        <location filename="../../src/ui/App.qml" line="2052"/>
         <source>Open DMG and quit</source>
         <translation>Otevřít DMG a ukončit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1926"/>
+        <location filename="../../src/ui/App.qml" line="2052"/>
         <source>Install and quit</source>
         <translation>Nainstalovat a ukončit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1990"/>
+        <location filename="../../src/ui/App.qml" line="2120"/>
         <source>Thanks! Your feedback has been submitted.</source>
         <translation>Děkujeme! Vaše zpětná vazba byla odeslána.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1992"/>
+        <location filename="../../src/ui/App.qml" line="2122"/>
         <source>Submission failed: %1</source>
         <translation>Odeslání selhalo: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2013"/>
+        <location filename="../../src/ui/App.qml" line="2150"/>
         <source>An error occured: %1</source>
         <translation>Došlo k chybě: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2014"/>
+        <location filename="../../src/ui/App.qml" line="2151"/>
         <source>Gyroflow file exported to %1.</source>
         <translation>Gyroflow soubor exportován do %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2015"/>
+        <location filename="../../src/ui/App.qml" line="2152"/>
         <source>--REPLACE_WITH_NATIVE_NAME_OF_YOUR_LANGUAGE_IN_YOUR_LANGUAGE--</source>
         <comment>Translate this to the native name of your language</comment>
         <translation>Čeština</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2016"/>
+        <location filename="../../src/ui/App.qml" line="2153"/>
         <source>Gyroflow will shut down the computer in 60 seconds because all tasks have been completed.</source>
         <translation>Gyroflow vypne počítač za 60 vteřin, protože všechny úkoly již byly dokončeny.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2017"/>
+        <location filename="../../src/ui/App.qml" line="2154"/>
         <source>Gyroflow will reboot the computer in 60 seconds because all tasks have been completed.</source>
         <translation>Gyroflow restartuje počítač za 60 vteřin, protože všechny úkoly již byly dokončeny.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2028"/>
+        <location filename="../../src/ui/App.qml" line="2165"/>
         <source>This encoder requires an external library licensed as GPL.
 Do you agree with the [GPL license] and want to download the additional codec?</source>
         <translation>Tento enkodér vyžaduje externí knihovnu s licencí GPL.
 Souhlasíte s [GPL licencí] a chcete stáhnout doplňkový kodek?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2029"/>
+        <location filename="../../src/ui/App.qml" line="2166"/>
         <source>Yes, I agree</source>
         <translation>Ano, souhlasím</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2044"/>
+        <location filename="../../src/ui/App.qml" line="2181"/>
         <source>Permission denied. Unable to create or write file.
 Change the output path or run the program as administrator.
 Make sure you have write permissions to the target directory and make sure target file is not used by any other application.</source>
@@ -620,7 +634,7 @@ Změňte výstupní cestu nebo spusťte program jako správce.
 Ujistěte se, že máte oprávnění k zápisu do cílového adresáře a ujistěte se, že cílový soubor není používán žádnou jinou aplikací.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2045"/>
+        <location filename="../../src/ui/App.qml" line="2182"/>
         <source>NVIDIA GPU driver is too old, GPU encoding will not work for this format.
 Update your NVIDIA drivers to the newest version: %1.
 If the issue is still present after driver update, your GPU probably doesn&apos;t support GPU encoding with this format. Disable GPU encoding in this case.</source>
@@ -629,36 +643,36 @@ Aktualizujte ovladače NVIDIA na nejnovější verzi: %1.
 Pokud problém přetrvává i po aktualizaci ovladače, váš GPU pravděpodobně nepodporuje GPU kódování s tímto formátem. V takovém případě zakažte kódování GPU.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2054"/>
+        <location filename="../../src/ui/App.qml" line="2191"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation>Enkodér grafické karty nepodporuje tento formát (%1).
 Chcete převést na jiný podporovaný formát nebo zachovat originální a vykreslit na CPU?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2060"/>
+        <location filename="../../src/ui/App.qml" line="2197"/>
         <source>GPU encoder failed to initialize and rendering is done on the CPU, which is much slower.
 If you have a modern device, latest GPU drivers and you think this shouldn&apos;t happen, report this on GitHub including gyroflow.log file.</source>
         <translation>Nepodařilo se inicializovat GPU enkondér. Vykreslování se provádí přes CPU, což je mnohem pomalejší.
 Pokud máte moderní zařízení, nejnovější GPU ovladače a myslíte, že se jedná o chybu, nahlaste to na GitHub včetně gyroflow.log souboru.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2063"/>
+        <location filename="../../src/ui/App.qml" line="2200"/>
         <source>Your GPU doesn&apos;t support H.265/HEVC encoding, try to use H.264/AVC or disable GPU encoding in Export settings.</source>
         <translation>Váš grafický procesor nepodporuje kódování H.265/HEVC, zkuste použít H.264/AVC nebo vypněte kódování GPU v nastavení exportu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2066"/>
+        <location filename="../../src/ui/App.qml" line="2203"/>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation>GPU dekodéru se nepodařilo dekódovat tento soubor. Zakažte GPU dekódování v &quot;Pokročilé&quot; a zkuste to znovu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2069"/>
+        <location filename="../../src/ui/App.qml" line="2206"/>
         <source>Make sure your output extension supports the selected codec. &quot;.mov&quot; should work in most cases.</source>
         <translation>Ujistěte se, že vaše výstupní rozšíření podporuje vybraný kodek. Přípona &quot;.mov&quot; by měla ve většině případů fungovat.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2072"/>
+        <location filename="../../src/ui/App.qml" line="2209"/>
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Audio enkodér nemohl zpracovat vstupní data. Zkuste odškrtnout &quot;Exportovat audio&quot; v nastavení exportu.</translation>
     </message>
@@ -1355,7 +1369,7 @@ Limit ostrosti můžete zvýšit v sekci Pokročilé.</translation>
 <context>
     <name>DropTarget</name>
     <message>
-        <location filename="../../src/ui/components/DropTarget.qml" line="22"/>
+        <location filename="../../src/ui/components/DropTarget.qml" line="23"/>
         <source>Drop file here</source>
         <translation>Přetáhněte sem soubor</translation>
     </message>
@@ -1363,266 +1377,266 @@ Limit ostrosti můžete zvýšit v sekci Pokročilé.</translation>
 <context>
     <name>Export</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1533"/>
+        <location filename="../../src/ui/App.qml" line="1642"/>
         <location filename="../../src/ui/menu/Export.qml" line="12"/>
         <source>Export settings</source>
         <translation>Nastavení výstupu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="351"/>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="114"/>
+        <location filename="../../src/ui/menu/Export.qml" line="358"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="119"/>
         <source>Output size</source>
         <translation>Velikost výstupu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="357"/>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="122"/>
+        <location filename="../../src/ui/menu/Export.qml" line="364"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="129"/>
         <source>Width</source>
         <translation>Šířka</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="375"/>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="171"/>
+        <location filename="../../src/ui/menu/Export.qml" line="382"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="178"/>
         <source>Height</source>
         <translation>Výška</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="407"/>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="159"/>
+        <location filename="../../src/ui/menu/Export.qml" line="414"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="166"/>
         <source>Lock aspect ratio</source>
         <translation>Uzamknout poměr stran</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="419"/>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="198"/>
+        <location filename="../../src/ui/menu/Export.qml" line="426"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="205"/>
         <source>Output size preset</source>
         <translation>Předvolba velikosti výstupu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="448"/>
+        <location filename="../../src/ui/menu/Export.qml" line="455"/>
         <source>Proportional</source>
         <translation>Proporcionální</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="454"/>
+        <location filename="../../src/ui/menu/Export.qml" line="461"/>
         <source>Based on &quot;Max zoom&quot;</source>
         <translation>Na základě &quot;Max. zoom&quot;</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="526"/>
+        <location filename="../../src/ui/menu/Export.qml" line="533"/>
         <source>This resolution is not supported by the selected codec.</source>
         <translation>Toto rozlišení není podporováno vybraným kodekem.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="527"/>
+        <location filename="../../src/ui/menu/Export.qml" line="534"/>
         <source>Maximum supported resolution is %1.</source>
         <translation>Maximální podporované rozlišení je %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="533"/>
+        <location filename="../../src/ui/menu/Export.qml" line="540"/>
         <source>Resolution must be divisible by 2.</source>
         <translation>Rozlišení musí být dělitelné dvěma.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="538"/>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="212"/>
+        <location filename="../../src/ui/menu/Export.qml" line="545"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="219"/>
         <source>Bitrate</source>
         <translation>Přenosová rychlost</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="545"/>
+        <location filename="../../src/ui/menu/Export.qml" line="552"/>
         <source>Mbps</source>
         <translation>Mb/s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1588"/>
-        <location filename="../../src/ui/menu/Export.qml" line="557"/>
+        <location filename="../../src/ui/App.qml" line="1699"/>
+        <location filename="../../src/ui/menu/Export.qml" line="564"/>
         <source>Use GPU encoding</source>
         <translation>Použít dekódování pomocí GPU</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="566"/>
+        <location filename="../../src/ui/menu/Export.qml" line="573"/>
         <source>GPU encoders typically generate output of lower quality than software encoders, but are significantly faster.</source>
         <translation>GPU enkodéry obvykle generují výstup nižší kvality než softwarové enkodéry, ale jsou mnohem rychlejší.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="567"/>
+        <location filename="../../src/ui/menu/Export.qml" line="574"/>
         <source>They require a higher bitrate to make output with the same perceptual quality, or they make output with a lower perceptual quality at the same bitrate.</source>
         <translation>Potřebují vyšší bitrate k dosažení výstupu se stejnou vnímatelnou kvalitou nebo produkují výstup s nižší vnímatelnou kvalitou při stejném bitratu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="568"/>
+        <location filename="../../src/ui/menu/Export.qml" line="575"/>
         <source>Uncheck this option for maximum possible quality.</source>
         <translation>Zrušte zaškrtnutí u této možnosti pro maximální možnou kvalitu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="570"/>
+        <location filename="../../src/ui/menu/Export.qml" line="577"/>
         <source>GPU acceleration is not available for the pixel format of this video.</source>
         <translation>GPU akcelerace není k dispozici pro tento formát.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="574"/>
+        <location filename="../../src/ui/menu/Export.qml" line="581"/>
         <source>Export audio</source>
         <translation>Exportovat Zvuk</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="578"/>
+        <location filename="../../src/ui/menu/Export.qml" line="585"/>
         <source>Audio export not available when changing video speed.</source>
         <translation>Při změně rychlosti videa není k dispozici export zvuku.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="585"/>
+        <location filename="../../src/ui/menu/Export.qml" line="592"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="19"/>
         <source>Render queue output path</source>
         <translation>Výstupní cesta vykreslení fronty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="588"/>
+        <location filename="../../src/ui/menu/Export.qml" line="595"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="23"/>
         <source>Same as source file</source>
         <translation>Stejné jako zdrojový soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="588"/>
+        <location filename="../../src/ui/menu/Export.qml" line="595"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="23"/>
         <source>Fixed path</source>
         <translation>Pevná cesta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="601"/>
+        <location filename="../../src/ui/menu/Export.qml" line="608"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="40"/>
         <source>Select output folder...</source>
         <translation>Vyberte výstupní složku...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="609"/>
+        <location filename="../../src/ui/menu/Export.qml" line="616"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="47"/>
         <source>Browse</source>
         <translation>Procházet</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="617"/>
+        <location filename="../../src/ui/menu/Export.qml" line="624"/>
         <source>Custom encoder options</source>
         <translation>Vlastní nastavení enkodéru</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="640"/>
+        <location filename="../../src/ui/menu/Export.qml" line="647"/>
         <source>Show available options</source>
         <translation>Zobrazit dostupné možnosti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="686"/>
+        <location filename="../../src/ui/menu/Export.qml" line="693"/>
         <source>Export trim ranges as separate videos</source>
         <translation>Exportovat rozsahy oříznutí jako samostatná videa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="705"/>
+        <location filename="../../src/ui/menu/Export.qml" line="712"/>
         <source>Interpolation method</source>
         <translation>Metoda integrace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="769"/>
+        <location filename="../../src/ui/menu/Export.qml" line="776"/>
         <source>Preserve export settings</source>
         <translation>Zachovat nastavení exportu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="771"/>
+        <location filename="../../src/ui/menu/Export.qml" line="778"/>
         <source>Save output size and bitrate in settings and use it for all files.</source>
         <translation>Uložit výstupní velikost a bitrate v nastavení a použít ji pro všechny soubory.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="782"/>
+        <location filename="../../src/ui/menu/Export.qml" line="789"/>
         <source>Preserve export path</source>
         <translation>Zachovat cestu exportu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="784"/>
+        <location filename="../../src/ui/menu/Export.qml" line="791"/>
         <source>Save output path in settings and use it for all files.</source>
         <translation>Uložte výstupní cestu v nastavení a použijte ji pro všechny soubory.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="795"/>
+        <location filename="../../src/ui/menu/Export.qml" line="802"/>
         <source>Use experimental Vulkan encoder (HEVC only)</source>
         <translation>Použít experimentální kodér Vulkan (pouze HEVC)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="804"/>
+        <location filename="../../src/ui/menu/Export.qml" line="811"/>
         <source>Use experimental D3D12 encoder (HEVC and AVC)</source>
         <translation>Použít experimentální kodér D3D12 (HEVC a AVC)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="494"/>
-        <location filename="../../src/ui/menu/Export.qml" line="643"/>
+        <location filename="../../src/ui/menu/Export.qml" line="501"/>
+        <location filename="../../src/ui/menu/Export.qml" line="650"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="429"/>
+        <location filename="../../src/ui/menu/Export.qml" line="436"/>
         <source>Edit sizes</source>
         <translation>Upravit velikosti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="433"/>
+        <location filename="../../src/ui/menu/Export.qml" line="440"/>
         <source>Original</source>
         <translation>Původní</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="486"/>
+        <location filename="../../src/ui/menu/Export.qml" line="493"/>
         <source>You can edit the output size presets here:</source>
         <translation>Předvolby velikosti výstupu můžete upravit zde:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="487"/>
+        <location filename="../../src/ui/menu/Export.qml" line="494"/>
         <source>Save</source>
         <translation>Uložit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="494"/>
+        <location filename="../../src/ui/menu/Export.qml" line="501"/>
         <source>Invalid JSON format!</source>
         <translation>Neplatný JSON formát!</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="497"/>
+        <location filename="../../src/ui/menu/Export.qml" line="504"/>
         <source>Cancel</source>
         <translation>Storno</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="650"/>
+        <location filename="../../src/ui/menu/Export.qml" line="657"/>
         <source>Metadata comment</source>
         <translation>Komentář metadat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="658"/>
+        <location filename="../../src/ui/menu/Export.qml" line="665"/>
         <source>Keyframe distance</source>
         <translation>Vzdálenost klíčových snímků</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="667"/>
+        <location filename="../../src/ui/menu/Export.qml" line="674"/>
         <source>s</source>
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="672"/>
+        <location filename="../../src/ui/menu/Export.qml" line="679"/>
         <source>Preserve other tracks</source>
         <translation>Zachovat ostatní stopy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="674"/>
+        <location filename="../../src/ui/menu/Export.qml" line="681"/>
         <source>This disables trim range and you need to use the .mov output file extension</source>
         <translation>Tím se zakáže rozsah ořezu a je třeba použít výstupní soubor s příponou .mov</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="679"/>
+        <location filename="../../src/ui/menu/Export.qml" line="686"/>
         <source>Use black frames outside trim range and keep original file duration</source>
         <translation>Použít černé snímky mimo rozsah oříznutí a zachovat původní dobu trvání souboru</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="693"/>
+        <location filename="../../src/ui/menu/Export.qml" line="700"/>
         <source>Audio codec</source>
         <translation>Audio kodek</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="716"/>
+        <location filename="../../src/ui/menu/Export.qml" line="723"/>
         <source>Device for rendering</source>
         <translation>Zařízení pro vykreslování</translation>
     </message>
@@ -1630,52 +1644,52 @@ Limit ostrosti můžete zvýšit v sekci Pokročilé.</translation>
 <context>
     <name>FeedbackDialog</name>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="55"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="70"/>
         <source>Stage: %1 (%2%)</source>
         <translation>Fáze: %1 (%2 %)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="84"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="99"/>
         <source>Report a problem (after crash)</source>
         <translation>Nahlásit problém (po pádu)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="85"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="100"/>
         <source>Report a problem</source>
         <translation>Nahlásit problém</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="93"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="108"/>
         <source>Last session crashed; the crash log is attached automatically. Description and email are optional.</source>
         <translation>Předchozí relace spadla; protokol pádu je připojen automaticky. Popis a e-mail jsou volitelné.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="94"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="109"/>
         <source>Logs and project metadata will be uploaded to Niyien for analysis. Description and email are optional. No video files are uploaded.</source>
         <translation>Protokoly a metadata projektu budou odeslány k analýze do Niyien. Popis a e-mail jsou volitelné. Žádné video soubory se neodesílají.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="112"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="127"/>
         <source>What happened? (optional)</source>
         <translation>Co se stalo? (volitelné)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="121"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="136"/>
         <source>Email (optional, for follow-up)</source>
         <translation>E-mail (volitelný, pro odpověď)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="145"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="160"/>
         <source>Cancel</source>
         <translation>Zrušit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="150"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="165"/>
         <source>Submit</source>
         <translation>Odeslat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/FeedbackDialog.qml" line="155"/>
+        <location filename="../../src/ui/components/FeedbackDialog.qml" line="171"/>
         <source>Packaging…</source>
         <translation>Balení…</translation>
     </message>
@@ -1927,95 +1941,92 @@ Chcete odeslat svůj profil?</translation>
         <translation>Skupiny objektivů</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="590"/>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="663"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="610"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="685"/>
         <source>Mixed</source>
         <translation>Smíšené</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="216"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="237"/>
         <source>No focus</source>
         <translation>Bez ohniska</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="234"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="255"/>
         <source>Manual setup</source>
         <translation>Ruční nastavení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="452"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="475"/>
         <source>Manually set lens focal length or anamorphic info.</source>
         <translation>Ručně nastavte ohniskovou vzdálenost nebo anamorfní informace.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="465"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="488"/>
         <source>Manual edit</source>
         <translation>Ruční úpravy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="466"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Když je zapnuto, každá skupina objektivů použije ručně zadanou ohniskovou vzdálenost / anamorfickou hodnotu, pokud video nemá telemetrii ohniskové vzdálenosti nebo je povolen anamorfický režim. Pro účinek musí být ohnisková vzdálenost &gt; 5 mm.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="499"/>
         <source>Changes only affect the selected video.</source>
-        <translation>Změny ovlivní pouze vybrané video.</translation>
+        <translation type="vanished">Změny ovlivní pouze vybrané video.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="500"/>
         <source>Changes only affect the %1 selected videos.</source>
-        <translation>Změny ovlivní pouze %1 vybraných videí.</translation>
+        <translation type="vanished">Změny ovlivní pouze %1 vybraných videí.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="505"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="517"/>
         <source>Lens group</source>
         <translation>Skupina objektivů</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="526"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="538"/>
         <source>Focal length</source>
         <translation>Ohnisková vzdálenost</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="537"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="549"/>
         <source>mm</source>
         <translation>mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="554"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="566"/>
         <source>Anamorphic lens</source>
         <translation>Anamorfní objektiv</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="595"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="615"/>
         <source>Preset</source>
         <translation>Předvolba</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="631"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="653"/>
         <source>Horizontal</source>
         <translation>Vodorovně</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="641"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="663"/>
         <source>Vertical</source>
         <translation>Svisle</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="651"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="673"/>
         <source>Squeeze ratio</source>
         <translation>Poměr stlačení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="688"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="710"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="706"/>
         <source>Apply globally</source>
-        <translation>Použít globálně</translation>
+        <translation type="vanished">Použít globálně</translation>
     </message>
 </context>
 <context>
@@ -2026,127 +2037,172 @@ Chcete odeslat svůj profil?</translation>
         <translation>Profil objektivu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="39"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="124"/>
         <source>Choose a lens profile</source>
         <translation>Vyberte profil objektivu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="40"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="125"/>
         <source>Lens profiles</source>
         <translation>Profily objektivů</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="108"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="202"/>
         <source>Yes</source>
         <translation>Ano</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="210"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="331"/>
         <source>Open file</source>
         <translation>Otevřít soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="215"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="336"/>
         <source>Create new</source>
         <translation>Vytvořit nový</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="241"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="362"/>
         <source>Rate this profile: [Good] | [Bad]</source>
         <translation>Ohodnoťte tento profil: [Good] | [Bad]</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="243"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="364"/>
         <source>Thank you for rating this profile.</source>
         <translation>Díky za ohodnocení tohoto profilu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="273"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="394"/>
         <source>Lens profile aspect ratio doesn&apos;t match the file aspect ratio. The result will not look correct.</source>
         <translation>Poměr stran profilu objektivu neodpovídá poměru stran souboru. Výsledek nebude vypadat správně.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="274"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="395"/>
         <source>Lens profile dimensions don&apos;t match the file dimensions. The result may not look correct.</source>
         <translation>Rozměr profilu objektivu neodpovídá poměru stran souboru. Výsledek nebude vypadat správně.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="304"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="425"/>
         <source>Focal length (mm)</source>
         <translation>Ohnisková vzdálenost (mm)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="314"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="439"/>
         <source>Enter focal length for manual lenses or lenses without electronic contacts</source>
         <translation>Zadejte ohniskovou vzdálenost pro manuální objektivy nebo objektivy bez elektronických kontaktů</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="324"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="449"/>
         <source>Advanced</source>
         <translation>Pokročilé</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="329"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="454"/>
         <source>Lens is under water</source>
         <translation>Objektiv je pod vodou</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="331"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="456"/>
         <source>Enable if you&apos;re filming under water. This will adjust the refraction coefficient.</source>
         <translation>Aktivujte, pokud natáčíte pod vodou. Tím se upraví koeficient lomu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="352"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="477"/>
         <source>Enable keyframing</source>
         <translation>Povolit vytváření klíčových snímků</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="365"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="490"/>
         <source>Add keyframe</source>
         <translation>Přidat klíčový snímek</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="435"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="574"/>
+        <source>Anchor:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="579"/>
+        <source>Inner ring — narrow / tele lenses</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="580"/>
+        <source>Default — normal lenses</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="581"/>
+        <source>Wider — ultra-wide / anamorphic</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="582"/>
+        <source>Ultra-wide / fisheye</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="605"/>
+        <source>Bend @ r=</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="630"/>
+        <source>Anchor radius (0.4-0.9). Switching anchor keeps the bend value but rebuilds k1/k2 so the new ring shows that bend.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="657"/>
+        <source>Reset bend / corner / anchor and clear k1..k4.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="667"/>
+        <source>Corner bend @ r=1.0</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="705"/>
         <source>Export STMap</source>
         <translation>Exportovat STMap</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="441"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="711"/>
         <source>This file contains per-frame lens metadata. Do you want to export an STMap sequence or a single frame?</source>
         <translation>Tento soubor obsahuje metadata objektivu pro jednotlivé snímky. Chcete exportovat sekvenci STMap nebo jeden snímek?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="442"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="712"/>
         <source>Single frame</source>
         <translation>Jediný rám</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="443"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="713"/>
         <source>STMap sequence</source>
         <translation>sekvence STMap</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="457"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="727"/>
         <source>Exporting %1...</source>
         <translation>Export %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="394"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="532"/>
         <source>Pixel focal length</source>
         <translation>Ohnisková vzdálenost pixelů</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="240"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="361"/>
         <source>This lens profile is unofficial, we can&apos;t guarantee its correctness. Use at your own risk.</source>
         <translation>Tento profil objektivu není oficiální, nemůžeme zaručit jeho správnost. Používejte na vlastní nebezpečí.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="404"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="542"/>
         <source>Focal center</source>
         <translation>Střed ohniska</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="414"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="552"/>
         <source>Distortion coefficients</source>
         <translation>Koeficienty zkreslení</translation>
     </message>
@@ -2213,228 +2269,227 @@ Chcete odeslat svůj profil?</translation>
         <translation>Data o pohybu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="30"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="31"/>
         <source>Choose a motion data file</source>
         <translation>Vyberte soubor dat pohybu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="31"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="32"/>
         <source>Motion data files</source>
         <translation>Soubory dat pohybu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="40"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="41"/>
         <source>Video file is not loaded.</source>
         <translation>Video soubor není načten.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="40"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="41"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1450"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="176"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="177"/>
         <source>Open file</source>
         <translation>Otevřít soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="184"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="185"/>
         <source>In order to detect multiple motion data files, click here and grant access to the directory with files.</source>
         <translation>Chcete-li detekovat více souborů s daty pohybu, klikněte zde a povolte přístup k adresáři se soubory.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="212"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="213"/>
         <source>Select log</source>
         <translation>Vyberte protokol</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="230"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="231"/>
         <source>Load all metadata</source>
         <translation>Načíst všechna metadata</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="244"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="245"/>
         <source>Frame offset</source>
         <translation>Odsazení rámu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="251"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="252"/>
         <source>frames</source>
         <translation>rámy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="257"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="258"/>
         <source>Add or subtract frames from the video to align with motion data</source>
         <translation>Přidejte nebo odečtěte snímky z videa, abyste je zarovnali s daty pohybu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="265"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="266"/>
         <source>Low pass filter</source>
         <translation>Low pass filtr</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="273"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="274"/>
         <source>Hz</source>
         <translation>Hz</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="278"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="279"/>
         <source>Lower cutoff frequency means more filtering</source>
         <translation>Nižší frekvence přerušení znamená více filtrování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="287"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="288"/>
         <source>Median filter</source>
         <translation>Mediánový filtr</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="295"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="296"/>
         <source>samples</source>
         <translation>vzorky</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="311"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="312"/>
         <source>Rotation</source>
         <translation>Rotace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="328"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="378"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="329"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="379"/>
         <source>Pitch</source>
         <translation>Náklon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="332"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="333"/>
         <source>Pitch is camera angle up/down when using FPV blackbox data</source>
         <translation>Náklon je úhel kamery nahoru/dolů při použití dat z FPV blackboxu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="336"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="386"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="337"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="387"/>
         <source>Roll</source>
         <translation>Náklon do boku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="344"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="394"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="345"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="395"/>
         <source>Yaw</source>
         <translation>Otočení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="358"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="359"/>
         <source>Separate accelerometer rotation</source>
         <translation>Samostatná rotace akcelerometru</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="367"/>
         <source>Accelerometer rotation</source>
         <translation>Rotace akcelerometru</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="404"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="405"/>
         <source>Gyro bias</source>
         <translation>Zkreslení gyroskopu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="416"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="417"/>
         <source>X</source>
         <translation>X</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="424"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="425"/>
         <source>Y</source>
         <translation>Y</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="432"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="433"/>
         <source>Z</source>
         <translation>Z</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="442"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="443"/>
         <source>IMU orientation</source>
         <translation>Orientace IMU</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="449"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="450"/>
         <source>Uppercase is positive, lowercase is negative. eg. zYX</source>
         <translation>Velká písmena jsou kladná, malá záporná. např. zYX</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="455"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="456"/>
         <source>Integration method</source>
         <translation>Způsob integrace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
         <source>Use built-in quaternions instead of IMU data</source>
         <translation>Použít vestavěné čtveřice namísto IMU dat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
         <source>IMU integration method for calculating motion data</source>
         <translation>Metoda integrace IMU pro výpočet dat o pohybu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="480"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
         <source>Orientation indicator</source>
         <translation>Indikátor orientace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="696"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="697"/>
         <source>Statistics</source>
         <translation>Statistiky</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="704"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="705"/>
         <source>Export</source>
         <translation>Export</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="715"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="716"/>
         <source>Select file destination</source>
         <translation>Vyberte destinaci</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="729"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="730"/>
         <source>Export camera data (CSV/JSON/USD/AE)</source>
         <translation>Export dat fotoaparátu (CSV/JSON/USD/AE)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="778"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="779"/>
         <source>Which format do you want to use?</source>
         <translation>Jaký formát chcete použít?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="781"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="791"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="782"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="792"/>
         <source>Universal Scene Description</source>
         <translation>Univerzální popis scény</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="782"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="792"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="783"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="793"/>
         <source>After Effects Script</source>
         <translation>Skript pro After Effects</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="783"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="784"/>
         <source>Cancel</source>
         <translation>Zrušit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="800"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="801"/>
         <source>Export full metadata</source>
         <translation>Exportujte celá metadata</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="819"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="820"/>
         <source>Export parsed metadata</source>
         <translation>Exportujte analyzovaná metadata</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="837"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="838"/>
         <source>Export project file (including processed gyro data)</source>
         <translation>Export souboru projektu (včetně zpracovaných gyroskopických dat)</translation>
     </message>
@@ -2529,7 +2584,7 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="217"/>
+        <location filename="../../src/ui/App.qml" line="221"/>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="127"/>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="155"/>
         <source>Update</source>
@@ -2597,42 +2652,42 @@ Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</transl
 <context>
     <name>Popup</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="877"/>
+        <location filename="../../src/ui/App.qml" line="968"/>
         <source>Export</source>
         <translation>Export</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="877"/>
+        <location filename="../../src/ui/App.qml" line="968"/>
         <source>Save</source>
         <translation>Uložit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="877"/>
+        <location filename="../../src/ui/App.qml" line="968"/>
         <source>Add to render queue</source>
         <translation>Přidat do fronty renderování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="878"/>
+        <location filename="../../src/ui/App.qml" line="969"/>
         <source>Create settings preset</source>
         <translation>Vytvořit předvolbu nastavení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="879"/>
+        <location filename="../../src/ui/App.qml" line="970"/>
         <source>Apply selected settings to all items in the render queue</source>
         <translation>Použít vybraná nastavení pro všechny položky ve frontě</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="880"/>
+        <location filename="../../src/ui/App.qml" line="971"/>
         <source>Export project file (including gyro data)</source>
         <translation>Exportovat .gyroflow soubor (včetně dat gyroskopu)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="881"/>
+        <location filename="../../src/ui/App.qml" line="972"/>
         <source>Export project file</source>
         <translation>Exportovat projekt</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="883"/>
+        <location filename="../../src/ui/App.qml" line="974"/>
         <source>Save project file</source>
         <translation>Uložit projekt</translation>
     </message>
@@ -2640,7 +2695,7 @@ Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</transl
         <location filename="../../src/ui/menu/Advanced.qml" line="88"/>
         <location filename="../../src/ui/menu/LensCalibrate.qml" line="557"/>
         <location filename="../../src/ui/menu/LensCalibrate.qml" line="579"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="327"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="339"/>
         <source>Full</source>
         <translation>Plný</translation>
     </message>
@@ -2685,12 +2740,12 @@ Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</transl
         <translation>Mobil tmavý</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="218"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="219"/>
         <source>All logs combined</source>
         <translation>Všechny logy kombinované</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="461"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="462"/>
         <source>None</source>
         <translation>Žádný</translation>
     </message>
@@ -2715,73 +2770,73 @@ Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</transl
         <translation>Pevná kamera</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
         <source>No zooming</source>
         <translation>Žádné přiblížení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
         <source>Dynamic zooming</source>
         <translation>Dynamické přiblížení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1625"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
         <source>Static zoom</source>
         <translation>Statické přiblížení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="401"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="414"/>
         <source>rs-sync</source>
         <translation>rs-synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="401"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="414"/>
         <source>Essential matrix</source>
         <translation>Základní matice</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="401"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="414"/>
         <source>Visual features</source>
         <translation>Vizuální funkce</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2104"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2566"/>
         <source>Do nothing</source>
         <translation>Nic nedělat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2105"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2567"/>
         <source>Shut down the computer</source>
         <translation>Vypnout počítač</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2106"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2568"/>
         <source>Restart the computer</source>
         <translation>Restartovat počítač</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2107"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2569"/>
         <source>Sleep</source>
         <translation>Uspat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2108"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2570"/>
         <source>Hibernate</source>
         <translation>Hibernovat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2109"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2571"/>
         <source>Logout</source>
         <translation>Odhlásit se</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2110"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2572"/>
         <source>Close Gyroflow</source>
         <translation>Zavřít Gyroflow</translation>
     </message>
@@ -2817,17 +2872,16 @@ Otevřete &lt;b&gt;Terminal&lt;/b&gt; a zadejte následující příkaz:</transl
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1247"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1316"/>
         <source>Change framerate</source>
         <translation>Změnit snímkovou frekvenci</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1268"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1337"/>
         <source>Change lens group</source>
         <translation>Změnit skupinu objektivů</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="290"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 
 **1. Calibration videos are loaded**
@@ -2836,11 +2890,391 @@ Short videos (under 10 seconds) recorded simultaneously with the gyro file.
 
 **2. Videos and gyro files are correctly paired**
 
-For any unpaired video, you can pair manually: right-click the video → **"Pair with Gyro"**, then select the matching gyro file.
+For any unpaired video, you can pair manually: right-click the video → **&quot;Pair with Gyro&quot;**, then select the matching gyro file.
 
 **3. If there are not 2 calibration videos for the day**
 
-- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day&apos;s folder, re-add to the queue, then pair manually as above.
+- Or re-shoot calibration videos and re-add to the queue.</source>
+        <translation type="vanished">**Hromadná synchronizace neposkytla spolehlivý výsledek.** Zkontrolujte:
+
+**1. Jsou načtena kalibrační videa**
+
+Krátká videa (do 10 sekund) natočená současně se souborem gyroskopu.
+
+**2. Videa a gyroskopy jsou správně spárovány**
+
+Nespárované video můžete spárovat ručně: klikněte na video pravým tlačítkem → **&quot;Spárovat s gyroskopem&quot;** a vyberte odpovídající soubor gyroskopu.
+
+**3. Pokud pro daný den nejsou 2 kalibrační videa**
+
+- Použijte data ze sousedního dne: zkopírujte kalibrační videa a jejich gyroskopy do složky daného dne, znovu přidejte do fronty a ručně spárujte.
+- Nebo znovu natočte kalibrační videa a přidejte je do fronty.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="814"/>
+        <source>%1 video(s) will use Anamorphic lens</source>
+        <translation>%1 videí použije anamorfní objektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1349"/>
+        <source>Pair with Gyro</source>
+        <translation>Spárovat s gyroskopem</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1437"/>
+        <source>Unpair gyro</source>
+        <translation>Zrušit spárování s gyroskopem</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2060"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2115"/>
+        <source>Sync complete</source>
+        <translation>Synchronizace dokončena</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1931"/>
+        <source>Sync complete: %1</source>
+        <translation>Synchronizace dokončena: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
+        <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
+        <translation>Soubory Canon CRM je nutné načíst společně s proxy videem se stejným názvem.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="712"/>
+        <source>Pause</source>
+        <translation>Pauza</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="439"/>
+        <source>Render queue</source>
+        <translation>Fronta výstupu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2184"/>
+        <source>Selected: %1</source>
+        <translation>Vybráno: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2192"/>
+        <source>Select all</source>
+        <translation>Vybrat vše</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2198"/>
+        <source>Deselect</source>
+        <translation>Zrušit výběr</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
+        <source>Done</source>
+        <translation>Hotovo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2574"/>
+        <source>When rendering is finished: %1</source>
+        <translation>Když je vykreslování dokončeno: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="572"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2111"/>
+        <source> @ %1fps</source>
+        <translation> @ %1fps</translation>
+    </message>
+    <message>
+        <source>No calibration pair found for %1 video(s). Please pair manually.</source>
+        <translation type="vanished">Pro %1 videa nebyl nalezen žádný kalibrační pár. Spárujte prosím ručně.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="583"/>
+        <source>Elapsed: %1</source>
+        <translation>Uplynulo: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="601"/>
+        <source>Remaining: %1</source>
+        <translation>Zbývá: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="239"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="291"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="382"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="386"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="632"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="664"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2397"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="648"/>
+        <source>Rendering %1...</source>
+        <translation>Ukládání %1...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="648"/>
+        <source>Converting to %1 %2...</source>
+        <translation>Převádí se na %1 %2...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="666"/>
+        <source>Rendering completed. The file was written to: %1.</source>
+        <translation>Export ukončen, soubor byl uložen do: %1.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="659"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2150"/>
+        <source>Open rendered file</source>
+        <translation>Otevřít vygenerovaný soubor</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="376"/>
+        <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
+        <translation>Některá videa se nepodařilo spolehlivě synchronizovat. Pokusit se o automatickou opravu?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="377"/>
+        <source>Repair</source>
+        <translation>Opravit</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="378"/>
+        <source>Skip</source>
+        <translation>Přeskočit</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="385"/>
+        <source>Some videos are still not reliably synchronized after repair.</source>
+        <translation>Některá videa stále nejsou spolehlivě synchronizována ani po opravě.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="461"/>
+        <source>Choose files</source>
+        <translation>Vybrat soubory</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Video files</source>
+        <translation>Video soubory</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="478"/>
+        <source>Choose folder</source>
+        <translation>Vybrat složku</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="511"/>
+        <source>0s</source>
+        <translation>0 s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="662"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2156"/>
+        <source>Open file location</source>
+        <translation>Otevřít umístění souboru</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="681"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1800"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1822"/>
+        <source>Render using CPU</source>
+        <translation>Renderovat pomocí CPU</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="266"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="688"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="763"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
+        <source>Cancel</source>
+        <translation>Zrušit</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="690"/>
+        <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
+Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
+        <translation>Enkodér grafické garty nepodporuje tento formát (%1).
+Chcete převést na jiný podporovaný formát nebo zachovat originální a vykreslit přes CPU?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
+        <source>Start exporting</source>
+        <translation>Zahájit export</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="711"/>
+        <source>Resume</source>
+        <translation>Pokračovat</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="826"/>
+        <source>Add files</source>
+        <translation>Přidat soubory</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="844"/>
+        <source>Add folder</source>
+        <translation>Přidat složku</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1269"/>
+        <source>Render now</source>
+        <translation>Uložit nyní</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1279"/>
+        <source>Edit</source>
+        <translation>Upravit</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1297"/>
+        <source>Reset status</source>
+        <translation>Obnovení stavu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1297"/>
+        <source>Stop</source>
+        <translation>Zastavit</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1776"/>
+        <source>Missing required components.</source>
+        <translation>Chybějící požadavky.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1788"/>
+        <source>Applying pixel format: %1</source>
+        <translation>Používá se formát pixelů: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
+        <source>Selected encoder does not support the source pixel format.
+Choose a target pixel format or render on CPU.
+This choice applies to all remaining jobs in this batch.</source>
+        <translation>Vybraný enkodér nepodporuje zdrojový formát pixelů.
+Vyberte cílový formát nebo renderujte na CPU.
+Volba se použije na všechny zbývající úlohy v této dávce.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1811"/>
+        <source>Waiting for pixel format selection…</source>
+        <translation>Čeká se na výběr formátu pixelů…</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1835"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2699"/>
+        <source>Yes</source>
+        <translation>Ano</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1836"/>
+        <source>Rename</source>
+        <translation>Přejmenovat</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1837"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2706"/>
+        <source>No</source>
+        <translation>Ne</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1930"/>
+        <source>ETA %1</source>
+        <translation>ETA %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1932"/>
+        <source>Synchronizing: %1</source>
+        <translation>Synchronizace: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1933"/>
+        <source>Rendering: %1</source>
+        <translation>Vykreslování: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <source>Mode</source>
+        <translation>Režim</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <source>Local</source>
+        <translation>Místní</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2010"/>
+        <source>Global</source>
+        <translation>Globální</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2015"/>
+        <source>Lens</source>
+        <translation>Objektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2020"/>
+        <source>Focal</source>
+        <translation>Ohnisko</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2025"/>
+        <source>Anamorphic</source>
+        <translation>Anamorfní</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1994"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2052"/>
+        <source>Manual</source>
+        <translation>Manuál</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="239"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
+        <source>Failed to load the gyro file.</source>
+        <translation>Nepodařilo se načíst soubor gyroskopu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="265"/>
+        <source>Deep matching gyro data...</source>
+        <translation>Probíhá hluboké párování dat gyroskopu...</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
+        <source>The video has too little camera motion for deep matching. Try a video with more movement.</source>
+        <translation>Video má příliš málo pohybu kamery pro hluboké párování. Zkuste video s výraznějším pohybem.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="291"/>
+        <source>Couldn&apos;t find this video&apos;s time range in the selected gyro file. Make sure you picked the correct gyro file.</source>
+        <translation>Ve vybraném souboru gyroskopu se nepodařilo najít časový rozsah tohoto videa. Ujistěte se, že jste vybrali správný soubor gyroskopu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="353"/>
+        <source>No calibration pair found for %1 video(s). Pair manually, or right-click the video → &quot;Deep match with gyro&quot; to search the whole gyro file.</source>
+        <translation>Pro %1 videa nebyl nalezen žádný kalibrační pár. Spárujte ručně, nebo klikněte na video pravým tlačítkem → &quot;Hluboké párování s gyroskopem&quot; pro prohledání celého souboru gyroskopu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="381"/>
+        <source>**Batch synchronization did not produce a reliable result.** Please check:
+
+**1. Calibration videos are loaded**
+
+Short videos (under 10 seconds) recorded simultaneously with the gyro file.
+
+**2. Videos and gyro files are correctly paired**
+
+For any unpaired video, you can pair manually: right-click the video → **&quot;Pair with Gyro&quot;**, then select the matching gyro file.
+
+If there is no usable time-sync data at all, right-click the video → **&quot;Deep match with gyro&quot;** to search the whole gyro file for this video&apos;s position.
+
+**3. If there are not 2 calibration videos for the day**
+
+- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day&apos;s folder, re-add to the queue, then pair manually as above.
 - Or re-shoot calibration videos and re-add to the queue.</source>
         <translation>**Hromadná synchronizace neposkytla spolehlivý výsledek.** Zkontrolujte:
 
@@ -2850,7 +3284,9 @@ Krátká videa (do 10 sekund) natočená současně se souborem gyroskopu.
 
 **2. Videa a gyroskopy jsou správně spárovány**
 
-Nespárované video můžete spárovat ručně: klikněte na video pravým tlačítkem → **"Spárovat s gyroskopem"** a vyberte odpovídající soubor gyroskopu.
+Nespárované video můžete spárovat ručně: klikněte na video pravým tlačítkem → **&quot;Spárovat s gyroskopem&quot;** a vyberte odpovídající soubor gyroskopu.
+
+Pokud nejsou k dispozici vůbec žádná použitelná data časové synchronizace, klikněte na video pravým tlačítkem → **&quot;Hluboké párování s gyroskopem&quot;** a vyhledejte pozici tohoto videa v celém souboru gyroskopu.
 
 **3. Pokud pro daný den nejsou 2 kalibrační videa**
 
@@ -2858,485 +3294,187 @@ Nespárované video můžete spárovat ručně: klikněte na video pravým tlač
 - Nebo znovu natočte kalibrační videa a přidejte je do fronty.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2354"/>
-        <source>%1 video(s) will use Anamorphic lens</source>
-        <translation>%1 videí použije anamorfní objektiv</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="1231"/>
+        <source>Frame rate (0=unchanged)</source>
+        <translation type="unfinished">Snímková frekvence (0=nezměněno)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1110"/>
-        <source>Pair with Gyro</source>
-        <translation>Spárovat s gyroskopem</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
+        <source>OK</source>
+        <translation type="unfinished">OK</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1323"/>
-        <source>Unpair gyro</source>
-        <translation>Zrušit spárování s gyroskopem</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="1392"/>
+        <source>Deep match with gyro</source>
+        <translation>Hluboké párování s gyroskopem</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1719"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1774"/>
-        <source>Sync complete</source>
-        <translation>Synchronizace dokončena</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="2050"/>
+        <source>Deep</source>
+        <translation>Hluboké</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1635"/>
-        <source>Sync complete: %1</source>
-        <translation>Synchronizace dokončena: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1985"/>
-        <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
-        <translation>Soubory Canon CRM je nutné načíst společně s proxy videem se stejným názvem.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="622"/>
-        <source>Pause</source>
-        <translation>Pauza</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="349"/>
-        <source>Render queue</source>
-        <translation>Fronta výstupu</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1803"/>
-        <source>Selected: %1</source>
-        <translation>Vybráno: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1811"/>
-        <source>Select all</source>
-        <translation>Vybrat vše</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1817"/>
-        <source>Deselect</source>
-        <translation>Zrušit výběr</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1823"/>
-        <source>Done</source>
-        <translation>Hotovo</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2112"/>
-        <source>When rendering is finished: %1</source>
-        <translation>Když je vykreslování dokončeno: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1731"/>
-        <source> @ %1fps</source>
-        <translation> @ %1fps</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="263"/>
-        <source>No calibration pair found for %1 video(s). Please pair manually.</source>
-        <translation>Pro %1 videa nebyl nalezen žádný kalibrační pár. Spárujte prosím ručně.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="493"/>
-        <source>Elapsed: %1</source>
-        <translation>Uplynulo: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="511"/>
-        <source>Remaining: %1</source>
-        <translation>Zbývá: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="297"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="542"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="574"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1978"/>
-        <source>Ok</source>
-        <translation>Ok</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="558"/>
-        <source>Rendering %1...</source>
-        <translation>Ukládání %1...</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="558"/>
-        <source>Converting to %1 %2...</source>
-        <translation>Převádí se na %1 %2...</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="576"/>
-        <source>Rendering completed. The file was written to: %1.</source>
-        <translation>Export ukončen, soubor byl uložen do: %1.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="569"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1769"/>
-        <source>Open rendered file</source>
-        <translation>Otevřít vygenerovaný soubor</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="287"/>
-        <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
-        <translation>Některá videa se nepodařilo spolehlivě synchronizovat. Pokusit se o automatickou opravu?</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="288"/>
-        <source>Repair</source>
-        <translation>Opravit</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="289"/>
-        <source>Skip</source>
-        <translation>Přeskočit</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="296"/>
-        <source>Some videos are still not reliably synchronized after repair.</source>
-        <translation>Některá videa stále nejsou spolehlivě synchronizována ani po opravě.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="371"/>
-        <source>Choose files</source>
-        <translation>Vybrat soubory</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="372"/>
-        <source>Video files</source>
-        <translation>Video soubory</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="388"/>
-        <source>Choose folder</source>
-        <translation>Vybrat složku</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="421"/>
-        <source>0s</source>
-        <translation>0 s</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="572"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1775"/>
-        <source>Open file location</source>
-        <translation>Otevřít umístění souboru</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="591"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1473"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1495"/>
-        <source>Render using CPU</source>
-        <translation>Renderovat pomocí CPU</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="598"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="667"/>
-        <source>Cancel</source>
-        <translation>Zrušit</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="600"/>
-        <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
-Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
-        <translation>Enkodér grafické garty nepodporuje tento formát (%1).
-Chcete převést na jiný podporovaný formát nebo zachovat originální a vykreslit přes CPU?</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="620"/>
-        <source>Start exporting</source>
-        <translation>Zahájit export</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="621"/>
-        <source>Resume</source>
-        <translation>Pokračovat</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="730"/>
-        <source>Add files</source>
-        <translation>Přidat soubory</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="748"/>
-        <source>Add folder</source>
-        <translation>Přidat složku</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1029"/>
-        <source>Render now</source>
-        <translation>Uložit nyní</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1039"/>
-        <source>Edit</source>
-        <translation>Upravit</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1057"/>
-        <source>Reset status</source>
-        <translation>Obnovení stavu</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1057"/>
-        <source>Stop</source>
-        <translation>Zastavit</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1074"/>
-        <source>Pair with Gyro</source>
-        <translation>Spárujte s Gyrem</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1449"/>
-        <source>Missing required components.</source>
-        <translation>Chybějící požadavky.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1461"/>
-        <source>Applying pixel format: %1</source>
-        <translation>Používá se formát pixelů: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1481"/>
-        <source>Selected encoder does not support the source pixel format.
-Choose a target pixel format or render on CPU.
-This choice applies to all remaining jobs in this batch.</source>
-        <translation>Vybraný enkodér nepodporuje zdrojový formát pixelů.
-Vyberte cílový formát nebo renderujte na CPU.
-Volba se použije na všechny zbývající úlohy v této dávce.</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1484"/>
-        <source>Waiting for pixel format selection…</source>
-        <translation>Čeká se na výběr formátu pixelů…</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1508"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2237"/>
-        <source>Yes</source>
-        <translation>Ano</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1509"/>
-        <source>Rename</source>
-        <translation>Přejmenovat</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1510"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2244"/>
-        <source>No</source>
-        <translation>Ne</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1601"/>
-        <source>ETA %1</source>
-        <translation>ETA %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1602"/>
-        <source>Synchronizing: %1</source>
-        <translation>Synchronizace: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1603"/>
-        <source>Rendering: %1</source>
-        <translation>Vykreslování: %1</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
-        <source>Mode</source>
-        <translation>Režim</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
-        <source>Local</source>
-        <translation>Místní</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
-        <source>Global</source>
-        <translation>Globální</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1652"/>
-        <source>Lens</source>
-        <translation>Objektiv</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1657"/>
-        <source>Focal</source>
-        <translation>Ohnisko</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1662"/>
-        <source>Anamorphic</source>
-        <translation>Anamorfní</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1677"/>
-        <source>Manual</source>
-        <translation>Manuál</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1680"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2055"/>
         <source>Calibration</source>
         <translation>Kalibrace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1684"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2059"/>
         <source>Sync confirmed</source>
         <translation>Synchronizace potvrzena</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1684"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2061"/>
         <source>Sync not confirmed</source>
         <translation>Synchronizace nepotvrzena</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1692"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2071"/>
         <source>Skipped - no gyro data</source>
         <translation>Přeskočeno – žádná data gyroskopu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1693"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
         <source>Skipped - calibration pair</source>
         <translation>Přeskočeno - kalibrační pár</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1850"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1861"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2231"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2242"/>
         <source>Matching...</source>
         <translation>Odpovídající...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1850"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2231"/>
         <source>Auto match</source>
         <translation>Automatická shoda</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1874"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2255"/>
         <source>Clear</source>
         <translation>Jasný</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1891"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2272"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Drop video files or gyroscope data here</source>
         <translation>Sem přetáhněte video soubory nebo data gyroskopu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1977"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2396"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>Kvůli omezení přístupu k souborům musíte cílovou složku vybrat ručně.
 Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2134"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2596"/>
         <source>Queue settings</source>
         <translation>Nastavení fronty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2190"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2652"/>
         <source>Number of parallel renders</source>
         <translation>Počet paralelních renderování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2201"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2663"/>
         <source>Default overwrite action</source>
         <translation>Výchozí akce přepsání</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2202"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2664"/>
         <source>Ask</source>
         <translation>Zeptat se</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2666"/>
         <source>Overwrite file</source>
         <translation>Přepsat soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2205"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2667"/>
         <source>Rename file</source>
         <translation>Přejmenovat soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2206"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2668"/>
         <source>Skip file</source>
         <translation>Přeskočit soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2225"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
         <source>Export mode</source>
         <translation>Režim exportu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2226"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
         <source>Stabilized video</source>
         <translation>Stabilizované video</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2227"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2689"/>
         <source>Project file</source>
         <translation>Soubor projektu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2228"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2690"/>
         <source>Project file (including gyro data)</source>
         <translation>Soubor projektu (včetně gyroskopických dat)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2229"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2691"/>
         <source>Project file (including processed gyro data)</source>
         <translation>Soubor projektu (včetně zpracovaných gyroskopických údajů)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2230"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2692"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation>Stabilizované video + Soubor projektu s gyroskopickými daty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2234"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2696"/>
         <source>Show queue when adding an item</source>
         <translation>Zobrazit frontu při přidání položky</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2235"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2697"/>
         <source>Clear render queue</source>
         <translation>Vymazat frontu renderování</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2236"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2698"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Opravdu chcete odstranit všechny položky z fronty renderování?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1505"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1510"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1832"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1837"/>
         <source>Output file already exists.</source>
         <translation>Soubor již existuje.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="661"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="757"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation>Párování: %1 — Kliknutím na video spárujete</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1735"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2116"/>
         <source>Synchronizing...</source>
         <translation>Synchronizuji...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1736"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2117"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>Uplynulo: %1. Zbývá: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1779"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2160"/>
         <source>Remove</source>
         <translation>Odstranit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1605"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1939"/>
         <source>Save to: %1</source>
         <translation>Uložit do: %1</translation>
     </message>
@@ -3641,7 +3779,7 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
 <context>
     <name>SimpleExport</name>
     <message>
-        <location filename="../../src/ui/menu/SimpleExport.qml" line="220"/>
+        <location filename="../../src/ui/menu/SimpleExport.qml" line="228"/>
         <source>Mbps</source>
         <translation>Mb/s</translation>
     </message>
@@ -3649,25 +3787,30 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
 <context>
     <name>SimpleStabilization</name>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="183"/>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="195"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="224"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="233"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="245"/>
         <source>°</source>
         <translation>°</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="311"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="327"/>
         <source>Frame rate (0=unchanged)</source>
         <translation>Snímková frekvence (0=nezměněno)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="343"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="359"/>
         <source>ms</source>
         <translation>ms</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
+        <source>AI SYNC</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -3691,7 +3834,7 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
 <context>
     <name>Stabilization</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1510"/>
+        <location filename="../../src/ui/App.qml" line="1616"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>
         <source>Stabilization</source>
         <translation>Stabilizace</translation>
@@ -3712,9 +3855,9 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
         <translation>Plynulost náklonu do boku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="174"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1612"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
         <source>Smoothness</source>
         <translation>Plynulost</translation>
     </message>
@@ -3755,7 +3898,7 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
         <translation>Korekce úhlu naklonění</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="223"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="235"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="294"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="429"/>
         <source>Roll angle correction</source>
@@ -3842,79 +3985,79 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
         <translation>°/s²</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="724"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="728"/>
         <source>Frame rate (0=unchanged)</source>
         <translation>Snímková frekvence (0=nezměněno)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="742"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="746"/>
         <source>FOV is greater than 1.0, you may see black borders</source>
         <translation>FOV je větší než 1.0, můžete vidět černé okraje</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="747"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="751"/>
         <source>FOV</source>
         <translation>Úhel záběru</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="863"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="867"/>
         <source>Link with zooming limit</source>
         <translation>Propojení s limitem přiblížení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="936"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="940"/>
         <source>Additional 3D rotation</source>
         <translation>Další 3D rotace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="940"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="944"/>
         <source>Pitch</source>
         <translation>Náklon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="945"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="949"/>
         <source>Yaw</source>
         <translation>Otočení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="950"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="954"/>
         <source>Roll</source>
         <translation>Náklon do boku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="957"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="961"/>
         <source>Additional 3D translation</source>
         <translation>Dodatečný 3D překlad</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="972"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="976"/>
         <source>Z</source>
         <translation>Z</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="200"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1616"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1954"/>
         <source>Lock horizon</source>
         <translation>Zamknout horizont</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="205"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="217"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="410"/>
         <source>Lock amount</source>
         <comment>Horizon locking amount</comment>
         <translation>Síla zámku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="244"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1620"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1958"/>
         <source>Auto rotate</source>
         <translation>Automatické otočení</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="418"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="909"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="926"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="913"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="930"/>
         <source>%</source>
         <translation>%</translation>
     </message>
@@ -3977,79 +4120,79 @@ Pokud potřebujete větší přesnost, zvyšte počet iterací v části „Pokr
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="678"/>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="296"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="700"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="308"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="696"/>
         <source>Lens correction</source>
         <translation>Korekce objektivu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="870"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="874"/>
         <source>When keyframing zooming speed, it is recommended to use the Envelope follower method. Gaussian filter might lead to black borders in view.</source>
         <translation>Při upravování rychlosti přiblížení pomocí keyframů se doporučuje použít metodu Envelope. Gaussovský filtr může vést k černým okrajům v zorném poli.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="875"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="879"/>
         <source>Zooming method</source>
         <translation>Metoda přiblížení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="895"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="899"/>
         <source>Zooming center offset</source>
         <translation>Odsazení středu přiblížení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="900"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="962"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="904"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="966"/>
         <source>X</source>
         <translation>X</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="917"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="967"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="921"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="971"/>
         <source>Y</source>
         <translation>Y</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="980"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="984"/>
         <source>Zoom limit iterations</source>
         <translation>Iterace limitu zoomu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="981"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="985"/>
         <source>More iterations = more accurate limit, but also slower to calculate.</source>
         <translation>Více iterací = přesnější limit, ale také pomalejší výpočet.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="327"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="762"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="343"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="766"/>
         <source>Rolling shutter correction</source>
         <translation>Korekce pohybového zkreslení závěrky</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="335"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="769"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="351"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="773"/>
         <source>Frame readout time</source>
         <translation>Čas čtení snímků</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/Stabilization.qml" line="539"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="776"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="780"/>
         <source>ms</source>
         <translation>ms</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="791"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="795"/>
         <source>Video speed</source>
         <translation>Rychlost přehrávání</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="837"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="841"/>
         <source>Link with smoothing</source>
         <translation>Propojit s vyhlazováním</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="850"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="854"/>
         <source>Link with zooming speed</source>
         <translation>Propojit s rychlostí přiblížení</translation>
     </message>
@@ -4110,13 +4253,12 @@ Pokud potřebujete větší přesnost, zvyšte počet iterací v části „Pokr
         <translation>Synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1441"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="170"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="182"/>
         <source>Auto sync</source>
         <translation>Automatická synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="174"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Žádná pohybová data nenačtena, nelze synchronizovat.</translation>
     </message>
@@ -4136,103 +4278,102 @@ Pokud potřebujete větší přesnost, zvyšte počet iterací v části „Pokr
         <translation>Ne</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="219"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="231"/>
         <source>Experimental automatic sync point selection.</source>
         <translation>Experimentální automatický výběr synchronizačního bodu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="226"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="238"/>
         <source>This file uses synced motion data, additional sync points are not needed and can make the output look worse.</source>
         <translation>Tento soubor používá synchronizovaná data pohybu, další synchronizační body nejsou potřeba a může způsobit zhoršení výstupu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="232"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="244"/>
         <source>Rough gyro offset</source>
         <translation>Hrubý gyroskopický posun</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="240"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="264"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="318"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="252"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="276"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="330"/>
         <source>s</source>
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="249"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="261"/>
         <source>Analyze both positive and negative offset.
 This doubles the calculation time, so check this only for the initial point and uncheck once you know the offset.</source>
         <translation>Analyzuj obě pozitivní i negativní kompenzace.
 Toto zdvojnásobí čas výpočtu, takže zkontrolujte pouze počáteční bod a zrušte zaškrtnutí, jakmile znáte kompenzaci.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="255"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="267"/>
         <source>Sync search size</source>
         <translation>Velikost hledání synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="275"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="287"/>
         <source>Calculate initial offset first (using essential matrix method), then refine using slower but more accurate rs-sync method.</source>
         <translation>Nejprve vypočítejte počáteční posun (pomocí základní metody matice) a poté upravte pomalejší, ale přesnější metodu rs-synchronizace.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="280"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="292"/>
         <source>Max sync points</source>
         <translation>Maximální počet bodů synchronizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="296"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="308"/>
         <source>Analyze every n-th frame</source>
         <translation>Analyzovat každý n-tý snímek</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="309"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="321"/>
         <source>Time to analyze per sync point</source>
         <translation>Doba analýzy na jeden synchronizační bod</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="324"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="336"/>
         <source>Processing resolution</source>
         <translation>Rozlišení náhledu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="347"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="359"/>
         <source>The AKAZE method may be more accurate but is significantly slower than OpenCV. Use only if OpenCV doesn&apos;t produce good results</source>
         <translation>Metoda AKAZE může být přesnější, ale je výrazně pomalejší než OpenCV. Použijte pouze v případě, že OpenCV nedosahuje dobrých výsledků</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="351"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="363"/>
         <source>Optical flow method</source>
         <translation>Metoda OpticalFlow</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="364"/>
         <source>NeuFlow v2 CUDA</source>
-        <translation>NeuFlow v2 CUDA</translation>
+        <translation type="vanished">NeuFlow v2 CUDA</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="365"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="378"/>
         <source>NeuFlow v2 Burn</source>
         <translation>NeuFlow v2 Burn</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="383"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="396"/>
         <source>Pose method</source>
         <translation>Poziční metoda</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="396"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="409"/>
         <source>Offset method</source>
         <translation>Metoda posunu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="406"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="419"/>
         <source>Calculate camera transformation matrix from optical flow to get the rotation angles of the camera.
 Then try to match these angles to gyroscope angles.</source>
         <translation>Vypočítejte transformační matici kamery z optického toku, abyste získali úhly otáčení kamery.
 Pak se pokuste přizpůsobit tyto úhly gyroskopům.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="407"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="420"/>
         <source>Undistort optical flow points using gyro and candidate offset.
 Then calculate lengths of the optical flow lines.
 Resulting offset is the one where lines were the shortest, meaning the video was moving the least visually.</source>
@@ -4241,29 +4382,29 @@ Poté vypočítejte délky čar optického toku.
 Výsledný posun je ten, kde byly linie nejkratší, což znamená, že se video vizuálně pohybovalo nejméně.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="408"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="421"/>
         <source>Rolling shutter video to gyro synchronization algorithm.
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Pohybová neostrost závěrky do gyroskopického synchronizačního algoritmu.
 Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostrosti.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="415"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="428"/>
         <source>Low pass filter</source>
         <translation>Lowpass filtr</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="420"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="433"/>
         <source>Hz</source>
         <translation>Hz</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="433"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="446"/>
         <source>Show detected features</source>
         <translation>Zobrazit zjištěné funkce</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="439"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="452"/>
         <source>Show optical flow</source>
         <translation>Zobrazit optický tok</translation>
     </message>
@@ -4271,13 +4412,13 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
 <context>
     <name>TableList</name>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="201"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="202"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="30"/>
         <source>File name</source>
         <translation>Název souboru</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="202"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="203"/>
         <source>Detected format</source>
         <translation>Zjištěný formát</translation>
     </message>
@@ -4287,49 +4428,49 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
         <translation>Zjištěná kamera</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="56"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="150"/>
         <source>Camera</source>
         <translation>Kamera</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="57"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="151"/>
         <source>Lens</source>
         <translation>Objektiv</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="58"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="152"/>
         <source>Setting</source>
         <translation>Nastavení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="60"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="154"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="33"/>
         <source>Dimensions</source>
         <translation>Rozměry</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="62"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="156"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="58"/>
         <source>Focal length</source>
         <translation>Ohnisková vzdálenost</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="63"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="157"/>
         <source>Crop factor</source>
         <translation>Crop snímače</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="64"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="158"/>
         <source>Asymmetrical</source>
         <translation>Asymetrický</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="65"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="159"/>
         <source>Distortion model</source>
         <translation>Typ zkreslení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="66"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="160"/>
         <source>Digital lens</source>
         <translation>Digitální čočka</translation>
     </message>
@@ -4355,7 +4496,7 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
     </message>
     <message>
         <location filename="../../src/ui/menu/LensCalibrate.qml" line="67"/>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="59"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="153"/>
         <source>Additional info</source>
         <translation>Doplňující informace</translation>
     </message>
@@ -4371,7 +4512,7 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
     </message>
     <message>
         <location filename="../../src/ui/menu/LensCalibrate.qml" line="70"/>
-        <location filename="../../src/ui/menu/LensProfile.qml" line="61"/>
+        <location filename="../../src/ui/menu/LensProfile.qml" line="155"/>
         <source>Calibrated by</source>
         <translation>Kalibrováno</translation>
     </message>
@@ -4504,27 +4645,27 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
 <context>
     <name>Tabs</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1177"/>
+        <location filename="../../src/ui/App.qml" line="1272"/>
         <source>Inputs</source>
         <translation>Vstupy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1177"/>
+        <location filename="../../src/ui/App.qml" line="1272"/>
         <source>Parameters</source>
         <translation>Parametry</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1177"/>
+        <location filename="../../src/ui/App.qml" line="1272"/>
         <source>Export</source>
         <translation>Export</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1261"/>
+        <location filename="../../src/ui/App.qml" line="1356"/>
         <source>Video &amp;&amp; Gyro</source>
         <translation>Video &amp;&amp; gyro</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1261"/>
+        <location filename="../../src/ui/App.qml" line="1356"/>
         <source>Stabilize &amp;&amp; Settings</source>
         <translation>Stabilizace &amp;&amp; nastavení</translation>
     </message>
@@ -4532,22 +4673,22 @@ Před synchronizací se ujistěte, že máte nastavenou hodnotu pohybové neostr
 <context>
     <name>Timeline</name>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="664"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="684"/>
         <source>Auto sync here</source>
         <translation>Automatická synchronizace zde</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="669"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="690"/>
         <source>Add manual sync point here</source>
         <translation>Přidat manuální synchronizační bod</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="682"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="704"/>
         <source>Estimate rolling shutter here</source>
         <translation>Odhadnout rozostření pohybu závěrky</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="686"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="708"/>
         <source>Your video needs to be already synced properly and you should use this function
 on a part of your video with significant camera motion (ideally horizontal).
 
@@ -4559,17 +4700,17 @@ Tato funkce je experimentální, výsledky nemusí být vůbec správné.
 Opravdu chcete pokračovat?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="690"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="712"/>
         <source>Yes</source>
         <translation>Ano</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="693"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="715"/>
         <source>No</source>
         <translation>Ne</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="655"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="675"/>
         <source>Add calibration point</source>
         <translation>Přidat kalibrační bod</translation>
     </message>
@@ -4728,62 +4869,62 @@ Opravdu chcete pokračovat?</translation>
         <translation>Rychlost přehrávání</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="674"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="695"/>
         <source>Guess IMU orientation here</source>
         <translation>Odhadnout orientaci IMU</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="699"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="722"/>
         <source>Estimate gyro bias here</source>
         <translation>Zde odhadnout gyroskopické zkreslení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="704"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="727"/>
         <source>Delete all sync points</source>
         <translation>Smazat všechny synchronizační body</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="761"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="785"/>
         <source>Chart display mode</source>
         <translation>Mód zobrazení grafu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="762"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="786"/>
         <source>Gyroscope</source>
         <translation>Gyroskop</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="763"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="787"/>
         <source>Accelerometer</source>
         <translation>Akcelerometr</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="764"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="788"/>
         <source>Magnetometer</source>
         <translation>Kompas</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="765"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="789"/>
         <source>Quaternions</source>
         <translation>Čtveřice</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="928"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="953"/>
         <source>px</source>
         <translation>px</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="1029"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1054"/>
         <source>Option+Scroll</source>
         <translation>Option+Scroll</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="1030"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1055"/>
         <source>Ctrl+Scroll</source>
         <translation>Ctrl+posun kolečkem myši</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="1027"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1052"/>
         <source>%1 to zoom horizontally, %2 to zoom vertically, %3 to pan, double click to reset zoom</source>
         <translation>%1 pro horizontální přiblížení, %2 pro vertikální přiblížení, %3 pro pootočení, dvojitým klepnutím resetovat přiblížení</translation>
     </message>
@@ -4808,50 +4949,50 @@ Opravdu chcete pokračovat?</translation>
         <translation>Plynulost otočení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="714"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="737"/>
         <source>Trim range</source>
         <translation>Rozsah oříznutí</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="729"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="752"/>
         <source>Add new range</source>
         <translation>Přidat nový rozsah</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="738"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="761"/>
         <source>Delete this range</source>
         <translation>Odstranit tento rozsah</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="747"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="770"/>
         <source>Clear all</source>
         <translation>Vymazat vše</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="754"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="777"/>
         <source>Restrict playback to trim range</source>
         <translation>Omezit přehrávání na rozsah oříznutí</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="1028"/>
-        <location filename="../../src/ui/components/Timeline.qml" line="1030"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1053"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1055"/>
         <source>Scroll</source>
         <translation>Posun</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="1029"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1054"/>
         <source>Alt+Scroll</source>
         <translation>Alt + posun kolečkem myši</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="882"/>
-        <location filename="../../src/ui/components/Timeline.qml" line="981"/>
-        <location filename="../../src/ui/components/Timeline.qml" line="988"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="907"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1006"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1013"/>
         <source>ms</source>
         <translation>ms</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Timeline.qml" line="1008"/>
+        <location filename="../../src/ui/components/Timeline.qml" line="1033"/>
         <source>Save</source>
         <translation>Uložit</translation>
     </message>
@@ -4885,79 +5026,112 @@ Opravdu chcete pokračovat?</translation>
     </message>
 </context>
 <context>
+    <name>Util</name>
+    <message>
+        <location filename="../../src/ui/Util.js" line="10"/>
+        <source>d</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/Util.js" line="11"/>
+        <source>h</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/Util.js" line="12"/>
+        <source>m</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/Util.js" line="13"/>
+        <source>s</source>
+        <translation type="unfinished">s</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/Util.js" line="15"/>
+        <source>&amp;lt; 1s</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
     <name>VideoArea</name>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="400"/>
-        <location filename="../../src/ui/VideoArea.qml" line="547"/>
-        <location filename="../../src/ui/VideoArea.qml" line="585"/>
-        <location filename="../../src/ui/VideoArea.qml" line="589"/>
+        <location filename="../../src/ui/VideoArea.qml" line="420"/>
+        <location filename="../../src/ui/VideoArea.qml" line="597"/>
+        <location filename="../../src/ui/VideoArea.qml" line="655"/>
+        <location filename="../../src/ui/VideoArea.qml" line="659"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation>Soubory Canon CRM je nutné načíst společně s proxy videem se stejným názvem.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="515"/>
+        <location filename="../../src/ui/VideoArea.qml" line="587"/>
         <source>There&apos;s a %1 file associated with this video, do you want to load it?</source>
         <translation>Existuje %1 soubor spojený s tímto videem, chcete ho načíst?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="361"/>
-        <location filename="../../src/ui/VideoArea.qml" line="460"/>
-        <location filename="../../src/ui/VideoArea.qml" line="516"/>
-        <location filename="../../src/ui/VideoArea.qml" line="780"/>
+        <location filename="../../src/ui/VideoArea.qml" line="374"/>
+        <location filename="../../src/ui/VideoArea.qml" line="492"/>
+        <location filename="../../src/ui/VideoArea.qml" line="588"/>
+        <location filename="../../src/ui/VideoArea.qml" line="949"/>
         <source>Yes</source>
         <translation>Ano</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="468"/>
-        <location filename="../../src/ui/VideoArea.qml" line="519"/>
-        <location filename="../../src/ui/VideoArea.qml" line="786"/>
+        <location filename="../../src/ui/VideoArea.qml" line="500"/>
+        <location filename="../../src/ui/VideoArea.qml" line="591"/>
+        <location filename="../../src/ui/VideoArea.qml" line="955"/>
         <source>No</source>
         <translation>Ne</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="730"/>
+        <location filename="../../src/ui/VideoArea.qml" line="899"/>
         <source>Zoom: %1</source>
         <translation>Zvětšení: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="811"/>
+        <location filename="../../src/ui/VideoArea.qml" line="987"/>
         <source>Failed to load the selected file, it may be unsupported or invalid.</source>
         <translation>Nepodařilo se načíst vybraný soubor, může být nepodporovaný nebo neplatný.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="85"/>
-        <location filename="../../src/ui/VideoArea.qml" line="218"/>
-        <location filename="../../src/ui/VideoArea.qml" line="229"/>
-        <location filename="../../src/ui/VideoArea.qml" line="248"/>
-        <location filename="../../src/ui/VideoArea.qml" line="271"/>
-        <location filename="../../src/ui/VideoArea.qml" line="297"/>
-        <location filename="../../src/ui/VideoArea.qml" line="443"/>
-        <location filename="../../src/ui/VideoArea.qml" line="566"/>
-        <location filename="../../src/ui/VideoArea.qml" line="811"/>
+        <location filename="../../src/ui/VideoArea.qml" line="92"/>
+        <location filename="../../src/ui/VideoArea.qml" line="225"/>
+        <location filename="../../src/ui/VideoArea.qml" line="236"/>
+        <location filename="../../src/ui/VideoArea.qml" line="255"/>
+        <location filename="../../src/ui/VideoArea.qml" line="278"/>
+        <location filename="../../src/ui/VideoArea.qml" line="304"/>
+        <location filename="../../src/ui/VideoArea.qml" line="408"/>
+        <location filename="../../src/ui/VideoArea.qml" line="420"/>
+        <location filename="../../src/ui/VideoArea.qml" line="475"/>
+        <location filename="../../src/ui/VideoArea.qml" line="597"/>
+        <location filename="../../src/ui/VideoArea.qml" line="655"/>
+        <location filename="../../src/ui/VideoArea.qml" line="659"/>
+        <location filename="../../src/ui/VideoArea.qml" line="729"/>
+        <location filename="../../src/ui/VideoArea.qml" line="987"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="442"/>
+        <location filename="../../src/ui/VideoArea.qml" line="474"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
         <translation>Byla zjištěna sekvence obrázků.
 Zadejte prosím frekvenci snímku: </translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="366"/>
-        <location filename="../../src/ui/VideoArea.qml" line="450"/>
-        <location filename="../../src/ui/VideoArea.qml" line="579"/>
+        <location filename="../../src/ui/VideoArea.qml" line="379"/>
+        <location filename="../../src/ui/VideoArea.qml" line="482"/>
+        <location filename="../../src/ui/VideoArea.qml" line="742"/>
         <source>Cancel</source>
         <translation>Zrušit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="207"/>
+        <location filename="../../src/ui/VideoArea.qml" line="214"/>
         <source>Downloading %1 (%2)</source>
         <translation>Stahování %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="218"/>
+        <location filename="../../src/ui/VideoArea.qml" line="225"/>
         <source>Component was installed successfully.
 You need to restart Gyroflow for changes to take effect.
 Your render queue and current file is saved automatically.</source>
@@ -4966,190 +5140,194 @@ Musíte restartovat Gyroflow, aby se změny projevily.
 Vaše fronta exportu a aktuální soubor je automaticky uložen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="240"/>
+        <location filename="../../src/ui/VideoArea.qml" line="247"/>
         <source>Merging files to %1 (%2)</source>
         <translation>Sloučení souborů do %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="360"/>
+        <location filename="../../src/ui/VideoArea.qml" line="373"/>
         <source>This format requires an external SDK. Do you want to download it now?</source>
         <translation>Tento formát vyžaduje externí SDK. Chcete jej nyní stáhnout?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="459"/>
+        <location filename="../../src/ui/VideoArea.qml" line="491"/>
         <source>Split recording has been detected, do you want to automatically join the files (%1) to create one full clip?</source>
         <translation>Bylo zjištěno rozdělení záznamu, chcete automaticky spojit soubory (%1) a vytvořit jeden celý klip?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="297"/>
+        <location filename="../../src/ui/VideoArea.qml" line="304"/>
         <source>Motion data sampling rate is too low (%1 Hz).
 50 Hz is an absolute minimum and we recommend at least 200 Hz.</source>
         <translation>Vzorkovací frekvence pohybových dat je příliš nízká (%1 Hz).
 50 Hz je absolutní minimum, ale doporučujeme aspoň 200 Hz.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1329"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1529"/>
         <source>Lens profile is not loaded, the results will not look correct. Please load a lens profile for your camera.</source>
         <translation>Profil objektivu není načten, výsledky nebudou vypadat správně. Prosím načtěte profil objektivu pro vaši kameru.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="906"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Loading %1...</source>
         <translation>Načítání %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="906"/>
         <source>Drop video file here</source>
-        <translation>Sem přetáhněte video soubory</translation>
+        <translation type="vanished">Sem přetáhněte video soubory</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="337"/>
+        <location filename="../../src/ui/VideoArea.qml" line="350"/>
         <source>Analyzing %1...</source>
         <translation>Probíhá analýza %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="224"/>
+        <location filename="../../src/ui/VideoArea.qml" line="231"/>
         <source>This is often caused by read-only file system.
 Make sure you copied the Gyroflow app to your Applications folder, instead of running from the .dmg directly.</source>
         <translation>To je často způsobeno souborovým systémem pouze pro čtení.
 Ujistěte se, že jste zkopírovali aplikaci Gyroflow do složky Aplikace namísto spuštění přímo z .dmg.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="227"/>
+        <location filename="../../src/ui/VideoArea.qml" line="234"/>
         <source>This is often caused by read-only file system.
 If you have Gyroflow in C:Program Files, then you&apos;ll need to run Gyroflow as Administrator in order to extract the SDK to the Gyroflow folder.</source>
         <translation>Toto je často způsobeno souborovým systémem pouze pro čtení.
 Pokud máte Gyroflow v C: Program Files, pak budete muset spustit Gyroflow jako administrátor, abyste extrahovali SDK do složky Gyroflow.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="346"/>
+        <location filename="../../src/ui/VideoArea.qml" line="359"/>
         <source>Loading gyro data %1...</source>
         <translation>Načítání gyroskopických dat %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="591"/>
+        <location filename="../../src/ui/VideoArea.qml" line="754"/>
         <source>Same as the original file</source>
         <translation>Stejný jako původní soubor</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="592"/>
+        <location filename="../../src/ui/VideoArea.qml" line="755"/>
         <source>Custom path</source>
         <translation>Vlastní cesta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="565"/>
+        <location filename="../../src/ui/VideoArea.qml" line="728"/>
         <source>Please enter the output path:</source>
         <translation>Prosím zadejte výstupní cestu:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="85"/>
+        <location filename="../../src/ui/VideoArea.qml" line="92"/>
         <source>Preset can be applied only after loading a video.</source>
         <translation>Předvolbu lze použít až po načtení videa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="271"/>
+        <location filename="../../src/ui/VideoArea.qml" line="278"/>
         <source>This video cannot be stabilized, because this lens doesn&apos;t support OSS metadata.
 Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</source>
         <translation>Toto video nelze stabilizovat, protože tento objektiv nepodporuje metadata OSS.
 Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot).</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="418"/>
+        <location filename="../../src/ui/VideoArea.qml" line="408"/>
+        <source>Previous video is still loading, please wait...</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/VideoArea.qml" line="450"/>
         <source>In order to load all R3D parts, you need to select the entire .RDC folder.</source>
         <translation>Chcete-li načíst všechny díly R3D, musíte vybrat celou složku .RDC.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="419"/>
+        <location filename="../../src/ui/VideoArea.qml" line="451"/>
         <source>OK</source>
         <translation>OK</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="734"/>
+        <location filename="../../src/ui/VideoArea.qml" line="903"/>
         <source>Focal length: %1 mm</source>
         <translation>Ohnisková vzdálenost: %1 mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="736"/>
+        <location filename="../../src/ui/VideoArea.qml" line="905"/>
         <source>full frame equiv.: %1 mm</source>
         <translation>full frame ekvivalent: %1 mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="779"/>
+        <location filename="../../src/ui/VideoArea.qml" line="948"/>
         <source>Files merged successfully, do you want to delete the original ones?</source>
         <translation>Soubory byly úspěšně sloučeny, chcete smazat původní?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="906"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Click here to open a video file</source>
         <translation>Kliknutím sem otevřete soubor videa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1066"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1265"/>
         <source>Turn Speed (Roll):</source>
         <translation>Rychlost otáčení (Roll):</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1097"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1296"/>
         <source>Trim start</source>
         <translation>Oříznout začátek</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1100"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1299"/>
         <source>Previous frame</source>
         <translation>Předchozí snímek</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1117"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1316"/>
         <source>Pause</source>
         <translation>Pauza</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1117"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1316"/>
         <source>Play</source>
         <translation>Přehrát</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1123"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1322"/>
         <source>Next frame</source>
         <translation>Další snímek</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1138"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1337"/>
         <source>Trim end</source>
         <translation>Oříznout konec</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1139"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1338"/>
         <source>Show timeline menu</source>
         <translation>Zobrazit menu časové osy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1178"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1377"/>
         <source>Toggle stabilization overview</source>
         <translation>Přepínač stabilizace</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1189"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1388"/>
         <source>Toggle stabilization</source>
         <translation>Zapnout/vypnout stabilizaci</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1195"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1394"/>
         <source>Mute</source>
         <translation>Ztišit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1195"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1394"/>
         <source>Unmute</source>
         <translation>Zrušit ztlumení</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1213"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1412"/>
         <source>Volume</source>
         <translation>Hlasitost</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1243"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1442"/>
         <source>Playback speed</source>
         <translation>Rychlost přehrávání</translation>
     </message>
@@ -5157,19 +5335,19 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
 <context>
     <name>VideoInformation</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1399"/>
+        <location filename="../../src/ui/App.qml" line="1494"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="11"/>
         <source>Video information</source>
         <translation>Informace o videu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/VideoInformation.qml" line="221"/>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="230"/>
         <source>In order to detect project files, video sequences or image sequences, click here and select the directory with input files.</source>
         <translation>Pro detekci projektů, videosekvencí nebo sekvencí obrázků, klikněte zde a vyberte adresář se vstupními soubory.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1405"/>
-        <location filename="../../src/ui/menu/VideoInformation.qml" line="212"/>
+        <location filename="../../src/ui/App.qml" line="1501"/>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="221"/>
         <source>Open file</source>
         <translation>Otevřít soubor</translation>
     </message>

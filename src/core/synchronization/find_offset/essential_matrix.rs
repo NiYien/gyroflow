@@ -132,6 +132,47 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                     if (lowest.0 - sync_params.initial_offset).abs() < sync_params.search_size * 0.9
                     {
                         offsets.push((middle_timestamp, lowest.0, lowest.1, 0.5));
+                        if crate::synchronization::deep_match::is_armed() {
+                            // Decimated cost curve for valley-quality stats.
+                            // 25ms step keeps this pass at ~2.5% of the 1ms
+                            // main scan cost.
+                            let step_ms = 25.0;
+                            let n_steps =
+                                ((sync_params.search_size * 2.0) / step_ms) as usize;
+                            let mut costs: Vec<f64> = (0..n_steps)
+                                .into_par_iter()
+                                .map(|k| {
+                                    let offs = sync_params.initial_offset
+                                        - sync_params.search_size
+                                        + k as f64 * step_ms;
+                                    calculate_cost(offs, &of_item, &gyro_bintree)
+                                })
+                                .filter(|c| c.is_finite() && *c != f64::MAX)
+                                .collect();
+                            costs.sort_by(|a, b| {
+                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                            });
+                            let p25 = costs
+                                .get(costs.len() / 4)
+                                .copied()
+                                .unwrap_or(f64::MAX);
+                            crate::synchronization::deep_match::record(
+                                crate::synchronization::deep_match::DeepMatchSegStats {
+                                    range_idx: i,
+                                    offset_ms: lowest.0,
+                                    cost_min: lowest.1,
+                                    cost_p25: p25,
+                                    max_angle,
+                                },
+                            );
+                            ::log::info!(
+                                target: "sync",
+                                "[deep-match] window {} offset={:.1}ms cost_min={:.2} p25={:.2} ratio={:.3} max_angle={:.1}",
+                                i, lowest.0, lowest.1, p25,
+                                if p25 > 0.0 { lowest.1 / p25 } else { f64::NAN },
+                                max_angle
+                            );
+                        }
                     } else {
                         log::warn!(
                             "Sync point out of acceptable range {} < {}",

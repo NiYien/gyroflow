@@ -524,6 +524,24 @@ struct CachedGyroMetadataRange {
     metadata: Arc<core::gyro_source::FileMetadata>,
 }
 
+// Deep gyro match (spec 2026-06-11): one in-flight job at a time.
+#[derive(Clone)]
+struct DeepMatchState {
+    gyro_index: usize,
+    // additional_data snapshot taken before the deep match run; restored on
+    // finish (success or failure) so one-shot params never leak.
+    original_additional_data: String,
+    // lens.sync_settings snapshot — this is the store that actually drives
+    // do_autosync (additional_data is only the .gyroflow export mirror).
+    original_sync_settings: Option<serde_json::Value>,
+}
+
+#[derive(Clone)]
+struct DeepMatchResult {
+    gyro_index: usize,
+    offset_ms: f64,
+}
+
 fn denormalize_video_rotation_metadata(normalized_rotation: f64) -> i32 {
     let normalized = normalized_rotation.round() as i32;
     (360 - normalized).rem_euclid(360)
@@ -943,6 +961,10 @@ pub struct RenderQueue {
     batch_sync_repair_prompt_pending: bool,
     batch_sync_prompt_kind: BatchSyncPromptKind,
     batch_sync_user_confirmed_repair: bool,
+    // Deep gyro match registries: pending = in-flight run (diverts batch-sync
+    // completion), results = accepted matches (drives the DeepMatched status).
+    deep_match_pending: HashMap<u32, DeepMatchState>,
+    deep_match_results: HashMap<u32, DeepMatchResult>,
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
@@ -999,6 +1021,11 @@ pub struct RenderQueue {
         qt_method!(fn(&mut self, indices_json: String)),
     manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
+    // Deep gyro match (2026-06-11): single-job coarse-offset search against
+    // one parsed gyro pool file; one match in flight at a time.
+    start_deep_gyro_match: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize) -> bool),
+    cancel_deep_gyro_match: qt_method!(fn(&mut self, job_id: u32)),
+    get_deep_match_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
     get_batch_sync_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
@@ -1031,6 +1058,8 @@ pub struct RenderQueue {
     // [T22] 匹配+数据加载全部完成时触发（区别于 match_results_changed 可能在算法完成时就触发）
     pub match_apply_finished: qt_signal!(),
     pub pairing_mode_changed: qt_signal!(),
+    pub deep_match_progress: qt_signal!(job_id: u32, progress: f64),
+    pub deep_match_finished: qt_signal!(job_id: u32, success: bool, error_kind: QString, offset_ms: f64),
 }
 
 macro_rules! update_model {
@@ -1460,6 +1489,14 @@ impl RenderQueue {
         mut points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
         attempted_timestamps_ms: Vec<f64>,
     ) {
+        // Deep-match runs never enter batch-sync confirmation/accounting;
+        // divert to the dedicated finisher (gate evaluation + write-back or
+        // rollback). The per-window offsets travel in `points` because
+        // collect_batch_points mode skips gyro.set_offset entirely.
+        if self.deep_match_pending.contains_key(&job_id) {
+            self.finish_deep_match(job_id, &points);
+            return;
+        }
         if !self.expected_batch_sync_job_ids.contains(&job_id) {
             return;
         }
@@ -3581,6 +3618,12 @@ impl RenderQueue {
                         itm.processing_progress = progress;
                     });
                     this.processing_progress(job_id, progress);
+                    // Deep match: forward sync progress to the modal dialog.
+                    // This queued callback is the per-job landing point of
+                    // do_autosync's processing_cb chain.
+                    if this.deep_match_pending.contains_key(&job_id) {
+                        this.deep_match_progress(job_id, progress);
+                    }
                     this.progress_changed();
                 },
             );
@@ -3761,6 +3804,9 @@ impl RenderQueue {
             let sync_cancel_flag = cancel_flag.clone();
             let defer_batch_sync_confirmation =
                 self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2;
+            // Deep match runs must leave no .gyroflow residue on disk — the
+            // per-window offsets are search probes, not sync points.
+            let job_is_deep_match = self.deep_match_pending.contains_key(&job_id);
             let batch_sync_done = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, (job_id, render_epoch, points, attempted_timestamps_ms, t1_snapshot): (
@@ -3829,41 +3875,47 @@ impl RenderQueue {
                     // offsets directly from sync_stats.points and inject them via JSON
                     // post-processing (mirrors the T2 yellow path), without touching
                     // stab.gyro itself.
-                    let (t1_data, t1_url) = Self::build_export_project_payload(
-                        &additional_data,
-                        &render_options,
-                        &default_suffix,
-                    );
-                    let t1_offsets: BTreeMap<i64, f64> = points
-                        .iter()
-                        .map(|p| {
-                            let ts = ((p.timestamp_ms - p.offset_ms) * 1000.0) as i64;
-                            (ts, p.offset_ms)
-                        })
-                        .collect();
-                    let t1_snapshot: Option<BTreeMap<i64, f64>> = match Self::write_gyroflow_with_offsets_override(
-                        &stab,
-                        &t1_data,
-                        &t1_url,
-                        &t1_offsets,
-                    ) {
-                        Ok(()) => {
-                            ::log::info!(
-                                target: "video.render",
-                                "[batch-sync-write T1] wrote {} ({} offsets)",
-                                t1_url,
-                                t1_offsets.len()
-                            );
-                            Some(t1_offsets)
-                        }
-                        Err(msg) => {
-                            ::log::warn!(
-                                target: "video.render",
-                                "[batch-sync-write T1] Failed to save .gyroflow: {}: {}",
-                                t1_url,
-                                msg
-                            );
-                            None
+                    let t1_snapshot: Option<BTreeMap<i64, f64>> = if job_is_deep_match {
+                        // Deep match: skip the T1 .gyroflow write entirely;
+                        // finish_deep_match handles write-back or rollback.
+                        None
+                    } else {
+                        let (t1_data, t1_url) = Self::build_export_project_payload(
+                            &additional_data,
+                            &render_options,
+                            &default_suffix,
+                        );
+                        let t1_offsets: BTreeMap<i64, f64> = points
+                            .iter()
+                            .map(|p| {
+                                let ts = ((p.timestamp_ms - p.offset_ms) * 1000.0) as i64;
+                                (ts, p.offset_ms)
+                            })
+                            .collect();
+                        match Self::write_gyroflow_with_offsets_override(
+                            &stab,
+                            &t1_data,
+                            &t1_url,
+                            &t1_offsets,
+                        ) {
+                            Ok(()) => {
+                                ::log::info!(
+                                    target: "video.render",
+                                    "[batch-sync-write T1] wrote {} ({} offsets)",
+                                    t1_url,
+                                    t1_offsets.len()
+                                );
+                                Some(t1_offsets)
+                            }
+                            Err(msg) => {
+                                ::log::warn!(
+                                    target: "video.render",
+                                    "[batch-sync-write T1] Failed to save .gyroflow: {}: {}",
+                                    t1_url,
+                                    msg
+                                );
+                                None
+                            }
                         }
                     };
 
@@ -8621,6 +8673,308 @@ impl RenderQueue {
         -1
     }
 
+    fn start_deep_gyro_match(&mut self, job_id: u32, gyro_index: usize) -> bool {
+        use gyroflow_core::synchronization::deep_match;
+        // One deep match at a time; QML also guards, this is the backstop.
+        if !self.deep_match_pending.is_empty() {
+            return false;
+        }
+        // Refuse while the queue is processing anything else — render_job
+        // captures self.export_project at launch, so flipping it to 2 while
+        // a batch is active would turn subsequently scheduled renders into
+        // sync-only runs.
+        if self.status.to_string() == "active" {
+            return false;
+        }
+        let Some(gyro_info) = self.gyro_files.get(gyro_index).cloned() else {
+            return false;
+        };
+        if !gyro_info.parsed {
+            return false;
+        }
+        let Some(job) = self.jobs.get(&job_id) else {
+            return false;
+        };
+        let Some(stab) = job.stab.clone() else {
+            return false;
+        };
+        let original_additional_data = job.additional_data.clone();
+        // lens.sync_settings is what do_autosync actually parses into
+        // SyncParams; snapshot it for the post-run restore.
+        let original_sync_settings = stab.lens.read().sync_settings.clone();
+        let cancel_flag = job.cancel_flag.clone();
+        cancel_flag.store(false, SeqCst);
+
+        // Load the full gyro file into the job's stabilizer (no time range —
+        // the offset is unknown, that's the point).
+        let gyro_url = gyro_info.path.clone();
+        let loaded = match filesystem::open_file(&gyro_url, false, false) {
+            Ok(mut file) => {
+                let filesize = file.size;
+                stab.load_gyro_data(
+                    file.get_file(),
+                    filesize,
+                    &gyro_url,
+                    false,
+                    &Default::default(),
+                    |_| (),
+                    cancel_flag.clone(),
+                )
+                .is_ok()
+            }
+            Err(_) => false,
+        };
+        if !loaded {
+            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            return false;
+        }
+        let gyro_span = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            let raw = gyro.raw_imu(&md);
+            match (raw.first(), raw.last()) {
+                (Some(f), Some(l)) if l.timestamp_ms > f.timestamp_ms => {
+                    Some((f.timestamp_ms, l.timestamp_ms))
+                }
+                _ => None,
+            }
+        };
+        let Some((g_start, g_end)) = gyro_span else {
+            stab.gyro.write().clear();
+            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            return false;
+        };
+
+        let video_duration_ms = stab.params.read().duration_ms;
+        let (init_ms, search_ms) = deep_match::search_domain(
+            video_duration_ms,
+            g_start,
+            g_end,
+            deep_match::max_scan_ms(),
+        );
+        let windows =
+            deep_match::window_positions_ms(video_duration_ms, deep_match::window_count());
+        let pattern: Vec<String> = windows.iter().map(|w| format!("{w:.0}ms")).collect();
+
+        // One-shot essential-only sync params. do_autosync parses
+        // lens.sync_settings (seconds; multiplied to ms at the parse site) —
+        // the repair backbone patches the same store.
+        {
+            let mut lens = stab.lens.write();
+            lens.sync_settings = Some(serde_json::json!({
+                "initial_offset": init_ms / 1000.0,
+                "search_size": search_ms / 1000.0,
+                "calc_initial_fast": false,
+                "max_sync_points": windows.len(),
+                "every_nth_frame": 1,
+                "time_per_syncpoint": 2.5,
+                "of_method": 2, // DIS, same default as the batch-match block
+                "offset_method": 0, // essential matrix only — never touches fusion
+                "pose_method": 0,
+                "auto_sync_points": false,
+                "custom_sync_pattern": pattern,
+                "do_autosync": true,
+            }));
+        }
+
+        // Mirror prepare_batch_sync_repair_job's queue-item reset so the job
+        // is schedulable again even if it previously Finished or Errored.
+        update_model!(self, job_id, itm {
+            itm.status = JobStatus::Queued;
+            itm.current_frame = 0;
+            itm.processing_progress = 0.0;
+            itm.error_string = QString::default();
+        });
+
+        ::log::info!(
+            target: "sync",
+            "[deep-match] start: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
+            job_id, gyro_info.filename, g_start, g_end, init_ms, search_ms, pattern
+        );
+        deep_match::arm();
+        self.deep_match_pending.insert(
+            job_id,
+            DeepMatchState {
+                gyro_index,
+                original_additional_data,
+                original_sync_settings,
+            },
+        );
+        // Run the job through the same sync-only path batch repair uses:
+        // export_project=2 + expected membership routes the worker into the
+        // defer branch (sync, then stop — no encode); batch_sync_job_ids
+        // membership keeps the stab (and thus the loaded gyro) alive on the
+        // finished tick.
+        self.export_project = 2;
+        self.batch_sync_job_ids.insert(job_id);
+        self.expected_batch_sync_job_ids = std::iter::once(job_id).collect();
+        self.completed_batch_sync_job_ids.clear();
+        // Launch this job only — start() would pick up every Queued job in
+        // the queue, but deep match must act on the clicked job alone.
+        self.render_job(job_id);
+        self.deep_match_progress(job_id, 0.0);
+        true
+    }
+
+    fn cancel_deep_gyro_match(&mut self, job_id: u32) {
+        if self.deep_match_pending.contains_key(&job_id) {
+            if let Some(job) = self.jobs.get(&job_id) {
+                job.cancel_flag.store(true, SeqCst);
+            }
+        }
+    }
+
+    // Deep match finisher: called from the record_batch_sync_result divert.
+    // Restores the one-shot stores, evaluates the double gate and either
+    // writes the coarse offset back or rolls the job back completely.
+    fn finish_deep_match(
+        &mut self,
+        job_id: u32,
+        points: &[gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate],
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let Some(state) = self.deep_match_pending.remove(&job_id) else {
+            return;
+        };
+        let stats = deep_match::take();
+
+        let Some(job) = self.jobs.get_mut(&job_id) else {
+            return;
+        };
+        let stab = job.stab.clone();
+        // Always restore the pre-deep-match stores first; the one-shot sync
+        // params must not leak into renders or .gyroflow exports.
+        job.additional_data = state.original_additional_data.clone();
+        if let Some(ref stab) = stab {
+            stab.lens.write().sync_settings = state.original_sync_settings.clone();
+        }
+        let cancelled = job.cancel_flag.load(SeqCst);
+
+        // Per-window offsets: collect_batch_points mode routes them through
+        // `points` (do_autosync skips gyro.set_offset there), but sweep any
+        // strays off the job gyro anyway — deep match must leave no sync
+        // points; only the injected initial_offset survives.
+        let offsets_ms: Vec<f64> = points.iter().map(|p| p.offset_ms).collect();
+        if let Some(ref stab) = stab {
+            let mut gyro = stab.gyro.write();
+            if !gyro.get_offsets().is_empty() {
+                gyro.clear_offsets();
+            }
+        }
+
+        if cancelled {
+            if let Some(ref stab) = stab {
+                stab.gyro.write().clear();
+            }
+            ::log::info!(target: "sync", "[deep-match] cancelled: job={}", job_id);
+            self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
+            return;
+        }
+
+        let verdict = deep_match::evaluate(
+            &offsets_ms,
+            &stats,
+            deep_match::spread_max_ms(),
+            deep_match::cost_ratio_max(),
+        );
+        ::log::info!(
+            target: "sync",
+            "[deep-match] finish: job={} windows={} offsets={:?} verdict={:?}",
+            job_id, offsets_ms.len(), offsets_ms, verdict
+        );
+        match verdict {
+            deep_match::DeepMatchVerdict::Accepted { offset_ms } => {
+                // Write the coarse offset into lens.sync_settings as a full
+                // batch-match-shaped block (render_queue.rs:8317 region) —
+                // this is the store the later batch-sync refine parses, and
+                // the restored original may lack max_sync_points/do_autosync.
+                if let Some(ref stab) = stab {
+                    let (duration_s, fps) = {
+                        let params = stab.params.read();
+                        (params.duration_ms / 1000.0, params.fps)
+                    };
+                    let max_sync_points = if duration_s > 30.0 * 60.0 {
+                        5
+                    } else if duration_s > 10.0 * 60.0 {
+                        4
+                    } else {
+                        2
+                    };
+                    let every_nth_frame = ((fps / 49.0).floor() as i64).max(1);
+                    stab.lens.write().sync_settings = Some(serde_json::json!({
+                        "do_autosync": true,
+                        "max_sync_points": max_sync_points,
+                        "search_size": 3.0,
+                        "time_per_syncpoint": 2.5,
+                        "every_nth_frame": every_nth_frame,
+                        "initial_offset": offset_ms / 1000.0,
+                        "calc_initial_fast": false,
+                        "pose_method": 0,
+                        "of_method": 2,
+                        "offset_method": 2,
+                        "auto_sync_points": true
+                    }));
+                }
+                // Mirror into additional_data (same JSON shape as the
+                // batch-match injection at render_queue.rs:8371-8395) so the
+                // exported .gyroflow stays consistent with sync_settings.
+                if let Some(job) = self.jobs.get_mut(&job_id) {
+                    if let Ok(serde_json::Value::Object(mut ad_obj)) =
+                        serde_json::from_str::<serde_json::Value>(&job.additional_data)
+                    {
+                        let sync_entry = ad_obj
+                            .entry("synchronization".to_string())
+                            .or_insert_with(|| serde_json::json!({}));
+                        if let Some(sync_obj) = sync_entry.as_object_mut() {
+                            sync_obj.insert(
+                                "initial_offset".into(),
+                                serde_json::json!(offset_ms / 1000.0),
+                            );
+                            sync_obj.insert("search_size".into(), serde_json::json!(3.0));
+                            sync_obj
+                                .insert("calc_initial_fast".into(), serde_json::json!(false));
+                        }
+                        if let Ok(s) = serde_json::to_string(&serde_json::Value::Object(ad_obj))
+                        {
+                            job.additional_data = s;
+                        }
+                    }
+                }
+                // Deep match supersedes any manual calibration pair.
+                self.manual_pairs.retain(|p| p.job_id != job_id);
+                self.deep_match_results.insert(
+                    job_id,
+                    DeepMatchResult {
+                        gyro_index: state.gyro_index,
+                        offset_ms,
+                    },
+                );
+                self.match_results_changed();
+                self.deep_match_finished(job_id, true, QString::default(), offset_ms);
+            }
+            deep_match::DeepMatchVerdict::TooFewWindows => {
+                if let Some(ref stab) = stab {
+                    stab.gyro.write().clear();
+                }
+                self.deep_match_finished(job_id, false, QString::from("low_motion"), 0.0);
+            }
+            deep_match::DeepMatchVerdict::Inconsistent { .. }
+            | deep_match::DeepMatchVerdict::WeakValley { .. } => {
+                if let Some(ref stab) = stab {
+                    stab.gyro.write().clear();
+                }
+                self.deep_match_finished(job_id, false, QString::from("not_in_range"), 0.0);
+            }
+        }
+    }
+
+    fn get_deep_match_gyro_index(&self, job_id: u32) -> i32 {
+        self.deep_match_results
+            .get(&job_id)
+            .map(|r| r.gyro_index as i32)
+            .unwrap_or(-1)
+    }
+
     // T7: Unpair a video job, clearing its external gyro data.
     fn unpair_video(&mut self, job_id: u32) {
         // Clear gyro data from the job
@@ -8631,6 +8985,11 @@ impl RenderQueue {
         }
         // 直接按 job_id 移除 manual pair
         self.manual_pairs.retain(|p| p.job_id != job_id);
+        // Clear the DeepMatched registry entry (the injected initial_offset in
+        // additional_data is left alone, consistent with unpair not touching
+        // additional_data — it is inert without a paired gyro and a re-pair
+        // overwrites it).
+        self.deep_match_results.remove(&job_id);
         // [queue-lifecycle T4] 按 job_id 查找 match result，避免 remove 后 video_index 错位
         let ordered_ids = self.get_ordered_job_ids();
         if let Some(ref mut results) = self.match_results {
@@ -8670,6 +9029,23 @@ impl RenderQueue {
     }
 
     fn get_match_status_json(&self, job_id: u32) -> QString {
+        // Deep match takes precedence over batch-match results.
+        if let Some(r) = self.deep_match_results.get(&job_id) {
+            let gyro_filename = self
+                .gyro_files
+                .get(r.gyro_index)
+                .map(|g| g.filename.clone())
+                .unwrap_or_default();
+            return QString::from(
+                serde_json::json!({
+                    "status": "DeepMatched",
+                    "gyro_index": r.gyro_index,
+                    "gyro_filename": gyro_filename,
+                    "offset_ms": r.offset_ms,
+                })
+                .to_string(),
+            );
+        }
         // [queue-lifecycle T4] 优先按 job_id 查找（remove 后 video_index 会错位）
         if let Some(ref results) = self.match_results {
             let r_opt = results
