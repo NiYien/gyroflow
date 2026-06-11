@@ -197,6 +197,9 @@ impl OpticalFlowTrait for OFOpenCVDis {
                     fb_p50,
                     fb_p95,
                     degraded: sel.degraded,
+                    // Only recorded when fb_check is on (see below), so DIS
+                    // pairs always count as FB-enabled in the run summary.
+                    fb_enabled: gate.fb_check,
                 };
                 Ok((kept_a, kept_b, stats))
             }();

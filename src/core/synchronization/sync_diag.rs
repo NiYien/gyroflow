@@ -59,6 +59,9 @@ struct FlowQualityRecord {
     candidates: usize,
     texture_pass: usize,
     fb_pass: usize,
+    /// False when FB was not executed for this pair (NeuFlow) — the fb
+    /// columns are written as empty strings in that case.
+    fb_enabled: bool,
     kept: usize,
     fb_p50: f32,
     fb_p95: f32,
@@ -234,6 +237,8 @@ pub fn record_axis_weights(range_idx: usize, q: [f64; 3], w: [f64; 3]) {
 }
 
 /// Record one optical-flow pair's quality-gate stats (see flow_gate.rs).
+/// `fb_enabled=false` (NeuFlow — FB is DIS-only) leaves the three fb CSV
+/// columns empty instead of reporting numbers for an unexecuted measurement.
 #[inline]
 #[allow(clippy::too_many_arguments)]
 pub fn record_flow_quality(
@@ -245,6 +250,7 @@ pub fn record_flow_quality(
     kept: usize,
     fb_p50: f32,
     fb_p95: f32,
+    fb_enabled: bool,
     degraded: bool,
 ) {
     if !is_enabled() {
@@ -260,6 +266,7 @@ pub fn record_flow_quality(
             kept,
             fb_p50,
             fb_p95,
+            fb_enabled,
             degraded: degraded as u8,
         });
     }
@@ -850,19 +857,29 @@ fn write_flow_quality(s: &DiagSession) -> std::io::Result<()> {
     let mut rows: Vec<&FlowQualityRecord> = s.flow_quality.iter().collect();
     rows.sort_by_key(|r| r.pair_ts_us);
     for r in rows {
-        writeln!(
-            w,
-            "{},{},{},{},{},{},{:.4},{:.4},{}",
-            r.pair_ts_us,
-            r.method,
-            r.candidates,
-            r.texture_pass,
-            r.fb_pass,
-            r.kept,
-            r.fb_p50,
-            r.fb_p95,
-            r.degraded
-        )?;
+        if r.fb_enabled {
+            writeln!(
+                w,
+                "{},{},{},{},{},{},{:.4},{:.4},{}",
+                r.pair_ts_us,
+                r.method,
+                r.candidates,
+                r.texture_pass,
+                r.fb_pass,
+                r.kept,
+                r.fb_p50,
+                r.fb_p95,
+                r.degraded
+            )?;
+        } else {
+            // FB not executed (NeuFlow) — fb_pass/fb_p50/fb_p95 stay empty,
+            // column structure unchanged (9 columns).
+            writeln!(
+                w,
+                "{},{},{},{},,{},,,{}",
+                r.pair_ts_us, r.method, r.candidates, r.texture_pass, r.kept, r.degraded
+            )?;
+        }
     }
     Ok(())
 }

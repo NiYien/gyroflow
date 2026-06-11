@@ -72,57 +72,6 @@ pub(super) fn neuflow_inference_burn_sampled(
     })
 }
 
-/// Sample the flow field img0→img1 at arbitrary fractional positions,
-/// rounded to the nearest pixel (clamped to bounds). Used by the FB gate to
-/// read the backward flow at forward endpoints without a dense readback —
-/// `infer_and_sample` already supports arbitrary linear indices.
-/// Returns a map keyed by the rounded (x, y) pixel.
-pub(super) fn sample_flow_at_points(
-    img0: Vec<f32>,
-    img1: Vec<f32>,
-    proc_h: usize,
-    proc_w: usize,
-    query: &[(f32, f32)],
-) -> Result<std::collections::HashMap<(i32, i32), (f32, f32)>, String> {
-    let mut grid_points = Vec::with_capacity(query.len());
-    let mut linear_indices = Vec::with_capacity(query.len());
-    let mut seen = std::collections::HashSet::with_capacity(query.len());
-    for &(x, y) in query {
-        if !x.is_finite() || !y.is_finite() {
-            continue;
-        }
-        let xi = (x.round() as i64).clamp(0, proc_w as i64 - 1) as usize;
-        let yi = (y.round() as i64).clamp(0, proc_h as i64 - 1) as usize;
-        if seen.insert((xi, yi)) {
-            grid_points.push((xi, yi));
-            linear_indices.push((yi * proc_w + xi) as i32);
-        }
-    }
-    if grid_points.is_empty() {
-        return Ok(Default::default());
-    }
-    let sampled = {
-        let _g = crate::synchronization::sync_perf::StageGuard::new(
-            crate::synchronization::sync_perf::Stage::InferAndSample,
-        );
-        crate::neuflow_burn::infer_and_sample(
-            img0,
-            img1,
-            proc_h,
-            proc_w,
-            grid_points,
-            linear_indices,
-        )?
-    };
-    let mut map = std::collections::HashMap::with_capacity(sampled.grid_points.len());
-    for (i, &(gx, gy)) in sampled.grid_points.iter().enumerate() {
-        if sampled.dx[i].is_finite() && sampled.dy[i].is_finite() {
-            map.insert((gx as i32, gy as i32), (sampled.dx[i], sampled.dy[i]));
-        }
-    }
-    Ok(map)
-}
-
 /// Compute texture-aware grid points for GPU sparse sampling.
 /// Returns (grid_points, linear_indices, candidates-before-texture-filter).
 fn compute_grid_points(

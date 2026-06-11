@@ -149,9 +149,12 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
             let pad_top = (model_h - new_h) / 2.0;
 
             // Dispatch to backend-specific inference. Each arm produces
-            // gate-filtered point pairs at model resolution (flow_gate: FB
-            // consistency + stratified cap; backward flow = second inference
-            // with swapped inputs).
+            // gate-filtered point pairs at model resolution. FB consistency
+            // is DIS-only (sync-fb-dis-only): NeuFlow's forward and backward
+            // flows come from the same learned prior, so the roundtrip
+            // residual measures network self-consistency, not flow quality.
+            // Each arm runs a single forward inference and the gate applies
+            // the spatially uniform stratified cap only.
             let gate = super::flow_gate::params();
             let step_div = gate.step_div(super::flow_gate::DEFAULT_STEP_DIV_NEUFLOW);
             let result = match self.backend {
@@ -169,36 +172,6 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                             );
                             if from_pts.len() < 10 {
                                 None
-                            } else if gate.fb_check {
-                                // Backward pass: swapped inputs, dense readback,
-                                // bilinear lookup at forward endpoints.
-                                match super::neuflow_ort::neuflow_inference_ort(
-                                    &chw1, &chw0, proc_h, proc_w,
-                                ) {
-                                    Ok(flow_bwd) => {
-                                        let mut backward_at = |qx: f32, qy: f32| {
-                                            bilinear_dense_flow_at(
-                                                &flow_bwd, proc_w, proc_h, qx, qy,
-                                            )
-                                        };
-                                        Some(gate_points(
-                                            "ort",
-                                            self.timestamp_us,
-                                            candidates,
-                                            from_pts,
-                                            to_pts,
-                                            Some(&mut backward_at),
-                                            (proc_w as u32, proc_h as u32),
-                                            &gate,
-                                        ))
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "NeuFlow ORT backward inference failed: {e}, falling back to DIS"
-                                        );
-                                        return fallback_to_dis(self, next);
-                                    }
-                                }
                             } else {
                                 Some(gate_points(
                                     "ort",
@@ -227,56 +200,6 @@ impl OpticalFlowTrait for OFNeuFlowV2 {
                         Ok(sampled) => {
                             if sampled.from_pts.len() < 10 {
                                 None
-                            } else if gate.fb_check {
-                                // Backward pass: swapped inputs, sampled at the
-                                // forward endpoints (rounded to nearest pixel) —
-                                // no dense readback, no new GPU kernel. CHW
-                                // tensors re-cloned from the preprocess cache.
-                                let bwd_inputs = self
-                                    .get_or_preprocess()
-                                    .and_then(|f0| next.get_or_preprocess().map(|f1| (f0.0, f1.0)));
-                                let bwd_map = match bwd_inputs {
-                                    Ok((chw0b, chw1b)) => {
-                                        super::neuflow_burn::sample_flow_at_points(
-                                            chw1b,
-                                            chw0b,
-                                            proc_h,
-                                            proc_w,
-                                            &sampled.to_pts,
-                                        )
-                                    }
-                                    Err(e) => Err(e),
-                                };
-                                match bwd_map {
-                                    Ok(bwd_map) => {
-                                        let (pw, ph) = (proc_w as i32, proc_h as i32);
-                                        let mut backward_at =
-                                            |qx: f32, qy: f32| -> Option<(f32, f32)> {
-                                                if !qx.is_finite() || !qy.is_finite() {
-                                                    return None;
-                                                }
-                                                let xi = (qx.round() as i32).clamp(0, pw - 1);
-                                                let yi = (qy.round() as i32).clamp(0, ph - 1);
-                                                bwd_map.get(&(xi, yi)).copied()
-                                            };
-                                        Some(gate_points(
-                                            "burn",
-                                            self.timestamp_us,
-                                            sampled.candidates,
-                                            sampled.from_pts,
-                                            sampled.to_pts,
-                                            Some(&mut backward_at),
-                                            (proc_w as u32, proc_h as u32),
-                                            &gate,
-                                        ))
-                                    }
-                                    Err(e) => {
-                                        log::warn!(
-                                            "NeuFlow Burn backward sampling failed: {e}, falling back to DIS"
-                                        );
-                                        return fallback_to_dis(self, next);
-                                    }
-                                }
                             } else {
                                 Some(gate_points(
                                     "burn",
@@ -517,41 +440,16 @@ fn sample_from_dense_flow(
     (candidates, from_pts, to_pts)
 }
 
-/// Bilinear sample of an interleaved [dx,dy] dense flow buffer at a
-/// fractional position. None outside the field (FB gate auto-rejects).
-fn bilinear_dense_flow_at(flow: &[f32], w: usize, h: usize, x: f32, y: f32) -> Option<(f32, f32)> {
-    if !(x.is_finite() && y.is_finite())
-        || x < 0.0
-        || y < 0.0
-        || x > (w - 1) as f32
-        || y > (h - 1) as f32
-        || flow.len() < w * h * 2
-    {
-        return None;
-    }
-    let x0 = x.floor() as usize;
-    let y0 = y.floor() as usize;
-    let x1 = (x0 + 1).min(w - 1);
-    let y1 = (y0 + 1).min(h - 1);
-    let fx = x - x0 as f32;
-    let fy = y - y0 as f32;
-    let at = |xx: usize, yy: usize| -> (f32, f32) {
-        let i = (yy * w + xx) * 2;
-        (flow[i], flow[i + 1])
-    };
-    let (dx00, dy00) = at(x0, y0);
-    let (dx10, dy10) = at(x1, y0);
-    let (dx01, dy01) = at(x0, y1);
-    let (dx11, dy11) = at(x1, y1);
-    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
-    let dx = lerp(lerp(dx00, dx10, fx), lerp(dx01, dx11, fx), fy);
-    let dy = lerp(lerp(dy00, dy10, fx), lerp(dy01, dy11, fx), fy);
-    Some((dx, dy))
-}
-
-/// Shared gate exit for the NeuFlow backends: FB filter + stratified cap +
-/// stats recording. `backward_at = None` (or `fb_check=0`) applies only the
-/// cap. Mirrors the DIS path so all three methods report identical stats.
+/// Shared gate exit for the NeuFlow backends: stratified spatial cap + stats
+/// recording. FB consistency is DIS-only (sync-fb-dis-only), so the NeuFlow
+/// callers always pass `backward_at = None`; the parameter is kept so a real
+/// uncertainty signal could be wired back in without interface churn.
+///
+/// `backward_at = None` (or `fb_check=0`) behaves exactly like the FB-off
+/// gate: a uniform spatial cap over all texture-passed points. The global
+/// `fb_check=true` state must not leak in here — an empty FB pass set would
+/// otherwise hit DegradeTopK over empty residuals and select zero points
+/// (sync-fb-dis-only design D1).
 #[allow(clippy::too_many_arguments)]
 fn gate_points(
     method: &'static str,
@@ -565,33 +463,38 @@ fn gate_points(
 ) -> (Vec<(f32, f32)>, Vec<(f32, f32)>) {
     use super::flow_gate;
     let texture_pass = from_pts.len();
-    let (fb_pass_count, residuals, sel) = match backward_at {
+    let (fb_enabled, fb_pass_count, fb_p50, fb_p95, sel) = match backward_at {
         Some(bw) if gate.fb_check && !from_pts.is_empty() => {
             let (pass, residuals) = flow_gate::fb_filter(&from_pts, &to_pts, bw, gate);
             let sel = flow_gate::apply_gate(&from_pts, &pass, &residuals, frame_size, gate);
-            (pass.len(), residuals, sel)
+            let (p50, p95) = flow_gate::residual_percentiles(&residuals);
+            (true, pass.len(), p50, p95, sel)
         }
         _ => {
-            let sel = flow_gate::apply_gate(&from_pts, &[], &[], frame_size, gate);
-            (0, Vec::new(), sel)
+            // No backward flow: force the fb_check=false gate semantics
+            // (uniform spatial cap) regardless of the global FB setting.
+            let no_fb = flow_gate::GateParams {
+                fb_check: false,
+                ..*gate
+            };
+            let sel = flow_gate::apply_gate(&from_pts, &[], &[], frame_size, &no_fb);
+            (false, 0, f32::NAN, f32::NAN, sel)
         }
     };
-    if gate.fb_check {
-        let (fb_p50, fb_p95) = flow_gate::residual_percentiles(&residuals);
-        flow_gate::record_pair_stats(
-            method,
-            pair_ts_us,
-            &flow_gate::GateStats {
-                candidates,
-                texture_pass,
-                fb_pass: fb_pass_count,
-                kept: sel.indices.len(),
-                fb_p50,
-                fb_p95,
-                degraded: sel.degraded,
-            },
-        );
-    }
+    flow_gate::record_pair_stats(
+        method,
+        pair_ts_us,
+        &flow_gate::GateStats {
+            candidates,
+            texture_pass,
+            fb_pass: fb_pass_count,
+            kept: sel.indices.len(),
+            fb_p50,
+            fb_p95,
+            degraded: sel.degraded,
+            fb_enabled,
+        },
+    );
     let kept_a: Vec<(f32, f32)> = sel.indices.iter().map(|&i| from_pts[i]).collect();
     let kept_b: Vec<(f32, f32)> = sel.indices.iter().map(|&i| to_pts[i]).collect();
     (kept_a, kept_b)
@@ -789,16 +692,34 @@ mod tests {
     }
 
     #[test]
-    fn test_bilinear_dense_flow_at() {
-        // 2×2 field, interleaved [dx,dy]: corners (0,0)=(0,0) (1,0)=(2,0) (0,1)=(0,2) (1,1)=(2,2)
-        let flow = vec![0.0, 0.0, 2.0, 0.0, 0.0, 2.0, 2.0, 2.0];
-        let (dx, dy) = bilinear_dense_flow_at(&flow, 2, 2, 0.5, 0.5).unwrap();
-        assert!((dx - 1.0).abs() < 1e-6);
-        assert!((dy - 1.0).abs() < 1e-6);
-        // Out of bounds → None
-        assert!(bilinear_dense_flow_at(&flow, 2, 2, -0.1, 0.0).is_none());
-        assert!(bilinear_dense_flow_at(&flow, 2, 2, 1.1, 0.0).is_none());
-        assert!(bilinear_dense_flow_at(&flow, 2, 2, f32::NAN, 0.0).is_none());
+    fn test_gate_points_none_backward_matches_fb_off() {
+        // sync-fb-dis-only D1: with backward_at=None and the *global*
+        // fb_check=true, gate_points must take the uniform-cap path (never
+        // "DegradeTopK over empty residuals → zero points") and produce
+        // exactly the same selection as fb_check=false.
+        let _guard = super::super::flow_gate::TEST_STATS_LOCK.lock();
+        let n = 470usize;
+        let from: Vec<(f32, f32)> = (0..n)
+            .map(|i| (((i * 7) % 768) as f32, ((i * 11) % 432) as f32))
+            .collect();
+        let to: Vec<(f32, f32)> = from.iter().map(|&(x, y)| (x + 1.0, y + 0.5)).collect();
+        let gate_on = super::super::flow_gate::GateParams {
+            fb_check: true,
+            fb_abs_px: 0.8,
+            fb_rel: 0.05,
+            step_div_override: None,
+            max_points: 200,
+        };
+        let (a_on, b_on) = gate_points(
+            "burn", 0, 576, from.clone(), to.clone(), None, (768, 432), &gate_on,
+        );
+        assert_eq!(a_on.len(), 200, "uniform cap must keep max_points, not zero");
+        assert_eq!(b_on.len(), 200);
+        let mut gate_off = gate_on;
+        gate_off.fb_check = false;
+        let (a_off, b_off) = gate_points("burn", 0, 576, from, to, None, (768, 432), &gate_off);
+        assert_eq!(a_on, a_off, "None backward must match the fb_check=false selection");
+        assert_eq!(b_on, b_off);
     }
 
     #[test]

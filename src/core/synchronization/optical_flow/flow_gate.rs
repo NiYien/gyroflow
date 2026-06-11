@@ -3,15 +3,24 @@
 
 //! Flow quality gate for the sync optical-flow front-end.
 //!
-//! Provides forward-backward (FB) consistency filtering, spatially stratified
-//! point capping and per-pair quality statistics for the point pairs produced
-//! by `optical_flow_to` implementations (DIS / NeuFlow).
+//! Provides forward-backward (FB) consistency filtering (DIS path only),
+//! spatially stratified point capping and per-pair quality statistics for the
+//! point pairs produced by `optical_flow_to` implementations (DIS / NeuFlow).
+//!
+//! FB scope (sync-fb-dis-only): FB residuals are only discriminative when the
+//! forward and backward flows are independent measurements (DIS solves the
+//! variational energy independently in each direction). NeuFlow's two
+//! directions come from the same learned prior, so its roundtrip residual
+//! measures network self-consistency, not flow quality — the NeuFlow paths
+//! never run FB. FB residuals are used as a threshold filter (DIS) and as the
+//! DegradeTopK rescue ranking only; the stratified cap is spatially uniform on
+//! all paths and never ranks by residual.
 //!
 //! The gate runs *inside* the optical-flow layer so the `OpticalFlowPair`
 //! contract is unchanged — both downstream consumers (rs-sync ray cost and
 //! findEssentialMat pose estimation) benefit without interface changes.
 //!
-//! Rollback: `GYROFLOW_SYNC_FB_CHECK=0` disables the FB computation entirely;
+//! Rollback: `GYROFLOW_SYNC_FB_CHECK=0` disables the FB computation on DIS;
 //! `GYROFLOW_SYNC_OF_STEP_DIV=15` restores the legacy DIS sampling grid.
 
 use parking_lot::Mutex;
@@ -29,10 +38,11 @@ pub const TOPK_FALLBACK: usize = 40;
 #[derive(Debug, Clone, Copy)]
 pub struct GateParams {
     /// Compute + apply FB consistency check (`GYROFLOW_SYNC_FB_CHECK`, default true).
+    /// DIS only — the NeuFlow paths hard-disable FB regardless of this flag.
     pub fb_check: bool,
-    /// Absolute FB residual threshold in px of the flow resolution (`GYROFLOW_SYNC_FB_ABS_PX`).
+    /// Absolute FB residual threshold in px of the flow resolution (`GYROFLOW_SYNC_FB_ABS_PX`). DIS only.
     pub fb_abs_px: f32,
-    /// Relative FB residual threshold coefficient on |flow| (`GYROFLOW_SYNC_FB_REL`).
+    /// Relative FB residual threshold coefficient on |flow| (`GYROFLOW_SYNC_FB_REL`). DIS only.
     pub fb_rel: f32,
     /// Optional override of the sampling-grid divisor for ALL paths (`GYROFLOW_SYNC_OF_STEP_DIV`).
     pub step_div_override: Option<u32>,
@@ -118,7 +128,7 @@ pub fn params() -> GateParams {
         if LOGGED.set(()).is_ok() {
             log::info!(
                 target: "lifecycle",
-                "flow_gate resolved fb_check={} fb_abs_px={:.2} fb_rel={:.3} step_div={} max_points={} source={}",
+                "flow_gate resolved fb_check={} fb_abs_px={:.2} fb_rel={:.3} step_div={} max_points={} source={} scope=dis-only",
                 p.fb_check,
                 p.fb_abs_px,
                 p.fb_rel,
@@ -219,15 +229,33 @@ pub fn topk_by_residual(residuals: &[f32], k: usize) -> Vec<usize> {
 
 const CAP_GRID: usize = 4;
 
-/// Spatially stratified cap over a 4×4 cell grid.
+/// Exactly `count` items from index-sorted `src`, spread equidistantly
+/// (positions `floor(k·len/count)`, k = 0..count). Positions are strictly
+/// increasing when `len > count`, so picks are distinct and deterministic.
+fn pick_equidistant(src: &[usize], count: usize) -> Vec<usize> {
+    if count >= src.len() {
+        return src.to_vec();
+    }
+    (0..count).map(|k| src[k * src.len() / count]).collect()
+}
+
+/// Spatially stratified cap over a 4×4 cell grid, spatially uniform.
 ///
-/// Each cell gets a quota of `ceil(max_points / 16)` selected by ascending FB
-/// residual (tie-break: candidate index). Unused quota is backfilled globally
-/// by residual. The result is returned in ascending index order so the output
-/// point ordering is deterministic and stable across runs.
+/// Each cell gets a quota of `ceil(max_points / 16)` selected by equidistant
+/// subsampling in candidate-index order (every `ceil(n/quota)`-th candidate),
+/// so picks span the whole cell instead of clustering on the scan-start side
+/// (the candidate grid is scanned column-major, so a "first N" pick would
+/// produce a one-sided band inside each cell). Remaining capacity is
+/// backfilled equidistantly over the unselected candidates in index order;
+/// overshoot (ceil quota × 16 > max_points) is thinned the same way.
+///
+/// FB residuals are deliberately not a ranking signal here (sync-fb-dis-only
+/// D4): residual ordering carries no information when the residual
+/// distribution is compressed (ultra-smooth scenes) and is structurally
+/// meaningless for NeuFlow. Residuals remain in use only for the DIS threshold
+/// filter and the DegradeTopK rescue ranking.
 pub fn stratified_cap(
     pts_a: &[(f32, f32)],
-    residuals: &[f32],
     eligible: &[usize],
     frame_size: (u32, u32),
     max_points: usize,
@@ -239,14 +267,7 @@ pub fn stratified_cap(
     }
     let cell_w = (frame_size.0.max(1) as f32 / CAP_GRID as f32).max(1.0);
     let cell_h = (frame_size.1.max(1) as f32 / CAP_GRID as f32).max(1.0);
-    let quota = max_points.div_ceil(CAP_GRID * CAP_GRID);
-
-    let by_residual = |&a: &usize, &b: &usize| {
-        residuals[a]
-            .partial_cmp(&residuals[b])
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then(a.cmp(&b))
-    };
+    let quota = max_points.div_ceil(CAP_GRID * CAP_GRID).max(1);
 
     let mut cells: Vec<Vec<usize>> = vec![Vec::new(); CAP_GRID * CAP_GRID];
     for &i in eligible {
@@ -258,19 +279,31 @@ pub fn stratified_cap(
     let mut selected: Vec<usize> = Vec::with_capacity(max_points + CAP_GRID * CAP_GRID);
     let mut leftover: Vec<usize> = Vec::new();
     for cell in &mut cells {
-        cell.sort_by(by_residual);
-        let take = quota.min(cell.len());
-        selected.extend_from_slice(&cell[..take]);
-        leftover.extend_from_slice(&cell[take..]);
+        if cell.is_empty() {
+            continue;
+        }
+        // Candidate-index order inside the cell (callers pass ascending
+        // eligible sets; sort keeps the contract robust regardless).
+        cell.sort_unstable();
+        // Equidistant in-cell pick: every ceil(n/quota)-th candidate. May take
+        // fewer than `quota` points; the global backfill below compensates.
+        let stride = cell.len().div_ceil(quota).max(1);
+        for (k, &i) in cell.iter().enumerate() {
+            if k % stride == 0 {
+                selected.push(i);
+            } else {
+                leftover.push(i);
+            }
+        }
     }
     if selected.len() < max_points {
-        leftover.sort_by(by_residual);
+        leftover.sort_unstable();
         let need = max_points - selected.len();
-        selected.extend(leftover.into_iter().take(need));
+        selected.extend(pick_equidistant(&leftover, need));
     } else if selected.len() > max_points {
-        // ceil quota × 16 can exceed max_points — trim worst residuals.
-        selected.sort_by(by_residual);
-        selected.truncate(max_points);
+        // ceil quota × 16 can exceed max_points — thin out equidistantly.
+        selected.sort_unstable();
+        selected = pick_equidistant(&selected, max_points);
     }
     selected.sort_unstable();
     selected
@@ -288,10 +321,11 @@ pub struct GateSelection {
 /// Apply the full gate decision to a texture-passed candidate set.
 ///
 /// `fb_pass` / `residuals` come from [`fb_filter`]. When `params.fb_check` is
-/// false the FB outcome is ignored and only the stratified cap applies
-/// (uniform ranking → index order), so `FB_CHECK=0` + legacy step density is
-/// point-for-point equivalent to the pre-gate pipeline (cap is a passthrough
-/// below `max_points`).
+/// false the FB outcome is ignored and only the spatially uniform stratified
+/// cap applies, so `FB_CHECK=0` + legacy step density is point-for-point
+/// equivalent to the pre-gate pipeline (cap is a passthrough below
+/// `max_points`). Residuals are used only by the DegradeTopK rescue path —
+/// the Enforce cap is spatially uniform and residual-independent.
 pub fn apply_gate(
     pts_a: &[(f32, f32)],
     fb_pass: &[usize],
@@ -301,9 +335,8 @@ pub fn apply_gate(
 ) -> GateSelection {
     if !params.fb_check {
         let all: Vec<usize> = (0..pts_a.len()).collect();
-        let zeros = vec![0.0f32; pts_a.len()];
         return GateSelection {
-            indices: stratified_cap(pts_a, &zeros, &all, frame_size, params.max_points),
+            indices: stratified_cap(pts_a, &all, frame_size, params.max_points),
             degraded: false,
         };
     }
@@ -319,7 +352,7 @@ pub fn apply_gate(
             degraded: true,
         },
         GateOutcome::Enforce => GateSelection {
-            indices: stratified_cap(pts_a, residuals, fb_pass, frame_size, params.max_points),
+            indices: stratified_cap(pts_a, fb_pass, frame_size, params.max_points),
             degraded: false,
         },
     }
@@ -336,6 +369,10 @@ pub struct GateStats {
     pub fb_p50: f32,
     pub fb_p95: f32,
     pub degraded: bool,
+    /// True when FB was actually executed for this pair (DIS). NeuFlow pairs
+    /// set false with `fb_pass=0` and NaN percentiles; their fb fields render
+    /// as `-` in logs and stay out of the run-summary fb aggregation.
+    pub fb_enabled: bool,
 }
 
 /// Nearest-rank percentile over the finite residuals. NaN when none are finite.
@@ -366,6 +403,10 @@ struct Accum {
     sum_p50: f64,
     sum_p95: f64,
     percentile_pairs: u64,
+    /// Pairs where FB was executed (DIS) — divisor for `fb_avg`.
+    fb_pairs: u64,
+    /// Pairs where FB was skipped (NeuFlow) — reported as `fb_skipped=`.
+    fb_skipped: u64,
 }
 
 static ACCUM: Mutex<Accum> = Mutex::new(Accum {
@@ -381,24 +422,46 @@ static ACCUM: Mutex<Accum> = Mutex::new(Accum {
     sum_p50: 0.0,
     sum_p95: 0.0,
     percentile_pairs: 0,
+    fb_pairs: 0,
+    fb_skipped: 0,
 });
 
-/// Record one pair's gate stats: per-pair debug log, run accumulator and
-/// (when `GYROFLOW_SYNC_DIAG=1`) a flow_quality.csv row.
-pub fn record_pair_stats(method: &'static str, pair_ts_us: i64, stats: &GateStats) {
-    log::debug!(
-        target: "sync",
-        "[flow-gate] ts={} method={} cand={} tex={} fb={} kept={} fb_p50={:.2} fb_p95={:.2}{}",
+/// Format a log metric with fixed precision; non-finite (NaN) renders as `-`
+/// so unexecuted measurements are never reported as numbers.
+fn fmt_metric(v: f64, precision: usize) -> String {
+    if v.is_finite() {
+        format!("{:.*}", precision, v)
+    } else {
+        "-".to_string()
+    }
+}
+
+/// Build the per-pair `[flow-gate]` log line. The fb count renders as `-`
+/// when FB was not executed for the pair; NaN percentiles render as `-`.
+fn format_pair_line(method: &str, pair_ts_us: i64, stats: &GateStats) -> String {
+    let fb = if stats.fb_enabled {
+        stats.fb_pass.to_string()
+    } else {
+        "-".to_string()
+    };
+    format!(
+        "[flow-gate] ts={} method={} cand={} tex={} fb={} kept={} fb_p50={} fb_p95={}{}",
         pair_ts_us,
         method,
         stats.candidates,
         stats.texture_pass,
-        stats.fb_pass,
+        fb,
         stats.kept,
-        stats.fb_p50,
-        stats.fb_p95,
+        fmt_metric(stats.fb_p50 as f64, 2),
+        fmt_metric(stats.fb_p95 as f64, 2),
         if stats.degraded { " degraded" } else { "" }
-    );
+    )
+}
+
+/// Record one pair's gate stats: per-pair debug log, run accumulator and
+/// (when `GYROFLOW_SYNC_DIAG=1`) a flow_quality.csv row.
+pub fn record_pair_stats(method: &'static str, pair_ts_us: i64, stats: &GateStats) {
+    log::debug!(target: "sync", "{}", format_pair_line(method, pair_ts_us, stats));
     if stats.degraded {
         log::warn!(
             target: "sync",
@@ -425,8 +488,15 @@ pub fn record_pair_stats(method: &'static str, pair_ts_us: i64, stats: &GateStat
         }
         a.sum_candidates += stats.candidates as u64;
         a.sum_texture += stats.texture_pass as u64;
-        a.sum_fb += stats.fb_pass as u64;
         a.sum_kept += stats.kept as u64;
+        // fb aggregation only over FB-enabled pairs (DIS) so NeuFlow pairs
+        // never dilute the run-summary fb averages.
+        if stats.fb_enabled {
+            a.fb_pairs += 1;
+            a.sum_fb += stats.fb_pass as u64;
+        } else {
+            a.fb_skipped += 1;
+        }
         if stats.fb_p50.is_finite() && stats.fb_p95.is_finite() {
             a.sum_p50 += stats.fb_p50 as f64;
             a.sum_p95 += stats.fb_p95 as f64;
@@ -442,13 +512,53 @@ pub fn record_pair_stats(method: &'static str, pair_ts_us: i64, stats: &GateStat
         stats.kept,
         stats.fb_p50,
         stats.fb_p95,
+        stats.fb_enabled,
         stats.degraded,
     );
 }
 
+/// Serializes tests that mutate the global ACCUM (shared with neuflow.rs
+/// tests — record_pair_stats writes to one process-wide accumulator).
+#[cfg(test)]
+pub(super) static TEST_STATS_LOCK: Mutex<()> = Mutex::new(());
+
 /// Reset the run-level accumulator. Called at sync start.
 pub fn reset_stats() {
     *ACCUM.lock() = Accum::default();
+}
+
+/// Build the run-summary line. fb averages are computed over FB-enabled
+/// pairs only (DIS); pairs without FB are counted as `fb_skipped`. fb fields
+/// render as `-` when no pair ran FB.
+fn format_run_summary(a: &Accum) -> String {
+    let avg = |sum: u64| sum as f64 / a.pairs as f64;
+    let fb_avg = if a.fb_pairs > 0 {
+        a.sum_fb as f64 / a.fb_pairs as f64
+    } else {
+        f64::NAN
+    };
+    let p_avg = |sum: f64| {
+        if a.percentile_pairs > 0 {
+            sum / a.percentile_pairs as f64
+        } else {
+            f64::NAN
+        }
+    };
+    format!(
+        "[flow-gate] run summary: pairs={} (dis={} ort={} burn={}) degraded={} cand_avg={:.0} tex_avg={:.0} fb_avg={} kept_avg={:.0} fb_p50_avg={} fb_p95_avg={} fb_skipped={}",
+        a.pairs,
+        a.pairs_dis,
+        a.pairs_ort,
+        a.pairs_burn,
+        a.degraded_pairs,
+        avg(a.sum_candidates),
+        avg(a.sum_texture),
+        fmt_metric(fb_avg, 0),
+        avg(a.sum_kept),
+        fmt_metric(p_avg(a.sum_p50), 2),
+        fmt_metric(p_avg(a.sum_p95), 2),
+        a.fb_skipped,
+    )
 }
 
 /// Emit one info-level run summary line and reset. Called at sync end.
@@ -457,29 +567,7 @@ pub fn dump_and_reset_stats() {
     if a.pairs == 0 {
         return;
     }
-    let avg = |sum: u64| sum as f64 / a.pairs as f64;
-    let p_avg = |sum: f64| {
-        if a.percentile_pairs > 0 {
-            sum / a.percentile_pairs as f64
-        } else {
-            f64::NAN
-        }
-    };
-    log::info!(
-        target: "sync",
-        "[flow-gate] run summary: pairs={} (dis={} ort={} burn={}) degraded={} cand_avg={:.0} tex_avg={:.0} fb_avg={:.0} kept_avg={:.0} fb_p50_avg={:.2} fb_p95_avg={:.2}",
-        a.pairs,
-        a.pairs_dis,
-        a.pairs_ort,
-        a.pairs_burn,
-        a.degraded_pairs,
-        avg(a.sum_candidates),
-        avg(a.sum_texture),
-        avg(a.sum_fb),
-        avg(a.sum_kept),
-        p_avg(a.sum_p50),
-        p_avg(a.sum_p95),
-    );
+    log::info!(target: "sync", "{}", format_run_summary(&a));
 }
 
 #[cfg(test)]
@@ -559,9 +647,8 @@ mod tests {
     #[test]
     fn stratified_cap_passthrough_below_limit() {
         let pts: Vec<(f32, f32)> = (0..50).map(|i| (i as f32, i as f32)).collect();
-        let residuals = vec![0.1; 50];
         let eligible: Vec<usize> = (0..50).collect();
-        let out = stratified_cap(&pts, &residuals, &eligible, (100, 100), 200);
+        let out = stratified_cap(&pts, &eligible, (100, 100), 200);
         assert_eq!(out, eligible);
     }
 
@@ -579,9 +666,8 @@ mod tests {
             })
             .collect();
         pts.extend_from_slice(&spread);
-        let residuals = vec![0.1; pts.len()];
         let eligible: Vec<usize> = (0..pts.len()).collect();
-        let out = stratified_cap(&pts, &residuals, &eligible, (400, 400), 200);
+        let out = stratified_cap(&pts, &eligible, (400, 400), 200);
         assert_eq!(out.len(), 200);
         // Every spread point (one per non-corner cell) must survive the cap.
         for i in 500..pts.len() {
@@ -594,16 +680,68 @@ mod tests {
     }
 
     #[test]
-    fn stratified_cap_deterministic_with_ties() {
+    fn stratified_cap_deterministic() {
         let pts: Vec<(f32, f32)> = (0..400)
             .map(|i| ((i % 40) as f32 * 10.0, (i / 40) as f32 * 40.0))
             .collect();
-        let residuals = vec![0.25; 400]; // all ties → index tie-break
         let eligible: Vec<usize> = (0..400).collect();
-        let a = stratified_cap(&pts, &residuals, &eligible, (400, 400), 100);
-        let b = stratified_cap(&pts, &residuals, &eligible, (400, 400), 100);
+        let a = stratified_cap(&pts, &eligible, (400, 400), 100);
+        let b = stratified_cap(&pts, &eligible, (400, 400), 100);
         assert_eq!(a, b);
         assert_eq!(a.len(), 100);
+    }
+
+    #[test]
+    fn stratified_cap_selection_independent_of_residuals() {
+        // 742 FB-passing points with residuals compressed into 0.05-0.26
+        // (the 2026-06-11 ultra-smooth DIS case): the cap selection must be a
+        // pure function of geometry + index order. Perturbing residual values
+        // must not change the selected set.
+        let p = test_params(); // max_points = 200
+        let n = 742usize;
+        let pts: Vec<(f32, f32)> = (0..n)
+            .map(|i| (((i * 13) % 1280) as f32, ((i * 29) % 720) as f32))
+            .collect();
+        let fb_pass: Vec<usize> = (0..n).collect();
+        let res_a: Vec<f32> = (0..n)
+            .map(|i| 0.05 + 0.21 * (i as f32) / (n as f32))
+            .collect();
+        let res_b: Vec<f32> = res_a.iter().rev().copied().collect(); // perturbed
+        let sa = apply_gate(&pts, &fb_pass, &res_a, (1280, 720), &p);
+        let sb = apply_gate(&pts, &fb_pass, &res_b, (1280, 720), &p);
+        assert!(!sa.degraded && !sb.degraded);
+        assert_eq!(sa.indices.len(), 200);
+        assert_eq!(sa.indices, sb.indices, "cap selection must not depend on residual values");
+    }
+
+    #[test]
+    fn stratified_cap_cell_quota_equidistant_not_prefix() {
+        // Single cell with 26 candidates and quota 13 (max_points=208 →
+        // ceil(208/16)=13). The 15 other cells hold exactly 13 candidates
+        // each so totals hit the cap exactly (13 + 15×13 = 208) — no
+        // backfill, no thinning — isolating the in-cell pick rule.
+        let max_points = 208usize;
+        let mut pts: Vec<(f32, f32)> = Vec::new();
+        // Cell (0,0) of a 400×400 frame: 26 candidates in index order.
+        for k in 0..26usize {
+            pts.push(((k % 13) as f32 * 7.0, (k / 13) as f32 * 40.0));
+        }
+        for c in 1..16usize {
+            let cx = (c % CAP_GRID) as f32 * 100.0;
+            let cy = (c / CAP_GRID) as f32 * 100.0;
+            for k in 0..13usize {
+                pts.push((cx + (k % 4) as f32 * 10.0, cy + (k / 4) as f32 * 10.0));
+            }
+        }
+        let eligible: Vec<usize> = (0..pts.len()).collect();
+        let out = stratified_cap(&pts, &eligible, (400, 400), max_points);
+        assert_eq!(out.len(), max_points);
+        let cell0: Vec<usize> = out.iter().copied().filter(|&i| i < 26).collect();
+        let expected: Vec<usize> = (0..26).step_by(2).collect(); // 0,2,4,...,24
+        assert_eq!(
+            cell0, expected,
+            "in-cell picks must span the cell equidistantly, not take the first 13"
+        );
     }
 
     #[test]
@@ -698,6 +836,7 @@ mod tests {
 
     #[test]
     fn accumulator_aggregates_and_resets() {
+        let _guard = TEST_STATS_LOCK.lock();
         reset_stats();
         let s = GateStats {
             candidates: 900,
@@ -707,6 +846,7 @@ mod tests {
             fb_p50: 0.2,
             fb_p95: 1.8,
             degraded: false,
+            fb_enabled: true,
         };
         record_pair_stats("dis", 1000, &s);
         record_pair_stats("dis", 2000, &s);
@@ -716,8 +856,94 @@ mod tests {
             assert_eq!(a.pairs_dis, 2);
             assert_eq!(a.sum_kept, 400);
             assert_eq!(a.percentile_pairs, 2);
+            assert_eq!(a.fb_pairs, 2);
+            assert_eq!(a.fb_skipped, 0);
         }
         dump_and_reset_stats();
         assert_eq!(ACCUM.lock().pairs, 0);
+    }
+
+    fn neuflow_style_stats() -> GateStats {
+        GateStats {
+            candidates: 576,
+            texture_pass: 470,
+            fb_pass: 0,
+            kept: 200,
+            fb_p50: f32::NAN,
+            fb_p95: f32::NAN,
+            degraded: false,
+            fb_enabled: false,
+        }
+    }
+
+    #[test]
+    fn pair_line_formats_nan_fb_fields_as_dash() {
+        let line = format_pair_line("burn", 12345, &neuflow_style_stats());
+        assert!(line.contains("method=burn"), "{line}");
+        assert!(line.contains("cand=576 tex=470 fb=- kept=200"), "{line}");
+        assert!(line.contains("fb_p50=- fb_p95=-"), "{line}");
+        // DIS-style stats with finite percentiles keep numeric formatting.
+        let dis = GateStats {
+            candidates: 900,
+            texture_pass: 500,
+            fb_pass: 380,
+            kept: 200,
+            fb_p50: 0.2,
+            fb_p95: 1.8,
+            degraded: false,
+            fb_enabled: true,
+        };
+        let line = format_pair_line("dis", 1, &dis);
+        assert!(line.contains("fb=380"), "{line}");
+        assert!(line.contains("fb_p50=0.20 fb_p95=1.80"), "{line}");
+    }
+
+    #[test]
+    fn run_summary_fb_not_diluted_by_skipped_pairs() {
+        let _guard = TEST_STATS_LOCK.lock();
+        reset_stats();
+        let dis = GateStats {
+            candidates: 900,
+            texture_pass: 700,
+            fb_pass: 380,
+            kept: 200,
+            fb_p50: 0.2,
+            fb_p95: 1.8,
+            degraded: false,
+            fb_enabled: true,
+        };
+        record_pair_stats("dis", 1, &dis);
+        record_pair_stats("dis", 2, &dis);
+        record_pair_stats("burn", 3, &neuflow_style_stats());
+        record_pair_stats("burn", 4, &neuflow_style_stats());
+        record_pair_stats("burn", 5, &neuflow_style_stats());
+        let line = {
+            let a = ACCUM.lock();
+            assert_eq!(a.fb_pairs, 2);
+            assert_eq!(a.fb_skipped, 3);
+            assert_eq!(a.percentile_pairs, 2);
+            format_run_summary(&a)
+        };
+        // fb_avg = 760/2 = 380 (not diluted to 760/5 = 152 by burn pairs).
+        assert!(line.contains("fb_avg=380"), "{line}");
+        assert!(line.contains("fb_p50_avg=0.20 fb_p95_avg=1.80"), "{line}");
+        assert!(line.contains("fb_skipped=3"), "{line}");
+        assert!(line.contains("pairs=5 (dis=2 ort=0 burn=3)"), "{line}");
+        dump_and_reset_stats();
+    }
+
+    #[test]
+    fn run_summary_all_skipped_renders_dash() {
+        let _guard = TEST_STATS_LOCK.lock();
+        reset_stats();
+        record_pair_stats("burn", 1, &neuflow_style_stats());
+        let line = {
+            let a = ACCUM.lock();
+            format_run_summary(&a)
+        };
+        assert!(line.contains("fb_avg=- "), "{line}");
+        assert!(line.contains("fb_p50_avg=- fb_p95_avg=-"), "{line}");
+        assert!(line.contains("fb_skipped=1"), "{line}");
+        dump_and_reset_stats();
     }
 }
