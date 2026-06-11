@@ -97,11 +97,29 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
         let bypass_fusion = std::env::var("GYROFLOW_BYPASS_FUSION")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
+        let auto_bypass_disabled = std::env::var("GYROFLOW_SYNC_AUTO_BYPASS")
+            .map(|v| matches!(v.trim(), "0" | "false" | "no" | "off"))
+            .unwrap_or(false);
+        // Evaluated on the LOCAL sync_params clone, i.e. AFTER the
+        // calc_initial_fast block above possibly replaced initial_offset
+        // with the essential-matrix median and clamped search_size to 3000.
+        let auto_bypass = should_auto_bypass_fusion(
+            sync_params.initial_offset,
+            sync_params.search_size,
+            auto_bypass_disabled,
+        );
         let use_old_rerank = std::env::var("GYROFLOW_SYNC_OLD_RERANK")
             .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
             .unwrap_or(false);
         if bypass_fusion {
             log::info!("[rssync] BYPASS FUSION — using raw full_sync() output (matches upstream main)");
+        } else if auto_bypass {
+            log::info!(
+                target: "sync",
+                "[rssync] fusion auto-bypassed: |initial_offset|={:.1}ms > search_size={:.1}ms (raw full_sync output)",
+                sync_params.initial_offset.abs(),
+                sync_params.search_size
+            );
         } else if use_old_rerank {
             finder.correlation_rerank(&mut offsets, estimator, ranges, params);
         } else {
@@ -218,6 +236,24 @@ pub(super) fn should_use_rs_shortcut(
         && rs_argmin_ms.is_finite()
         && unimodal_ok
         && (rs_argmin_ms - coarse_ms).abs() < max_dev_ms
+}
+
+// Auto-bypass fusion when the search neighborhood lies outside the fusion
+// data window. ncc_fusion_decide's raw_pairs window only covers
+// video_ts ± (search_size + 200ms) and ignores initial_offset, so with
+// |initial_offset| > search_size the gyro samples around the true offset
+// are never loaded — every correlation-based weight collapses to zero and
+// the fallback emits garbage near 0ms. Raw full_sync output (which handles
+// initial_offset correctly via initial_delay) matches upstream behavior.
+pub(crate) fn should_auto_bypass_fusion(
+    initial_offset_ms: f64,
+    search_size_ms: f64,
+    env_disable: bool,
+) -> bool {
+    if env_disable {
+        return false;
+    }
+    initial_offset_ms.abs() > search_size_ms
 }
 
 /// M1 axis-quality weighting on/off (`GYROFLOW_SYNC_AXIS_WEIGHT`, default on).
@@ -3388,5 +3424,32 @@ mod penta_solver_tests {
                 assert!(diff < 1e-9, "n={} λ={} diff={}", n, lambda, diff);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod auto_bypass_tests {
+    use super::should_auto_bypass_fusion;
+
+    #[test]
+    fn large_initial_offset_bypasses() {
+        // The 2026-06-11 field case: essential pre-pass found -204692.5ms,
+        // search clamped to 3000ms by calc_initial_fast.
+        assert!(should_auto_bypass_fusion(-204692.5, 3000.0, false));
+        assert!(should_auto_bypass_fusion(204692.5, 3000.0, false));
+    }
+
+    #[test]
+    fn small_initial_offset_keeps_fusion() {
+        assert!(!should_auto_bypass_fusion(0.0, 5000.0, false));
+        assert!(!should_auto_bypass_fusion(-1800.0, 5000.0, false));
+        // Boundary: equal magnitude does NOT bypass (fusion window still
+        // marginally covers the truth neighborhood).
+        assert!(!should_auto_bypass_fusion(3000.0, 3000.0, false));
+    }
+
+    #[test]
+    fn env_disable_forces_fusion() {
+        assert!(!should_auto_bypass_fusion(-204692.5, 3000.0, true));
     }
 }
