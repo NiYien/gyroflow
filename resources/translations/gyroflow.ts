@@ -2719,21 +2719,21 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1993"/>
         <source>No zooming</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1993"/>
         <source>Dynamic zooming</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1993"/>
         <source>Static zoom</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2753,37 +2753,37 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2586"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2596"/>
         <source>Do nothing</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2587"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2597"/>
         <source>Shut down the computer</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2588"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2598"/>
         <source>Restart the computer</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2589"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2599"/>
         <source>Sleep</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2590"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2600"/>
         <source>Hibernate</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2591"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2601"/>
         <source>Logout</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2592"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2602"/>
         <source>Close Gyroflow</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2819,7 +2819,7 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1336"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1346"/>
         <source>Change framerate</source>
         <translation type="unfinished"></translation>
     </message>
@@ -2829,348 +2829,357 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1369"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1379"/>
         <source>Pair with Gyro</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1457"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1467"/>
         <source>Unpair gyro</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2080"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2135"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2090"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2145"/>
         <source>Sync complete</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1951"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1961"/>
         <source>Sync complete: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2356"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="732"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="742"/>
         <source>Pause</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="459"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="469"/>
         <source>Render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2214"/>
         <source>Selected: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2222"/>
         <source>Select all</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2218"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2228"/>
         <source>Deselect</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2224"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2234"/>
         <source>Done</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2594"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2604"/>
         <source>When rendering is finished: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="592"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2131"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="602"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2141"/>
         <source> @ %1fps</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="603"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="613"/>
         <source>Elapsed: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="621"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
         <source>Remaining: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="302"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="402"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="652"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="684"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2417"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="242"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="312"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="319"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="321"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="323"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="412"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="416"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="662"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="694"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2356"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2427"/>
         <source>Ok</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="678"/>
         <source>Rendering %1...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="678"/>
         <source>Converting to %1 %2...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="686"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="696"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="679"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2170"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="689"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
         <source>Open rendered file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="396"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
         <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="397"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="407"/>
         <source>Repair</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="398"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="408"/>
         <source>Skip</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="405"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="415"/>
         <source>Some videos are still not reliably synchronized after repair.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="481"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="491"/>
         <source>Choose files</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="492"/>
         <source>Video files</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="498"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="508"/>
         <source>Choose folder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="531"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="541"/>
         <source>0s</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="682"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2176"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="692"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2186"/>
         <source>Open file location</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="701"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1820"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1842"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1830"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
         <source>Render using CPU</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="270"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="708"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="783"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="273"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="718"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="793"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1262"/>
         <source>Cancel</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="242"/>
+        <source>Cannot start deep match while the queue is busy.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
+        <source>Click Ok to run Auto match and assign the data.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="319"/>
+        <source>Not enough camera motion. Try a video with more movement.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="321"/>
+        <source>No match found in this gyro file. Try another gyro file.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="383"/>
+        <source>No match found for %1 video(s). Try a deep search: pick a video with camera motion, right-click it → &quot;Deep match with gyro&quot;, then select a gyro file.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="720"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="730"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="740"/>
         <source>Start exporting</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="731"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="741"/>
         <source>Resume</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="846"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="856"/>
         <source>Add files</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="864"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="874"/>
         <source>Add folder</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1289"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1299"/>
         <source>Render now</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1299"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1309"/>
         <source>Edit</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1327"/>
         <source>Reset status</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1327"/>
         <source>Stop</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1796"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1806"/>
         <source>Missing required components.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1818"/>
         <source>Applying pixel format: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1828"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1838"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1831"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1841"/>
         <source>Waiting for pixel format selection…</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1855"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2719"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1865"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2729"/>
         <source>Yes</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1856"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1866"/>
         <source>Rename</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2726"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1867"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2736"/>
         <source>No</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <source>ETA %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1952"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1962"/>
         <source>Synchronizing: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1953"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
         <source>Rendering: %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Mode</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Local</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Global</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2035"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2045"/>
         <source>Lens</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2050"/>
         <source>Focal</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2045"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2055"/>
         <source>Anamorphic</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2014"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2024"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2082"/>
         <source>Manual</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="323"/>
         <source>Failed to load the gyro file.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="269"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="272"/>
         <source>Deep matching gyro data...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="310"/>
         <source>Deep match succeeded. Offset: %1 s</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
-        <source>The video has too little camera motion for deep matching. Try a video with more movement.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
-        <source>Couldn&apos;t find this video&apos;s time range in the selected gyro file. Make sure you picked the correct gyro file.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="373"/>
-        <source>No calibration pair found for %1 video(s). Pair manually, or right-click the video → &quot;Deep match with gyro&quot; to search the whole gyro file.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="401"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="411"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 
 **1. Calibration videos are loaded**
@@ -3190,191 +3199,191 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1251"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1261"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1262"/>
         <source>OK</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1357"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1367"/>
         <source>Change lens group</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1412"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1422"/>
         <source>Deep match with gyro</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2070"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2080"/>
         <source>Deep</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2075"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2085"/>
         <source>Calibration</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2079"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2089"/>
         <source>Sync confirmed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2081"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
         <source>Sync not confirmed</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2101"/>
         <source>Skipped - no gyro data</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2092"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2102"/>
         <source>Skipped - calibration pair</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2262"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2261"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2272"/>
         <source>Matching...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2261"/>
         <source>Auto match</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2275"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2285"/>
         <source>Clear</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2292"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2302"/>
         <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Drop video files or gyroscope data here</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2416"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2426"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2616"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2626"/>
         <source>Queue settings</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2672"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2682"/>
         <source>Number of parallel renders</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2683"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2693"/>
         <source>Default overwrite action</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2684"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2694"/>
         <source>Ask</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2686"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2696"/>
         <source>Overwrite file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2697"/>
         <source>Rename file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2698"/>
         <source>Skip file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2707"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
         <source>Export mode</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2708"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2718"/>
         <source>Stabilized video</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2709"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2719"/>
         <source>Project file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2720"/>
         <source>Project file (including gyro data)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2721"/>
         <source>Project file (including processed gyro data)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2712"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2722"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2716"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2726"/>
         <source>Show queue when adding an item</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2727"/>
         <source>Clear render queue</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2718"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2728"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1862"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1867"/>
         <source>Output file already exists.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="777"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="787"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2136"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2146"/>
         <source>Synchronizing...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2137"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2147"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2190"/>
         <source>Remove</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1959"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1969"/>
         <source>Save to: %1</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3757,7 +3766,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1970"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1980"/>
         <source>Smoothness</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3937,7 +3946,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1974"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1984"/>
         <source>Lock horizon</source>
         <translation type="unfinished"></translation>
     </message>
@@ -3950,7 +3959,7 @@ Click Ok and select the destination folder.</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1978"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1988"/>
         <source>Auto rotate</source>
         <translation type="unfinished"></translation>
     </message>

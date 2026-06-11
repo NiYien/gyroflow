@@ -2771,21 +2771,21 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1993"/>
         <source>No zooming</source>
         <translation>줌 없음</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1993"/>
         <source>Dynamic zooming</source>
         <translation>동적 줌</translation>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1983"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1993"/>
         <source>Static zoom</source>
         <translation>줌 값 고정</translation>
     </message>
@@ -2805,37 +2805,37 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>시각적 특징 검출</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2586"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2596"/>
         <source>Do nothing</source>
         <translation>아무것도 하지 않음</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2587"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2597"/>
         <source>Shut down the computer</source>
         <translation>시스템 종료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2588"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2598"/>
         <source>Restart the computer</source>
         <translation>시스템 다시 시작</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2589"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2599"/>
         <source>Sleep</source>
         <translation>절전 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2590"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2600"/>
         <source>Hibernate</source>
         <translation>최대 절전 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2591"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2601"/>
         <source>Logout</source>
         <translation>로그아웃</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2592"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2602"/>
         <source>Close Gyroflow</source>
         <translation>Gyroflow 종료</translation>
     </message>
@@ -2871,12 +2871,12 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1336"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1346"/>
         <source>Change framerate</source>
         <translation>프레임 속도 변경</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1357"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1367"/>
         <source>Change lens group</source>
         <translation>렌즈 그룹 변경</translation>
     </message>
@@ -2916,69 +2916,69 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>%1 개 영상이 Anamorphic 렌즈를 사용합니다</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1369"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1379"/>
         <source>Pair with Gyro</source>
         <translation>자이로와 페어링</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1457"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1467"/>
         <source>Unpair gyro</source>
         <translation>자이로 페어링 해제</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2080"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2135"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2090"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2145"/>
         <source>Sync complete</source>
         <translation>동기화 완료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1951"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1961"/>
         <source>Sync complete: %1</source>
         <translation>동기화 완료: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2356"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation>Canon CRM 파일은 같은 이름의 프록시 영상과 함께 불러와야 합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="732"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="742"/>
         <source>Pause</source>
         <translation>일시 중단</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="459"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="469"/>
         <source>Render queue</source>
         <translation>렌더링 대기열</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2204"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2214"/>
         <source>Selected: %1</source>
         <translation>선택됨: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2212"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2222"/>
         <source>Select all</source>
         <translation>모두 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2218"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2228"/>
         <source>Deselect</source>
         <translation>선택 해제</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2224"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2234"/>
         <source>Done</source>
         <translation>완료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2594"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2604"/>
         <source>When rendering is finished: %1</source>
         <translation>렌더링 완료 시: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="592"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2131"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="602"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2141"/>
         <source> @ %1fps</source>
         <translation> @ %1fps</translation>
     </message>
@@ -2987,171 +2987,196 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation type="vanished">%1개 비디오의 캘리브레이션 페어를 찾을 수 없습니다. 수동으로 페어링하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="603"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="613"/>
         <source>Elapsed: %1</source>
         <translation>경과: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="621"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
         <source>Remaining: %1</source>
         <translation>남은 시간: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="302"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="402"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="652"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="684"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2346"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2417"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="242"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="312"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="319"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="321"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="323"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="412"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="416"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="662"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="694"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2356"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2427"/>
         <source>Ok</source>
         <translation>확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="678"/>
         <source>Rendering %1...</source>
         <translation>%1 렌더링 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="668"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="678"/>
         <source>Converting to %1 %2...</source>
         <translation>%1 %2 (으)로 변환 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="686"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="696"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation>렌더링 완료. 파일이 %1에 저장되었습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="679"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2170"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="689"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
         <source>Open rendered file</source>
         <translation>렌더링된 파일 열기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="396"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="406"/>
         <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
         <translation>일부 동영상을 안정적으로 동기화하지 못했습니다. 자동으로 복구를 시도하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="397"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="407"/>
         <source>Repair</source>
         <translation>복구</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="398"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="408"/>
         <source>Skip</source>
         <translation>건너뛰기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="405"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="415"/>
         <source>Some videos are still not reliably synchronized after repair.</source>
         <translation>복구 후에도 일부 동영상이 안정적으로 동기화되지 않았습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="481"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="491"/>
         <source>Choose files</source>
         <translation>파일 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="482"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="492"/>
         <source>Video files</source>
         <translation>영상 파일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="498"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="508"/>
         <source>Choose folder</source>
         <translation>폴더 선택</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="531"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="541"/>
         <source>0s</source>
         <translation>0초</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="682"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2176"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="692"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2186"/>
         <source>Open file location</source>
         <translation>파일 위치 열기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="701"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1820"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1842"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1830"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
         <source>Render using CPU</source>
         <translation>CPU 렌더링 사용</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="270"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="708"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="783"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="273"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="718"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="793"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1262"/>
         <source>Cancel</source>
         <translation>취소</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="242"/>
+        <source>Cannot start deep match while the queue is busy.</source>
+        <translation>대기열이 작동 중일 때는 딥 매칭을 시작할 수 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
+        <source>Click Ok to run Auto match and assign the data.</source>
+        <translation>Ok를 클릭하면 자동 매칭이 실행되어 데이터가 할당됩니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="319"/>
+        <source>Not enough camera motion. Try a video with more movement.</source>
+        <translation>카메라 움직임이 부족합니다. 움직임이 더 많은 영상으로 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="321"/>
+        <source>No match found in this gyro file. Try another gyro file.</source>
+        <translation>이 자이로 파일에서 일치 항목을 찾지 못했습니다. 다른 자이로 파일을 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="383"/>
+        <source>No match found for %1 video(s). Try a deep search: pick a video with camera motion, right-click it → &quot;Deep match with gyro&quot;, then select a gyro file.</source>
+        <translation>%1개 영상에 대한 일치 항목을 찾지 못했습니다. 딥 검색을 시도하세요: 카메라 움직임이 있는 영상을 선택하고 마우스 오른쪽 버튼 클릭 → &quot;자이로와 딥 매칭&quot;에서 자이로 파일을 선택하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="720"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
         <translation>GPU 가속 인코더가 이 픽셀 형식을 지원하지 않습니다 (%1).
 지원되는 다른 픽셀 형식으로 변환하시겠습니까, 아니면 그대로 CPU에서 렌더링하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="730"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="740"/>
         <source>Start exporting</source>
         <translation>내보내기 시작</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="731"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="741"/>
         <source>Resume</source>
         <translation>재개</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="846"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="856"/>
         <source>Add files</source>
         <translation>파일 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="864"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="874"/>
         <source>Add folder</source>
         <translation>폴더 추가</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1289"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1299"/>
         <source>Render now</source>
         <translation>바로 렌더링하기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1299"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1309"/>
         <source>Edit</source>
         <translation>편집</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1327"/>
         <source>Reset status</source>
         <translation>상태 재설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1317"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1327"/>
         <source>Stop</source>
         <translation>중지</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1796"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1806"/>
         <source>Missing required components.</source>
         <translation>필요한 구성 요소 누락.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1808"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1818"/>
         <source>Applying pixel format: %1</source>
         <translation>픽셀 형식 적용 중: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1828"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1838"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
@@ -3160,111 +3185,107 @@ This choice applies to all remaining jobs in this batch.</source>
 이 선택은 이 배치의 남은 모든 작업에 적용됩니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1831"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1841"/>
         <source>Waiting for pixel format selection…</source>
         <translation>픽셀 형식 선택 대기 중…</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1855"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2719"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1865"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2729"/>
         <source>Yes</source>
         <translation>예</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1856"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1866"/>
         <source>Rename</source>
         <translation>이름 바꾸기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2726"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1867"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2736"/>
         <source>No</source>
         <translation>아니요</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <source>ETA %1</source>
         <translation>남은 시간 %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1952"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1962"/>
         <source>Synchronizing: %1</source>
         <translation>동기화 중: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1953"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
         <source>Rendering: %1</source>
         <translation>렌더링 중: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Mode</source>
         <translation>모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Local</source>
         <translation>로컬</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2030"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
         <source>Global</source>
         <translation>전역</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2035"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2045"/>
         <source>Lens</source>
         <translation>렌즈</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2040"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2050"/>
         <source>Focal</source>
         <translation>초점</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2045"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2055"/>
         <source>Anamorphic</source>
         <translation>아나모픽</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2014"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2072"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2024"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2082"/>
         <source>Manual</source>
         <translation>수동</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="239"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="313"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="323"/>
         <source>Failed to load the gyro file.</source>
         <translation>자이로 파일을 불러오지 못했습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="269"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="272"/>
         <source>Deep matching gyro data...</source>
         <translation>자이로 데이터 딥 매칭 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="310"/>
         <source>Deep match succeeded. Offset: %1 s</source>
         <translation>딥 매칭에 성공했습니다. 오프셋: %1 초</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="309"/>
         <source>The video has too little camera motion for deep matching. Try a video with more movement.</source>
-        <translation>딥 매칭을 하기에는 영상의 카메라 움직임이 너무 적습니다. 움직임이 더 많은 영상으로 시도하세요.</translation>
+        <translation type="vanished">딥 매칭을 하기에는 영상의 카메라 움직임이 너무 적습니다. 움직임이 더 많은 영상으로 시도하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="311"/>
         <source>Couldn&apos;t find this video&apos;s time range in the selected gyro file. Make sure you picked the correct gyro file.</source>
-        <translation>선택한 자이로 파일에서 이 영상의 시간 범위를 찾을 수 없습니다. 올바른 자이로 파일을 선택했는지 확인하세요.</translation>
+        <translation type="vanished">선택한 자이로 파일에서 이 영상의 시간 범위를 찾을 수 없습니다. 올바른 자이로 파일을 선택했는지 확인하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="373"/>
         <source>No calibration pair found for %1 video(s). Pair manually, or right-click the video → &quot;Deep match with gyro&quot; to search the whole gyro file.</source>
-        <translation>%1개 비디오의 캘리브레이션 페어를 찾을 수 없습니다. 수동으로 페어링하거나, 영상에서 마우스 오른쪽 버튼 → &quot;자이로와 딥 매칭&quot;으로 자이로 파일 전체를 검색하세요.</translation>
+        <translation type="vanished">%1개 비디오의 캘리브레이션 페어를 찾을 수 없습니다. 수동으로 페어링하거나, 영상에서 마우스 오른쪽 버튼 → &quot;자이로와 딥 매칭&quot;으로 자이로 파일 전체를 검색하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="401"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="411"/>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
 
 **1. Calibration videos are loaded**
@@ -3299,187 +3320,187 @@ If there is no usable time-sync data at all, right-click the video → **&quot;D
 - 또는 새 캘리브레이션 영상을 다시 촬영해 큐에 추가합니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1251"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1261"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished">프레임 레이트 (0=변경 없음)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1252"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1262"/>
         <source>OK</source>
         <translation type="unfinished">OK</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1412"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1422"/>
         <source>Deep match with gyro</source>
         <translation>자이로와 딥 매칭</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2070"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2080"/>
         <source>Deep</source>
         <translation>딥</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2075"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2085"/>
         <source>Calibration</source>
         <translation>캘리브레이션</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2079"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2089"/>
         <source>Sync confirmed</source>
         <translation>동기화 확인됨</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2081"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
         <source>Sync not confirmed</source>
         <translation>동기화 미확인</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2101"/>
         <source>Skipped - no gyro data</source>
         <translation>건너뜀 - 자이로 데이터 없음</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2092"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2102"/>
         <source>Skipped - calibration pair</source>
         <translation>건너뜀 - 캘리브레이션 페어</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2262"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2261"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2272"/>
         <source>Matching...</source>
         <translation>매칭 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2251"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2261"/>
         <source>Auto match</source>
         <translation>자동 매칭</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2275"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2285"/>
         <source>Clear</source>
         <translation>지우기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2292"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2302"/>
         <location filename="../../src/ui/VideoArea.qml" line="1086"/>
         <source>Drop video files or gyroscope data here</source>
         <translation>비디오 파일 또는 자이로스코프 데이터를 여기에 놓으세요</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2416"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2426"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>파일 접근 권한 제한으로 인해, 파일을 저장할 위치를 직접 선택해야 합니다.
 확인을 클릭하고 파일을 저장할 위치를 선택하세요.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2616"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2626"/>
         <source>Queue settings</source>
         <translation>대기열 설정</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2672"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2682"/>
         <source>Number of parallel renders</source>
         <translation>병렬 렌더링 수</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2683"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2693"/>
         <source>Default overwrite action</source>
         <translation>기본 덮어쓰기 동작</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2684"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2694"/>
         <source>Ask</source>
         <translation>묻기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2686"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2696"/>
         <source>Overwrite file</source>
         <translation>파일 덮어쓰기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2687"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2697"/>
         <source>Rename file</source>
         <translation>파일 이름 바꾸기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2688"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2698"/>
         <source>Skip file</source>
         <translation>파일 건너뛰기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2707"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
         <source>Export mode</source>
         <translation>내보내기 모드</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2708"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2718"/>
         <source>Stabilized video</source>
         <translation>안정화된 영상 파일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2709"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2719"/>
         <source>Project file</source>
         <translation>프로젝트 파일</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2710"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2720"/>
         <source>Project file (including gyro data)</source>
         <translation>프로젝트 파일 (자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2721"/>
         <source>Project file (including processed gyro data)</source>
         <translation>프로젝트 파일 (처리된 자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2712"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2722"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation>안정화된 영상 + 프로젝트 파일(자이로 데이터 포함)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2716"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2726"/>
         <source>Show queue when adding an item</source>
         <translation>항목 추가 시 대기열 보이기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2727"/>
         <source>Clear render queue</source>
         <translation>렌더링 대기열 비우기</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2718"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2728"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>렌더링 대기열의 모든 항목을 제거하시겠습니까?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1857"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1862"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1867"/>
         <source>Output file already exists.</source>
         <translation>동일한 이름의 파일이 있습니다.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="777"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="787"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation>페어링: %1 — 비디오를 클릭하여 페어링</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2136"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2146"/>
         <source>Synchronizing...</source>
         <translation>동기화 중...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2137"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2147"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>경과: %1. 남은 시간: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2190"/>
         <source>Remove</source>
         <translation>제거</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1959"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1969"/>
         <source>Save to: %1</source>
         <translation>저장 위치: %1</translation>
     </message>
@@ -3862,7 +3883,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1970"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1980"/>
         <source>Smoothness</source>
         <translation>평활도</translation>
     </message>
@@ -4042,7 +4063,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1974"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1984"/>
         <source>Lock horizon</source>
         <translation>수평 잠금</translation>
     </message>
@@ -4055,7 +4076,7 @@ Click Ok and select the destination folder.</source>
     </message>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1978"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1988"/>
         <source>Auto rotate</source>
         <translation>자동 회전</translation>
     </message>
