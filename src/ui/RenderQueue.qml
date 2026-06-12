@@ -349,6 +349,14 @@ Item {
             // Set on acceptance: the dialog switches to its success state and
             // the single button becomes [Ok] (close + destroy).
             property bool succeeded: false;
+            // Current scan segment (1-based) and plan size, mirrored from
+            // deep_match_chunk_changed. The modal presents segment-local
+            // progress (bar and ETA) derived from the composed signal — a
+            // whole-run view assumes every segment will be scanned, but an
+            // accepted chunk short-circuits the rest, which crawls the bar
+            // and overestimates the remaining time by up to chunk_count times.
+            property int dmChunk: 1;
+            property int dmTotal: 1;
             iconType: Modal.Info;
             text: qsTr("Deep matching gyro data...") + "\n" + videoName + "\n⟷ " + gyroName;
             buttons: [qsTr("Cancel")];
@@ -377,13 +385,27 @@ Item {
                 target: render_queue;
                 function onDeep_match_progress(job_id: int, progress: real): void {
                     if (job_id !== deepMatchDialog.jobId || !deepMatchDialog.loader) return;
-                    deepMatchDialog.loader.progress = progress;
+                    // The signal carries the composed whole-run progress; the
+                    // modal shows the current segment's sweep instead (one
+                    // 0→100% per segment, paired with the ordinal text), so
+                    // both the bar and the ETA reflect this segment only.
+                    const segP = progress * deepMatchDialog.dmTotal - (deepMatchDialog.dmChunk - 1);
+                    deepMatchDialog.loader.progress = Math.max(0, Math.min(1, segP));
                 }
                 // Chunked scan: long gyro files are searched in segments —
                 // surface the segment ordinal so a multi-segment run doesn't
                 // read as stuck. Single-segment runs keep the plain text.
                 function onDeep_match_chunk_changed(job_id: int, chunk: int, total: int): void {
-                    if (job_id !== deepMatchDialog.jobId || deepMatchDialog.succeeded || total <= 1) return;
+                    if (job_id !== deepMatchDialog.jobId) return;
+                    deepMatchDialog.dmChunk = Math.max(1, chunk);
+                    deepMatchDialog.dmTotal = Math.max(1, total);
+                    if (deepMatchDialog.loader) {
+                        // Restart the ETA clock at each segment boundary so the
+                        // estimate reflects this segment only (a hit ends the run
+                        // early, so cross-segment extrapolation is meaningless).
+                        deepMatchDialog.loader.etaStartTime = Date.now();
+                    }
+                    if (deepMatchDialog.succeeded || total <= 1) return;
                     deepMatchDialog.text = qsTr("Deep matching gyro data...") + "\n"
                                          + deepMatchDialog.videoName + "\n⟷ " + deepMatchDialog.gyroName + "\n"
                                          + qsTr("Scanning segment %1 of %2").arg(chunk).arg(total);

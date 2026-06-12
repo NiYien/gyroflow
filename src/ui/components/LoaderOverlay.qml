@@ -27,6 +27,12 @@ Item {
     property alias infoMessage: infoMessage;
     property alias pb: pb;
     property real verticalOffset: 0;
+    // Optional override for the elapsed/remaining timer origin: when a run is
+    // split into segments that may short-circuit (e.g. deep-match chunked
+    // scan), the caller feeds segment-local values into `progress` and resets
+    // this at each segment boundary so the estimate covers the current
+    // segment only. Default 0 preserves the whole-run behavior (startTime).
+    property real etaStartTime: 0;
 
     //onActiveChanged: parent.opacity = Qt.binding(() => (1.5 - opacity));
     onActiveChanged: {
@@ -36,6 +42,7 @@ Item {
             progress = -1;
             root.text = "";
             startTime = 0;
+            etaStartTime = 0;
             infoMessage.text = "";
             infoMessage.show = false;
         } else {
@@ -44,7 +51,7 @@ Item {
         }
     }
     onProgressChanged: {
-        const times = Util.calculateTimesAndFps(progress, root.currentFrame, startTime);
+        const times = Util.calculateTimesAndFps(progress, root.currentFrame, etaStartTime > 0? etaStartTime : startTime);
         if (times !== false) {
             time.elapsed = times[0];
             time.remaining = times[1];
