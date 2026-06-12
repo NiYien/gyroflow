@@ -76,10 +76,52 @@ pub fn window_positions_ms(video_duration_ms: f64, n: usize) -> Vec<f64> {
         .collect()
 }
 
+/// Overlap between consecutive scan chunks: the search-margin factor applied
+/// to the video duration plus a fixed safety pad, so a true offset sitting on
+/// a chunk boundary is fully covered by at least one chunk.
+pub fn chunk_overlap_ms(video_duration_ms: f64) -> f64 {
+    video_duration_ms.max(0.0) * 1.15 + 60_000.0
+}
+
+/// Split a gyro file's `[0, total_ms]` timeline into consecutive scan chunks
+/// of `chunk_ms` length, each overlapping the previous one by `overlap_ms`.
+/// `max_chunks > 0` caps the count (1 = legacy first-chunk-only behavior).
+/// Degenerate inputs (overlap >= chunk) fall back to half-chunk stepping so
+/// the plan always advances and terminates.
+pub fn chunk_plan(
+    total_ms: f64,
+    chunk_ms: f64,
+    overlap_ms: f64,
+    max_chunks: usize,
+) -> Vec<(f64, f64)> {
+    if !total_ms.is_finite() || total_ms <= 0.0 || !chunk_ms.is_finite() || chunk_ms <= 0.0 {
+        return Vec::new();
+    }
+    let step = if overlap_ms.is_finite() && overlap_ms >= 0.0 && overlap_ms < chunk_ms {
+        chunk_ms - overlap_ms
+    } else {
+        chunk_ms / 2.0
+    };
+    let mut chunks = Vec::new();
+    let mut start = 0.0f64;
+    loop {
+        let end = (start + chunk_ms).min(total_ms);
+        chunks.push((start, end));
+        if end >= total_ms || (max_chunks > 0 && chunks.len() >= max_chunks) {
+            break;
+        }
+        start += step;
+    }
+    chunks
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeepMatchVerdict {
     /// median of per-window offsets
     Accepted { offset_ms: f64 },
+    /// the probe produced no usable window at all (no offsets, no collector
+    /// stats) — assembly/arbitration failure, not low camera motion
+    ProbeNotRun,
     /// fewer than 2 windows survived the motion gate inside essential
     TooFewWindows,
     /// per-window offsets disagree → video likely not in this gyro file
@@ -90,12 +132,23 @@ pub enum DeepMatchVerdict {
 
 /// Double acceptance gate (spec §3.3). `offsets_ms` are the per-window
 /// offsets returned by the sync run; `stats` come from the collector.
+/// The valley-quality ceiling is two-tier: when the windows agree within
+/// `tight_spread_ms`, `cost_ratio_tight` applies instead of
+/// `cost_ratio_max` — multi-window agreement at ms scale over a
+/// ±thousands-of-seconds domain is overwhelming evidence, while the
+/// per-window ratio floor is physically elevated under bare/approximate
+/// lens matrices. `tight_spread_ms = 0` disables the tight tier.
 pub fn evaluate(
     offsets_ms: &[f64],
     stats: &[DeepMatchSegStats],
     spread_max_ms: f64,
     cost_ratio_max: f64,
+    tight_spread_ms: f64,
+    cost_ratio_tight: f64,
 ) -> DeepMatchVerdict {
+    if offsets_ms.is_empty() && stats.is_empty() {
+        return DeepMatchVerdict::ProbeNotRun;
+    }
     if offsets_ms.len() < 2 {
         return DeepMatchVerdict::TooFewWindows;
     }
@@ -107,6 +160,11 @@ pub fn evaluate(
     }
     // Gate 2: every window must show a real valley. ratio = cost_min/p25,
     // lower = deeper valley; near 1.0 = flat curve (noise match).
+    let ratio_max_effective = if tight_spread_ms > 0.0 && spread <= tight_spread_ms {
+        cost_ratio_tight
+    } else {
+        cost_ratio_max
+    };
     let mut worst_ratio = 0.0f64;
     for s in stats {
         if !s.cost_p25.is_finite() || s.cost_p25 <= 0.0 {
@@ -115,7 +173,7 @@ pub fn evaluate(
         let ratio = s.cost_min / s.cost_p25;
         worst_ratio = worst_ratio.max(ratio);
     }
-    if stats.is_empty() || worst_ratio > cost_ratio_max {
+    if stats.is_empty() || worst_ratio > ratio_max_effective {
         return DeepMatchVerdict::WeakValley {
             worst_ratio: if stats.is_empty() { 1.0 } else { worst_ratio },
         };
@@ -136,6 +194,15 @@ fn env_f64(name: &str, default: f64) -> f64 {
         .unwrap_or(default)
 }
 
+// Same as env_f64 but accepts 0 (used by kill-switch style knobs).
+fn env_f64_nonneg(name: &str, default: f64) -> f64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse::<f64>().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0)
+        .unwrap_or(default)
+}
+
 pub fn spread_max_ms() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_SPREAD_MS", 200.0)
 }
@@ -145,8 +212,37 @@ pub fn cost_ratio_max() -> f64 {
     // plateau p25).
     env_f64("GYROFLOW_DEEP_MATCH_COST_RATIO", 0.35)
 }
+/// Spread below which the relaxed `cost_ratio_tight` ceiling applies.
+/// 0 disables the tight tier (single-gate pre-change behavior).
+pub fn tight_spread_ms() -> f64 {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_TIGHT_SPREAD_MS", 10.0)
+}
+/// Relaxed valley-ratio ceiling for tight-spread agreement (bare/approximate
+/// lens matrices elevate the physical ratio floor at the true offset).
+/// Calibration points: bare-lens true hits 0.448/0.471; R5 Mark II 70mm
+/// long-lens true hit (3 windows agreeing within 3ms) worst_ratio 0.637;
+/// known noise/flat-curve windows 0.875-0.925. 0.7 splits true hits from
+/// noise with margin on both sides.
+pub fn cost_ratio_tight() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_COST_RATIO_TIGHT", 0.7)
+}
+/// Per-window motion gate (°/s) used by the essential scan while the
+/// deep-match collector is armed; regular autosync keeps the fixed 3.0.
+/// OF-estimated rates scale by f_true/f_assumed under approximate lens
+/// matrices, so the probe runs a lower economy floor — correctness is
+/// carried by the consistency gate.
+pub fn motion_gate_armed() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_MOTION_GATE", 1.5)
+}
+/// Scan chunk length (chunked scan: per-chunk parse + search span; formerly
+/// a hard cap on the searched span).
 pub fn max_scan_ms() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_MAX_SCAN_S", 7200.0) * 1000.0
+}
+/// Chunk-count cap. 0 = unlimited (cover the whole gyro file);
+/// 1 = legacy first-chunk-only behavior.
+pub fn max_chunks() -> usize {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_MAX_CHUNKS", 0.0) as usize
 }
 pub fn window_count() -> usize {
     (env_f64("GYROFLOW_DEEP_MATCH_WINDOWS", 3.0) as usize).clamp(2, 8)
@@ -177,6 +273,62 @@ mod tests {
         assert_eq!(p, vec![25_000.0, 50_000.0, 75_000.0]);
     }
 
+    #[test]
+    fn chunk_plan_single_chunk_when_total_fits() {
+        assert_eq!(
+            chunk_plan(3_600_000.0, 7_200_000.0, 100_000.0, 0),
+            vec![(0.0, 3_600_000.0)]
+        );
+    }
+
+    #[test]
+    fn chunk_plan_exact_multiple_ends_at_total() {
+        // total = 2 chunks exactly, no overlap: second chunk ends at total.
+        let plan = chunk_plan(14_400_000.0, 7_200_000.0, 0.0, 0);
+        assert_eq!(plan, vec![(0.0, 7_200_000.0), (7_200_000.0, 14_400_000.0)]);
+    }
+
+    #[test]
+    fn chunk_plan_covers_long_file_with_overlap() {
+        // 8.5h file, 2h chunks, 30s-video overlap (94.5s).
+        let total = 30_600_000.0;
+        let chunk = 7_200_000.0;
+        let overlap = chunk_overlap_ms(30_000.0);
+        let plan = chunk_plan(total, chunk, overlap, 0);
+        assert_eq!(plan.len(), 5);
+        assert_eq!(plan[0], (0.0, chunk));
+        for w in plan.windows(2) {
+            // Consecutive chunks overlap by exactly `overlap`.
+            assert!((w[0].1 - w[1].0 - overlap).abs() < 1e-6);
+        }
+        assert_eq!(plan.last().unwrap().1, total, "last chunk must end at total");
+    }
+
+    #[test]
+    fn chunk_plan_max_chunks_caps_the_plan() {
+        let plan = chunk_plan(30_600_000.0, 7_200_000.0, 100_000.0, 1);
+        assert_eq!(plan, vec![(0.0, 7_200_000.0)]);
+    }
+
+    #[test]
+    fn chunk_plan_degenerate_overlap_still_advances() {
+        // overlap >= chunk falls back to half-chunk stepping — must terminate
+        // and still cover the file end.
+        let plan = chunk_plan(10_000_000.0, 1_000_000.0, 2_000_000.0, 0);
+        assert!(plan.len() < 100, "plan must not blow up");
+        assert_eq!(plan.last().unwrap().1, 10_000_000.0);
+        for w in plan.windows(2) {
+            assert!(w[1].0 > w[0].0, "chunks must advance monotonically");
+        }
+    }
+
+    #[test]
+    fn chunk_plan_rejects_invalid_inputs() {
+        assert!(chunk_plan(0.0, 7_200_000.0, 0.0, 0).is_empty());
+        assert!(chunk_plan(f64::NAN, 7_200_000.0, 0.0, 0).is_empty());
+        assert!(chunk_plan(1000.0, 0.0, 0.0, 0).is_empty());
+    }
+
     fn stats(ratio: f64) -> DeepMatchSegStats {
         DeepMatchSegStats {
             range_idx: 0,
@@ -194,6 +346,8 @@ mod tests {
             &[stats(0.1), stats(0.2), stats(0.15)],
             200.0,
             0.35,
+            10.0,
+            0.6,
         );
         assert_eq!(v, DeepMatchVerdict::Accepted { offset_ms: -204692.0 });
     }
@@ -201,14 +355,21 @@ mod tests {
     #[test]
     fn evaluate_rejects_single_window() {
         assert_eq!(
-            evaluate(&[-100.0], &[stats(0.1)], 200.0, 0.35),
+            evaluate(&[-100.0], &[stats(0.1)], 200.0, 0.35, 10.0, 0.6),
             DeepMatchVerdict::TooFewWindows
         );
     }
 
     #[test]
     fn evaluate_rejects_inconsistent_offsets() {
-        match evaluate(&[0.0, 5000.0], &[stats(0.1), stats(0.1)], 200.0, 0.35) {
+        match evaluate(
+            &[0.0, 5000.0],
+            &[stats(0.1), stats(0.1)],
+            200.0,
+            0.35,
+            10.0,
+            0.6,
+        ) {
             DeepMatchVerdict::Inconsistent { spread_ms } => assert_eq!(spread_ms, 5000.0),
             v => panic!("expected Inconsistent, got {v:?}"),
         }
@@ -216,7 +377,14 @@ mod tests {
 
     #[test]
     fn evaluate_rejects_shallow_valleys() {
-        match evaluate(&[0.0, 1.0], &[stats(0.1), stats(0.9)], 200.0, 0.35) {
+        match evaluate(
+            &[0.0, 1.0],
+            &[stats(0.1), stats(0.9)],
+            200.0,
+            0.35,
+            10.0,
+            0.6,
+        ) {
             DeepMatchVerdict::WeakValley { worst_ratio } => {
                 assert!((worst_ratio - 0.9).abs() < 1e-9)
             }
@@ -227,8 +395,93 @@ mod tests {
     #[test]
     fn evaluate_rejects_missing_stats() {
         assert_eq!(
-            evaluate(&[0.0, 1.0], &[], 200.0, 0.35),
+            evaluate(&[0.0, 1.0], &[], 200.0, 0.35, 10.0, 0.6),
             DeepMatchVerdict::WeakValley { worst_ratio: 1.0 }
+        );
+    }
+
+    #[test]
+    fn evaluate_tight_spread_relaxes_ratio_ceiling() {
+        // Bare manual-lens true hit: ms-scale agreement, elevated ratios.
+        let v = evaluate(
+            &[0.0, 1.0, 2.0],
+            &[stats(0.45), stats(0.47), stats(0.40)],
+            200.0,
+            0.35,
+            10.0,
+            0.7,
+        );
+        assert_eq!(v, DeepMatchVerdict::Accepted { offset_ms: 1.0 });
+        // R5 Mark II 70mm long-lens true hit (2026-06-12 log): windows
+        // agreeing within 3ms with worst ratio 0.637 must pass the default
+        // tight ceiling; flat-curve noise (0.875+) must still be rejected.
+        let v = evaluate(
+            &[-1316494.0, -1316497.0, -1316496.3],
+            &[stats(0.523), stats(0.637), stats(0.626)],
+            200.0,
+            0.35,
+            10.0,
+            0.7,
+        );
+        assert_eq!(v, DeepMatchVerdict::Accepted { offset_ms: -1316496.3 });
+        match evaluate(
+            &[0.0, 1.0],
+            &[stats(0.875), stats(0.925)],
+            200.0,
+            0.35,
+            10.0,
+            0.7,
+        ) {
+            DeepMatchVerdict::WeakValley { .. } => {}
+            v => panic!("flat-curve noise must stay rejected, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_loose_spread_keeps_strict_ceiling() {
+        match evaluate(
+            &[0.0, 150.0],
+            &[stats(0.45), stats(0.45)],
+            200.0,
+            0.35,
+            10.0,
+            0.6,
+        ) {
+            DeepMatchVerdict::WeakValley { worst_ratio } => {
+                assert!((worst_ratio - 0.45).abs() < 1e-9)
+            }
+            v => panic!("expected WeakValley, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_tight_zero_degrades_to_single_gate() {
+        match evaluate(
+            &[0.0, 0.0],
+            &[stats(0.45), stats(0.45)],
+            200.0,
+            0.35,
+            0.0,
+            0.6,
+        ) {
+            DeepMatchVerdict::WeakValley { worst_ratio } => {
+                assert!((worst_ratio - 0.45).abs() < 1e-9)
+            }
+            v => panic!("expected WeakValley (tight tier disabled), got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn evaluate_reports_probe_not_run_on_empty_inputs() {
+        assert_eq!(
+            evaluate(&[], &[], 200.0, 0.35, 10.0, 0.6),
+            DeepMatchVerdict::ProbeNotRun
+        );
+        // A probe that ran (stats recorded) but produced no offsets is still
+        // the low-motion case, not ProbeNotRun.
+        assert_eq!(
+            evaluate(&[], &[stats(0.1)], 200.0, 0.35, 10.0, 0.6),
+            DeepMatchVerdict::TooFewWindows
         );
     }
 

@@ -234,11 +234,12 @@ Item {
     // gyro file, whole-file coarse offset search. Synchronous backend refusal
     // (another deep match pending / queue active) never opens the progress
     // modal, so give immediate feedback here instead.
-    function startDeepMatch(jobId: int, gyroIdx: int, videoName: string): void {
+    // lensIdx: user-confirmed probe lens group (-1 = no injection).
+    function startDeepMatch(jobId: int, gyroIdx: int, videoName: string, lensIdx: int): void {
         // start_deep_gyro_match returns false only for synchronous refusals
         // (another deep match in flight / queue active / job or gyro gone);
         // gyro load failures now arrive asynchronously via deep_match_finished.
-        if (!render_queue.start_deep_gyro_match(jobId, gyroIdx)) {
+        if (!render_queue.start_deep_gyro_match(jobId, gyroIdx, lensIdx)) {
             messageBox(Modal.Warning, qsTr("Cannot start deep match while the queue is busy."), [{ text: qsTr("Ok") }]);
             return;
         }
@@ -249,6 +250,86 @@ Item {
             "gyroName": gyroName
         });
         if (dlg) dlg.opened = true;
+    }
+    // Pre-flight gate (deep-match-builtin-gyro-bare-lens): bare manual-lens
+    // jobs (no lens identity, no video focal length, bare camera matrix)
+    // confirm a lens group before the probe so it runs with a real camera
+    // matrix instead of the 0.8*width default.
+    function maybeStartDeepMatch(jobId: int, gyroIdx: int, videoName: string): void {
+        let res = { state: "ok" };
+        try { res = JSON.parse(render_queue.deep_match_needs_lens_choice(jobId)); } catch (e) { }
+        if (res.state === "needs_choice") {
+            const dlg = deepMatchLensChoiceComponent.createObject(window, {
+                "jobId": jobId,
+                "gyroIdx": gyroIdx,
+                "videoName": videoName,
+                "groups": res.groups || [],
+                "preselect": (res.preselect !== undefined && res.preselect !== null) ? res.preselect : -1
+            });
+            if (dlg) dlg.opened = true;
+            return;
+        }
+        if (res.state === "no_groups") {
+            messageBox(Modal.Info, qsTr("No lens group focal lengths are configured. Set them in Sensor & Lens first, then run deep match."), [{ text: qsTr("Ok") }]);
+            return;
+        }
+        startDeepMatch(jobId, gyroIdx, videoName, -1);
+    }
+    // Lens-group confirmation modal for bare manual-lens deep matches. Lists
+    // only the configured groups (labels mirror lensSlotLabel incl. the
+    // anamorphic suffix), pre-selecting the median-focal group. Cancel
+    // starts nothing; the choice is probe-scoped and never persisted.
+    Component {
+        id: deepMatchLensChoiceComponent;
+        Modal {
+            id: lensChoiceDialog;
+            property int jobId: -1;
+            property int gyroIdx: -1;
+            property string videoName: "";
+            property var groups: [];
+            property int preselect: -1;
+            iconType: Modal.Question;
+            text: qsTr("Which lens group was this video shot with?") + "\n" + qsTr("This video has no lens information. The correct lens group makes deep match much more accurate.");
+            buttons: [qsTr("Ok"), qsTr("Cancel")];
+            accentButton: 0;
+            function groupLabel(g): string {
+                let anamorphic = "";
+                try {
+                    const cfgs = JSON.parse(controller.lens_group_config || "[]");
+                    const cfg = cfgs[g.index] || {};
+                    if (cfg.anamorphic_enabled) {
+                        if (cfg.preset_id) {
+                            anamorphic = " · " + cfg.preset_id;
+                        } else if (cfg.squeeze_ratio && cfg.squeeze_ratio > 1.0) {
+                            const dir = (cfg.squeeze_direction === "vertical") ? "V" : "H";
+                            anamorphic = " · " + (+cfg.squeeze_ratio).toFixed(2).replace(/\.?0+$/, "") + "x-" + dir;
+                        }
+                    }
+                } catch (e) { }
+                return "L" + (g.index + 1) + " " + (+g.focal).toFixed(1) + "mm" + anamorphic;
+            }
+            ComboBox {
+                id: lensChoiceCombo;
+                width: 250 * dpiScale;
+                anchors.horizontalCenter: parent.horizontalCenter;
+                model: lensChoiceDialog.groups.map(g => lensChoiceDialog.groupLabel(g));
+                Component.onCompleted: {
+                    for (let i = 0; i < lensChoiceDialog.groups.length; ++i) {
+                        if (lensChoiceDialog.groups[i].index === lensChoiceDialog.preselect) {
+                            currentIndex = i;
+                            break;
+                        }
+                    }
+                }
+            }
+            onClicked: (idx) => {
+                if (idx === 0) {
+                    const g = lensChoiceDialog.groups[lensChoiceCombo.currentIndex];
+                    root.startDeepMatch(lensChoiceDialog.jobId, lensChoiceDialog.gyroIdx, lensChoiceDialog.videoName, g ? g.index : -1);
+                }
+                lensChoiceDialog.close();
+            }
+        }
     }
     // Modal progress dialog for a running deep match. Root-scoped (not inside
     // the delegate) so root.startDeepMatch can resolve the component id.
@@ -298,6 +379,15 @@ Item {
                     if (job_id !== deepMatchDialog.jobId || !deepMatchDialog.loader) return;
                     deepMatchDialog.loader.progress = progress;
                 }
+                // Chunked scan: long gyro files are searched in segments —
+                // surface the segment ordinal so a multi-segment run doesn't
+                // read as stuck. Single-segment runs keep the plain text.
+                function onDeep_match_chunk_changed(job_id: int, chunk: int, total: int): void {
+                    if (job_id !== deepMatchDialog.jobId || deepMatchDialog.succeeded || total <= 1) return;
+                    deepMatchDialog.text = qsTr("Deep matching gyro data...") + "\n"
+                                         + deepMatchDialog.videoName + "\n⟷ " + deepMatchDialog.gyroName + "\n"
+                                         + qsTr("Scanning segment %1 of %2").arg(chunk).arg(total);
+                }
                 function onDeep_match_finished(job_id: int, success: bool, error_kind: string, offset_ms: real): void {
                     if (job_id !== deepMatchDialog.jobId) return;
                     if (success) {
@@ -318,7 +408,12 @@ Item {
                     if (error_kind === "low_motion") {
                         messageBox(Modal.Warning, qsTr("Not enough camera motion. Try a video with more movement."), [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "not_in_range") {
-                        messageBox(Modal.Warning, qsTr("No match found in this gyro file. Try another gyro file."), [{ text: qsTr("Ok") }]);
+                        // Both failure directions are plausible: wrong gyro
+                        // file, or this video's OF-estimated motion is too
+                        // unreliable to lock onto (e.g. short long-lens clip).
+                        messageBox(Modal.Warning, qsTr("No match found. The gyro file may not cover this video, or the video's motion may be unreliable. Try another gyro file or another video."), [{ text: qsTr("Ok") }]);
+                    } else if (error_kind === "probe_not_run") {
+                        messageBox(Modal.Warning, qsTr("Deep match could not run. Check the logs for details."), [{ text: qsTr("Ok") }]);
                     } else {
                         messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
                     }
@@ -380,7 +475,7 @@ Item {
                     }
                 }
                 if (unmatchedCount > 0) {
-                    root.matchWarning = qsTr("No match found for %1 video(s). Try a deep search: pick a video with camera motion, right-click it → \"Deep match with gyro\", then select a gyro file.").arg(unmatchedCount);
+                    root.matchWarning = qsTr("%1 video(s) not matched. Right-click a video with clear camera motion and select \"Deep match with gyro\".").arg(unmatchedCount);
                 }
             });
         }
@@ -408,9 +503,12 @@ Item {
                     { text: qsTr("Skip"), clicked: () => render_queue.skip_batch_sync_repair() }
                 ]);
             } else if (kind === "all_yellow") {
-                messageBox(Modal.Warning, qsTr("**Batch synchronization did not produce a reliable result.** Please check:\n\n**1. Calibration videos are loaded**\n\nShort videos (under 10 seconds) recorded simultaneously with the gyro file.\n\n**2. Videos and gyro files are correctly paired**\n\nFor any unpaired video, you can pair manually: right-click the video → **\"Pair with Gyro\"**, then select the matching gyro file.\n\nIf there is no usable time-sync data at all, right-click the video → **\"Deep match with gyro\"** to search the whole gyro file for this video's position.\n\n**3. If there are not 2 calibration videos for the day**\n\n- Borrow time-sync data from the previous/next day: copy the calibration videos and their gyro files into the current day's folder, re-add to the queue, then pair manually as above.\n- Or re-shoot calibration videos and re-add to the queue."), [
+                // Replaced the old 3-section calibration-video guide (2026-06-12
+                // UX feedback): deep match is now the primary recovery path
+                // when no usable time-sync data exists.
+                messageBox(Modal.Warning, qsTr("Could not establish time sync. Right-click a video with clear camera motion and select \"Deep match with gyro\"."), [
                     { text: qsTr("Ok") }
-                ], undefined, Text.MarkdownText);
+                ]);
             } else if (kind === "finished_with_yellow") {
                 messageBox(Modal.Warning, qsTr("Some videos are still not reliably synchronized after repair."), [
                     { text: qsTr("Ok") }
@@ -1447,7 +1545,7 @@ Item {
                             if (!action)
                                 continue;
                             action.triggered.connect(function() {
-                                root.startDeepMatch(job_id, action.gyroIdx, input_filename);
+                                root.maybeStartDeepMatch(job_id, action.gyroIdx, input_filename);
                             });
                             deepMatchSubMenu.addAction(action);
                             actions.push(action);

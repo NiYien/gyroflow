@@ -63,10 +63,20 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                     .collect();
 
                 let max_angle = get_max_angle(&of_item);
-                if max_angle < 3.0 {
+                // The gate reads OF-estimated rates, which scale by
+                // f_true/f_assumed under approximate lens matrices — armed
+                // deep-match probes run a lower economy floor (consistency
+                // gate carries correctness there).
+                let motion_gate = if crate::synchronization::deep_match::is_armed() {
+                    crate::synchronization::deep_match::motion_gate_armed()
+                } else {
+                    3.0
+                };
+                if max_angle < motion_gate {
                     ::log::info!(
-                        "No movement detected, max gyro angle: {}. Skipping sync point.",
-                        max_angle
+                        "No movement detected, max OF-estimated angle: {} (gate {}). Skipping sync point.",
+                        max_angle,
+                        motion_gate
                     );
                     continue;
                 }

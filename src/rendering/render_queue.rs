@@ -534,6 +534,21 @@ struct DeepMatchState {
     // lens.sync_settings snapshot — this is the store that actually drives
     // do_autosync (additional_data is only the .gyroflow export mirror).
     original_sync_settings: Option<serde_json::Value>,
+    // Full pre-probe GyroSource snapshot (built-in gyro on keep_video_gyro
+    // jobs, or any prior pairing). Restored on every failure path, and on
+    // success too when the snapshot metadata says keep_video_gyro — the
+    // probed .bin must never remain the motion source of such jobs.
+    original_gyro: Box<core::gyro_source::GyroSource>,
+    // Pre-probe lens profile; restores any probe-scoped injected lens.
+    original_lens: Box<core::lens_profile::LensProfile>,
+    // User-confirmed lens group for bare manual-lens jobs; the probe builds
+    // its camera matrix from this group's config (None = no injection).
+    probe_lens_index: Option<usize>,
+    // Chunked scan (deep-match-chunked-scan): consecutive overlapping
+    // time ranges over the gyro file; the probe loads and searches one
+    // chunk at a time, short-circuiting on acceptance.
+    chunk_plan: Vec<(f64, f64)>,
+    current_chunk: usize,
 }
 
 #[derive(Clone)]
@@ -1023,8 +1038,15 @@ pub struct RenderQueue {
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     // Deep gyro match (2026-06-11): single-job coarse-offset search against
     // one parsed gyro pool file; one match in flight at a time.
-    start_deep_gyro_match: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize) -> bool),
+    // probe_lens_index: confirmed lens group for bare manual-lens jobs
+    // (-1 = no probe lens injection).
+    start_deep_gyro_match:
+        qt_method!(fn(&mut self, job_id: u32, gyro_index: usize, probe_lens_index: i32) -> bool),
     cancel_deep_gyro_match: qt_method!(fn(&mut self, job_id: u32)),
+    // Pre-flight query for the lens-group confirmation dialog: "ok" /
+    // "needs_choice" (bare manual-lens job, configured groups listed) /
+    // "no_groups" (bare job, nothing configured yet).
+    deep_match_needs_lens_choice: qt_method!(fn(&self, job_id: u32) -> QString),
     get_deep_match_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
@@ -1059,6 +1081,9 @@ pub struct RenderQueue {
     pub match_apply_finished: qt_signal!(),
     pub pairing_mode_changed: qt_signal!(),
     pub deep_match_progress: qt_signal!(job_id: u32, progress: f64),
+    // Chunked scan: fired once per chunk launch so the progress modal can
+    // show "Scanning segment i of n".
+    pub deep_match_chunk_changed: qt_signal!(job_id: u32, chunk: u32, total: u32),
     pub deep_match_finished: qt_signal!(job_id: u32, success: bool, error_kind: QString, offset_ms: f64),
 }
 
@@ -3632,9 +3657,16 @@ impl RenderQueue {
                     this.processing_progress(job_id, progress);
                     // Deep match: forward sync progress to the modal dialog.
                     // This queued callback is the per-job landing point of
-                    // do_autosync's processing_cb chain.
-                    if this.deep_match_pending.contains_key(&job_id) {
-                        this.deep_match_progress(job_id, progress);
+                    // do_autosync's processing_cb chain. Deep-match progress
+                    // composes across scan chunks: (chunk + p) / chunk_count.
+                    if let Some((chunk, n)) = this
+                        .deep_match_pending
+                        .get(&job_id)
+                        .map(|s| (s.current_chunk, s.chunk_plan.len()))
+                    {
+                        let composed = (chunk as f64 + progress.clamp(0.0, 1.0))
+                            / n.max(1) as f64;
+                        this.deep_match_progress(job_id, composed);
                     }
                     this.progress_changed();
                 },
@@ -5315,10 +5347,20 @@ impl RenderQueue {
                 as serde_json::Result<synchronization::SyncParams>
             {
                 if sync_params.max_sync_points > 0 {
-                    let mut timestamps_fract = stab.get_optimal_sync_points(
-                        sync_params.max_sync_points,
-                        sync_params.initial_offset * 1000.0,
-                    );
+                    // OptimSync's rank analysis is only consumed when
+                    // auto_sync_points is on (the fract helper below discards
+                    // it otherwise) — skip it entirely for custom-pattern
+                    // runs. Deep-match probes hold a whole pool gyro file
+                    // (hours, millions of samples) where the discarded
+                    // analysis costs tens of seconds.
+                    let mut timestamps_fract = if sync_params.auto_sync_points {
+                        stab.get_optimal_sync_points(
+                            sync_params.max_sync_points,
+                            sync_params.initial_offset * 1000.0,
+                        )
+                    } else {
+                        Vec::new()
+                    };
 
                     timestamps_fract = autosync_timestamps_fract_for_batch(
                         timestamps_fract,
@@ -8748,7 +8790,13 @@ impl RenderQueue {
         -1
     }
 
-    fn start_deep_gyro_match(&mut self, job_id: u32, gyro_index: usize) -> bool {
+    fn start_deep_gyro_match(
+        &mut self,
+        job_id: u32,
+        gyro_index: usize,
+        probe_lens_index: i32,
+    ) -> bool {
+        use gyroflow_core::synchronization::deep_match;
         // One deep match at a time; QML also guards, this is the backstop.
         if !self.deep_match_pending.is_empty() {
             return false;
@@ -8772,36 +8820,83 @@ impl RenderQueue {
         let Some(stab) = job.stab.clone() else {
             return false;
         };
-        let original_additional_data = job.additional_data.clone();
-        // lens.sync_settings is what do_autosync actually parses into
-        // SyncParams; snapshot it for the post-run restore.
-        let original_sync_settings = stab.lens.read().sync_settings.clone();
+        // Snapshot every pre-probe store before the background load can touch
+        // anything; the restore matrix in finish_deep_match puts them back.
+        let mut state = Self::snapshot_deep_match_state(
+            job,
+            &stab,
+            gyro_index,
+            usize::try_from(probe_lens_index).ok(),
+        );
+        // Chunked scan plan over the pool file's known duration. Missing /
+        // zero duration falls back to a single chunk-length range — the
+        // load clamps to the actual file contents anyway.
+        let chunk_ms = deep_match::max_scan_ms();
+        let video_duration_ms = stab.params.read().duration_ms;
+        let total_ms = gyro_info.duration_ms.unwrap_or(0.0);
+        state.chunk_plan = if total_ms > 0.0 {
+            deep_match::chunk_plan(
+                total_ms,
+                chunk_ms,
+                deep_match::chunk_overlap_ms(video_duration_ms),
+                deep_match::max_chunks(),
+            )
+        } else {
+            Vec::new()
+        };
+        if state.chunk_plan.is_empty() {
+            state.chunk_plan = vec![(0.0, chunk_ms)];
+        }
+        let first_chunk = state.chunk_plan[0];
         let cancel_flag = job.cancel_flag.clone();
         cancel_flag.store(false, SeqCst);
 
         // Register as pending before the async load so the single-flight
         // guard and cancel_deep_gyro_match cover the whole load+search span.
-        self.deep_match_pending.insert(
-            job_id,
-            DeepMatchState {
-                gyro_index,
-                original_additional_data,
-                original_sync_settings,
-            },
-        );
+        self.deep_match_pending.insert(job_id, state);
 
-        // Parse the full gyro file off the UI thread — it can take over a
-        // second on big files and the progress modal must appear instantly.
-        // The search setup continues on the UI thread once the load lands.
+        self.spawn_deep_match_gyro_load(job_id, first_chunk);
+        true
+    }
+
+    // Background (off-UI-thread) load of one scan chunk of the probe gyro
+    // file; lands back on the UI thread in continue_deep_gyro_match. Shared
+    // by the first chunk (start_deep_gyro_match) and chunk advances
+    // (finish_deep_match).
+    fn spawn_deep_match_gyro_load(&mut self, job_id: u32, time_range_ms: (f64, f64)) {
+        let Some(gyro_index) = self.deep_match_pending.get(&job_id).map(|s| s.gyro_index) else {
+            return;
+        };
+        let gyro_url = self.gyro_files.get(gyro_index).map(|g| g.path.clone());
+        let job_handles = self
+            .jobs
+            .get(&job_id)
+            .and_then(|j| j.stab.clone().map(|s| (s, j.cancel_flag.clone())));
+        let (Some(gyro_url), Some((stab, cancel_flag))) = (gyro_url, job_handles) else {
+            self.deep_match_pending.remove(&job_id);
+            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            return;
+        };
         let on_loaded = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
             move |this, loaded: bool| {
                 this.continue_deep_gyro_match(job_id, loaded);
             },
         );
-        let gyro_url = gyro_info.path.clone();
-        let load_stab = stab.clone();
+        let load_stab = stab;
         core::run_threaded(move || {
+            // Probe loads bypass the built-in-gyro arbitration: deep match is
+            // an explicit user request to test this .bin against the job, and
+            // keep_video_gyro jobs would otherwise silently refuse it. The
+            // snapshot restore in finish_deep_match keeps the built-in gyro
+            // authoritative after the probe. time_range_ms keeps the
+            // per-chunk parse cost bounded on long pool files.
+            let load_options = core::gyro_source::FileLoadOptions {
+                bypass_builtin_gyro_arbitration: true,
+                time_range_ms: Some(time_range_ms),
+                ..Default::default()
+            };
+            let t = std::time::Instant::now();
             let loaded = match filesystem::open_file(&gyro_url, false, false) {
                 Ok(mut file) => {
                     let filesize = file.size;
@@ -8811,7 +8906,7 @@ impl RenderQueue {
                             filesize,
                             &gyro_url,
                             false,
-                            &Default::default(),
+                            &load_options,
                             |_| (),
                             cancel_flag,
                         )
@@ -8819,17 +8914,29 @@ impl RenderQueue {
                 }
                 Err(_) => false,
             };
+            ::log::info!(
+                target: "sync",
+                "[deep-match] chunk load: range=[{:.0},{:.0}]ms elapsed_ms={:.0} loaded={}",
+                time_range_ms.0,
+                time_range_ms.1,
+                t.elapsed().as_secs_f64() * 1000.0,
+                loaded
+            );
             on_loaded(loaded);
         });
-        true
     }
 
-    // UI-thread continuation of start_deep_gyro_match, invoked after the
-    // threaded gyro load lands: validates the gyro span, injects the one-shot
-    // search params and launches the sync-only run.
+    // UI-thread continuation of a chunk load (first chunk from
+    // start_deep_gyro_match, later ones from the finish_deep_match advance):
+    // validates the chunk's gyro span, injects the one-shot search params and
+    // launches the sync-only run. Re-entrant per chunk.
     fn continue_deep_gyro_match(&mut self, job_id: u32, loaded: bool) {
         use gyroflow_core::synchronization::deep_match;
-        let Some(gyro_index) = self.deep_match_pending.get(&job_id).map(|s| s.gyro_index) else {
+        let Some((gyro_index, current_chunk, chunk_count)) = self
+            .deep_match_pending
+            .get(&job_id)
+            .map(|s| (s.gyro_index, s.current_chunk, s.chunk_plan.len()))
+        else {
             return;
         };
         let (stab, cancelled) = match self.jobs.get(&job_id) {
@@ -8843,15 +8950,20 @@ impl RenderQueue {
         };
         // Cancelled mid-load, or the queue went active while loading (the
         // export_project flip below would corrupt active renders) — roll
-        // back silently.
+        // back silently to the pre-probe snapshot.
         if cancelled || self.status.to_string() == "active" {
-            self.deep_match_pending.remove(&job_id);
-            stab.gyro.write().clear();
+            if let Some(state) = self.deep_match_pending.remove(&job_id) {
+                Self::restore_deep_match_gyro(&stab, &state);
+            }
             self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
             return;
         }
         if !loaded {
-            self.deep_match_pending.remove(&job_id);
+            // A failed load already cleared the gyro inside load_gyro_data —
+            // put the pre-probe contents (built-in gyro / prior pairing) back.
+            if let Some(state) = self.deep_match_pending.remove(&job_id) {
+                Self::restore_deep_match_gyro(&stab, &state);
+            }
             self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         }
@@ -8867,8 +8979,21 @@ impl RenderQueue {
             }
         };
         let Some((g_start, g_end)) = gyro_span else {
-            self.deep_match_pending.remove(&job_id);
-            stab.gyro.write().clear();
+            // A chunk with no usable samples (e.g. silent stretch in the
+            // file) is not an error — move on to the next chunk if any.
+            if current_chunk + 1 < chunk_count {
+                ::log::info!(
+                    target: "sync",
+                    "[deep-match] chunk {}/{}: no usable IMU span, advancing",
+                    current_chunk + 1,
+                    chunk_count
+                );
+                self.advance_deep_match_chunk(job_id);
+                return;
+            }
+            if let Some(state) = self.deep_match_pending.remove(&job_id) {
+                Self::restore_deep_match_gyro(&stab, &state);
+            }
             self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         };
@@ -8883,6 +9008,61 @@ impl RenderQueue {
         let windows =
             deep_match::window_positions_ms(video_duration_ms, deep_match::window_count());
         let pattern: Vec<String> = windows.iter().map(|w| format!("{w:.0}ms")).collect();
+
+        // Probe-scoped lens injection (bare manual-lens jobs): build the
+        // camera matrix from the user-confirmed lens group. upfl comes from
+        // the *snapshot* metadata — the live gyro metadata is the probe
+        // file's by now. The injected profile is removed by the lens
+        // snapshot restore on every exit path; it is never persisted.
+        // First chunk only — the lens store is untouched between chunks.
+        if let Some((lens_index, snapshot_md)) = self.deep_match_pending.get(&job_id).and_then(|s| {
+            if s.current_chunk != 0 {
+                return None;
+            }
+            s.probe_lens_index
+                .map(|idx| (idx, s.original_gyro.file_metadata.read().clone()))
+        }) {
+            let manual_edit = core::settings::get_bool("lens_group_manual_edit", false);
+            let global_configs = self.stabilizer.lens_group_config.read().clone();
+            let size = stab.params.read().size;
+            let profile = global_configs
+                .iter()
+                .find(|c| c.lens_index == lens_index)
+                .and_then(|config| {
+                    let cfg_for_build =
+                        niyien_lens_presets::effective_lens_group_config_for_build(
+                            manual_edit,
+                            config,
+                            &snapshot_md,
+                        );
+                    niyien_lens_presets::build_lens_profile(
+                        &snapshot_md,
+                        size,
+                        cfg_for_build.as_ref(),
+                        None,
+                    )
+                });
+            match profile {
+                Some(profile) => {
+                    ::log::info!(
+                        target: "sync",
+                        "[deep-match] probe lens injected: job={} lens_group=L{} focal={:?}mm",
+                        job_id,
+                        lens_index + 1,
+                        profile.focal_length
+                    );
+                    *stab.lens.write() = profile;
+                }
+                None => {
+                    ::log::info!(
+                        target: "sync",
+                        "[deep-match] probe lens build failed (no usable upfl) — probing with the bare default matrix: job={} lens_group=L{}",
+                        job_id,
+                        lens_index + 1
+                    );
+                }
+            }
+        }
 
         // One-shot essential-only sync params. do_autosync parses
         // lens.sync_settings (seconds; multiplied to ms at the parse site) —
@@ -8921,8 +9101,8 @@ impl RenderQueue {
             .unwrap_or_default();
         ::log::info!(
             target: "sync",
-            "[deep-match] start: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
-            job_id, gyro_filename, g_start, g_end, init_ms, search_ms, pattern
+            "[deep-match] start chunk {}/{}: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
+            current_chunk + 1, chunk_count, job_id, gyro_filename, g_start, g_end, init_ms, search_ms, pattern
         );
         deep_match::arm();
         // Run the job through the same sync-only path batch repair uses:
@@ -8937,7 +9117,38 @@ impl RenderQueue {
         // Launch this job only — start() would pick up every Queued job in
         // the queue, but deep match must act on the clicked job alone.
         self.render_job(job_id);
-        self.deep_match_progress(job_id, 0.0);
+        self.deep_match_chunk_changed(job_id, (current_chunk + 1) as u32, chunk_count as u32);
+        // Progress composes across chunks; the first chunk starts at 0.
+        self.deep_match_progress(job_id, current_chunk as f64 / chunk_count.max(1) as f64);
+    }
+
+    // Advances the chunked scan to the next planned chunk and spawns its
+    // background load. Caller must have verified a next chunk exists.
+    fn advance_deep_match_chunk(&mut self, job_id: u32) {
+        let next_chunk = self.deep_match_pending.get_mut(&job_id).and_then(|s| {
+            s.current_chunk += 1;
+            s.chunk_plan.get(s.current_chunk).copied()
+        });
+        let Some(range) = next_chunk else {
+            // Defensive: no next chunk — terminate as not found, restoring
+            // all four snapshotted stores.
+            if let Some(state) = self.deep_match_pending.remove(&job_id) {
+                if let Some(job) = self.jobs.get_mut(&job_id) {
+                    job.additional_data = state.original_additional_data.clone();
+                }
+                if let Some(stab) = self.jobs.get(&job_id).and_then(|j| j.stab.clone()) {
+                    {
+                        let mut lens = stab.lens.write();
+                        *lens = (*state.original_lens).clone();
+                        lens.sync_settings = state.original_sync_settings.clone();
+                    }
+                    Self::restore_deep_match_gyro(&stab, &state);
+                }
+            }
+            self.deep_match_finished(job_id, false, QString::from("not_in_range"), 0.0);
+            return;
+        };
+        self.spawn_deep_match_gyro_load(job_id, range);
     }
 
     fn cancel_deep_gyro_match(&mut self, job_id: u32) {
@@ -8946,6 +9157,58 @@ impl RenderQueue {
                 job.cancel_flag.store(true, SeqCst);
             }
         }
+    }
+
+    // Builds the pre-probe snapshot bundle for a deep match run: the four
+    // stores the restore matrix needs (additional_data, lens.sync_settings,
+    // GyroSource contents, lens profile).
+    fn snapshot_deep_match_state(
+        job: &Job,
+        stab: &StabilizationManager,
+        gyro_index: usize,
+        probe_lens_index: Option<usize>,
+    ) -> DeepMatchState {
+        // Deep-copy the (Arc-shared) file_metadata so no later in-place
+        // write can reach the snapshot.
+        let original_gyro = {
+            let gyro = stab.gyro.read();
+            let mut snap = gyro.clone();
+            snap.file_metadata = gyro.file_metadata.read().clone().into();
+            Box::new(snap)
+        };
+        DeepMatchState {
+            gyro_index,
+            original_additional_data: job.additional_data.clone(),
+            // lens.sync_settings is what do_autosync actually parses into
+            // SyncParams; snapshotted separately so the restore stays
+            // explicit even though original_lens contains it too.
+            original_sync_settings: stab.lens.read().sync_settings.clone(),
+            original_gyro,
+            original_lens: Box::new(stab.lens.read().clone()),
+            probe_lens_index,
+            // Filled in by start_deep_gyro_match once the pool duration is
+            // known; a single full-range chunk is the safe default.
+            chunk_plan: Vec::new(),
+            current_chunk: 0,
+        }
+    }
+
+    // Restores the pre-probe GyroSource snapshot (built-in gyro or a prior
+    // pairing) and logs the key fields so an incomplete restore is
+    // diagnosable against the snapshot.
+    fn restore_deep_match_gyro(stab: &StabilizationManager, state: &DeepMatchState) {
+        *stab.gyro.write() = (*state.original_gyro).clone();
+        let gyro = stab.gyro.read();
+        let fm = gyro.file_metadata.read();
+        ::log::debug!(
+            target: "sync",
+            "[deep-match] gyro snapshot restored: raw_imu={} quats={} file_url='{}' offsets={} keep_video_gyro={}",
+            fm.raw_imu.len(),
+            fm.quaternions.len(),
+            gyro.file_url,
+            gyro.get_offsets().len(),
+            fm.keep_video_gyro
+        );
     }
 
     // Deep match finisher: called from the record_batch_sync_result divert.
@@ -8957,27 +9220,26 @@ impl RenderQueue {
         points: &[gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate],
     ) {
         use gyroflow_core::synchronization::deep_match;
-        let Some(state) = self.deep_match_pending.remove(&job_id) else {
-            return;
-        };
         let stats = deep_match::take();
-
-        let Some(job) = self.jobs.get_mut(&job_id) else {
+        let Some((current_chunk, chunk_count)) = self
+            .deep_match_pending
+            .get(&job_id)
+            .map(|s| (s.current_chunk, s.chunk_plan.len()))
+        else {
             return;
         };
-        let stab = job.stab.clone();
-        // Always restore the pre-deep-match stores first; the one-shot sync
-        // params must not leak into renders or .gyroflow exports.
-        job.additional_data = state.original_additional_data.clone();
-        if let Some(ref stab) = stab {
-            stab.lens.write().sync_settings = state.original_sync_settings.clone();
-        }
-        let cancelled = job.cancel_flag.load(SeqCst);
+        let (stab, cancelled) = match self.jobs.get(&job_id) {
+            Some(job) => (job.stab.clone(), job.cancel_flag.load(SeqCst)),
+            None => {
+                self.deep_match_pending.remove(&job_id);
+                return;
+            }
+        };
 
         // Per-window offsets: collect_batch_points mode routes them through
         // `points` (do_autosync skips gyro.set_offset there), but sweep any
-        // strays off the job gyro anyway — deep match must leave no sync
-        // points; only the injected initial_offset survives.
+        // strays off the job gyro anyway — between chunks and at termination
+        // alike; deep match must leave no sync points.
         let offsets_ms: Vec<f64> = points.iter().map(|p| p.offset_ms).collect();
         if let Some(ref stab) = stab {
             let mut gyro = stab.gyro.write();
@@ -8986,28 +9248,97 @@ impl RenderQueue {
             }
         }
 
-        if cancelled {
-            if let Some(ref stab) = stab {
-                stab.gyro.write().clear();
+        if !cancelled {
+            let verdict = deep_match::evaluate(
+                &offsets_ms,
+                &stats,
+                deep_match::spread_max_ms(),
+                deep_match::cost_ratio_max(),
+                deep_match::tight_spread_ms(),
+                deep_match::cost_ratio_tight(),
+            );
+            ::log::info!(
+                target: "sync",
+                "[deep-match] chunk {}/{} finish: job={} windows={} offsets={:?} verdict={:?}",
+                current_chunk + 1, chunk_count, job_id, offsets_ms.len(), offsets_ms, verdict
+            );
+            // "No hit in this chunk" verdicts advance the scan; Accepted,
+            // TooFewWindows (video-side motion gate, chunk-independent) and
+            // ProbeNotRun (assembly failure, reproducible on every chunk)
+            // terminate immediately.
+            let advanceable = matches!(
+                verdict,
+                deep_match::DeepMatchVerdict::Inconsistent { .. }
+                    | deep_match::DeepMatchVerdict::WeakValley { .. }
+            );
+            if advanceable && current_chunk + 1 < chunk_count {
+                // Freeze the bar at the next chunk's base while it loads.
+                self.deep_match_progress(
+                    job_id,
+                    (current_chunk + 1) as f64 / chunk_count.max(1) as f64,
+                );
+                self.advance_deep_match_chunk(job_id);
+                return;
             }
-            ::log::info!(target: "sync", "[deep-match] cancelled: job={}", job_id);
-            self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
+            self.terminate_deep_match(job_id, stab, verdict);
             return;
         }
 
-        let verdict = deep_match::evaluate(
-            &offsets_ms,
-            &stats,
-            deep_match::spread_max_ms(),
-            deep_match::cost_ratio_max(),
-        );
-        ::log::info!(
-            target: "sync",
-            "[deep-match] finish: job={} windows={} offsets={:?} verdict={:?}",
-            job_id, offsets_ms.len(), offsets_ms, verdict
-        );
+        // Cancelled: terminate silently with a full snapshot restore.
+        let Some(state) = self.deep_match_pending.remove(&job_id) else {
+            return;
+        };
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            job.additional_data = state.original_additional_data.clone();
+        }
+        if let Some(ref stab) = stab {
+            {
+                let mut lens = stab.lens.write();
+                *lens = (*state.original_lens).clone();
+                lens.sync_settings = state.original_sync_settings.clone();
+            }
+            Self::restore_deep_match_gyro(stab, &state);
+        }
+        ::log::info!(target: "sync", "[deep-match] cancelled: job={}", job_id);
+        self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
+    }
+
+    // Terminal resolution of a deep match run: restores the snapshotted
+    // stores and applies the verdict (accepted write-back or rollback).
+    fn terminate_deep_match(
+        &mut self,
+        job_id: u32,
+        stab: Option<Arc<StabilizationManager>>,
+        verdict: gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let Some(state) = self.deep_match_pending.remove(&job_id) else {
+            return;
+        };
+        // Always restore the pre-deep-match stores first; the one-shot sync
+        // params (and any probe-scoped injected lens profile) must not leak
+        // into renders or .gyroflow exports.
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            job.additional_data = state.original_additional_data.clone();
+        }
+        if let Some(ref stab) = stab {
+            let mut lens = stab.lens.write();
+            *lens = (*state.original_lens).clone();
+            lens.sync_settings = state.original_sync_settings.clone();
+        }
         match verdict {
             deep_match::DeepMatchVerdict::Accepted { offset_ms } => {
+                // Gyro retention depends on the snapshot's metadata: a
+                // keep_video_gyro job gets its built-in gyro back (the .bin
+                // must never remain its motion source — deep match only
+                // contributes the session anchor); regular jobs keep the .bin
+                // loaded, as before. Judged on the snapshot because the live
+                // metadata is the .bin's by now (keep_video_gyro=false).
+                if state.original_gyro.file_metadata.read().keep_video_gyro {
+                    if let Some(ref stab) = stab {
+                        Self::restore_deep_match_gyro(stab, &state);
+                    }
+                }
                 // Write the coarse offset into lens.sync_settings as a full
                 // batch-match-shaped block (render_queue.rs:8317 region) —
                 // this is the store the later batch-sync refine parses, and
@@ -9076,16 +9407,24 @@ impl RenderQueue {
                 self.match_results_changed();
                 self.deep_match_finished(job_id, true, QString::default(), offset_ms);
             }
+            deep_match::DeepMatchVerdict::ProbeNotRun => {
+                // The probe never produced a window (assembly/arbitration
+                // failure) — distinct from genuine low camera motion.
+                if let Some(ref stab) = stab {
+                    Self::restore_deep_match_gyro(stab, &state);
+                }
+                self.deep_match_finished(job_id, false, QString::from("probe_not_run"), 0.0);
+            }
             deep_match::DeepMatchVerdict::TooFewWindows => {
                 if let Some(ref stab) = stab {
-                    stab.gyro.write().clear();
+                    Self::restore_deep_match_gyro(stab, &state);
                 }
                 self.deep_match_finished(job_id, false, QString::from("low_motion"), 0.0);
             }
             deep_match::DeepMatchVerdict::Inconsistent { .. }
             | deep_match::DeepMatchVerdict::WeakValley { .. } => {
                 if let Some(ref stab) = stab {
-                    stab.gyro.write().clear();
+                    Self::restore_deep_match_gyro(stab, &state);
                 }
                 self.deep_match_finished(job_id, false, QString::from("not_in_range"), 0.0);
             }
@@ -9097,6 +9436,65 @@ impl RenderQueue {
             .get(&job_id)
             .map(|r| r.gyro_index as i32)
             .unwrap_or(-1)
+    }
+
+    // Pre-flight query for the deep-match lens-group confirmation dialog.
+    // A bare manual-lens job (no lens identity, no video focal length, bare
+    // camera matrix) probes with the 0.8*width default matrix, which inflates
+    // valley ratios and deflates OF-estimated motion — asking the user for
+    // the lens group fixes the matrix before the probe.
+    fn deep_match_needs_lens_choice(&self, job_id: u32) -> QString {
+        let ok = QString::from(r#"{"state":"ok"}"#);
+        let Some(job) = self.jobs.get(&job_id) else {
+            return ok;
+        };
+        let metadata = metadata_snapshot_for_job(job);
+        let lens_index = job.lens_index_override.or(job.lens_group_index).or_else(|| {
+            metadata
+                .as_ref()
+                .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
+        });
+        let video_focal = metadata
+            .as_ref()
+            .and_then(niyien_lens_presets::extract_video_focus_length_mm);
+        let camera_matrix_bare = job
+            .stab
+            .as_ref()
+            .map(|s| s.lens.read().fisheye_params.camera_matrix.is_empty())
+            .unwrap_or(true);
+        if lens_index.is_some() || video_focal.is_some() || !camera_matrix_bare {
+            return ok;
+        }
+        // Configured groups = groups with a sensible manual focal length
+        // (same threshold as the sanitize step on the write path).
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        let mut groups: Vec<(usize, f64)> = global_configs
+            .iter()
+            .filter_map(|c| {
+                c.focal_length_mm
+                    .filter(|f| {
+                        f.is_finite() && *f > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+                    })
+                    .map(|f| (c.lens_index, f))
+            })
+            .collect();
+        if groups.is_empty() {
+            return QString::from(r#"{"state":"no_groups"}"#);
+        }
+        groups.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        let preselect = groups[groups.len() / 2].0;
+        let groups_json: Vec<serde_json::Value> = groups
+            .iter()
+            .map(|(idx, focal)| serde_json::json!({ "index": idx, "focal": focal }))
+            .collect();
+        QString::from(
+            serde_json::json!({
+                "state": "needs_choice",
+                "groups": groups_json,
+                "preselect": preselect,
+            })
+            .to_string(),
+        )
     }
 
     // T7: Unpair a video job, clearing its external gyro data.
@@ -11467,6 +11865,450 @@ mod tests {
         assert_eq!(queue.export_project, 2);
         assert!(!queue.batch_sync_job_ids.contains(&1));
         assert_eq!(batch_status(&queue, 1)["color"], "none");
+    }
+
+    #[test]
+    fn load_gyro_data_keep_video_gyro_arbitration_respects_probe_bypass_flag() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap().clone();
+        stab.gyro.write().file_metadata.write().keep_video_gyro = true;
+
+        let garbage = b"definitely not a telemetry file".to_vec();
+
+        // Default options: the arbitration early-exit returns Ok without
+        // parsing and leaves the built-in gyro untouched.
+        let mut stream = std::io::Cursor::new(garbage.clone());
+        let res = stab.load_gyro_data(
+            &mut stream,
+            garbage.len(),
+            "file:///probe-test.bin",
+            false,
+            &Default::default(),
+            |_| (),
+            Default::default(),
+        );
+        assert!(res.is_ok(), "arbitration early-exit must stay silent: {res:?}");
+        {
+            let gyro = stab.gyro.read();
+            let fm = gyro.file_metadata.read();
+            assert!(fm.keep_video_gyro);
+            assert_eq!(fm.raw_imu.len(), 1, "built-in gyro must stay untouched");
+        }
+
+        // bypass flag: the guard is skipped and the regular external-IMU load
+        // path runs — the built-in metadata gets replaced and the garbage
+        // stream fails to parse instead of being silently skipped.
+        let mut stream = std::io::Cursor::new(garbage.clone());
+        let res = stab.load_gyro_data(
+            &mut stream,
+            garbage.len(),
+            "file:///probe-test.bin",
+            false,
+            &core::gyro_source::FileLoadOptions {
+                bypass_builtin_gyro_arbitration: true,
+                ..Default::default()
+            },
+            |_| (),
+            Default::default(),
+        );
+        assert!(res.is_err(), "bypass must reach the parse path (garbage -> Err)");
+        {
+            let gyro = stab.gyro.read();
+            let fm = gyro.file_metadata.read();
+            assert!(
+                !fm.keep_video_gyro,
+                "load path must have reset the pre-probe metadata"
+            );
+        }
+    }
+
+    // The deep-match collector is a single global slot; serialize the tests
+    // that arm/take it.
+    static DEEP_MATCH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn deep_match_stats(
+        ratio: f64,
+    ) -> gyroflow_core::synchronization::deep_match::DeepMatchSegStats {
+        gyroflow_core::synchronization::deep_match::DeepMatchSegStats {
+            range_idx: 0,
+            offset_ms: 0.0,
+            cost_min: ratio * 100.0,
+            cost_p25: 100.0,
+            max_angle: 10.0,
+        }
+    }
+
+    // Job 1 with a small "built-in" gyro; keep=true marks it as the trusted
+    // motion source (Komodo/Sony/Canon material).
+    fn setup_deep_match_job(queue: &mut RenderQueue, keep: bool) -> Arc<StabilizationManager> {
+        add_motion_to_job(queue, 1, false);
+        let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap().clone();
+        stab.gyro.write().file_url = "file:///builtin-source.mp4".into();
+        stab.gyro.write().file_metadata.write().keep_video_gyro = keep;
+        queue.jobs.get_mut(&1).unwrap().additional_data = r#"{"original":true}"#.to_string();
+        stab
+    }
+
+    // Registers the pending state (snapshots included) and simulates what the
+    // probe run does to the live stores: the .bin gyro replaces the built-in
+    // one, the one-shot sync params and an injected probe lens overwrite the
+    // lens stores.
+    fn simulate_deep_match_probe(queue: &mut RenderQueue, stab: &Arc<StabilizationManager>) {
+        simulate_deep_match_probe_chunks(queue, stab, vec![(0.0, 7_200_000.0)], 0);
+    }
+
+    // Variant with an explicit chunk plan / position for chunked-scan tests.
+    fn simulate_deep_match_probe_chunks(
+        queue: &mut RenderQueue,
+        stab: &Arc<StabilizationManager>,
+        chunk_plan: Vec<(f64, f64)>,
+        current_chunk: usize,
+    ) {
+        // A pool entry so a chunk advance can resolve the gyro path.
+        queue.gyro_files = vec![GyroFileInfo {
+            path: "file:///pool.bin".to_string(),
+            filename: "pool.bin".to_string(),
+            parsed: true,
+            ..Default::default()
+        }];
+        let mut state = {
+            let job = queue.jobs.get(&1).unwrap();
+            RenderQueue::snapshot_deep_match_state(job, stab, 0, None)
+        };
+        state.chunk_plan = chunk_plan;
+        state.current_chunk = current_chunk;
+        queue.deep_match_pending.insert(1, state);
+        {
+            let mut md = FileMetadata::default();
+            for i in 0..3 {
+                md.raw_imu.push(core::gyro_source::TimeIMU {
+                    timestamp_ms: i as f64 * 10.0,
+                    gyro: Some([0.0, 0.0, 0.0]),
+                    accl: None,
+                    magn: None,
+                });
+            }
+            let mut gyro = stab.gyro.write();
+            gyro.load_from_telemetry(md);
+            gyro.file_url = "file:///pool.bin".into();
+        }
+        let mut lens = stab.lens.write();
+        lens.name = "PROBE-INJECTED".into();
+        lens.sync_settings = Some(serde_json::json!({ "offset_method": 0, "one_shot": true }));
+    }
+
+    #[test]
+    fn deep_match_success_restores_builtin_gyro_for_keep_material() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe(&mut queue, &stab);
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.2));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, -5001.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_results.contains_key(&1), "expected Accepted");
+        {
+            let gyro = stab.gyro.read();
+            let fm = gyro.file_metadata.read();
+            assert!(fm.keep_video_gyro, "built-in gyro must be restored on keep material");
+            assert_eq!(fm.raw_imu.len(), 1);
+            assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+        }
+        let lens = stab.lens.read();
+        assert_eq!(lens.name, "", "probe-injected lens must not leak");
+        let ss = lens.sync_settings.clone().unwrap();
+        assert_eq!(ss["offset_method"], 2);
+        assert!((ss["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9);
+        let ad: serde_json::Value =
+            serde_json::from_str(&queue.jobs[&1].additional_data).unwrap();
+        assert_eq!(ad["original"], true);
+        assert!(
+            (ad["synchronization"]["initial_offset"].as_f64().unwrap() - (-5.0005)).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn deep_match_success_keeps_bin_for_regular_material() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.2));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, -5001.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_results.contains_key(&1), "expected Accepted");
+        let gyro = stab.gyro.read();
+        let fm = gyro.file_metadata.read();
+        assert!(!fm.keep_video_gyro);
+        assert_eq!(fm.raw_imu.len(), 3, "the .bin must stay loaded on regular material");
+        assert_eq!(gyro.file_url, "file:///pool.bin");
+    }
+
+    #[test]
+    fn deep_match_needs_lens_choice_states() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        // The manager seeds lens_group_config from persisted settings; reset
+        // to a clean slate so this test is deterministic on any machine.
+        *queue.stabilizer.lens_group_config.write() =
+            niyien_lens_presets::default_lens_group_configs();
+
+        // Bare job (no lens identity, no focal, empty camera matrix) and
+        // nothing configured -> no_groups.
+        let v: serde_json::Value =
+            serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
+        assert_eq!(v["state"], "no_groups");
+
+        // Configured groups L1=18 / L3=50 / L5=85 -> needs_choice with the
+        // median-focal group (L3, index 2) preselected.
+        {
+            let mut configs = queue.stabilizer.lens_group_config.write();
+            configs[0].focal_length_mm = Some(18.0);
+            configs[2].focal_length_mm = Some(50.0);
+            configs[4].focal_length_mm = Some(85.0);
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
+        assert_eq!(v["state"], "needs_choice");
+        assert_eq!(v["preselect"], 2);
+        assert_eq!(v["groups"].as_array().unwrap().len(), 3);
+
+        // A job-level lens index override resolves the lens identity -> ok.
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(3);
+        let v: serde_json::Value =
+            serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
+        assert_eq!(v["state"], "ok");
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = None;
+
+        // A non-bare camera matrix (electronic lens / loaded profile) -> ok.
+        {
+            let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap().clone();
+            stab.lens.write().fisheye_params.camera_matrix = vec![
+                [1000.0, 0.0, 960.0],
+                [0.0, 1000.0, 540.0],
+                [0.0, 0.0, 1.0],
+            ];
+        }
+        let v: serde_json::Value =
+            serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
+        assert_eq!(v["state"], "ok");
+    }
+
+    #[test]
+    fn deep_match_failure_restores_all_four_snapshots() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        let original_sync_settings = stab.lens.read().sync_settings.clone();
+        simulate_deep_match_probe(&mut queue, &stab);
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.1));
+        // 5000ms apart -> Inconsistent -> full rollback.
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, 0.0, 0.9),
+                sync_candidate(1, 2000.0, 5000.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_results.is_empty());
+        assert!(queue.deep_match_pending.is_empty());
+        assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+        let lens = stab.lens.read();
+        assert_eq!(lens.name, "");
+        assert_eq!(lens.sync_settings, original_sync_settings);
+        let gyro = stab.gyro.read();
+        let fm = gyro.file_metadata.read();
+        assert!(fm.keep_video_gyro, "keep_video_gyro must survive a failed attempt");
+        assert_eq!(fm.raw_imu.len(), 1);
+        assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+    }
+
+    #[test]
+    fn deep_match_chunk_miss_advances_to_next_chunk() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)],
+            0,
+        );
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.1));
+        // 5000ms apart -> Inconsistent -> advance, not terminate.
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, 0.0, 0.9),
+                sync_candidate(1, 2000.0, 5000.0, 0.9),
+            ],
+            vec![],
+        );
+
+        let state = queue.deep_match_pending.get(&1).expect("run must stay pending");
+        assert_eq!(state.current_chunk, 1, "scan must advance to the next chunk");
+        assert!(queue.deep_match_results.is_empty());
+        // Probe continues: the live gyro is still the .bin, not the snapshot.
+        assert_eq!(stab.gyro.read().file_url, "file:///pool.bin");
+    }
+
+    #[test]
+    fn deep_match_last_chunk_miss_terminates_with_rollback() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)],
+            1, // final chunk
+        );
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.1));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, 0.0, 0.9),
+                sync_candidate(1, 2000.0, 5000.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_pending.is_empty(), "run must terminate");
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+        let gyro = stab.gyro.read();
+        let fm = gyro.file_metadata.read();
+        assert!(fm.keep_video_gyro);
+        assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+    }
+
+    #[test]
+    fn deep_match_accept_on_first_chunk_short_circuits() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![
+                (0.0, 7_200_000.0),
+                (7_000_000.0, 14_200_000.0),
+                (14_000_000.0, 21_200_000.0),
+            ],
+            0,
+        );
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.2));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, -5001.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_results.contains_key(&1), "expected Accepted");
+        assert!(
+            queue.deep_match_pending.is_empty(),
+            "acceptance must short-circuit the remaining chunks"
+        );
+    }
+
+    #[test]
+    fn deep_match_low_motion_terminates_on_first_chunk() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)],
+            0,
+        );
+
+        deep_match::arm();
+        deep_match::record(deep_match_stats(0.1));
+        // Single window -> TooFewWindows: video-side motion gate, must NOT
+        // try further chunks.
+        queue.record_batch_sync_result(1, vec![sync_candidate(1, 1000.0, 0.0, 0.9)], vec![]);
+
+        assert!(queue.deep_match_pending.is_empty(), "must terminate, not advance");
+        assert!(queue.deep_match_results.is_empty());
+        let gyro = stab.gyro.read();
+        assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
+    }
+
+    #[test]
+    fn deep_match_cancel_terminates_at_any_chunk() {
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, true);
+        simulate_deep_match_probe_chunks(
+            &mut queue,
+            &stab,
+            vec![(0.0, 7_200_000.0), (7_000_000.0, 14_200_000.0)],
+            0,
+        );
+        queue.jobs.get(&1).unwrap().cancel_flag.store(true, SeqCst);
+
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, 0.0, 0.9),
+                sync_candidate(1, 2000.0, 1.0, 0.9),
+            ],
+            vec![],
+        );
+
+        assert!(queue.deep_match_pending.is_empty(), "cancel must terminate the run");
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(queue.jobs[&1].additional_data, r#"{"original":true}"#);
+        let gyro = stab.gyro.read();
+        let fm = gyro.file_metadata.read();
+        assert!(fm.keep_video_gyro);
+        assert_eq!(gyro.file_url, "file:///builtin-source.mp4");
     }
 
     #[test]

@@ -414,6 +414,11 @@ pub struct FileLoadOptions {
     pub header_only: bool,
     #[serde(default)]
     pub time_range_ms: Option<(f64, f64)>,
+    /// Deep-match probe only: skip the built-in-gyro arbitration early-exit in
+    /// `load_gyro_data` so an external IMU file can be probed against a
+    /// `keep_video_gyro` main video. Every other caller must leave this false.
+    #[serde(default)]
+    pub bypass_builtin_gyro_arbitration: bool,
 }
 
 pub fn get_camera_db_path() -> Option<String> {

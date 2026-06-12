@@ -1162,8 +1162,18 @@ impl StabilizationManager {
             // rejects any external IMU as a motion source. Once classified this
             // way, a subsequent external IMU load is silently ignored (no clear,
             // no overwrite); only its lens metadata is taken elsewhere (batch
-            // apply_match).
-            if fm.keep_video_gyro {
+            // apply_match). The deep-match probe is the single sanctioned
+            // exception: it loads the external IMU on explicit user request and
+            // restores the built-in gyro from its snapshot afterwards.
+            if fm.keep_video_gyro && options.bypass_builtin_gyro_arbitration {
+                log::info!(
+                    target: "sync",
+                    "[deep-match] builtin-gyro arbitration bypassed for probe load: url='{}' detected_source={:?}",
+                    url,
+                    fm.detected_source
+                );
+            }
+            if fm.keep_video_gyro && !options.bypass_builtin_gyro_arbitration {
                 let is_canon = fm.detected_source.as_deref().map_or(false, |s| s.starts_with("Canon"));
                 if fm.is_komodo {
                     log::info!(
