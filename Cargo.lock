@@ -7491,6 +7491,7 @@ dependencies = [
 [[package]]
 name = "rs-sync"
 version = "0.1.0"
+source = "git+https://github.com/NiYien/rs-sync.git?rev=25f4e3c#25f4e3c01ac32c28deab0104715cd55c4fc110ba"
 dependencies = [
  "argmin",
  "argmin-math",
