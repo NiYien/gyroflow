@@ -20,6 +20,10 @@ pub struct AutosyncProcess {
     mode: String, // synchronize, guess_imu_orientation, estimate_rolling_shutter
     ranges_us: Vec<(i64, i64)>,
     scaled_ranges_us: Vec<(i64, i64)>,
+    /// sync-likelihood-nuisance §3.2: scaled-µs range of the probe-only
+    /// window appended in `from_manager` (posterior single-window runs).
+    /// Offsets whose mid falls inside are stripped before the finished cb.
+    probe_range_us: Option<(i64, i64)>,
     estimator: Arc<PoseEstimator>,
     total_read_frames: Arc<AtomicUsize>,
     total_detected_frames: Arc<AtomicUsize>,
@@ -133,6 +137,40 @@ impl AutosyncProcess {
         if let Some(scale) = &fps_scale {
             time_per_syncpoint *= scale;
         }
+
+        // sync-likelihood-nuisance §3.2: a single-window rs-sync run gets one
+        // extra probe-only window so the posterior's cross-window product has
+        // independent evidence (echo suppression, design D3). The probe
+        // participates in the likelihood only — its offset row is stripped
+        // before the finished callback (`strip_probe_offsets`).
+        let mut timestamps_fract: Vec<f64> = timestamps_fract.to_vec();
+        let mut probe_added = false;
+        if mode == "synchronize"
+            && sync_params.offset_method == 2
+            && crate::synchronization::find_offset::rs_sync::posterior_enabled()
+            && timestamps_fract.len() == 1
+            && stab.gyro.read().has_motion()
+        {
+            if let Some(far) =
+                pick_probe_fraction(timestamps_fract[0], org_duration_ms, time_per_syncpoint)
+            {
+                log::info!(
+                    target: "sync",
+                    "[posterior] probe window added at {:.0}% (single sync point at {:.0}%) — likelihood evidence only, no sync point output",
+                    far * 100.0,
+                    timestamps_fract[0] * 100.0
+                );
+                timestamps_fract.push(far);
+                probe_added = true;
+            } else {
+                log::info!(
+                    target: "sync",
+                    "[posterior] no disjoint probe position available — single-window posterior (conf one tier down)"
+                );
+            }
+        }
+        let timestamps_fract: &[f64] = &timestamps_fract;
+
         let frame_count = ((timestamps_fract.len() as f64 * (time_per_syncpoint / 1000.0) * org_fps)
             .ceil() as usize)
             .min(params.frame_count) / every_nth_frame as usize;
@@ -164,7 +202,7 @@ impl AutosyncProcess {
             ranges_us.push((0, (org_duration_ms * 1000.0).round() as i64));
         }
 
-        let scaled_ranges_us = ranges_us
+        let scaled_ranges_us: Vec<(i64, i64)> = ranges_us
             .iter()
             .map(|(f, t)| {
                 (
@@ -173,6 +211,10 @@ impl AutosyncProcess {
                 )
             })
             .collect();
+        // The probe fraction was appended last, so its scaled range is the
+        // last entry (the no-motion branch above never runs when a probe was
+        // added — probe insertion is gated on has_motion()).
+        let probe_range_us = if probe_added { scaled_ranges_us.last().copied() } else { None };
 
         let estimator = stab.pose_estimator.clone();
 
@@ -233,6 +275,7 @@ impl AutosyncProcess {
             mode,
             ranges_us,
             scaled_ranges_us,
+            probe_range_us,
             estimator,
             fps_scale,
             total_read_frames: Arc::new(AtomicUsize::new(1)), // Start with 1 to keep the loader active until `finished_feeding_frames` overrides it with final value
@@ -668,13 +711,13 @@ impl AutosyncProcess {
                     cb(Either::Right(guessed));
                 }
             } else {
-                let offsets = self.estimator.find_offsets(
+                let offsets = self.strip_probe_offsets(self.estimator.find_offsets(
                     &scaled_ranges_us,
                     &self.sync_params,
                     &self.compute_params.read(),
                     progress_cb2,
                     self.cancel_flag.clone(),
-                );
+                ));
                 if check_negative {
                     // §5.8 before second find_offsets retry pass
                     if self.cancel_flag.load(SeqCst) {
@@ -689,13 +732,13 @@ impl AutosyncProcess {
                     // Try also negative rough offset
                     let mut sync_params = self.sync_params.clone();
                     sync_params.initial_offset = -sync_params.initial_offset;
-                    let offsets2 = self.estimator.find_offsets(
+                    let offsets2 = self.strip_probe_offsets(self.estimator.find_offsets(
                         &scaled_ranges_us,
                         &sync_params,
                         &self.compute_params.read(),
                         progress_cb2,
                         self.cancel_flag.clone(),
-                    );
+                    ));
                     if offsets2.len() > offsets.len() {
                         cb(Either::Left(offsets2));
                     } else if offsets2.len() == offsets.len() {
@@ -726,6 +769,28 @@ impl AutosyncProcess {
         crate::synchronization::sync_diag::flush_and_close();
     }
 
+    /// sync-likelihood-nuisance §3.2: drop the probe-only window's offset row
+    /// (it contributed likelihood evidence inside `find_offsets`; it must not
+    /// become a user-visible sync point).
+    fn strip_probe_offsets(&self, mut offsets: Vec<(f64, f64, f64, f64)>) -> Vec<(f64, f64, f64, f64)> {
+        if let Some((pf, pt)) = self.probe_range_us {
+            let before = offsets.len();
+            offsets.retain(|(mid_ms, ..)| {
+                let mid_us = (mid_ms * 1000.0).round() as i64;
+                !(mid_us >= pf && mid_us <= pt)
+            });
+            if offsets.len() != before {
+                log::info!(
+                    target: "sync",
+                    "[posterior] probe-only window offset stripped from results ({} -> {})",
+                    before,
+                    offsets.len()
+                );
+            }
+        }
+        offsets
+    }
+
     pub fn on_progress<F>(&mut self, cb: F)
     where
         F: Fn(f64, usize, usize) + Send + Sync + 'static,
@@ -737,5 +802,65 @@ impl AutosyncProcess {
         F: Fn(Either<Vec<(f64, f64, f64, f64)>, Option<(String, f64)>>) + Send + Sync + 'static,
     {
         self.finished_cb = Some(Arc::new(Box::new(cb)));
+    }
+}
+
+/// Probe-window placement (sync-likelihood-nuisance §3.2): pick the uniform
+/// candidate position farthest from the existing single sync point so the
+/// two windows are maximally independent. The optimsync rank is not
+/// available at this layer (the caller already collapsed it to one
+/// fraction), so this is design D3's "no second-best -> farthest valid
+/// position" branch. Returns `None` when even the farthest candidate would
+/// overlap the existing window (very short videos) — the posterior then
+/// degrades to single-window with its confidence tier-down.
+pub(crate) fn pick_probe_fraction(
+    existing_fract: f64,
+    duration_ms: f64,
+    window_ms: f64,
+) -> Option<f64> {
+    const CANDIDATES: [f64; 5] = [0.2, 0.35, 0.5, 0.65, 0.8];
+    let far = CANDIDATES
+        .iter()
+        .copied()
+        .max_by(|a, b| {
+            (a - existing_fract)
+                .abs()
+                .partial_cmp(&(b - existing_fract).abs())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+    // Windows are `window_ms` wide and centered on the fractions — require
+    // the centers to be more than one window apart so the frame pairs are
+    // disjoint (independent evidence, design D3).
+    if ((far - existing_fract).abs() * duration_ms) > window_ms {
+        Some(far)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_fraction_picks_farthest_disjoint_candidate() {
+        // Single point late in the clip -> probe lands early, and vice versa.
+        assert_eq!(pick_probe_fraction(0.72, 10_000.0, 1_500.0), Some(0.2));
+        assert_eq!(pick_probe_fraction(0.2, 10_000.0, 1_500.0), Some(0.8));
+        // Center point: 0.2 and 0.8 tie at 0.3 distance; max_by keeps the
+        // LAST max under ties -> 0.8. Pin it for determinism.
+        assert_eq!(pick_probe_fraction(0.5, 10_000.0, 1_500.0), Some(0.8));
+    }
+
+    #[test]
+    fn probe_fraction_refuses_overlapping_windows() {
+        // 3s window on a 7.5s clip (the P1004620 shape): farthest candidate
+        // from 0.72 is 0.2 -> 0.52 * 7500 = 3900ms > 3000ms window -> ok.
+        assert_eq!(pick_probe_fraction(0.72, 7_500.0, 3_000.0), Some(0.2));
+        // Same window on a 4s clip: 0.52 * 4000 = 2080 < 3000 -> overlap,
+        // no probe (posterior degrades to single window).
+        assert_eq!(pick_probe_fraction(0.72, 4_000.0, 3_000.0), None);
+        // Degenerate zero-length video.
+        assert_eq!(pick_probe_fraction(0.5, 0.0, 500.0), None);
     }
 }

@@ -213,15 +213,22 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                             max_angle,
                             of_item.len(),
                         );
-                        let cost_steps = (sync_params.search_size as usize) * 2;
-                        let curve: Vec<(f64, f64)> = (0..cost_steps)
-                            .map(|k| {
-                                let offs = sync_params.initial_offset - sync_params.search_size
-                                    + (k as f64);
-                                (offs, calculate_cost(offs, &of_item, &gyro_bintree))
-                            })
-                            .collect();
-                        crate::synchronization::sync_diag::record_cost_curve_essmat(i, &curve);
+                        // The full essmat curve is recomputed serially just for
+                        // this dump (deep-match probes span millions of 1ms
+                        // steps) — opt-in via GYROFLOW_SYNC_DIAG_ESSMAT so that
+                        // residual-corpus recording does not stall the probe.
+                        if crate::synchronization::sync_diag::essmat_curve_enabled() {
+                            let cost_steps = (sync_params.search_size as usize) * 2;
+                            let curve: Vec<(f64, f64)> = (0..cost_steps)
+                                .map(|k| {
+                                    let offs = sync_params.initial_offset
+                                        - sync_params.search_size
+                                        + (k as f64);
+                                    (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                                })
+                                .collect();
+                            crate::synchronization::sync_diag::record_cost_curve_essmat(i, &curve);
+                        }
                         for (k, o) in of_item.iter().enumerate() {
                             if k % 10 != 0 {
                                 continue;

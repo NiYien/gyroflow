@@ -33,6 +33,7 @@ pub mod sync_diag;
 pub mod deep_match;
 pub mod sync_metric;
 pub mod sync_perf;
+pub mod posterior;
 use crate::util::MapClosest;
 pub use autosync::{AutosyncProcess, describe_autosync_init_failure};
 

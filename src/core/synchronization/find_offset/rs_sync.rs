@@ -75,7 +75,7 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                 &sync_params,
                 params,
                 progress_cb,
-                cancel_flag,
+                cancel_flag.clone(),
             )
         };
         log::info!(
@@ -124,6 +124,16 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
             finder.correlation_rerank(&mut offsets, estimator, ranges, params);
         } else {
             finder.ncc_fusion_decide(&mut offsets, estimator, ranges, params);
+            // sync-likelihood-nuisance §3.1: the generative posterior takes
+            // over the per-segment output. Fusion above still ran in full so
+            // `[ncc-fuse]` stays as the double-write comparison log; any
+            // failure or cancellation inside leaves the fusion output
+            // untouched (graceful no-op). Bypass branches above (env bypass,
+            // auto-bypass on |initial| > search, legacy rerank) skip the
+            // posterior too — same interlock as the fusion itself.
+            if posterior_enabled() {
+                finder.posterior_override(&mut offsets, &cancel_flag);
+            }
         }
         offsets
     };
@@ -254,6 +264,39 @@ pub(crate) fn should_auto_bypass_fusion(
         return false;
     }
     initial_offset_ms.abs() > search_size_ms
+}
+
+/// `GYROFLOW_SYNC_POSTERIOR` master switch (change sync-likelihood-nuisance
+/// §3). Default ON (explicit user decision, 2026-06-12 late session: the fix
+/// goes live now; the D7 acceptance gates run as regression validation on
+/// the recorded corpus instead of blocking enablement). The generative
+/// posterior takes over each segment's output offset + confidence after
+/// `ncc_fusion_decide` (which keeps running in full as the `[ncc-fuse]`
+/// comparison-log producer). `0|false|no|off` reverts the decision to the
+/// pre-change fusion output byte-for-byte.
+/// OnceLock-cached; first resolve logs to `target="lifecycle"`.
+pub(crate) fn posterior_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_POSTERIOR").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_POSTERIOR={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_posterior resolved enabled={} source={}", v, source);
+        v
+    })
 }
 
 /// M1 axis-quality weighting on/off (`GYROFLOW_SYNC_AXIS_WEIGHT`, default on).
@@ -557,6 +600,13 @@ pub struct FindOffsetsRssync<'a> {
     /// aligned with `sync_points` (M2). ~200 pts × ~90 pairs × 5×f64 < 1MB
     /// per segment.
     track_data: Vec<Vec<PairTracks>>,
+
+    /// `GYROFLOW_SYNC_DIAG=2` only: ranges whose residual grid has already
+    /// been dumped this run. M2 pass-2 re-runs the fusion body (and
+    /// `scan_cost_curve_per_seg`) on the same segment — without this flag the
+    /// per-window dump doubles, and it would capture the gyro-prior-filtered
+    /// pass-2 problem instead of the raw corpus data.
+    residuals_dumped: parking_lot::Mutex<std::collections::HashSet<usize>>,
 }
 
 /// Confidence path classification — emitted to `[ncc-fuse]` log line for
@@ -692,6 +742,7 @@ impl FindOffsetsRssync<'_> {
             current_orientation: Arc::new(AtomicUsize::new(0)),
             presync_curves: Vec::new(),
             track_data: Vec::new(),
+            residuals_dumped: parking_lot::Mutex::new(std::collections::HashSet::new()),
         };
 
         {
@@ -1122,8 +1173,8 @@ impl FindOffsetsRssync<'_> {
     fn scan_cost_curve_per_seg(
         &self,
         range_idx: usize,
-        _from_ts: i64,
-        _to_ts: i64,
+        from_ts: i64,
+        to_ts: i64,
         final_offset_external_ms: f64,
     ) -> (f64, f64) {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
@@ -1182,8 +1233,440 @@ impl FindOffsetsRssync<'_> {
                 final_offset_external_ms,
                 0.05,
             );
+            // GYROFLOW_SYNC_DIAG=2: per-point residual dump for the offline
+            // likelihood rebuild (change sync-likelihood-nuisance, task 1.3).
+            self.dump_residual_grid(range_idx, from_ts, to_ts, &raw, final_offset_external_ms, frt_offset_ms);
         }
         (best_offs, ratio)
+    }
+
+    /// `GYROFLOW_SYNC_DIAG=2` only: stream per-point rs-sync residuals to
+    /// `residuals.csv` — every 10th grid δ of the cached pre-search curve
+    /// plus the final δ*. At every sampled δ TWO row groups are dumped:
+    /// gain = 1.0 (baseline, matches the existing cost curve) and gain = ĝ
+    /// from rs-sync's closed-form gain solve (design D1) — the latter is
+    /// what lets the offline replay rebuild the gain-profiled likelihood
+    /// without live SyncProblem geometry.
+    ///
+    /// Volume control (a full dump measured 14.46M rows = 1.16 GB / 22.5 s
+    /// per window): grid-δ groups are thinned to ≤ `RESIDUAL_DUMP_MAX_POINTS`
+    /// rows each via a deterministic equidistant stride over the flattened
+    /// (pair, point) sequence — both gain groups share the stride (computed
+    /// from the g = 1 group) so rows stay comparable, and `point_idx` keeps
+    /// the ORIGINAL per-pair index. δ* keeps the full point set for both
+    /// groups (σ/MAD analysis needs the complete population). The gain solve
+    /// on thinned δ runs on the same strided subset (`solve_gain_strided`,
+    /// fed the already-evaluated g = 1 base — the gain is a single scalar,
+    /// ~2000 points are statistically plenty), cutting its ~19 full residual
+    /// passes per δ to ~1/stride. None of this touches the progress callback
+    /// (no progress-bar jumps); diag-only, not on any hot path.
+    ///
+    /// M2 pass-2 re-runs of the same segment skip the dump entirely (the
+    /// `residuals_dumped` flag): the corpus wants the pass-1 (unfiltered)
+    /// residuals exactly once — a second dump would double the file and
+    /// record a derived (gyro-prior-filtered) problem state the offline
+    /// replay can re-derive from the pass-1 rows itself.
+    fn dump_residual_grid(
+        &self,
+        range_idx: usize,
+        from_ts: i64,
+        to_ts: i64,
+        raw_curve: &[(f64, f64)],
+        final_offset_external_ms: f64,
+        frt_offset_ms: f64,
+    ) {
+        /// Per-(δ, gain-group) row cap for grid-sampled δ (δ* is exempt).
+        const RESIDUAL_DUMP_MAX_POINTS: usize = 2000;
+
+        if !crate::synchronization::sync_diag::residual_dump_enabled() {
+            return;
+        }
+        if !self.residuals_dumped.lock().insert(range_idx) {
+            log::debug!(
+                target: "sync",
+                "[SyncDiag] residual dump: range={} already dumped (M2 pass-2 re-run), skipping",
+                range_idx
+            );
+            return;
+        }
+        let t0 = std::time::Instant::now();
+        let mut n_deltas = 0usize;
+        let mut n_rows = 0usize;
+        // Equidistant thinning over the flattened (pair, point) sequence;
+        // stride == 1 keeps everything. Original per-pair point indices are
+        // preserved so rows stay join-able across gain groups and δ.
+        let thin_rows = |groups: &[rs_sync::PairResiduals], stride: usize| -> Vec<(i64, usize, f64)> {
+            let mut rows = Vec::new();
+            let mut flat = 0usize;
+            for g in groups {
+                for (idx, r) in g.residuals.iter().enumerate() {
+                    if flat % stride == 0 {
+                        rows.push((g.timestamp_us, idx, *r));
+                    }
+                    flat += 1;
+                }
+            }
+            rows
+        };
+        let mut dump_at = |delay_s: f64, full: bool| {
+            let ext_ms = -delay_s * 1000.0 - frt_offset_ms;
+            // Baseline group: g ≡ 1 (aggregates back to the cost curve).
+            // Also provides the fixed (m, k) pairs + stride for the strided
+            // gain solve below.
+            let base = self.sync.eval_residuals(delay_s, from_ts, to_ts);
+            let n_total: usize = base.iter().map(|g| g.residuals.len()).sum();
+            let stride = if full {
+                1
+            } else {
+                n_total.div_ceil(RESIDUAL_DUMP_MAX_POINTS).max(1)
+            };
+            let mut record = |gain: f64, groups: &[rs_sync::PairResiduals]| {
+                let rows = thin_rows(groups, stride);
+                n_rows += rows.len();
+                crate::synchronization::sync_diag::record_residuals(range_idx, ext_ms, gain, &rows);
+            };
+            record(1.0, &base);
+            // Profiled group: residuals at the closed-form gain ĝ(δ).
+            let g_hat = if stride > 1 {
+                self.sync.solve_gain_strided(delay_s, &base, stride)
+            } else {
+                self.sync.solve_gain(delay_s, from_ts, to_ts)
+            };
+            record(g_hat, &self.sync.eval_residuals_with_gain(delay_s, from_ts, to_ts, g_hat));
+            n_deltas += 1;
+        };
+        for (i, &(_cost, delay_s)) in raw_curve.iter().enumerate() {
+            if i % 10 == 0 {
+                dump_at(delay_s, false);
+            }
+        }
+        // δ* (LBFGS-refined final offset; generally off-grid) — full dump.
+        let final_delay_s = -(final_offset_external_ms + frt_offset_ms) / 1000.0;
+        dump_at(final_delay_s, true);
+        log::info!(
+            target: "sync",
+            "[SyncDiag] residual dump: range={} deltas={} rows={} (g1 + profiled-gain groups; grid δ thinned to ≤{} pts/group, δ* full) took {:.0}ms",
+            range_idx,
+            n_deltas,
+            n_rows,
+            RESIDUAL_DUMP_MAX_POINTS,
+            t0.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+
+    /// sync-likelihood-nuisance §3 — generative-posterior decision layer.
+    ///
+    /// Runs AFTER `ncc_fusion_decide` (kept intact as the `[ncc-fuse]`
+    /// comparison-log producer) and REPLACES each segment's output offset +
+    /// confidence with the joint-posterior decision:
+    ///
+    /// 1. per window: robust likelihood on a sampled δ set — every 10th point
+    ///    of the cached pre-search curve (≈50ms) densified ±30ms around the
+    ///    curve argmin and the fusion output (candidates double as grid
+    ///    densifiers, design D6). Residuals are thinned to ≤2000 points/δ
+    ///    (same budget as the DIAG=2 dump), the amplitude gain is profiled
+    ///    per δ on the same strided subset (`solve_gain_strided`, fixed
+    ///    (m, k) per pair), σ = 1.4826×MAD at the best sampled δ, Tukey on
+    ///    standardized residuals, curvature scaled by the frame-pair count
+    ///    (designs D1/D2);
+    /// 2. windows are resampled onto the common 5ms lattice and summed
+    ///    (design D3 cross-window product — probe-only windows added by
+    ///    `AutosyncProcess` participate here and are stripped after
+    ///    `find_offsets` returns);
+    /// 3. prior (design D4): Stored Gaussian(initial_offset, σ=search/2)
+    ///    when an initial offset exists, else Uniform. Batch/deep-match
+    ///    anchors write search_size = 3000ms, so the stored tier carries
+    ///    exactly the anchor tier's σ = 1500ms — no separate source flag
+    ///    is needed at this layer;
+    /// 4. joint argmax → per-segment `pre_sync` sub-grid refinement (±7.5ms,
+    ///    0.1ms step); confidence = posterior mass within ±12.5ms of the
+    ///    argmax (D5), single-window runs scaled one tier down (×0.85).
+    ///
+    /// Guards / candidate votes DO NOT modify this output (D6). Any failure
+    /// or cancellation leaves the fusion output untouched (graceful no-op).
+    pub fn posterior_override(&mut self, offsets: &mut [(f64, f64, f64, f64)], cancel_flag: &AtomicBool) {
+        use crate::synchronization::posterior::{
+            combine_windows_on_common_grid, posterior_decide, sigma_mad, window_log_likelihood,
+            Prior,
+        };
+        const GRID_STEP_MS: f64 = 5.0;
+        const SAMPLE_EVERY_NTH: usize = 10;
+        const THIN_MAX_POINTS: usize = 2000;
+        const DENSIFY_RADIUS_MS: f64 = 30.0;
+        const REFINE_RADIUS_S: f64 = 0.0075;
+        const FINE_STEP_S: f64 = 0.0001;
+        const SINGLE_WINDOW_CONF_FACTOR: f64 = 0.85;
+
+        if offsets.is_empty() {
+            return;
+        }
+        let t0 = std::time::Instant::now();
+        let frt_offset_ms = self.frame_readout_time * 1000.0 / 2.0;
+        let ext_of = |d_s: f64| -d_s * 1000.0 - frt_offset_ms;
+
+        struct WindowEval {
+            seg: usize,
+            sp: (i64, i64),
+            grid_ms: Vec<f64>,
+            logl: Vec<f64>,
+            sigma: f64,
+            n_pairs: usize,
+            gain_star: f64,
+            star_ms: f64,
+        }
+        let mut windows: Vec<WindowEval> = Vec::new();
+
+        for i in 0..offsets.len() {
+            if cancel_flag.load(Relaxed) {
+                log::info!(target: "sync", "[posterior] canceled — keeping fusion outputs");
+                return;
+            }
+            let (mid_ms, fusion_ms, _cost, _conf) = offsets[i];
+            let mid_us = (mid_ms * 1000.0) as i64;
+            let sp = match self
+                .sync_points
+                .iter()
+                .find(|(f, t)| mid_us >= *f && mid_us <= *t)
+            {
+                Some(s) => *s,
+                None => continue,
+            };
+            let curve = match self.presync_curves.get(i) {
+                Some(c) if !c.is_empty() => c.clone(),
+                _ => continue,
+            };
+
+            // Sampled δ indices: coarse lattice + dense neighborhoods around
+            // the curve argmin and the fusion output. The true basin can be
+            // ~10-15ms wide — the coarse lattice alone could miss it, the
+            // argmin densification guarantees it is sampled.
+            let mut idxs: std::collections::BTreeSet<usize> =
+                (0..curve.len()).step_by(SAMPLE_EVERY_NTH).collect();
+            let argmin_idx = curve
+                .iter()
+                .enumerate()
+                .filter(|(_, (c, _))| c.is_finite())
+                .min_by(|a, b| {
+                    a.1 .0
+                        .partial_cmp(&b.1 .0)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .map(|(k, _)| k);
+            let mut densify_centers_ms: Vec<f64> = Vec::new();
+            if let Some(k) = argmin_idx {
+                densify_centers_ms.push(ext_of(curve[k].1));
+            }
+            if fusion_ms.is_finite() {
+                densify_centers_ms.push(fusion_ms);
+            }
+            for center in &densify_centers_ms {
+                for (k, &(_c, d_s)) in curve.iter().enumerate() {
+                    if (ext_of(d_s) - center).abs() <= DENSIFY_RADIUS_MS {
+                        idxs.insert(k);
+                    }
+                }
+            }
+            let deltas: Vec<f64> = idxs.iter().map(|&k| curve[k].1).collect();
+
+            // Evaluate the robust residual groups at every sampled δ in
+            // parallel (SyncProblem evaluation is read-only; workers carry
+            // the log context).
+            let sync = &self.sync;
+            let (sp_from, sp_to) = sp;
+            let evals: Vec<Option<(f64, f64, Vec<Vec<f64>>)>> =
+                crate::log_context::par_with_ctx(deltas, |delay_s: f64| {
+                    if cancel_flag.load(Relaxed) {
+                        return None;
+                    }
+                    // g ≡ 1 baseline: provides per-pair (m, k) and the
+                    // thinning stride, exactly like the DIAG=2 dump.
+                    let base = sync.eval_residuals(delay_s, sp_from, sp_to);
+                    let n_total: usize = base.iter().map(|g| g.residuals.len()).sum();
+                    if n_total == 0 {
+                        return None;
+                    }
+                    let stride = n_total.div_ceil(THIN_MAX_POINTS).max(1);
+                    let g_hat = sync.solve_gain_strided(delay_s, &base, stride);
+                    // Residuals at ĝ on the SAME strided subset with fixed
+                    // (m, k) per pair — the gain must explain the amplitude
+                    // under the same motion model, and the subset keeps the
+                    // per-δ cost bounded.
+                    let mut flat = 0usize;
+                    let mut groups: Vec<Vec<f64>> = Vec::new();
+                    for p in &base {
+                        if p.residuals.is_empty() {
+                            continue;
+                        }
+                        let mut sel = Vec::new();
+                        for k in 0..p.residuals.len() {
+                            if flat % stride == 0 {
+                                sel.push(k);
+                            }
+                            flat += 1;
+                        }
+                        if sel.is_empty() || p.motion.len() != 3 || !p.var_k.is_finite() {
+                            continue;
+                        }
+                        let r = sync.eval_pair_residuals_fixed_subset(
+                            p.timestamp_us,
+                            delay_s,
+                            g_hat,
+                            &p.motion,
+                            Some(p.var_k),
+                            &sel,
+                        );
+                        if !r.is_empty() {
+                            groups.push(r);
+                        }
+                    }
+                    if groups.is_empty() {
+                        return None;
+                    }
+                    Some((ext_of(delay_s), g_hat, groups))
+                });
+            if cancel_flag.load(Relaxed) {
+                log::info!(target: "sync", "[posterior] canceled — keeping fusion outputs");
+                return;
+            }
+            let mut evals: Vec<(f64, f64, Vec<Vec<f64>>)> = evals.into_iter().flatten().collect();
+            if evals.len() < 2 {
+                continue;
+            }
+            evals.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+            // δ*: smallest median |r| (same selection as the offline replay),
+            // σ = robust MAD scale of its residual population.
+            let med_abs = |groups: &[Vec<f64>]| -> f64 {
+                let mut v: Vec<f64> = groups
+                    .iter()
+                    .flatten()
+                    .map(|r| r.abs())
+                    .filter(|r| r.is_finite())
+                    .collect();
+                if v.is_empty() {
+                    return f64::INFINITY;
+                }
+                let k = v.len() / 2;
+                v.select_nth_unstable_by(k, |a, b| {
+                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                });
+                v[k]
+            };
+            let star_i = match evals
+                .iter()
+                .enumerate()
+                .map(|(k, e)| (k, med_abs(&e.2)))
+                .filter(|(_, m)| m.is_finite())
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            {
+                Some((k, _)) => k,
+                None => continue,
+            };
+            let flat_star: Vec<f64> = evals[star_i].2.iter().flatten().copied().collect();
+            let sigma = sigma_mad(&flat_star);
+            let n_pairs = evals[star_i].2.len();
+            let gain_star = evals[star_i].1;
+            let star_ms = evals[star_i].0;
+            let grid_ms: Vec<f64> = evals.iter().map(|e| e.0).collect();
+            let logl: Vec<f64> = evals
+                .iter()
+                .map(|e| window_log_likelihood(&e.2, sigma))
+                .collect();
+            windows.push(WindowEval { seg: i, sp, grid_ms, logl, sigma, n_pairs, gain_star, star_ms });
+        }
+
+        if windows.is_empty() {
+            log::warn!(
+                target: "sync",
+                "[posterior] no usable window likelihood — keeping fusion outputs"
+            );
+            return;
+        }
+
+        // D3: cross-window product on the common 5ms lattice.
+        let views: Vec<(&[f64], &[f64])> = windows
+            .iter()
+            .map(|w| (w.grid_ms.as_slice(), w.logl.as_slice()))
+            .collect();
+        let Some((joint_grid, joint_logl)) = combine_windows_on_common_grid(&views, GRID_STEP_MS)
+        else {
+            log::warn!(
+                target: "sync",
+                "[posterior] window grids share no common span — keeping fusion outputs"
+            );
+            return;
+        };
+
+        // D4 prior. `initial_offset` here is the effective value (it already
+        // reflects the calc_initial_fast essential median when that ran).
+        let init = self.sync_params.initial_offset;
+        let prior = if init.abs() > 1e-9 {
+            Prior::Stored { init_ms: init, search_size_ms: self.sync_params.search_size }
+        } else {
+            Prior::Uniform
+        };
+        let prior_str = match prior {
+            Prior::Stored { init_ms, search_size_ms } => {
+                format!("stored(init={:.1},sigma={:.0})", init_ms, search_size_ms / 2.0)
+            }
+            _ => "uniform".to_string(),
+        };
+
+        let Some(post) = posterior_decide(&joint_grid, &joint_logl, &prior) else {
+            log::warn!(
+                target: "sync",
+                "[posterior] posterior_decide failed — keeping fusion outputs"
+            );
+            return;
+        };
+        let n_windows = windows.len();
+        let conf = (post.conf_posterior
+            * if n_windows == 1 { SINGLE_WINDOW_CONF_FACTOR } else { 1.0 })
+        .clamp(0.0, 1.0);
+
+        // Per-segment sub-grid refinement at the shared joint argmax (D6:
+        // same pre_sync refinement the fusion output uses).
+        for w in &windows {
+            let center_s = -(post.argmax_ms + frt_offset_ms) / 1000.0;
+            let refined = self
+                .sync
+                .pre_sync(center_s, w.sp.0, w.sp.1, FINE_STEP_S, REFINE_RADIUS_S);
+            let (out_ms, out_cost) = match refined {
+                Some((c, d_s)) if c.is_finite() => (ext_of(d_s), c),
+                _ => (post.argmax_ms, offsets[w.seg].2),
+            };
+            let fusion_ms = offsets[w.seg].1;
+            log::info!(
+                target: "sync",
+                "[posterior] seg {}: argmax={:.1}ms refined={:.1}ms ci95=[{:.0},{:.0}] conf={:.3} windows={} win=[{}-{}ms] g*={:.3} sigma={:.5} n_pairs={} star={:.1}ms prior={} fusion={:.1}ms diff={:+.1}ms",
+                w.seg,
+                post.argmax_ms,
+                out_ms,
+                post.ci95.0,
+                post.ci95.1,
+                conf,
+                n_windows,
+                w.sp.0 / 1000,
+                w.sp.1 / 1000,
+                w.gain_star,
+                w.sigma,
+                w.n_pairs,
+                w.star_ms,
+                prior_str,
+                fusion_ms,
+                out_ms - fusion_ms
+            );
+            offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
+        }
+        log::info!(
+            target: "sync",
+            "[posterior] joint decision done in {:.0}ms (windows={}, joint_grid={} pts, argmax={:.1}ms conf={:.3})",
+            t0.elapsed().as_secs_f64() * 1000.0,
+            n_windows,
+            joint_grid.len(),
+            post.argmax_ms,
+            conf
+        );
     }
 
     /// Top-N correlation rerank: for each selected offset, check corr@final; if low,

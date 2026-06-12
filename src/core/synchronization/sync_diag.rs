@@ -14,6 +14,23 @@
 //! - `cost_curves_rssync.csv`     full per-segment cost curve from rs_sync
 //! - `summary.txt`                per-segment initial vs final, second/best ratio
 //!
+//! `GYROFLOW_SYNC_DIAG=2` implies all of the above and additionally streams
+//! per-point rs-sync residuals to `residuals.csv` (change
+//! `sync-likelihood-nuisance` — offline likelihood-rebuild corpus): every 10th
+//! grid δ plus the final δ*, columns
+//! `range_idx, offset_ms, frame_pair_ts, point_idx, gain, residual`.
+//! Each sampled δ carries TWO row groups: one at gain = 1.0 (the existing
+//! cost-curve residuals) and one at the profiled gain ĝ solved by rs-sync's
+//! closed-form `solve_gain` (design D1) — the offline replay rebuilds the
+//! gain-profiled likelihood from the latter without needing the live
+//! SyncProblem geometry. Grid-δ groups are thinned to ≤ 2000 points each
+//! (deterministic equidistant stride shared by both gain groups; `point_idx`
+//! is the ORIGINAL per-pair index); δ* keeps the full point set for both
+//! groups (the σ/MAD analysis of the offline rebuild needs it). A full dump
+//! measured 14.46M rows = 1.16 GB / 22.5 s per window — unusable for corpus
+//! recording. M2 pass-2 re-runs do not re-dump a segment. The `=1` file list
+//! and behavior are unchanged.
+//!
 //! When disabled, every sink call performs one atomic load and returns
 //! immediately — zero allocation.
 
@@ -25,14 +42,45 @@ use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static ENABLED: OnceLock<bool> = OnceLock::new();
+static RESIDUAL_DUMP: OnceLock<bool> = OnceLock::new();
+static ESSMAT_CURVE: OnceLock<bool> = OnceLock::new();
 static SESSION: Mutex<Option<DiagSession>> = Mutex::new(None);
 
 #[inline]
 pub fn is_enabled() -> bool {
     *ENABLED.get_or_init(|| {
         std::env::var("GYROFLOW_SYNC_DIAG")
-            .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+            // "2" implies the full level-1 dump (plus residuals.csv).
+            .map(|v| matches!(v.trim(), "1" | "2" | "true" | "yes" | "on"))
             .unwrap_or(false)
+    })
+}
+
+/// `GYROFLOW_SYNC_DIAG=2` — per-point residual dump for the offline
+/// likelihood rebuild (change `sync-likelihood-nuisance`). Level 1 keeps the
+/// exact pre-change file list.
+#[inline]
+pub fn residual_dump_enabled() -> bool {
+    *RESIDUAL_DUMP.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_DIAG")
+            .map(|v| v.trim() == "2")
+            .unwrap_or(false)
+    })
+}
+
+/// `GYROFLOW_SYNC_DIAG_ESSMAT=1` — opt-in for the essential-matrix full cost
+/// curve dump. The curve is RECOMPUTED serially at 1ms steps over the whole
+/// search span just for the dump (a deep-match probe spans millions of
+/// points: measured 8.29M points ≈ +69s/window + 1.19GB CSV), so it must not
+/// ride along with the general diag gate — corpus recording (`DIAG=2`) would
+/// otherwise stall every deep-match probe. Requires `is_enabled()` too.
+#[inline]
+pub fn essmat_curve_enabled() -> bool {
+    *ESSMAT_CURVE.get_or_init(|| {
+        is_enabled()
+            && std::env::var("GYROFLOW_SYNC_DIAG_ESSMAT")
+                .map(|v| matches!(v.trim(), "1" | "true" | "yes" | "on"))
+                .unwrap_or(false)
     })
 }
 
@@ -51,6 +99,11 @@ struct DiagSession {
     fusion_decisions: Vec<FusionDecisionRecord>,
     flow_quality: Vec<FlowQualityRecord>,
     axis_weights: Vec<AxisWeightRecord>,
+    /// Level-2 only (`GYROFLOW_SYNC_DIAG=2`): residuals.csv is streamed
+    /// instead of buffered — a full dump is 10⁵–10⁶ rows per window.
+    /// Lazily created on the first `record_residuals` call.
+    residuals_writer: Option<BufWriter<File>>,
+    residual_rows: u64,
 }
 
 struct FlowQualityRecord {
@@ -222,7 +275,47 @@ pub fn init_session() {
         fusion_decisions: Vec::new(),
         flow_quality: Vec::new(),
         axis_weights: Vec::new(),
+        residuals_writer: None,
+        residual_rows: 0,
     });
+}
+
+/// Stream per-point residual rows for one (range, offset, gain) grid sample
+/// to `residuals.csv` (`GYROFLOW_SYNC_DIAG=2` only — change
+/// `sync-likelihood-nuisance`). `rows` is `(frame_pair_ts_us, point_idx,
+/// residual)` — already thinned by the caller for grid δ (≤ 2000 points per
+/// gain group, deterministic equidistant stride; δ* is dumped in full).
+/// `point_idx` is the ORIGINAL index within the pair's residual vector so
+/// thinned rows stay join-able across gain groups and δ. `gain` is 1.0 for
+/// the baseline group and the profiled ĝ for the gain-solved group — both
+/// are dumped per sampled δ (see module docs).
+pub fn record_residuals(range_idx: usize, offset_ms: f64, gain: f64, rows: &[(i64, usize, f64)]) {
+    if !residual_dump_enabled() {
+        return;
+    }
+    if let Some(s) = SESSION.lock().as_mut() {
+        if s.residuals_writer.is_none() {
+            let mut p = s.out_dir.clone();
+            p.push("residuals.csv");
+            match File::create(&p) {
+                Ok(f) => {
+                    let mut w = BufWriter::new(f);
+                    let _ = writeln!(w, "range_idx,offset_ms,frame_pair_ts,point_idx,gain,residual");
+                    s.residuals_writer = Some(w);
+                }
+                Err(e) => {
+                    log::warn!("[SyncDiag] failed to create residuals.csv: {}", e);
+                    return;
+                }
+            }
+        }
+        if let Some(w) = s.residuals_writer.as_mut() {
+            for (pair_ts, point_idx, r) in rows {
+                let _ = writeln!(w, "{},{:.4},{},{},{:.6},{:.9}", range_idx, offset_ms, pair_ts, point_idx, gain, r);
+                s.residual_rows += 1;
+            }
+        }
+    }
 }
 
 /// Record one segment's axis quality scan + derived weights (M1).
@@ -788,10 +881,18 @@ pub fn flush_and_close() {
     if !is_enabled() {
         return;
     }
-    let session = match SESSION.lock().take() {
+    let mut session = match SESSION.lock().take() {
         Some(s) => s,
         None => return,
     };
+    // Level-2 residual stream: flush + close before the buffered files are
+    // written. No-op (and no extra log line) on level 1.
+    if let Some(mut w) = session.residuals_writer.take() {
+        if let Err(e) = w.flush() {
+            log::warn!("[SyncDiag] residuals.csv flush error: {}", e);
+        }
+        log::info!("[SyncDiag] residuals.csv closed: {} rows", session.residual_rows);
+    }
     let dir = session.out_dir.clone();
     if let Err(e) = write_all(&session) {
         log::warn!("[SyncDiag] flush error: {}", e);

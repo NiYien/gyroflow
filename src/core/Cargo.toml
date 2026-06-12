@@ -9,6 +9,14 @@ build = "build.rs"
 name = "gyroflow_core"
 path = "lib.rs"
 
+# Dev-only offline replay tool (change sync-likelihood-nuisance, spec
+# sync-decision-replay). Feature-gated so it never enters release packaging:
+#   cargo run -p gyroflow-core --features sync-replay --bin sync_replay -- --help
+[[bin]]
+name = "sync_replay"
+path = "bin/sync_replay.rs"
+required-features = ["sync-replay"]
+
 [dependencies]
 telemetry-parser = { git = "https://github.com/NiYien/telemetry-parser.git", branch = "niyien" }
 #ahrs = { version = "0.5.0", features = ["field_access"] }
@@ -16,8 +24,10 @@ ahrs = { version = "0.8", features = ["field_access"] }
 
 stabilize_spirv = { path = "./gpu/stabilize_spirv" }
 
-#rs-sync = { path = "../../../rs-sync" }
-rs-sync = { git = "https://github.com/NiYien/rs-sync.git", rev = "0644253" }
+# Local fork — adds eval_residuals/solve_gain (change sync-likelihood-nuisance).
+# Switch back to the git pin once the fork's new API is pushed and re-pinned.
+rs-sync = { path = "../../../rs-sync" }
+#rs-sync = { git = "https://github.com/NiYien/rs-sync.git", rev = "0644253" }
 
 argmin = { version = "0.11.0", default-features = false }
 argmin-math = { version = "0.5.1", default-features = false, features = ["nalgebra_v0_34"] }
@@ -124,6 +134,8 @@ cache-gyro-metadata = []
 neuflow-ort = ["dep:ort"]
 neuflow-burn = ["dep:burn", "dep:burn-store", "dep:cubecl-runtime"]
 neuflow = ["neuflow-ort", "neuflow-burn"]
+# Dev-only: enables the sync_replay offline decision-replay bin.
+sync-replay = []
 
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.22"
