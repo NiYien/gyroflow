@@ -345,6 +345,117 @@ pub(crate) fn probe_escalation_disagree_ms() -> f64 {
     })
 }
 
+/// `GYROFLOW_SYNC_ARBITRATION` master switch (change sync-decision-arbitration).
+/// Default ON (2026-06-13, task 6 — thresholds calibrated on the 18-variant
+/// corpus + all four branches live-verified; user authorized the default flip).
+/// The arbiter only engages once the posterior override would otherwise apply
+/// (`posterior_enabled()` must also be on). `0|false|no|off` disables it and the
+/// decision layer reverts byte-for-byte to the `sync-offset-posterior` "posterior
+/// owns the output unconditionally" path (the per-seg fusion basin side-channel
+/// is then never populated). When on, the disagreement-triggered, ci95-gated
+/// arbitration runs. OnceLock-cached; first resolve logs to `target="lifecycle"`.
+pub(crate) fn sync_arbitration_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_ARBITRATION").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_ARBITRATION={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_arbitration resolved enabled={} source={}", v, source);
+        v
+    })
+}
+
+/// Arbiter ci95-narrow threshold (ms): when posterior and fusion disagree, a
+/// posterior ci95 width AT OR BELOW this is treated as trustworthy and the
+/// posterior is kept (it rejects fusion false peaks). Placeholder default to
+/// be swept later (`GYROFLOW_SYNC_ARB_CI95_NARROW_MS`). OnceLock-cached.
+pub(crate) fn arb_ci95_narrow_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_ARB_CI95_NARROW_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(12.0)
+    })
+}
+
+/// Arbiter ci95-wide threshold (ms): a posterior ci95 width AT OR ABOVE this is
+/// treated as untrustworthy, so the arbiter may hand off to a strong-basin
+/// fusion (or suppress conf when fusion is also weak). Placeholder default to
+/// be swept later (`GYROFLOW_SYNC_ARB_CI95_WIDE_MS`). OnceLock-cached.
+pub(crate) fn arb_ci95_wide_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_ARB_CI95_WIDE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(30.0)
+    })
+}
+
+/// Arbiter fusion strong-basin Pearson r threshold: fusion is "strong" when its
+/// Pearson r is AT OR ABOVE this (OR-combined with the cost-sharpness ratio
+/// gate). Default 0.55, swept on the 18-variant corpus (`_arb_sim.py`, task 5):
+/// safe region is (0.5, 0.615] — bounded below by clip 8's bad-window fusion
+/// (r=0.5, must stay excluded) and above by clip 7 (r=0.615, must be included).
+/// 0.55 centers it with ~0.05/0.065 margin each side (0.6 left only 0.015 to
+/// clip 7). `GYROFLOW_SYNC_ARB_FUSION_R` overrides. OnceLock-cached.
+pub(crate) fn arb_fusion_r() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_ARB_FUSION_R")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.55)
+    })
+}
+
+/// Arbiter fusion strong-basin sharpness threshold: compared against the
+/// rs-cost 2nd/best RATIO (`rs_2nd_over_best`, e.g. 1.2 = sharp), OR-combined
+/// with the Pearson r gate. Placeholder default to be swept later
+/// (`GYROFLOW_SYNC_ARB_FUSION_SHARP`). OnceLock-cached.
+pub(crate) fn arb_fusion_sharp() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_ARB_FUSION_SHARP")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite())
+            .unwrap_or(1.2)
+    })
+}
+
+/// Arbiter disagreement floor (ms): the effective Δ trigger is
+/// `max(this, one_frame_ms)`. Below it the posterior↔fusion agree and the
+/// posterior output is kept (common path). Placeholder default to be swept
+/// later (`GYROFLOW_SYNC_ARB_DELTA_MS`). OnceLock-cached.
+pub(crate) fn arb_delta_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_ARB_DELTA_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(30.0)
+    })
+}
+
 /// M1 axis-quality weighting on/off (`GYROFLOW_SYNC_AXIS_WEIGHT`, default on).
 /// `0` reverts every aggregation point (pearson_at, Pearson scan, NCC) to the
 /// legacy equal-weight mean. OnceLock-cached; first resolve logs to
@@ -663,6 +774,33 @@ pub struct FindOffsetsRssync<'a> {
     /// per-window dump doubles, and it would capture the gyro-prior-filtered
     /// pass-2 problem instead of the raw corpus data.
     residuals_dumped: parking_lot::Mutex<std::collections::HashSet<usize>>,
+
+    /// Per-segment fusion basin-strength side-channel (change
+    /// sync-decision-arbitration, design D7). Indexed by seg; `None` when the
+    /// segment was not finalized through the normal fusion path or when the
+    /// arbiter is disabled. Carries the fusion Pearson r and the rs-cost
+    /// 2nd/best sharpness RATIO (e.g. 1.28 = sharp, NOT the normalized [0,1]
+    /// `cost_sharpness`) from `ncc_fusion_decide`'s finalize point to the
+    /// posterior override seam, so the arbiter can read fusion strength
+    /// without widening the offsets tuple. Populated ONLY when both posterior
+    /// and arbitration are enabled — left empty otherwise so the off-path is
+    /// byte-identical.
+    fusion_basin: Vec<Option<FusionBasin>>,
+
+    /// Scaled fps cached from `ComputeParams::scaled_fps` so the arbiter can
+    /// compute an fps-aware one-frame-ms disagreement floor without holding a
+    /// `ComputeParams` reference (sync-decision-arbitration, design D2).
+    scaled_fps: f64,
+}
+
+/// Per-segment fusion basin strength carried to the posterior override seam
+/// (sync-decision-arbitration D7). `cost_sharpness_ratio` is the rs-cost
+/// 2nd/best ratio (`rs_2nd_over_best`), NOT the normalized [0,1]
+/// `cost_sharpness`.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FusionBasin {
+    pearson_r: f64,
+    cost_sharpness_ratio: f64,
 }
 
 /// Confidence path classification — emitted to `[ncc-fuse]` log line for
@@ -801,6 +939,8 @@ impl FindOffsetsRssync<'_> {
             presync_curves: Vec::new(),
             track_data: Vec::new(),
             residuals_dumped: parking_lot::Mutex::new(std::collections::HashSet::new()),
+            fusion_basin: Vec::new(),
+            scaled_fps: params.scaled_fps,
         };
 
         {
@@ -1768,7 +1908,114 @@ impl FindOffsetsRssync<'_> {
                 fusion_ms,
                 out_ms - fusion_ms
             );
-            offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
+
+            // ── Disagreement-triggered posterior↔fusion arbitration ──────
+            // (change sync-decision-arbitration, designs D2/D3/D4/D5). When
+            // disabled this is a no-op and the override below stays
+            // byte-identical to the `sync-offset-posterior` path.
+            if sync_arbitration_enabled() {
+                // `_delta_trigger` retained for diagnostics / a possible future
+                // agree-shortcut, but it NO LONGER gates the decision: a
+                // wide-ci95 posterior within ~1 frame of fusion (clip 1 Δ16ms /
+                // clip 9 Δ8ms) is exactly the half-frame precision error we must
+                // fix, so the choice is purely ci95-tiered. (Offline sim
+                // 2026-06-13: Δ-gate fixed 13/16, ci95-only 15/16; design D2 rev.)
+                let _one_frame_ms = if self.scaled_fps.is_finite() && self.scaled_fps > 0.0 {
+                    1000.0 / self.scaled_fps
+                } else {
+                    0.0
+                };
+                let _delta_trigger = arb_delta_ms().max(_one_frame_ms);
+                let delta = (out_ms - fusion_ms).abs();
+                let ci95_width = (post.ci95.1 - post.ci95.0).abs();
+                let basin = self.fusion_basin.get(w.seg).copied().flatten();
+
+                // Unusable / non-finite data → graceful no-op (keep posterior).
+                // No Δ-agree gate (see note above): finite cases fall straight
+                // into the ci95 tiers below.
+                if !out_ms.is_finite()
+                    || !fusion_ms.is_finite()
+                    || !ci95_width.is_finite()
+                {
+                    offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
+                } else if ci95_width <= arb_ci95_narrow_ms() {
+                    // Branch 1 (narrow): posterior is trustworthy and rejects
+                    // fusion false peaks (clip 13/15). Keep posterior.
+                    log::info!(
+                        target: "sync",
+                        "[arbiter] seg {}: delta={:.1}ms ci95={:.1}ms chose=posterior fusion={:.1}ms r={} sharp={} (branch=narrow)",
+                        w.seg, delta, ci95_width, fusion_ms,
+                        basin.map(|b| format!("{:.3}", b.pearson_r)).unwrap_or_else(|| "n/a".into()),
+                        basin.map(|b| format!("{:.3}", b.cost_sharpness_ratio)).unwrap_or_else(|| "n/a".into())
+                    );
+                    offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
+                } else {
+                    // ci95 above the narrow gate (mid OR wide). Decide by fusion
+                    // basin strength FIRST (design D3 rev, 2026-06-13 live): clip
+                    // 1's DIS ci95 swings 20/30/100 across runs — gating "take
+                    // fusion" on ci95>=wide left the ci95=20 run stuck in the mid
+                    // dead-zone (kept a +12ms posterior). So a strong fusion basin
+                    // wins in BOTH mid and wide; only the fusion-WEAK action
+                    // differs (wide=drop / mid=keep posterior, which preserves
+                    // clip-8-style good escalated posteriors when the window's
+                    // fusion is a bad-window value). The narrow gate above still
+                    // protects fusion false-peaks (clip 13/15, whose r>=0.6 would
+                    // otherwise grab the wrong peak).
+                    let fusion_strong = match basin {
+                        Some(b) => {
+                            (b.pearson_r.is_finite() && b.pearson_r >= arb_fusion_r())
+                                || (b.cost_sharpness_ratio.is_finite()
+                                    && b.cost_sharpness_ratio >= arb_fusion_sharp())
+                        }
+                        None => false,
+                    };
+                    if fusion_strong {
+                        // fusion-win: hand off to the strong-basin fusion offset
+                        // (D4 consolidation — downstream drop logic untouched).
+                        // Reuse the fusion cost still in the tuple, conf safely
+                        // above the downstream 0.4 filter so it is kept.
+                        let fusion_cost = offsets[w.seg].2;
+                        let arb_cost = if fusion_cost.is_finite() { fusion_cost } else { out_cost };
+                        const ARB_FUSION_WIN_CONF: f64 = 0.5;
+                        log::info!(
+                            target: "sync",
+                            "[arbiter] seg {}: delta={:.1}ms ci95={:.1}ms chose=fusion fusion={:.1}ms r={} sharp={} (branch=fusion-win)",
+                            w.seg, delta, ci95_width, fusion_ms,
+                            basin.map(|b| format!("{:.3}", b.pearson_r)).unwrap_or_else(|| "n/a".into()),
+                            basin.map(|b| format!("{:.3}", b.cost_sharpness_ratio)).unwrap_or_else(|| "n/a".into())
+                        );
+                        offsets[w.seg] = (offsets[w.seg].0, fusion_ms, arb_cost, ARB_FUSION_WIN_CONF);
+                    } else if ci95_width >= arb_ci95_wide_ms() {
+                        // both-weak (wide): posterior wide AND fusion weak →
+                        // conf-suppress below the downstream 0.4 filter so the
+                        // point is dropped (don't bake a wrong value; clip 16).
+                        const ARB_DROP_CONF: f64 = 0.0;
+                        log::info!(
+                            target: "sync",
+                            "[arbiter] seg {}: delta={:.1}ms ci95={:.1}ms chose=drop fusion={:.1}ms r={} sharp={} (branch=both-weak)",
+                            w.seg, delta, ci95_width, fusion_ms,
+                            basin.map(|b| format!("{:.3}", b.pearson_r)).unwrap_or_else(|| "n/a".into()),
+                            basin.map(|b| format!("{:.3}", b.cost_sharpness_ratio)).unwrap_or_else(|| "n/a".into())
+                        );
+                        offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, ARB_DROP_CONF);
+                    } else {
+                        // mid-keep: posterior mid-ci95 AND fusion weak → keep the
+                        // posterior (conservative; preserves good escalated
+                        // posteriors whose window fusion is a bad-window value,
+                        // e.g. clip 8). Equivalent to the disabled-arbiter output.
+                        log::info!(
+                            target: "sync",
+                            "[arbiter] seg {}: delta={:.1}ms ci95={:.1}ms chose=posterior fusion={:.1}ms r={} sharp={} (branch=mid-keep)",
+                            w.seg, delta, ci95_width, fusion_ms,
+                            basin.map(|b| format!("{:.3}", b.pearson_r)).unwrap_or_else(|| "n/a".into()),
+                            basin.map(|b| format!("{:.3}", b.cost_sharpness_ratio)).unwrap_or_else(|| "n/a".into())
+                        );
+                        offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
+                    }
+                }
+            } else {
+                offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
+            }
         }
         // Posterior done; the final 1.0 is emitted by finished_feeding_frames
         // after the offsets are applied, so the bar never reaches 100% early.
@@ -3443,6 +3690,21 @@ impl FindOffsetsRssync<'_> {
                 };
 
             offsets[i] = (mid_ms, output_ms, output_cost, confidence);
+
+            // Carry this segment's fusion basin strength to the posterior
+            // override seam (sync-decision-arbitration D7). Only populated when
+            // both posterior and arbitration are enabled so the off-path stays
+            // byte-identical. `cost_sharpness_ratio` is the raw 2nd/best ratio
+            // (`rs_2nd_over_best`), NOT the normalized [0,1] `cost_sharpness`.
+            if posterior_enabled() && sync_arbitration_enabled() {
+                if self.fusion_basin.len() < offsets.len() {
+                    self.fusion_basin.resize(offsets.len(), None);
+                }
+                self.fusion_basin[i] = Some(FusionBasin {
+                    pearson_r: max_pearson_r,
+                    cost_sharpness_ratio: rs_2nd_over_best,
+                });
+            }
 
             // Prior-state tail for log traceability. Only emit when prior is
             // active to keep the no-prior log line byte-identical to the
