@@ -8490,6 +8490,9 @@ impl RenderQueue {
                     "time_per_syncpoint": 2.5,
                     "every_nth_frame": every_nth_frame,
                     "initial_offset": init_offset_s,
+                    // COMP_TIME-grade anchor — posterior uses the σ=1500ms
+                    // anchor prior instead of search_size/2 (5s floor → 2500ms).
+                    "offset_is_anchor": true,
                     // Disable essential_matrix pre-computation so it doesn't
                     // overwrite our per-clip initial_offset and force search_size=3000ms.
                     "calc_initial_fast": false,
@@ -8551,6 +8554,10 @@ impl RenderQueue {
                             sync_obj.insert(
                                 "search_size".into(),
                                 serde_json::json!(search_size_s),
+                            );
+                            sync_obj.insert(
+                                "offset_is_anchor".into(),
+                                serde_json::json!(true),
                             );
                             sync_obj.insert(
                                 "calc_initial_fast".into(),
@@ -9363,6 +9370,7 @@ impl RenderQueue {
                         "time_per_syncpoint": 2.5,
                         "every_nth_frame": every_nth_frame,
                         "initial_offset": offset_ms / 1000.0,
+                        "offset_is_anchor": true,
                         "calc_initial_fast": false,
                         "pose_method": 0,
                         "of_method": 2,
@@ -9386,6 +9394,7 @@ impl RenderQueue {
                                 serde_json::json!(offset_ms / 1000.0),
                             );
                             sync_obj.insert("search_size".into(), serde_json::json!(3.0));
+                            sync_obj.insert("offset_is_anchor".into(), serde_json::json!(true));
                             sync_obj
                                 .insert("calc_initial_fast".into(), serde_json::json!(false));
                         }

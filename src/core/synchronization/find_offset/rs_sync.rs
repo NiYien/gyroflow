@@ -1373,11 +1373,12 @@ impl FindOffsetsRssync<'_> {
     ///    (design D3 cross-window product — probe-only windows added by
     ///    `AutosyncProcess` participate here and are stripped after
     ///    `find_offsets` returns);
-    /// 3. prior (design D4): Stored Gaussian(initial_offset, σ=search/2)
-    ///    when an initial offset exists, else Uniform. Batch/deep-match
-    ///    anchors write search_size = 3000ms, so the stored tier carries
-    ///    exactly the anchor tier's σ = 1500ms — no separate source flag
-    ///    is needed at this layer;
+    /// 3. prior (design D4): batch/deep-match anchors flag their offset via
+    ///    `SyncParams::offset_is_anchor` and get the anchor tier
+    ///    Gaussian(init, σ=1500ms); any other stored initial offset gets the
+    ///    weakly-informative Gaussian(init, σ=search/2); no initial offset
+    ///    → Uniform. (The flag exists because the batch search floor is 5s,
+    ///    so search/2 would inflate the anchor prior to σ ≥ 2500ms.);
     /// 4. joint argmax → per-segment `pre_sync` sub-grid refinement (±7.5ms,
     ///    0.1ms step); confidence = posterior mass within ±12.5ms of the
     ///    argmax (D5), single-window runs scaled one tier down (×0.85).
@@ -1423,15 +1424,18 @@ impl FindOffsetsRssync<'_> {
             }
             let (mid_ms, fusion_ms, _cost, _conf) = offsets[i];
             let mid_us = (mid_ms * 1000.0) as i64;
-            let sp = match self
+            let sp_idx = match self
                 .sync_points
                 .iter()
-                .find(|(f, t)| mid_us >= *f && mid_us <= *t)
+                .position(|(f, t)| mid_us >= *f && mid_us <= *t)
             {
-                Some(s) => *s,
+                Some(k) => k,
                 None => continue,
             };
-            let curve = match self.presync_curves.get(i) {
+            let sp = self.sync_points[sp_idx];
+            // presync_curves is aligned with sync_points, not with `offsets` —
+            // a dropped segment (no offset row pushed) shifts `i` off by one.
+            let curve = match self.presync_curves.get(sp_idx) {
                 Some(c) if !c.is_empty() => c.clone(),
                 _ => continue,
             };
@@ -1601,11 +1605,22 @@ impl FindOffsetsRssync<'_> {
         // reflects the calc_initial_fast essential median when that ran).
         let init = self.sync_params.initial_offset;
         let prior = if init.abs() > 1e-9 {
-            Prior::Stored { init_ms: init, search_size_ms: self.sync_params.search_size }
+            if self.sync_params.offset_is_anchor {
+                Prior::Anchor { init_ms: init }
+            } else {
+                Prior::Stored { init_ms: init, search_size_ms: self.sync_params.search_size }
+            }
         } else {
             Prior::Uniform
         };
         let prior_str = match prior {
+            Prior::Anchor { init_ms } => {
+                format!(
+                    "anchor(init={:.1},sigma={:.0})",
+                    init_ms,
+                    crate::synchronization::posterior::ANCHOR_PRIOR_SIGMA_MS
+                )
+            }
             Prior::Stored { init_ms, search_size_ms } => {
                 format!("stored(init={:.1},sigma={:.0})", init_ms, search_size_ms / 2.0)
             }

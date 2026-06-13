@@ -821,6 +821,9 @@ impl<'a> FfmpegProcessor<'a> {
                 let next_range = ranges.remove(0);
                 let position = (next_range.0 as i64).rescale((1, 1000), rescale::TIME_BASE);
                 self.input_context.seek(position, ..position)?;
+                // Both bounds must follow the range: a stale start_ms from the
+                // first range drops every frame of a range that starts earlier.
+                start_ms = Some(next_range.0);
                 end_ms = Some(next_range.1);
                 continue;
             } else {

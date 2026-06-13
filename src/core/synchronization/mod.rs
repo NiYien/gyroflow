@@ -67,6 +67,12 @@ pub struct SyncParams {
     pub pose_method: usize,
     pub custom_sync_pattern: serde_json::Value,
     pub auto_sync_points: bool,
+    /// True when `initial_offset` is a batch/deep-match anchor (COMP_TIME
+    /// ±1.5s granularity). Selects the posterior's anchor-tier prior
+    /// (σ = 1500ms) instead of the σ = search_size/2 stored tier — the
+    /// stored tier would otherwise inflate with the batch search floor
+    /// (5s → σ = 2500ms) and with |initial_offset| × 1.5 growth.
+    pub offset_is_anchor: bool,
 }
 
 #[derive(Clone)]

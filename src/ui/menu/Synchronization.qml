@@ -40,6 +40,9 @@ MenuItem {
     property alias poseMethod: poseMethod;
     property var customSyncTimestamps: [];
     property var additionalSyncTimestamps: [];
+    // True when initial_offset came from a batch/deep-match anchor — rides
+    // along sync_settings so the posterior can pick the anchor-tier prior.
+    property bool offsetIsAnchor: false;
 
     function doAutosync(): void {
         if (controller.sync_in_progress) return;
@@ -64,6 +67,9 @@ MenuItem {
         if (o && Object.keys(o).length > 0) {
             if (o.hasOwnProperty("initial_offset"))     initialOffset.value                 = +o.initial_offset;
             if (o.hasOwnProperty("initial_offset_inv")) checkNegativeInitialOffset.checked  = !!o.initial_offset_inv;
+            // No hasOwnProperty guard: a project without the key must clear a
+            // stale anchor flag from the previous clip.
+            sync.offsetIsAnchor = !!o.offset_is_anchor;
             if (o.hasOwnProperty("search_size"))        syncSearchSize.value                = +o.search_size;
             if (o.hasOwnProperty("calc_initial_fast"))  calculateInitialOffsetFirst.checked = !!o.calc_initial_fast;
             if (o.hasOwnProperty("max_sync_points"))    maxSyncPoints.value                 = +o.max_sync_points;
@@ -110,6 +116,7 @@ MenuItem {
         return {
             "initial_offset":     initialOffset.value,
             "initial_offset_inv": checkNegativeInitialOffset.checked,
+            "offset_is_anchor":   sync.offsetIsAnchor,
             "search_size":        syncSearchSize.value,
             "calc_initial_fast":  calculateInitialOffsetFirst.checked,
             "max_sync_points":    maxSyncPoints.value,

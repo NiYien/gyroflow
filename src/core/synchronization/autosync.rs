@@ -144,7 +144,7 @@ impl AutosyncProcess {
         // participates in the likelihood only — its offset row is stripped
         // before the finished callback (`strip_probe_offsets`).
         let mut timestamps_fract: Vec<f64> = timestamps_fract.to_vec();
-        let mut probe_added = false;
+        let mut probe_fract: Option<f64> = None;
         if mode == "synchronize"
             && sync_params.offset_method == 2
             && crate::synchronization::find_offset::rs_sync::posterior_enabled()
@@ -161,7 +161,14 @@ impl AutosyncProcess {
                     timestamps_fract[0] * 100.0
                 );
                 timestamps_fract.push(far);
-                probe_added = true;
+                probe_fract = Some(far);
+                // Decode ranges must stay in ascending time order: the ffmpeg
+                // range walker only seeks forward through the list, and a probe
+                // placed before the user's sync point would otherwise be
+                // requested after it and deliver zero frames (probe silently
+                // missing from the joint posterior).
+                timestamps_fract
+                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             } else {
                 log::info!(
                     target: "sync",
@@ -211,10 +218,13 @@ impl AutosyncProcess {
                 )
             })
             .collect();
-        // The probe fraction was appended last, so its scaled range is the
-        // last entry (the no-motion branch above never runs when a probe was
-        // added — probe insertion is gated on has_motion()).
-        let probe_range_us = if probe_added { scaled_ranges_us.last().copied() } else { None };
+        // The fraction list was re-sorted after the probe was appended, so the
+        // probe's range is located by value, not by position (the no-motion
+        // branch above never runs when a probe was added — probe insertion is
+        // gated on has_motion()).
+        let probe_range_us = probe_fract
+            .and_then(|f| timestamps_fract.iter().position(|x| *x == f))
+            .and_then(|i| scaled_ranges_us.get(i).copied());
 
         let estimator = stab.pose_estimator.clone();
 
