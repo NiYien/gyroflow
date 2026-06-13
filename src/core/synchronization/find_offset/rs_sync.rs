@@ -14,7 +14,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering::Relaxed, Ordering::SeqCst},
 };
 
-pub fn find_offsets<F: Fn(f64) + Sync>(
+pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     estimator: &PoseEstimator,
     ranges: &[(i64, i64)],
     sync_params: &SyncParams,
@@ -59,6 +59,15 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
             log::debug!("Initial offset: {}", median_offset);
         }
     }
+
+    // Share the progress callback between rs-sync's internal on_progress
+    // (full_sync owns 60→92% of this stage) and the fusion/posterior tick
+    // emitters (92→99%). The trait object keeps the finder struct non-generic;
+    // Send + Sync are required because rs-sync invokes on_progress from worker
+    // threads. The essential-matrix block above already finished borrowing the
+    // original `F`, so moving it into the Arc here is safe.
+    let progress_cb: std::sync::Arc<dyn Fn(f64) + Send + Sync + '_> =
+        std::sync::Arc::new(progress_cb);
 
     let offsets = {
         let _g = crate::synchronization::sync_perf::StageGuard::new(
@@ -135,6 +144,11 @@ pub fn find_offsets<F: Fn(f64) + Sync>(
                 finder.posterior_override(&mut offsets, &cancel_flag);
             }
         }
+        // Publish the lazy-probe escalation hint for autosync. The bypass
+        // branches above never set it, so they store false (no escalation).
+        estimator
+            .probe_escalation_hint
+            .store(finder.escalation_hint.get(), SeqCst);
         offsets
     };
 
@@ -296,6 +310,38 @@ pub(crate) fn posterior_enabled() -> bool {
         };
         log::info!(target: "lifecycle", "sync_posterior resolved enabled={} source={}", v, source);
         v
+    })
+}
+
+/// Posterior CI95 width (ms) above which a single-window run requests a lazy
+/// probe window (`GYROFLOW_SYNC_PROBE_CI95_MS`, default 30). A sharp single
+/// window (CI ≈ 0) is trusted; a wide CI signals an ambiguous basin that a
+/// second window must disambiguate. OnceLock-cached.
+pub(crate) fn probe_escalation_ci95_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_PROBE_CI95_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(30.0)
+    })
+}
+
+/// Posterior-vs-fusion disagreement (ms) above which a single-window run
+/// requests a lazy probe (`GYROFLOW_SYNC_PROBE_DISAGREE_MS`, default 1000). A
+/// large override means the two estimators picked different basins — on noisy
+/// optical flow the posterior can be the wrong one — so a probe must verify.
+/// Gated on the CI not being rock-solid so a confident echo fix (P1004620,
+/// CI ≈ 0) is still trusted without a probe. OnceLock-cached.
+pub(crate) fn probe_escalation_disagree_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_PROBE_DISAGREE_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(1000.0)
     })
 }
 
@@ -591,6 +637,16 @@ pub struct FindOffsetsRssync<'a> {
     current_sync_point: Arc<AtomicUsize>,
     current_orientation: Arc<AtomicUsize>,
 
+    /// Caller progress callback (0..1 across the whole find_offsets stage).
+    /// Also registered inside `sync.on_progress`; kept here so the fusion and
+    /// posterior stages can emit coarse ticks after full_sync hits its cap.
+    progress_cb: Arc<dyn Fn(f64) + Send + Sync + 'a>,
+
+    /// Accumulated across fusion/posterior: a single-window result that fusion
+    /// flagged LOW QUALITY (weak/wide peak) or whose posterior CI is wide.
+    /// Read by the free `find_offsets` to drive the lazy-probe escalation.
+    escalation_hint: std::cell::Cell<bool>,
+
     /// Per-range pre_sync grid cost curve produced during `full_sync()`.
     /// Each inner Vec is `(cost, delay_s)` in scan order — reused by
     /// `scan_cost_curve_per_seg` to avoid re-scanning the same grid.
@@ -712,12 +768,12 @@ pub(super) fn decide_confidence(
 }
 
 impl FindOffsetsRssync<'_> {
-    pub fn new<'a, F: Fn(f64) + Sync + 'a>(
+    pub fn new<'a>(
         ranges: &'a [(i64, i64)],
         sync_results: Arc<RwLock<BTreeMap<i64, FrameResult>>>,
         sync_params: &'a SyncParams,
         params: &'a ComputeParams,
-        progress_cb: F,
+        progress_cb: Arc<dyn Fn(f64) + Send + Sync + 'a>,
         cancel_flag: Arc<AtomicBool>,
     ) -> FindOffsetsRssync<'a> {
         let matched_points = Self::collect_points(sync_results, ranges);
@@ -740,6 +796,8 @@ impl FindOffsetsRssync<'_> {
             is_guess_orient: Arc::new(AtomicBool::new(false)),
             current_sync_point: Arc::new(AtomicUsize::new(0)),
             current_orientation: Arc::new(AtomicUsize::new(0)),
+            progress_cb: progress_cb.clone(),
+            escalation_hint: std::cell::Cell::new(false),
             presync_curves: Vec::new(),
             track_data: Vec::new(),
             residuals_dumped: parking_lot::Mutex::new(std::collections::HashSet::new()),
@@ -750,17 +808,17 @@ impl FindOffsetsRssync<'_> {
             let is_guess_orient = ret.is_guess_orient.clone();
             let cur_sync_point = ret.current_sync_point.clone();
             let cur_orientation = ret.current_orientation.clone();
+            let progress_cb = progress_cb.clone();
             ret.sync.on_progress(move |progress| -> bool {
-                let num_orientations = if is_guess_orient.load(SeqCst) {
-                    48.0
-                } else {
-                    1.0
-                };
-                progress_cb(
-                    (cur_orientation.load(SeqCst) as f64
-                        + ((cur_sync_point.load(SeqCst) as f64 + progress) / num_sync_points))
-                        / num_orientations,
-                );
+                let guess = is_guess_orient.load(SeqCst);
+                let num_orientations = if guess { 48.0 } else { 1.0 };
+                let p = (cur_orientation.load(SeqCst) as f64
+                    + ((cur_sync_point.load(SeqCst) as f64 + progress) / num_sync_points))
+                    / num_orientations;
+                // full_sync owns 0→0.8 of the find_offsets stage; the fusion and
+                // posterior ticks fill 0.8→0.99. Orientation guessing has no
+                // fusion stage, so it keeps the full span.
+                progress_cb(if guess { p } else { p * 0.8 });
                 !cancel_flag.load(Relaxed)
             });
         }
@@ -1079,6 +1137,23 @@ impl FindOffsetsRssync<'_> {
             }
             (filtered, kept, total)
         };
+
+        // posterior owns the final decision (design 2026-06-13
+        // sync-lazy-probe-and-progress): the re-solve below would only feed
+        // the [ncc-fuse] comparison row, so skip the second full_sync unless
+        // pass2 is forced via GYROFLOW_SYNC_PRIOR_REWEIGHT=always. The
+        // NotApplicable outcome keeps pass 1 + the twin conf ceiling, which
+        // the conf<0.4 filter drops on posterior fallback — safer than a
+        // re-solved echo value landing at 0.475.
+        if posterior_enabled() && pass2_params().mode != Pass2Mode::Always {
+            log::info!(
+                "[pass2] seg {}: re-solve skipped (posterior owns the decision; {}/{} points removable)",
+                curve_idx,
+                total - kept,
+                total
+            );
+            return Pass2Outcome::NotApplicable;
+        }
 
         // Phase 2 (mutable): feed filtered tracks and re-solve the segment.
         for p in &filtered {
@@ -1577,6 +1652,10 @@ impl FindOffsetsRssync<'_> {
                 .map(|e| window_log_likelihood(&e.2, sigma))
                 .collect();
             windows.push(WindowEval { seg: i, sp, grid_ms, logl, sigma, n_pairs, gain_star, star_ms });
+            // Posterior stage spans 0.95→0.99 of the find_offsets budget.
+            (self.progress_cb)(
+                0.95 + 0.04 * (windows.len() as f64 / offsets.len().max(1) as f64),
+            );
         }
 
         if windows.is_empty() {
@@ -1639,6 +1718,24 @@ impl FindOffsetsRssync<'_> {
             * if n_windows == 1 { SINGLE_WINDOW_CONF_FACTOR } else { 1.0 })
         .clamp(0.0, 1.0);
 
+        // Lazy-probe escalation hint (single-window only). The window is
+        // ambiguous if (a) the posterior CI is wide, or (b) the posterior
+        // overrode fusion by a large margin without being rock-solid — the two
+        // estimators picked different basins (on noisy DIS flow the posterior
+        // can be the wrong one), so a probe must verify. A rock-solid override
+        // (CI ≈ 0, e.g. P1004620's echo fix) is trusted without a probe.
+        if n_windows == 1 {
+            let ci95_width = (post.ci95.1 - post.ci95.0).abs();
+            let fusion_ms = offsets[windows[0].seg].1;
+            let big_override =
+                (post.argmax_ms - fusion_ms).abs() > probe_escalation_disagree_ms();
+            if ci95_width > probe_escalation_ci95_ms()
+                || (big_override && ci95_width > 5.0)
+            {
+                self.escalation_hint.set(true);
+            }
+        }
+
         // Per-segment sub-grid refinement at the shared joint argmax (D6:
         // same pre_sync refinement the fusion output uses).
         for w in &windows {
@@ -1673,6 +1770,9 @@ impl FindOffsetsRssync<'_> {
             );
             offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
         }
+        // Posterior done; the final 1.0 is emitted by finished_feeding_frames
+        // after the offsets are applied, so the bar never reaches 100% early.
+        (self.progress_cb)(0.99);
         log::info!(
             target: "sync",
             "[posterior] joint decision done in {:.0}ms (windows={}, joint_grid={} pts, argmax={:.1}ms conf={:.3})",
@@ -2485,6 +2585,14 @@ impl FindOffsetsRssync<'_> {
             } else {
                 None
             };
+            // Lazy-probe escalation hint: a weak or wide fusion peak means this
+            // single window cannot be trusted on its own — request a probe
+            // window. periodic_ambiguity (echo) is excluded: the posterior with
+            // its prior usually resolves it sharply (a wide posterior CI below
+            // catches the cases it does not).
+            if matches!(quality_warn, Some("weak_signal") | Some("wide_W")) {
+                self.escalation_hint.set(true);
+            }
             if let Some(reason) = quality_warn {
                 log::warn!(
                     "[ncc-fuse] seg {}: LOW QUALITY {} (peak_h={:.3}, W={:.1}ms, r2={:.3}) — applying best-effort offset with reduced confidence",
@@ -3445,6 +3553,9 @@ impl FindOffsetsRssync<'_> {
             );
             break 'pass;
             } // 'pass loop (M2 two-pass body)
+            // Progress tick: fusion stage spans 0.8→0.95 of the find_offsets
+            // budget (full_sync capped at 0.8, posterior fills 0.95→0.99).
+            (self.progress_cb)(0.8 + 0.15 * ((i + 1) as f64 / offsets.len().max(1) as f64));
         }
 
         log::info!(

@@ -5815,6 +5815,36 @@ impl RenderQueue {
                             }
                         }
                         sync.finished_feeding_frames();
+                        // Lazy probe escalation (single-window batch runs).
+                        // Skip after a round-1 failure: empty offsets would
+                        // otherwise trigger a spurious second decode.
+                        if !sync_failed.load(SeqCst) {
+                            if let Some(probe_ranges) = sync.pending_probe_ranges() {
+                                let result = if try_gpu {
+                                    match try_run(true, probe_ranges.clone()) {
+                                        Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                                            try_run(false, probe_ranges)
+                                        }
+                                        other => other,
+                                    }
+                                } else {
+                                    try_run(false, probe_ranges)
+                                };
+                                if let Err(e) = result {
+                                    sync_failed.store(true, SeqCst);
+                                    if collect_batch_points {
+                                        ::log::warn!(
+                                            "[batch_sync] probe decoder failed for '{}': {}",
+                                            filesystem::get_filename(&url),
+                                            e
+                                        );
+                                    } else {
+                                        err(("An error occured: %1".to_string(), e.to_string()));
+                                    }
+                                }
+                                sync.finished_feeding_frames();
+                            }
+                        }
                         sync_frames = sync_frame_count.load(SeqCst);
                     } else {
                         let detail = format!(

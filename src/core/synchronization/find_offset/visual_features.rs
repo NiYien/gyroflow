@@ -10,7 +10,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering::Relaxed},
 };
 
-pub fn find_offsets<F: Fn(f64) + Sync>(
+pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     estimator: &PoseEstimator,
     ranges: &[(i64, i64)],
     sync_params: &SyncParams,

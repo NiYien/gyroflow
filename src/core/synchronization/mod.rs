@@ -101,6 +101,11 @@ pub struct PoseEstimator {
     pub pose_method: AtomicU32,
     pub offset_method: AtomicU32,
     pub neuflow_processing: AtomicBool,
+    /// Set by rs-sync find_offsets when the single-window result is too
+    /// ambiguous to trust (fusion LOW QUALITY weak/wide peak, or a wide
+    /// posterior CI). The lazy-probe escalation reads this so a confidently
+    /// wrong single window still gets a disambiguating probe window.
+    pub probe_escalation_hint: AtomicBool,
 }
 
 impl PoseEstimator {
@@ -668,7 +673,7 @@ impl PoseEstimator {
         ranges
     }
 
-    pub fn find_offsets<F: Fn(f64) + Sync>(
+    pub fn find_offsets<F: Fn(f64) + Send + Sync>(
         &self,
         ranges: &[(i64, i64)],
         sync_params: &SyncParams,

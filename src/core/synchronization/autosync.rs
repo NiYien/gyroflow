@@ -24,6 +24,19 @@ pub struct AutosyncProcess {
     /// window appended in `from_manager` (posterior single-window runs).
     /// Offsets whose mid falls inside are stripped before the finished cb.
     probe_range_us: Option<(i64, i64)>,
+    /// Lazy probe candidate (decode-domain µs, unscaled). Set in
+    /// `from_manager` when the lazy probe is armed; decoded only on
+    /// escalation.
+    probe_candidate_us: Option<(i64, i64)>,
+    /// Same candidate in the scaled domain (feed gate / find_offsets / strip).
+    probe_candidate_scaled_us: Option<(i64, i64)>,
+    /// Phase-1 verdict requested escalation; cleared by `pending_probe_ranges`.
+    probe_pending: AtomicBool,
+    /// Probe frames are accepted and the probe range joins find_offsets.
+    probe_active: AtomicBool,
+    /// Lazy run wanted a probe but no disjoint position fit — an ambiguous
+    /// single-window result here is dropped instead of escalated.
+    lazy_probe_unavailable: bool,
     estimator: Arc<PoseEstimator>,
     total_read_frames: Arc<AtomicUsize>,
     total_detected_frames: Arc<AtomicUsize>,
@@ -145,6 +158,12 @@ impl AutosyncProcess {
         // before the finished callback (`strip_probe_offsets`).
         let mut timestamps_fract: Vec<f64> = timestamps_fract.to_vec();
         let mut probe_fract: Option<f64> = None;
+        let mut lazy_probe_fract: Option<f64> = None;
+        // True when a lazy run wanted a probe but no disjoint position fits
+        // (the window already spans most of a short clip). Such a single window
+        // cannot be disambiguated, so an ambiguous result must be dropped
+        // rather than baked in (see finished_feeding_frames).
+        let mut lazy_probe_unavailable = false;
         if mode == "synchronize"
             && sync_params.offset_method == 2
             && crate::synchronization::find_offset::rs_sync::posterior_enabled()
@@ -154,26 +173,39 @@ impl AutosyncProcess {
             if let Some(far) =
                 pick_probe_fraction(timestamps_fract[0], org_duration_ms, time_per_syncpoint)
             {
-                log::info!(
-                    target: "sync",
-                    "[posterior] probe window added at {:.0}% (single sync point at {:.0}%) — likelihood evidence only, no sync point output",
-                    far * 100.0,
-                    timestamps_fract[0] * 100.0
-                );
-                timestamps_fract.push(far);
-                probe_fract = Some(far);
-                // Decode ranges must stay in ascending time order: the ffmpeg
-                // range walker only seeks forward through the list, and a probe
-                // placed before the user's sync point would otherwise be
-                // requested after it and deliver zero frames (probe silently
-                // missing from the joint posterior).
-                timestamps_fract
-                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                if lazy_probe_enabled() {
+                    // Lazy (default): hold the candidate. It is decoded only
+                    // when the first pass lands below the conf gate.
+                    log::info!(
+                        target: "sync",
+                        "[posterior] probe candidate at {:.0}% held for escalation (single sync point at {:.0}%)",
+                        far * 100.0,
+                        timestamps_fract[0] * 100.0
+                    );
+                    lazy_probe_fract = Some(far);
+                } else {
+                    log::info!(
+                        target: "sync",
+                        "[posterior] probe window added at {:.0}% (single sync point at {:.0}%) — likelihood evidence only, no sync point output",
+                        far * 100.0,
+                        timestamps_fract[0] * 100.0
+                    );
+                    timestamps_fract.push(far);
+                    probe_fract = Some(far);
+                    // Decode ranges must stay in ascending time order: the ffmpeg
+                    // range walker only seeks forward through the list, and a probe
+                    // placed before the user's sync point would otherwise be
+                    // requested after it and deliver zero frames (probe silently
+                    // missing from the joint posterior).
+                    timestamps_fract
+                        .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                }
             } else {
                 log::info!(
                     target: "sync",
                     "[posterior] no disjoint probe position available — single-window posterior (conf one tier down)"
                 );
+                lazy_probe_unavailable = lazy_probe_enabled();
             }
         }
         let timestamps_fract: &[f64] = &timestamps_fract;
@@ -225,6 +257,27 @@ impl AutosyncProcess {
         let probe_range_us = probe_fract
             .and_then(|f| timestamps_fract.iter().position(|x| *x == f))
             .and_then(|i| scaled_ranges_us.get(i).copied());
+
+        // Lazy probe: pre-compute both range domains for the candidate using
+        // the same formulas as the main range map above.
+        let (probe_candidate_us, probe_candidate_scaled_us) = match lazy_probe_fract {
+            Some(x) => {
+                let range = (
+                    ((x * org_duration_ms) - (time_per_syncpoint / 2.0)).max(0.0),
+                    ((x * org_duration_ms) + (time_per_syncpoint / 2.0)).min(org_duration_ms),
+                );
+                let us = (
+                    (range.0 * 1000.0).round() as i64,
+                    (range.1 * 1000.0).round() as i64,
+                );
+                let scaled = (
+                    (us.0 as f64 / fps_scale.unwrap_or(1.0)) as i64,
+                    (us.1 as f64 / fps_scale.unwrap_or(1.0)) as i64,
+                );
+                (Some(us), Some(scaled))
+            }
+            None => (None, None),
+        };
 
         let estimator = stab.pose_estimator.clone();
 
@@ -286,6 +339,11 @@ impl AutosyncProcess {
             ranges_us,
             scaled_ranges_us,
             probe_range_us,
+            probe_candidate_us,
+            probe_candidate_scaled_us,
+            probe_pending: AtomicBool::new(false),
+            probe_active: AtomicBool::new(false),
+            lazy_probe_unavailable,
             estimator,
             fps_scale,
             total_read_frames: Arc::new(AtomicUsize::new(1)), // Start with 1 to keep the loader active until `finished_feeding_frames` overrides it with final value
@@ -377,11 +435,14 @@ impl AutosyncProcess {
                 .round() as i64;
         }
 
-        if let Some(_current_range) = self
+        let in_user_ranges = self
             .scaled_ranges_us
             .iter()
-            .find(|(from, to)| (*from..=*to).contains(&timestamp_us))
-        {
+            .any(|(from, to)| (*from..=*to).contains(&timestamp_us));
+        let in_probe = self
+            .lazy_probe_scaled_range()
+            .is_some_and(|(from, to)| (from..=to).contains(&timestamp_us));
+        if in_user_ranges || in_probe {
             self.total_read_frames.fetch_add(1, SeqCst);
 
             let spawn_at = std::time::Instant::now();
@@ -708,12 +769,16 @@ impl AutosyncProcess {
                 )));
             } else if self.mode == "guess_imu_orientation" {
                 use super::find_offset::rs_sync::FindOffsetsRssync;
+                // FindOffsetsRssync::new now shares the callback as a trait
+                // object (the free find_offsets fn wraps it the same way).
+                let probe_cb: std::sync::Arc<dyn Fn(f64) + Send + Sync> =
+                    std::sync::Arc::new(progress_cb2);
                 let guessed = FindOffsetsRssync::new(
                     &scaled_ranges_us,
                     self.estimator.sync_results.clone(),
                     &self.sync_params,
                     &self.compute_params.read(),
-                    progress_cb2,
+                    probe_cb,
                     self.cancel_flag.clone(),
                 )
                 .guess_orient();
@@ -721,8 +786,15 @@ impl AutosyncProcess {
                     cb(Either::Right(guessed));
                 }
             } else {
-                let offsets = self.strip_probe_offsets(self.estimator.find_offsets(
-                    &scaled_ranges_us,
+                // An activated lazy probe joins the sync ranges; its OF was fed
+                // in the escalation pass, the user windows' OF persists from
+                // pass 1 in estimator.sync_results.
+                let mut sync_ranges: Vec<(i64, i64)> = scaled_ranges_us.to_vec();
+                if let Some(r) = self.lazy_probe_scaled_range() {
+                    sync_ranges.push(r);
+                }
+                let mut offsets = self.strip_probe_offsets(self.estimator.find_offsets(
+                    &sync_ranges,
                     &self.sync_params,
                     &self.compute_params.read(),
                     progress_cb2,
@@ -743,7 +815,7 @@ impl AutosyncProcess {
                     let mut sync_params = self.sync_params.clone();
                     sync_params.initial_offset = -sync_params.initial_offset;
                     let offsets2 = self.strip_probe_offsets(self.estimator.find_offsets(
-                        &scaled_ranges_us,
+                        &sync_ranges,
                         &sync_params,
                         &self.compute_params.read(),
                         progress_cb2,
@@ -761,6 +833,41 @@ impl AutosyncProcess {
                         }
                     }
                 } else {
+                    if self.should_escalate_to_probe(check_negative, &offsets) {
+                        // Hold the finished callback: the caller decodes the
+                        // probe range and calls finished_feeding_frames again
+                        // for the joint pass. Skips the final progress(1.0)
+                        // below, so the UI stays in the analyzing state.
+                        self.probe_pending.store(true, SeqCst);
+                        let reason = if self.estimator.probe_escalation_hint.load(SeqCst) {
+                            "ambiguous single window (LOW QUALITY / wide CI)"
+                        } else {
+                            "below conf gate"
+                        };
+                        log::info!(
+                            target: "sync",
+                            "[posterior] first pass {} ({} offsets) — escalating to probe window",
+                            reason,
+                            offsets.len()
+                        );
+                        return;
+                    }
+                    // Ambiguous single window that could not get a probe to
+                    // disambiguate (short clip, no disjoint position): drop it
+                    // rather than bake a confidently-wrong offset. The conf<0.4
+                    // filter in the controller/queue discards it.
+                    if self.lazy_probe_unavailable
+                        && self.estimator.probe_escalation_hint.load(SeqCst)
+                    {
+                        for o in offsets.iter_mut() {
+                            o.3 = o.3.min(0.39);
+                        }
+                        log::info!(
+                            target: "sync",
+                            "[posterior] ambiguous single window with no disjoint probe position — demoting confidence so it is dropped ({} offsets)",
+                            offsets.len()
+                        );
+                    }
                     cb(Either::Left(offsets));
                 }
             }
@@ -779,11 +886,26 @@ impl AutosyncProcess {
         crate::synchronization::sync_diag::flush_and_close();
     }
 
+    /// The lazy probe's scaled range, only once activated by escalation.
+    fn lazy_probe_scaled_range(&self) -> Option<(i64, i64)> {
+        if self.probe_active.load(SeqCst) {
+            self.probe_candidate_scaled_us
+        } else {
+            None
+        }
+    }
+
+    /// The probe range to strip from results: eager probe (in the range
+    /// list from construction) or an activated lazy probe.
+    fn probe_strip_range(&self) -> Option<(i64, i64)> {
+        self.probe_range_us.or_else(|| self.lazy_probe_scaled_range())
+    }
+
     /// sync-likelihood-nuisance §3.2: drop the probe-only window's offset row
     /// (it contributed likelihood evidence inside `find_offsets`; it must not
     /// become a user-visible sync point).
     fn strip_probe_offsets(&self, mut offsets: Vec<(f64, f64, f64, f64)>) -> Vec<(f64, f64, f64, f64)> {
-        if let Some((pf, pt)) = self.probe_range_us {
+        if let Some((pf, pt)) = self.probe_strip_range() {
             let before = offsets.len();
             offsets.retain(|(mid_ms, ..)| {
                 let mid_us = (mid_ms * 1000.0).round() as i64;
@@ -801,6 +923,66 @@ impl AutosyncProcess {
         offsets
     }
 
+    /// Phase-1 verdict: escalate only for single-window synchronize runs that
+    /// hold an unactivated lazy candidate and either landed below the conf gate
+    /// or were flagged ambiguous by rs-sync (fusion LOW QUALITY / wide
+    /// posterior CI — a sharply-wrong single window scores high conf but a
+    /// probe window disambiguates it). `check_negative` (legacy
+    /// initial_offset_inv retry) opts out.
+    fn should_escalate_to_probe(
+        &self,
+        check_negative: bool,
+        offsets: &[(f64, f64, f64, f64)],
+    ) -> bool {
+        !check_negative
+            && self.probe_candidate_us.is_some()
+            && !self.probe_active.load(SeqCst)
+            && !self.cancel_flag.load(SeqCst)
+            && (probe_escalation_needed(offsets)
+                || self.estimator.probe_escalation_hint.load(SeqCst))
+    }
+
+    /// Caller-side escalation hook: returns the probe decode range (ms) once
+    /// after a held phase 1, activating the probe and resetting the feed
+    /// counters so the progress bar honestly walks the second pass.
+    ///
+    /// SAFETY: must be called sequentially on the single decode thread after
+    /// `finished_feeding_frames` has drained all in-flight frame tasks. It
+    /// mutates atomics through `&self`; concurrent invocation would race the
+    /// counter resets. The `probe_pending.swap` guard makes repeat calls a
+    /// no-op but does not make concurrent calls safe.
+    pub fn pending_probe_ranges(&self) -> Option<Vec<(f64, f64)>> {
+        if !self.probe_pending.swap(false, SeqCst) {
+            return None;
+        }
+        if self.cancel_flag.load(SeqCst) {
+            // Phase 1 held the finished callback; close the UI loop the same
+            // way every other cancel path does.
+            self.emit_canceled_progress();
+            return None;
+        }
+        let (f, t) = match self.probe_candidate_us {
+            Some(r) => r,
+            None => {
+                self.emit_canceled_progress();
+                return None;
+            }
+        };
+        self.probe_active.store(true, SeqCst);
+        self.total_read_frames.store(1, SeqCst);
+        self.total_detected_frames.store(0, SeqCst);
+        if let Some(cb) = &self.progress_cb {
+            cb(0.0, 0, self.frame_count);
+        }
+        log::info!(
+            target: "sync",
+            "[posterior] probe escalation: decoding probe window {:.1}-{:.1}ms",
+            f as f64 / 1000.0,
+            t as f64 / 1000.0
+        );
+        Some(vec![(f as f64 / 1000.0, t as f64 / 1000.0)])
+    }
+
     pub fn on_progress<F>(&mut self, cb: F)
     where
         F: Fn(f64, usize, usize) + Send + Sync + 'static,
@@ -815,37 +997,103 @@ impl AutosyncProcess {
     }
 }
 
-/// Probe-window placement (sync-likelihood-nuisance §3.2): pick the uniform
-/// candidate position farthest from the existing single sync point so the
-/// two windows are maximally independent. The optimsync rank is not
-/// available at this layer (the caller already collapsed it to one
-/// fraction), so this is design D3's "no second-best -> farthest valid
-/// position" branch. Returns `None` when even the farthest candidate would
-/// overlap the existing window (very short videos) — the posterior then
-/// degrades to single-window with its confidence tier-down.
+/// `GYROFLOW_SYNC_LAZY_PROBE`: when enabled (default), the posterior probe
+/// window is decoded only after the first pass lands below the conf gate.
+/// `0` restores the eager probe (always decoded upfront).
+pub(crate) fn lazy_probe_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_LAZY_PROBE");
+        let (enabled, source) = match raw.as_deref().map(str::trim) {
+            Err(_) | Ok("") => (true, "default"),
+            Ok(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_LAZY_PROBE={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(
+            target: "lifecycle",
+            "sync_lazy_probe resolved enabled={} source={}",
+            enabled,
+            source
+        );
+        enabled
+    })
+}
+
+/// Escalation verdict for the lazy probe (design: trigger line = the
+/// controller's conf<0.4 drop filter; grey-zone results land as-is).
+/// Empty results count as "no correct point found".
+pub(crate) fn probe_escalation_needed(offsets: &[(f64, f64, f64, f64)]) -> bool {
+    offsets.is_empty() || offsets.iter().all(|o| o.3 < 0.4)
+}
+
+/// Minimum NEW (non-overlapping) frames a probe window must add to be useful
+/// independent evidence (`GYROFLOW_SYNC_PROBE_MIN_NEW_MS`, last-resort floor,
+/// default 2000ms). The placement already anchors at the farthest clip extreme,
+/// so a fully disjoint probe (≈5s total independent span) is used whenever the
+/// clip allows; this floor only governs how much overlap is tolerated on short
+/// clips before the single window is abandoned.
+pub(crate) fn probe_min_new_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_PROBE_MIN_NEW_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v > 0.0)
+            .unwrap_or(2000.0)
+    })
+}
+
+/// Probe-window placement (sync-likelihood-nuisance §3.2): anchor a probe at
+/// the clip extreme farthest from the existing single sync point so the two
+/// windows are as independent as the clip allows. A fully disjoint probe is
+/// preferred, but when the user window already spans most of a short clip a
+/// partial overlap is allowed as long as the probe still contributes at least
+/// `probe_min_new_ms()` of NEW data (capped at the window width so a sub-2.5s
+/// window can still use a fully disjoint probe). Returns `None` only when even
+/// the extreme placement cannot reach that much new data — the posterior then
+/// degrades to single-window (and an ambiguous result is dropped upstream).
 pub(crate) fn pick_probe_fraction(
     existing_fract: f64,
     duration_ms: f64,
     window_ms: f64,
 ) -> Option<f64> {
-    const CANDIDATES: [f64; 5] = [0.2, 0.35, 0.5, 0.65, 0.8];
-    let far = CANDIDATES
-        .iter()
-        .copied()
-        .max_by(|a, b| {
-            (a - existing_fract)
-                .abs()
-                .partial_cmp(&(b - existing_fract).abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
-    // Windows are `window_ms` wide and centered on the fractions — require
-    // the centers to be more than one window apart so the frame pairs are
-    // disjoint (independent evidence, design D3).
-    if ((far - existing_fract).abs() * duration_ms) > window_ms {
-        Some(far)
-    } else {
-        None
+    if duration_ms <= 0.0 || window_ms <= 0.0 || duration_ms < window_ms {
+        return None;
     }
+    let required_new = probe_min_new_ms().min(window_ms);
+    let half = window_ms / 2.0;
+    let e_center = existing_fract * duration_ms;
+    let (e_start, e_end) = (e_center - half, e_center + half);
+    // Candidate centers clamped so the window fits inside [0, duration].
+    let start_center = half;
+    let end_center = duration_ms - half;
+    let new_data = |p_center: f64| -> f64 {
+        let (p_start, p_end) = (p_center - half, p_center + half);
+        let overlap = (p_end.min(e_end) - p_start.max(e_start)).max(0.0);
+        window_ms - overlap
+    };
+    // Prefer the end farther from the existing window (more independence).
+    let order = if existing_fract >= 0.5 {
+        [start_center, end_center]
+    } else {
+        [end_center, start_center]
+    };
+    for c in order {
+        if new_data(c) >= required_new {
+            return Some((c / duration_ms).clamp(0.0, 1.0));
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -853,24 +1101,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn probe_fraction_picks_farthest_disjoint_candidate() {
-        // Single point late in the clip -> probe lands early, and vice versa.
-        assert_eq!(pick_probe_fraction(0.72, 10_000.0, 1_500.0), Some(0.2));
-        assert_eq!(pick_probe_fraction(0.2, 10_000.0, 1_500.0), Some(0.8));
-        // Center point: 0.2 and 0.8 tie at 0.3 distance; max_by keeps the
-        // LAST max under ties -> 0.8. Pin it for determinism.
-        assert_eq!(pick_probe_fraction(0.5, 10_000.0, 1_500.0), Some(0.8));
+    fn probe_escalation_gate() {
+        // Empty result = "no correct point found" → escalate.
+        assert!(probe_escalation_needed(&[]));
+        // Below the controller drop line → escalate.
+        assert!(probe_escalation_needed(&[(5447.0, -1497.8, 992.8, 0.39)]));
+        // At/above the drop line → land as-is (grey zone is NOT re-verified).
+        assert!(!probe_escalation_needed(&[(5447.0, -1497.8, 992.8, 0.4)]));
+        assert!(!probe_escalation_needed(&[(5447.0, -1497.8, 992.8, 0.85)]));
+        // Multi-row: any row at/above the line keeps the result.
+        assert!(!probe_escalation_needed(&[
+            (1000.0, -1500.0, 10.0, 0.1),
+            (5000.0, -1500.0, 10.0, 0.5),
+        ]));
+        assert!(probe_escalation_needed(&[
+            (1000.0, -1500.0, 10.0, 0.1),
+            (5000.0, -1500.0, 10.0, 0.39),
+        ]));
     }
 
     #[test]
-    fn probe_fraction_refuses_overlapping_windows() {
-        // 3s window on a 7.5s clip (the P1004620 shape): farthest candidate
-        // from 0.72 is 0.2 -> 0.52 * 7500 = 3900ms > 3000ms window -> ok.
-        assert_eq!(pick_probe_fraction(0.72, 7_500.0, 3_000.0), Some(0.2));
-        // Same window on a 4s clip: 0.52 * 4000 = 2080 < 3000 -> overlap,
-        // no probe (posterior degrades to single window).
+    fn probe_anchors_at_far_clip_extreme() {
+        let approx = |a: Option<f64>, b: f64| {
+            assert!(a.is_some_and(|x| (x - b).abs() < 1e-6), "got {a:?}, want ~{b}");
+        };
+        // Long clip, narrow window: probe anchors at the extreme opposite the
+        // existing point (window half-width in from the boundary), fully
+        // disjoint. Existing late -> probe near start; early -> near end.
+        approx(pick_probe_fraction(0.72, 10_000.0, 1_500.0), 0.075); // near start
+        approx(pick_probe_fraction(0.2, 10_000.0, 1_500.0), 0.925); // near end
+        approx(pick_probe_fraction(0.5, 10_000.0, 1_500.0), 0.075);
+        // 3s window on a 7.5s clip (P1004620 shape): start-anchored probe is
+        // fully disjoint (3s new data).
+        approx(pick_probe_fraction(0.72, 7_500.0, 3_000.0), 0.2);
+    }
+
+    #[test]
+    fn probe_allows_overlap_when_min_new_data_met() {
+        // R52 shape: 5.4s clip, ~2.8s window at 74% leaves <2.8s before it, so
+        // a fully disjoint probe doesn't fit — but a start-anchored probe still
+        // adds ~2.57s of new data (265ms overlap), above the 2.5s floor.
+        let f = pick_probe_fraction(0.738, 5405.0, 2836.0).expect("overlap probe");
+        assert!((f - 1418.0 / 5405.0).abs() < 1e-3, "start-anchored, got {f}");
+        // 4s clip, 3s window: only ~1.4s of space outside the window -> below
+        // the 2.5s new-data floor -> no probe.
         assert_eq!(pick_probe_fraction(0.72, 4_000.0, 3_000.0), None);
-        // Degenerate zero-length video.
+        // Window wider than the clip, and degenerate duration.
+        assert_eq!(pick_probe_fraction(0.5, 2_000.0, 3_000.0), None);
         assert_eq!(pick_probe_fraction(0.5, 0.0, 500.0), None);
     }
 }

@@ -1274,10 +1274,33 @@ impl Controller {
                     try_run(false, ranges)
                 };
 
+                let round1_ok = result.is_ok();
                 if let Err(e) = result {
                     err(("An error occured: %1".to_string(), e.to_string()));
                 }
                 sync.finished_feeding_frames();
+                // Lazy probe escalation: phase 1 held the finished callback,
+                // decode only the probe range and run the joint pass. Skip it
+                // when round-1 decode hard-errored (empty offsets would
+                // otherwise trigger a spurious second decode of the same file).
+                if round1_ok {
+                    if let Some(probe_ranges) = sync.pending_probe_ranges() {
+                        let result = if try_gpu {
+                            match try_run(true, probe_ranges.clone()) {
+                                Err(rendering::FFmpegError::GPUDecodingFailed) => {
+                                    try_run(false, probe_ranges)
+                                }
+                                other => other,
+                            }
+                        } else {
+                            try_run(false, probe_ranges)
+                        };
+                        if let Err(e) = result {
+                            err(("An error occured: %1".to_string(), e.to_string()));
+                        }
+                        sync.finished_feeding_frames();
+                    }
+                }
             });
         } else {
             let detail = format!("Invalid autosync parameters ({mode}): {sync_failure_detail}");
@@ -1344,7 +1367,11 @@ impl Controller {
                 || self.stabilizer.gyro.is_locked()
                 || self.stabilizer.params.is_locked()
             {
-                ::log::debug!("Chart mutex locked, retrying");
+                // Benign: the 100ms chart-refresh poll deferred because a sync /
+                // stabilization worker holds these locks; it retries next tick.
+                // trace (not debug) keeps it out of the Debug+ session log,
+                // where it would otherwise spam ~1 line per 100ms during sync.
+                ::log::trace!("Chart mutex locked, retrying");
                 return false;
             }
 
