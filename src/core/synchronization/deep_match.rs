@@ -382,14 +382,16 @@ pub fn plan_windows(
     if !duration_ms.is_finite() || duration_ms <= 0.0 || per_window_ms <= 0.0 {
         return (0, 0);
     }
-    // Spacing of k/(N+1) fractions is duration/(N+1); keep it >= per_window_ms.
+    // Windows sit at k/(N+1) fractions and may overlap (each analyses
+    // ~time_per_syncpoint of footage); `per_window_ms` is a soft density target
+    // for how many candidates to place, NOT a hard non-overlap requirement.
+    // Any valid-duration clip gets at least 2 windows — a clip with too little
+    // motion is then rejected honestly at scan time (TooFewWindows), matching
+    // the pre-change behaviour that always scanned its fixed windows.
     let fit = ((duration_ms / per_window_ms).floor() as i64 - 1).max(0) as usize;
-    let n = candidates.min(fit);
-    if n < 2 {
-        return (0, 0);
-    }
+    let n = candidates.min(fit).max(2);
     let k_target = if duration_ms > long_min_ms { scan_long } else { scan_short };
-    (n, k_target.min(n).max(2)) // .max(2): defensive floor; n>=2 here so min(k,n) is already >=2
+    (n, k_target.min(n).max(2))
 }
 
 /// Allowed drift range T(D) for a clip of `duration_ms` (design §3.8):
@@ -474,7 +476,7 @@ pub fn post_dense_ms() -> f64 {
 /// Per-window OF footage length used by `plan_windows` fit math; mirrors the
 /// `time_per_syncpoint` written into the probe sync_settings (2.5s).
 pub fn per_window_ms() -> f64 {
-    2500.0
+    env_f64("GYROFLOW_DEEP_MATCH_PER_WINDOW_MS", 2500.0)
 }
 
 #[cfg(test)]
@@ -743,8 +745,11 @@ mod tests {
         assert_eq!(plan_windows(10_000.0, 4, 2, 3, 480_000.0, 2500.0), (3, 2));
         // 7.5s -> fit 2; scan min(2, 2) = 2.
         assert_eq!(plan_windows(7_500.0, 4, 2, 3, 480_000.0, 2500.0), (2, 2));
-        // 5s -> fit 1 -> below the 2-window floor -> (0, 0) (caller emits TooFewWindows).
-        assert_eq!(plan_windows(5_000.0, 4, 2, 3, 480_000.0, 2500.0), (0, 0));
+        // 5s -> fit 1, but any valid-duration clip is clamped to >=2 windows
+        // (rejection happens honestly at scan time, not here).
+        assert_eq!(plan_windows(5_000.0, 4, 2, 3, 480_000.0, 2500.0), (2, 2));
+        // 4.2s (the DSC_0383 regression case) must also run with 2 windows.
+        assert_eq!(plan_windows(4_204.0, 4, 2, 3, 480_000.0, 2500.0), (2, 2));
         // Guard inputs → (0, 0).
         assert_eq!(plan_windows(f64::NAN, 4, 2, 3, 480_000.0, 2500.0), (0, 0));
         assert_eq!(plan_windows(600_000.0, 4, 2, 3, 480_000.0, 0.0), (0, 0));
