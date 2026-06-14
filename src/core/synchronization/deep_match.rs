@@ -232,6 +232,69 @@ pub fn evaluate(
     DeepMatchVerdict::Accepted { offset_ms: median }
 }
 
+/// Joint-posterior deep-match decision (design §3.4-3.8). Converts each
+/// window's essential cost curve to a log-likelihood, max-dilates by the
+/// clip's drift half-width T(D)/2, log-adds on the shared 5ms grid, and gates
+/// on `conf >= conf_min` and `ci95_width <= ci95_base_ms + T(D)`. Maps to the
+/// existing `DeepMatchVerdict` so the chunk orchestration is untouched.
+/// All inputs/outputs in ms.
+pub fn decide_posterior(
+    curves: &[DeepMatchWindowCurve],
+    clip_duration_ms: f64,
+    conf_min: f64,
+    ci95_base_ms: f64,
+    drift_rate_ms_per_min: f64,
+    drift_floor_ms: f64,
+) -> DeepMatchVerdict {
+    use crate::synchronization::posterior::{
+        approx_window_log_likelihood, combine_windows_on_common_grid_dilated, posterior_decide, Prior,
+    };
+    if curves.is_empty() {
+        return DeepMatchVerdict::ProbeNotRun;
+    }
+    if curves.len() < 2 {
+        return DeepMatchVerdict::TooFewWindows;
+    }
+    // Per-window (grid, logL). The combine re-cleans (sort/dedup/drop
+    // non-finite) so an unsorted curve is fine.
+    let per_window: Vec<(Vec<f64>, Vec<f64>)> = curves
+        .iter()
+        .map(|c| {
+            let grid: Vec<f64> = c.curve.iter().map(|p| p.0).collect();
+            let logl: Vec<f64> = c
+                .curve
+                .iter()
+                .map(|p| approx_window_log_likelihood(p.1, c.cost_min, c.n_eff))
+                .collect();
+            (grid, logl)
+        })
+        .collect();
+    let views: Vec<(&[f64], &[f64])> = per_window.iter().map(|(g, l)| (g.as_slice(), l.as_slice())).collect();
+
+    let t_d = drift_tolerance_ms(clip_duration_ms, drift_rate_ms_per_min, drift_floor_ms);
+    const GRID_STEP_MS: f64 = 5.0;
+    let Some((joint_grid, joint_logl)) =
+        combine_windows_on_common_grid_dilated(&views, GRID_STEP_MS, t_d / 2.0)
+    else {
+        // No usable span overlap -> windows do not share an offset domain.
+        return DeepMatchVerdict::Inconsistent { spread_ms: f64::INFINITY };
+    };
+    let Some(post) = posterior_decide(&joint_grid, &joint_logl, &Prior::Uniform) else {
+        return DeepMatchVerdict::WeakValley { worst_ratio: 1.0 };
+    };
+    let ci95_width = post.ci95.1 - post.ci95.0;
+    let ci95_gate = ci95_base_ms + t_d;
+    if post.conf_posterior >= conf_min && ci95_width <= ci95_gate {
+        DeepMatchVerdict::Accepted { offset_ms: post.argmax_ms }
+    } else if ci95_width > ci95_gate {
+        // Wide / multimodal posterior = windows disagree beyond drift -> advance.
+        DeepMatchVerdict::Inconsistent { spread_ms: ci95_width }
+    } else {
+        // Narrow but low-confidence = flat joint (noise match) -> advance.
+        DeepMatchVerdict::WeakValley { worst_ratio: 1.0 - post.conf_posterior }
+    }
+}
+
 fn env_f64(name: &str, default: f64) -> f64 {
     std::env::var(name)
         .ok()
@@ -690,6 +753,51 @@ mod tests {
         assert!((drift_tolerance_ms(3_600_000.0, 2.0, 10.0) - 120.0).abs() < 1e-9);
         // rate=0 disables the rate term, floor still applies.
         assert!((drift_tolerance_ms(3_600_000.0, 0.0, 10.0) - 10.0).abs() < 1e-9);
+    }
+
+    fn wc(idx: usize, t_center: f64, peak: f64, n_eff: f64) -> DeepMatchWindowCurve {
+        // Synthetic cost curve over [-500,500] @25ms, min cost 1.0 at `peak`,
+        // rising toward ~2.0 at the edges.
+        let curve: Vec<(f64, f64)> = (0..=40)
+            .map(|k| {
+                let off = -500.0 + k as f64 * 25.0;
+                let d = (off - peak) / 40.0;
+                (off, 1.0 + 1.0 * (1.0 - (-0.5 * d * d).exp()))
+            })
+            .collect();
+        DeepMatchWindowCurve { range_idx: idx, t_center_ms: t_center, argmin_ms: peak, cost_min: 1.0, n_eff, curve }
+    }
+
+    #[test]
+    fn decide_posterior_accepts_consistent_windows() {
+        let curves = vec![wc(0, 1000.0, -100.0, 75.0), wc(1, 2000.0, -98.0, 75.0), wc(2, 3000.0, -101.0, 75.0)];
+        match decide_posterior(&curves, 120_000.0, 0.4, 50.0, 2.0, 10.0) {
+            DeepMatchVerdict::Accepted { offset_ms } => assert!((offset_ms + 100.0).abs() <= 10.0, "got {offset_ms}"),
+            v => panic!("expected Accepted, got {v:?}"),
+        }
+    }
+
+    #[test]
+    fn decide_posterior_too_few_and_empty() {
+        assert_eq!(decide_posterior(&[], 120_000.0, 0.4, 50.0, 2.0, 10.0), DeepMatchVerdict::ProbeNotRun);
+        assert_eq!(decide_posterior(&[wc(0, 1000.0, -100.0, 75.0)], 120_000.0, 0.4, 50.0, 2.0, 10.0), DeepMatchVerdict::TooFewWindows);
+    }
+
+    #[test]
+    fn decide_posterior_drift_separated_long_clip_accepts() {
+        // 30min clip: T(D)=60ms. Two windows 50ms apart (within T) -> drift
+        // blur merges -> Accepted. Same gap on a 1min clip (T=10ms < 50ms) ->
+        // disagreement beyond tolerance -> not Accepted.
+        let curves = vec![wc(0, 100_000.0, -125.0, 75.0), wc(1, 1_700_000.0, -75.0, 75.0)];
+        match decide_posterior(&curves, 1_800_000.0, 0.4, 50.0, 2.0, 10.0) {
+            DeepMatchVerdict::Accepted { .. } => {}
+            v => panic!("long clip within drift tolerance should accept, got {v:?}"),
+        }
+        let short = vec![wc(0, 1000.0, -125.0, 75.0), wc(1, 59_000.0, -75.0, 75.0)];
+        assert!(!matches!(
+            decide_posterior(&short, 60_000.0, 0.4, 50.0, 2.0, 10.0),
+            DeepMatchVerdict::Accepted { .. }
+        ), "short clip beyond drift tolerance must not accept");
     }
 
     #[test]
