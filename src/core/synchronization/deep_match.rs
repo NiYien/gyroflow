@@ -272,7 +272,7 @@ pub fn plan_windows(
         return (0, 0);
     }
     let k_target = if duration_ms > long_min_ms { scan_long } else { scan_short };
-    (n, k_target.min(n).max(2))
+    (n, k_target.min(n).max(2)) // .max(2): defensive floor; n>=2 here so min(k,n) is already >=2
 }
 
 /// Allowed drift range T(D) for a clip of `duration_ms` (design §3.8):
@@ -285,18 +285,45 @@ pub fn drift_tolerance_ms(duration_ms: f64, rate_ms_per_min: f64, floor_ms: f64)
     (rate_ms_per_min.max(0.0) * minutes).max(floor_ms.max(0.0))
 }
 
+/// Master switch for the posterior acceptance gate in deep-match.
+/// `GYROFLOW_DEEP_MATCH_POSTERIOR=0|off|false` disables it; any other value
+/// (or unset) keeps it enabled. OnceLock-cached; first resolve logs to
+/// `target="lifecycle"`.
 pub fn posterior_enabled() -> bool {
-    !matches!(
-        std::env::var("GYROFLOW_DEEP_MATCH_POSTERIOR").ok().as_deref(),
-        Some("0") | Some("off") | Some("false")
-    )
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_DEEP_MATCH_POSTERIOR").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_DEEP_MATCH_POSTERIOR={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "deep_match_posterior resolved={} source={}", v, source);
+        v
+    })
 }
+
+/// Number of candidate windows placed for motion pre-screening (env, clamp 2-8).
 pub fn candidates_count() -> usize {
     (env_f64("GYROFLOW_DEEP_MATCH_CANDIDATES", 4.0) as usize).clamp(2, 8)
 }
+
+/// Windows essential-scanned on short clips (top-K by motion; env, clamp 2-8).
 pub fn scan_short() -> usize {
     (env_f64("GYROFLOW_DEEP_MATCH_SCAN_SHORT", 2.0) as usize).clamp(2, 8)
 }
+
+/// Windows essential-scanned on long clips (top-K by motion; env, clamp 2-8).
 pub fn scan_long() -> usize {
     (env_f64("GYROFLOW_DEEP_MATCH_SCAN_LONG", 3.0) as usize).clamp(2, 8)
 }
@@ -309,13 +336,19 @@ pub fn drift_rate_ms_per_min() -> f64 {
 pub fn drift_floor_ms() -> f64 {
     env_f64_nonneg("GYROFLOW_DEEP_MATCH_DRIFT_FLOOR_MS", 10.0)
 }
+
+/// Conservative starting confidence bar against the ground-truth ledger.
+/// Wrong queue-wide anchor is costly — start strict.
+/// Calibration pending (spec §5): compare against ground-truth ledger before relaxing.
+/// `GYROFLOW_DEEP_MATCH_POST_CONF_MIN` overrides.
 pub fn post_conf_min() -> f64 {
-    // Calibration TODO (spec §5): conservative starting bar against the
-    // ground-truth ledger. Wrong queue-wide anchor is costly -> start strict.
     env_f64("GYROFLOW_DEEP_MATCH_POST_CONF_MIN", 0.5)
 }
+
+/// Effective CI95 gate = this base + drift_tolerance T(D) (design §3.5/§3.8).
+/// Calibration pending (spec §5): sweep against recorded corpus before tightening.
+/// `GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS` overrides.
 pub fn post_ci95_base_ms() -> f64 {
-    // Calibration TODO (spec §5). Effective gate = base + T(D) (design §3.5/§3.8).
     env_f64("GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS", 25.0)
 }
 pub fn post_dense_ms() -> f64 {
@@ -590,6 +623,9 @@ mod tests {
         assert_eq!(plan_windows(7_500.0, 4, 2, 3, 480_000.0, 2500.0), (2, 2));
         // 5s -> fit 1 -> below the 2-window floor -> (0, 0) (caller emits TooFewWindows).
         assert_eq!(plan_windows(5_000.0, 4, 2, 3, 480_000.0, 2500.0), (0, 0));
+        // Guard inputs → (0, 0).
+        assert_eq!(plan_windows(f64::NAN, 4, 2, 3, 480_000.0, 2500.0), (0, 0));
+        assert_eq!(plan_windows(600_000.0, 4, 2, 3, 480_000.0, 0.0), (0, 0));
     }
 
     #[test]
