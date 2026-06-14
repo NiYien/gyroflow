@@ -285,6 +285,13 @@ pub fn decide_posterior(
     };
     let ci95_width = post.ci95.1 - post.ci95.0;
     let ci95_gate = ci95_base_ms + t_d;
+    ::log::info!(
+        target: "sync",
+        "[deep-match] posterior: argmax={:.1}ms conf={:.3} ci95=[{:.1},{:.1}] width={:.1}ms gate={:.1}ms windows={} T(D)={:.1}ms n_eff={:?}",
+        post.argmax_ms, post.conf_posterior, post.ci95.0, post.ci95.1,
+        ci95_width, ci95_gate, curves.len(), t_d,
+        curves.iter().map(|c| c.n_eff as usize).collect::<Vec<_>>()
+    );
     if post.conf_posterior >= conf_min && ci95_width <= ci95_gate {
         DeepMatchVerdict::Accepted { offset_ms: post.argmax_ms }
     } else if ci95_width > ci95_gate {
