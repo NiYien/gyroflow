@@ -25,16 +25,45 @@ pub struct DeepMatchSegStats {
     pub max_angle: f64,
 }
 
-static COLLECTOR: Mutex<Option<Vec<DeepMatchSegStats>>> = Mutex::new(None);
+/// Full per-window cost curve + metadata for the posterior path. `curve` is
+/// (offset_ms, cost): 25ms coarse over the search domain, densified to 5ms
+/// within ±DENSE_MS of `argmin_ms`, plus the refined (argmin, cost_min) point.
+/// `n_eff` = optical-flow frame-pair count in the window.
+#[derive(Debug, Clone)]
+pub struct DeepMatchWindowCurve {
+    pub range_idx: usize,
+    pub t_center_ms: f64,
+    pub argmin_ms: f64,
+    pub cost_min: f64,
+    pub n_eff: f64,
+    pub curve: Vec<(f64, f64)>,
+}
 
-/// Arm the collector. Only one deep match runs at a time (enforced by the
-/// render queue), so a single global slot is sufficient.
-pub fn arm() {
+static COLLECTOR: Mutex<Option<Vec<DeepMatchSegStats>>> = Mutex::new(None);
+static CURVE_COLLECTOR: Mutex<Option<Vec<DeepMatchWindowCurve>>> = Mutex::new(None);
+static SCAN_K: Mutex<usize> = Mutex::new(0);
+
+/// Arm both collectors and record the scan-K target the essential scan uses to
+/// cap how many (highest-motion) windows it fully scans. Only one deep match
+/// runs at a time (render queue enforces), so single global slots suffice.
+pub fn arm(scan_k: usize) {
     *COLLECTOR.lock() = Some(Vec::new());
+    *CURVE_COLLECTOR.lock() = Some(Vec::new());
+    *SCAN_K.lock() = scan_k;
 }
 
 pub fn is_armed() -> bool {
     COLLECTOR.lock().is_some()
+}
+
+/// Scan-K target while armed; 0 when disarmed (essential scan then keeps its
+/// pre-change all-windows behavior — only the POSTERIOR=0 path leaves K at 0).
+pub fn scan_k_target() -> usize {
+    if COLLECTOR.lock().is_some() {
+        *SCAN_K.lock()
+    } else {
+        0
+    }
 }
 
 pub fn record(stats: DeepMatchSegStats) {
@@ -43,9 +72,28 @@ pub fn record(stats: DeepMatchSegStats) {
     }
 }
 
-/// Take the collected stats and disarm.
+pub fn record_curve(c: DeepMatchWindowCurve) {
+    if let Some(v) = CURVE_COLLECTOR.lock().as_mut() {
+        v.push(c);
+    }
+}
+
+/// Take the collected stats and disarm (both collectors + scan-K reset).
+/// Call `take_curves()` BEFORE this if you need the curves — this resets them.
 pub fn take() -> Vec<DeepMatchSegStats> {
+    *SCAN_K.lock() = 0;
+    *CURVE_COLLECTOR.lock() = None;
     COLLECTOR.lock().take().unwrap_or_default()
+}
+
+/// Take all collected curves and fully disarm (both collectors + scan-K reset).
+/// After this call `is_armed()` returns false and `scan_k_target()` returns 0.
+/// If you also need the seg stats, call `record`/`take` separately — but note
+/// that in the posterior path curves are the primary output.
+pub fn take_curves() -> Vec<DeepMatchWindowCurve> {
+    *SCAN_K.lock() = 0;
+    COLLECTOR.lock().take();
+    CURVE_COLLECTOR.lock().take().unwrap_or_default()
 }
 
 /// Compute the global (run-level) essential search domain so that every
@@ -364,6 +412,10 @@ pub fn per_window_ms() -> f64 {
 mod tests {
     use super::*;
 
+    // Serializes tests that share the global collector statics so they do not
+    // race each other when the test harness runs them on multiple threads.
+    static TEST_MTX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn search_domain_covers_capped_gyro_span() {
         // 60s video, gyro 0..5820s, cap 7200s (no capping applied)
@@ -599,7 +651,8 @@ mod tests {
 
     #[test]
     fn collector_roundtrip() {
-        arm();
+        let _g = TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        arm(2);
         assert!(is_armed());
         record(stats(0.1));
         let v = take();
@@ -639,5 +692,27 @@ mod tests {
         assert!((drift_tolerance_ms(3_600_000.0, 2.0, 10.0) - 120.0).abs() < 1e-9);
         // rate=0 disables the rate term, floor still applies.
         assert!((drift_tolerance_ms(3_600_000.0, 0.0, 10.0) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn curve_collector_roundtrip_and_scan_k() {
+        let _g = TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        arm(3);
+        assert!(is_armed());
+        assert_eq!(scan_k_target(), 3);
+        record_curve(DeepMatchWindowCurve {
+            range_idx: 0,
+            t_center_ms: 1000.0,
+            argmin_ms: -204692.0,
+            cost_min: 1.0,
+            n_eff: 75.0,
+            curve: vec![(-204700.0, 2.0), (-204692.0, 1.0), (-204680.0, 2.0)],
+        });
+        let cs = take_curves();
+        assert_eq!(cs.len(), 1);
+        assert!(!is_armed());
+        // Disarmed: scan_k_target falls back to 0 and take is empty.
+        assert_eq!(scan_k_target(), 0);
+        assert!(take_curves().is_empty());
     }
 }
