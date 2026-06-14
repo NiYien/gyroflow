@@ -9056,8 +9056,33 @@ impl RenderQueue {
             g_end,
             deep_match::max_scan_ms(),
         );
-        let windows =
-            deep_match::window_positions_ms(video_duration_ms, deep_match::window_count());
+        // Posterior path: place CANDIDATES windows; essential_matrix scans the
+        // top scan_k by motion (via deep_match::arm). Legacy path: old fixed
+        // window_count, scan_k=0 (scan all).
+        let (window_n, scan_k) = if deep_match::posterior_enabled() {
+            let (cands, k) = deep_match::plan_windows(
+                video_duration_ms,
+                deep_match::candidates_count(),
+                deep_match::scan_short(),
+                deep_match::scan_long(),
+                deep_match::long_min_ms(),
+                deep_match::per_window_ms(),
+            );
+            if cands < 2 {
+                // Clip too short to fit two windows — restore and report the
+                // motion-insufficient failure (mirrors the gyro_load_failed
+                // early return above).
+                if let Some(state) = self.deep_match_pending.remove(&job_id) {
+                    Self::restore_deep_match_gyro(&stab, &state);
+                }
+                self.deep_match_finished(job_id, false, QString::from("low_motion"), 0.0);
+                return;
+            }
+            (cands, k)
+        } else {
+            (deep_match::window_count(), 0usize)
+        };
+        let windows = deep_match::window_positions_ms(video_duration_ms, window_n);
         let pattern: Vec<String> = windows.iter().map(|w| format!("{w:.0}ms")).collect();
 
         // Probe-scoped lens injection (bare manual-lens jobs): build the
@@ -9155,7 +9180,7 @@ impl RenderQueue {
             "[deep-match] start chunk {}/{}: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
             current_chunk + 1, chunk_count, job_id, gyro_filename, g_start, g_end, init_ms, search_ms, pattern
         );
-        deep_match::arm();
+        deep_match::arm(scan_k);
         // Run the job through the same sync-only path batch repair uses:
         // export_project=2 + expected membership routes the worker into the
         // defer branch (sync, then stop — no encode); batch_sync_job_ids
@@ -9271,6 +9296,7 @@ impl RenderQueue {
         points: &[gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate],
     ) {
         use gyroflow_core::synchronization::deep_match;
+        let curves = deep_match::take_curves();
         let stats = deep_match::take();
         let Some((current_chunk, chunk_count)) = self
             .deep_match_pending
@@ -9300,14 +9326,30 @@ impl RenderQueue {
         }
 
         if !cancelled {
-            let verdict = deep_match::evaluate(
-                &offsets_ms,
-                &stats,
-                deep_match::spread_max_ms(),
-                deep_match::cost_ratio_max(),
-                deep_match::tight_spread_ms(),
-                deep_match::cost_ratio_tight(),
-            );
+            // Posterior owns the decision when enabled AND curves were captured
+            // (a real posterior probe records curves, never legacy stats). The
+            // `!curves.is_empty()` guard falls back to the legacy double-gate
+            // for the POSTERIOR=0 path and any run that produced no curves.
+            let verdict = if deep_match::posterior_enabled() && !curves.is_empty() {
+                let clip_ms = stab.as_ref().map(|s| s.params.read().duration_ms).unwrap_or(0.0);
+                deep_match::decide_posterior(
+                    &curves,
+                    clip_ms,
+                    deep_match::post_conf_min(),
+                    deep_match::post_ci95_base_ms(),
+                    deep_match::drift_rate_ms_per_min(),
+                    deep_match::drift_floor_ms(),
+                )
+            } else {
+                deep_match::evaluate(
+                    &offsets_ms,
+                    &stats,
+                    deep_match::spread_max_ms(),
+                    deep_match::cost_ratio_max(),
+                    deep_match::tight_spread_ms(),
+                    deep_match::cost_ratio_tight(),
+                )
+            };
             ::log::info!(
                 target: "sync",
                 "[deep-match] chunk {}/{} finish: job={} windows={} offsets={:?} verdict={:?}",
@@ -12059,7 +12101,7 @@ mod tests {
         let stab = setup_deep_match_job(&mut queue, true);
         simulate_deep_match_probe(&mut queue, &stab);
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         deep_match::record(deep_match_stats(0.2));
         queue.record_batch_sync_result(
@@ -12100,7 +12142,7 @@ mod tests {
         let stab = setup_deep_match_job(&mut queue, false);
         simulate_deep_match_probe(&mut queue, &stab);
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         deep_match::record(deep_match_stats(0.2));
         queue.record_batch_sync_result(
@@ -12251,7 +12293,7 @@ mod tests {
         let original_sync_settings = stab.lens.read().sync_settings.clone();
         simulate_deep_match_probe(&mut queue, &stab);
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         deep_match::record(deep_match_stats(0.1));
         // 5000ms apart -> Inconsistent -> full rollback.
@@ -12290,7 +12332,7 @@ mod tests {
             0,
         );
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         deep_match::record(deep_match_stats(0.1));
         // 5000ms apart -> Inconsistent -> advance, not terminate.
@@ -12323,7 +12365,7 @@ mod tests {
             1, // final chunk
         );
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         deep_match::record(deep_match_stats(0.1));
         queue.record_batch_sync_result(
@@ -12361,7 +12403,7 @@ mod tests {
             0,
         );
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         deep_match::record(deep_match_stats(0.2));
         queue.record_batch_sync_result(
@@ -12393,7 +12435,7 @@ mod tests {
             0,
         );
 
-        deep_match::arm();
+        deep_match::arm(2);
         deep_match::record(deep_match_stats(0.1));
         // Single window -> TooFewWindows: video-side motion gate, must NOT
         // try further chunks.
