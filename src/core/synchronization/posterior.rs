@@ -140,10 +140,13 @@ pub fn combine_windows(per_window: &[Vec<f64>]) -> Option<Vec<f64>> {
 /// true reference-offset could sit anywhere within ±half_pts of its measured
 /// peak, so the drift-marginalized log-likelihood at each grid point is the
 /// max over the band (max logL = max likelihood). `half_pts = 0` is identity.
+/// Non-finite input values are treated as −∞ (they never win a window's max);
+/// `half_pts` is clamped to the slice length.
 pub fn dilate_logl(logl: &[f64], half_pts: usize) -> Vec<f64> {
     if half_pts == 0 {
         return logl.to_vec();
     }
+    let half_pts = half_pts.min(logl.len());
     let n = logl.len();
     (0..n)
         .map(|i| {
@@ -865,6 +868,8 @@ mod tests {
         assert_eq!(dilate_logl(&spike, 2), vec![-10.0, 0.0, 0.0, 0.0, 0.0, 0.0, -10.0]);
         // Empty input -> empty.
         assert!(dilate_logl(&[], 3).is_empty());
+        // half_pts far exceeding len: clamped, every point sees the global max.
+        assert_eq!(dilate_logl(&[1.0, -2.0, 3.0], 999), vec![3.0, 3.0, 3.0]);
     }
 
     /// Drift-separated peaks (design §3.8): two clean windows whose sharp
