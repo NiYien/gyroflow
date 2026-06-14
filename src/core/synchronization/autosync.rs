@@ -856,6 +856,10 @@ impl AutosyncProcess {
                     // disambiguate (short clip, no disjoint position): drop it
                     // rather than bake a confidently-wrong offset. The conf<0.4
                     // filter in the controller/queue discards it.
+                    // (change sync-probe-posterior-owns-escalation: the hint is
+                    // now posterior-owned — wide ci95 / big override — so a
+                    // fusion-weak-but-posterior-tight short clip no longer lands
+                    // here and is correctly kept at its single-window conf 0.85.)
                     if self.lazy_probe_unavailable
                         && self.estimator.probe_escalation_hint.load(SeqCst)
                     {
