@@ -248,6 +248,85 @@ pub fn window_count() -> usize {
     (env_f64("GYROFLOW_DEEP_MATCH_WINDOWS", 3.0) as usize).clamp(2, 8)
 }
 
+/// Decide candidate-window count and scan count for a clip of `duration_ms`.
+/// `candidates` candidates are placed; the top `scan_short`/`scan_long`
+/// (by motion) are essential-scanned depending on the `long_min_ms` threshold.
+/// Short clips that cannot fit `candidates` non-overlapping OF windows of
+/// `per_window_ms` each degrade the candidate count; below 2 windows deep
+/// match is impossible (returns (0, 0) -> caller emits `TooFewWindows`).
+pub fn plan_windows(
+    duration_ms: f64,
+    candidates: usize,
+    scan_short: usize,
+    scan_long: usize,
+    long_min_ms: f64,
+    per_window_ms: f64,
+) -> (usize, usize) {
+    if !duration_ms.is_finite() || duration_ms <= 0.0 || per_window_ms <= 0.0 {
+        return (0, 0);
+    }
+    // Spacing of k/(N+1) fractions is duration/(N+1); keep it >= per_window_ms.
+    let fit = ((duration_ms / per_window_ms).floor() as i64 - 1).max(0) as usize;
+    let n = candidates.min(fit);
+    if n < 2 {
+        return (0, 0);
+    }
+    let k_target = if duration_ms > long_min_ms { scan_long } else { scan_short };
+    (n, k_target.min(n).max(2))
+}
+
+/// Allowed drift range T(D) for a clip of `duration_ms` (design §3.8):
+/// `max(floor_ms, rate_ms_per_min * minutes)`. The blur half-width is T(D)/2.
+pub fn drift_tolerance_ms(duration_ms: f64, rate_ms_per_min: f64, floor_ms: f64) -> f64 {
+    if !duration_ms.is_finite() || duration_ms <= 0.0 {
+        return floor_ms.max(0.0);
+    }
+    let minutes = duration_ms / 60_000.0;
+    (rate_ms_per_min.max(0.0) * minutes).max(floor_ms.max(0.0))
+}
+
+pub fn posterior_enabled() -> bool {
+    !matches!(
+        std::env::var("GYROFLOW_DEEP_MATCH_POSTERIOR").ok().as_deref(),
+        Some("0") | Some("off") | Some("false")
+    )
+}
+pub fn candidates_count() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_CANDIDATES", 4.0) as usize).clamp(2, 8)
+}
+pub fn scan_short() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_SCAN_SHORT", 2.0) as usize).clamp(2, 8)
+}
+pub fn scan_long() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_SCAN_LONG", 3.0) as usize).clamp(2, 8)
+}
+pub fn long_min_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_LONG_MIN_S", 480.0) * 1000.0
+}
+pub fn drift_rate_ms_per_min() -> f64 {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_DRIFT_RATE_MS_PER_MIN", 2.0)
+}
+pub fn drift_floor_ms() -> f64 {
+    env_f64_nonneg("GYROFLOW_DEEP_MATCH_DRIFT_FLOOR_MS", 10.0)
+}
+pub fn post_conf_min() -> f64 {
+    // Calibration TODO (spec §5): conservative starting bar against the
+    // ground-truth ledger. Wrong queue-wide anchor is costly -> start strict.
+    env_f64("GYROFLOW_DEEP_MATCH_POST_CONF_MIN", 0.5)
+}
+pub fn post_ci95_base_ms() -> f64 {
+    // Calibration TODO (spec §5). Effective gate = base + T(D) (design §3.5/§3.8).
+    env_f64("GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS", 25.0)
+}
+pub fn post_dense_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_POST_DENSE_MS", 30.0)
+}
+/// Per-window OF footage length used by `plan_windows` fit math; mirrors the
+/// `time_per_syncpoint` written into the probe sync_settings (2.5s).
+pub fn per_window_ms() -> f64 {
+    2500.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -495,5 +574,34 @@ mod tests {
         assert!(!is_armed());
         // take() when disarmed yields empty
         assert!(take().is_empty());
+    }
+
+    #[test]
+    fn plan_windows_short_long_and_degrade() {
+        // Long clip (>8min) with room: 4 candidates, scan 3.
+        assert_eq!(plan_windows(600_000.0, 4, 2, 3, 480_000.0, 2500.0), (4, 3));
+        // Short clip (<=8min) with room: 4 candidates, scan 2.
+        assert_eq!(plan_windows(120_000.0, 4, 2, 3, 480_000.0, 2500.0), (4, 2));
+        // Boundary: exactly 8min is "short" (> threshold is long).
+        assert_eq!(plan_windows(480_000.0, 4, 2, 3, 480_000.0, 2500.0), (4, 2));
+        // Too short to fit 4 windows: fit = floor(D/per) - 1. 10s/2.5 - 1 = 3.
+        assert_eq!(plan_windows(10_000.0, 4, 2, 3, 480_000.0, 2500.0), (3, 2));
+        // 7.5s -> fit 2; scan min(2, 2) = 2.
+        assert_eq!(plan_windows(7_500.0, 4, 2, 3, 480_000.0, 2500.0), (2, 2));
+        // 5s -> fit 1 -> below the 2-window floor -> (0, 0) (caller emits TooFewWindows).
+        assert_eq!(plan_windows(5_000.0, 4, 2, 3, 480_000.0, 2500.0), (0, 0));
+    }
+
+    #[test]
+    fn drift_tolerance_floor_and_rate() {
+        // <=5min: floored at 10ms.
+        assert!((drift_tolerance_ms(60_000.0, 2.0, 10.0) - 10.0).abs() < 1e-9);
+        assert!((drift_tolerance_ms(300_000.0, 2.0, 10.0) - 10.0).abs() < 1e-9);
+        // >5min: 2ms per minute.
+        assert!((drift_tolerance_ms(600_000.0, 2.0, 10.0) - 20.0).abs() < 1e-9);
+        assert!((drift_tolerance_ms(1_800_000.0, 2.0, 10.0) - 60.0).abs() < 1e-9);
+        assert!((drift_tolerance_ms(3_600_000.0, 2.0, 10.0) - 120.0).abs() < 1e-9);
+        // rate=0 disables the rate term, floor still applies.
+        assert!((drift_tolerance_ms(3_600_000.0, 0.0, 10.0) - 10.0).abs() < 1e-9);
     }
 }
