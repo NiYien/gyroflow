@@ -9332,6 +9332,9 @@ impl RenderQueue {
             // for the POSTERIOR=0 path and any run that produced no curves.
             let verdict = if deep_match::posterior_enabled() && !curves.is_empty() {
                 let clip_ms = stab.as_ref().map(|s| s.params.read().duration_ms).unwrap_or(0.0);
+                if gyroflow_core::synchronization::sync_diag::is_enabled() {
+                    gyroflow_core::synchronization::sync_diag::record_deep_match_posterior(&curves, clip_ms);
+                }
                 deep_match::decide_posterior(
                     &curves,
                     clip_ms,

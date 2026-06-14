@@ -875,6 +875,117 @@ pub fn record_fusion_decision(
     }
 }
 
+/// Diagnostic dump of the deep-match posterior computation (`GYROFLOW_SYNC_DIAG=1`).
+///
+/// Recomputes the posterior from the raw cost curves using the same functions as
+/// `deep_match::decide_posterior` and writes `deep_match_posterior.csv` into the
+/// current diag session directory.  The file has three sections:
+///   - per-window rows: `window_idx,t_center_ms,offset_ms,cost,logl`
+///   - joint rows:      `joint,,offset_ms,,logl`
+///   - decision row:    `decision,argmax_ms,conf,ci95_lo,ci95_hi`
+///
+/// Returns immediately when disabled or when fewer than 2 curves are available
+/// (not enough windows for a meaningful posterior).
+pub fn record_deep_match_posterior(
+    curves: &[crate::synchronization::deep_match::DeepMatchWindowCurve],
+    clip_duration_ms: f64,
+) {
+    if !is_enabled() || curves.len() < 2 {
+        return;
+    }
+    use crate::synchronization::posterior::{
+        approx_window_log_likelihood, combine_windows_on_common_grid_dilated, posterior_decide,
+        Prior,
+    };
+    use crate::synchronization::deep_match::{drift_tolerance_ms, drift_rate_ms_per_min, drift_floor_ms};
+
+    // Obtain the session directory using the same pattern as record_residuals.
+    let out_dir = match SESSION.lock().as_ref() {
+        Some(s) => s.out_dir.clone(),
+        None => {
+            log::warn!("[SyncDiag] record_deep_match_posterior: no active session");
+            return;
+        }
+    };
+
+    // Build per-window (grid, logl) pairs — mirrors decide_posterior's input preparation.
+    let mut win_grids: Vec<Vec<f64>> = Vec::with_capacity(curves.len());
+    let mut win_logls: Vec<Vec<f64>> = Vec::with_capacity(curves.len());
+    for c in curves {
+        let grid: Vec<f64> = c.curve.iter().map(|(o, _)| *o).collect();
+        let logl: Vec<f64> = c.curve.iter()
+            .map(|(_, cost)| approx_window_log_likelihood(*cost, c.cost_min, c.n_eff))
+            .collect();
+        win_grids.push(grid);
+        win_logls.push(logl);
+    }
+
+    // Build views for combine_windows_on_common_grid_dilated.
+    let views: Vec<(&[f64], &[f64])> = win_grids.iter()
+        .zip(win_logls.iter())
+        .map(|(g, l)| (g.as_slice(), l.as_slice()))
+        .collect();
+
+    // Drift tolerance uses the same env getters as decide_posterior.
+    let t_d = drift_tolerance_ms(clip_duration_ms, drift_rate_ms_per_min(), drift_floor_ms());
+    let combined = combine_windows_on_common_grid_dilated(&views, 5.0, t_d / 2.0);
+
+    // Open the CSV file using the same open_csv helper used throughout this module.
+    let mut w = match open_csv(&out_dir, "deep_match_posterior.csv") {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("[SyncDiag] failed to create deep_match_posterior.csv: {}", e);
+            return;
+        }
+    };
+
+    // Write per-window rows.
+    if let Err(e) = writeln!(w, "window_idx,t_center_ms,offset_ms,cost,logl") {
+        log::warn!("[SyncDiag] deep_match_posterior.csv write error: {}", e);
+        return;
+    }
+    for (c, logl_row) in curves.iter().zip(win_logls.iter()) {
+        for ((offset_ms, cost), logl) in c.curve.iter().zip(logl_row.iter()) {
+            if let Err(e) = writeln!(
+                w,
+                "{},{:.4},{:.4},{:.6},{:.6}",
+                c.range_idx, c.t_center_ms, offset_ms, cost, logl
+            ) {
+                log::warn!("[SyncDiag] deep_match_posterior.csv write error: {}", e);
+                return;
+            }
+        }
+    }
+
+    // Write joint posterior rows.
+    match combined {
+        Some((joint_grid, joint_logl)) => {
+            for (offset_ms, logl) in joint_grid.iter().zip(joint_logl.iter()) {
+                if let Err(e) = writeln!(w, "joint,,{:.4},,{:.6}", offset_ms, logl) {
+                    log::warn!("[SyncDiag] deep_match_posterior.csv write error: {}", e);
+                    return;
+                }
+            }
+            // Recompute the decision for the final row.
+            match posterior_decide(&joint_grid, &joint_logl, &Prior::Uniform) {
+                Some(p) => {
+                    let _ = writeln!(
+                        w,
+                        "decision,{:.4},{:.6},{:.4},{:.4}",
+                        p.argmax_ms, p.conf_posterior, p.ci95.0, p.ci95.1
+                    );
+                }
+                None => {
+                    let _ = writeln!(w, "decision,unavailable,,,");
+                }
+            }
+        }
+        None => {
+            let _ = writeln!(w, "decision,unavailable,,,");
+        }
+    }
+}
+
 /// Called at sync end. Dumps buffers to CSV and closes the session.
 /// Returns immediately when disabled.
 pub fn flush_and_close() {
