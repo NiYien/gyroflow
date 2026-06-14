@@ -313,6 +313,91 @@ pub(crate) fn posterior_enabled() -> bool {
     })
 }
 
+/// `GYROFLOW_SYNC_POSTERIOR_DRIFT` master switch (drift-tolerant cross-window
+/// joint — deep-match design §3.8 ported to the windowing path). Default ON.
+/// When on, the cross-window posterior product max-dilates each window's logL by
+/// T(D)/2 before summing, so two windows whose true reference offsets drifted
+/// apart (camera/gyro clock skew over a long inter-window gap — lazy-probe
+/// escalation, or multi-window batch sync on a long clip) still form one joint
+/// peak instead of a low-conf bimodal. T(D) is keyed on the actual window-center
+/// time span (NOT clip duration), so a single-window run (span 0 → T(D) 0) is
+/// byte-identical to the pre-change plain product. `0|false|no|off` forces
+/// T(D)=0 (plain product) everywhere. OnceLock-cached; first resolve logs to
+/// `target="lifecycle"`.
+pub(crate) fn posterior_drift_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_POSTERIOR_DRIFT").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_POSTERIOR_DRIFT={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_posterior_drift resolved enabled={} source={}", v, source);
+        v
+    })
+}
+
+/// Drift rate (ms of camera/gyro clock skew per minute of inter-window gap)
+/// feeding `drift_tolerance_ms` on the windowing path
+/// (`GYROFLOW_SYNC_DRIFT_RATE_MS_PER_MIN`, default 2.0 ≈ 33ppm — the realistic
+/// rate calibrated for deep match). Decoupled from the deep-match env so the two
+/// paths tune independently. OnceLock-cached.
+pub(crate) fn sync_drift_rate_ms_per_min() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_DRIFT_RATE_MS_PER_MIN")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(2.0)
+    })
+}
+
+/// Drift-tolerance floor (ms) applied to multi-window joints regardless of the
+/// inter-window gap, absorbing sub-grid peak jitter between genuinely-aligned
+/// windows (`GYROFLOW_SYNC_DRIFT_FLOOR_MS`, default 10.0). Only reached when
+/// there are >= 2 windows; single-window runs short-circuit T(D) to 0 before
+/// this applies. OnceLock-cached.
+pub(crate) fn sync_drift_floor_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        std::env::var("GYROFLOW_SYNC_DRIFT_FLOOR_MS")
+            .ok()
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .filter(|v| v.is_finite() && *v >= 0.0)
+            .unwrap_or(10.0)
+    })
+}
+
+/// Full drift tolerance T(D) (ms) for the cross-window joint, keyed on the time
+/// span between window centers (ms). Fewer than 2 finite centers, or a
+/// non-positive span, returns 0 (a single window has no inter-window drift —
+/// keeps the common fast path byte-identical). Otherwise returns
+/// `drift_tolerance_ms(span, rate, floor)`; the caller dilates by T(D)/2 and
+/// widens the arbitration ci95 gates by T(D) (design §3.5/§3.8).
+fn cross_window_drift_tol_ms(centers_ms: &[f64], rate_ms_per_min: f64, floor_ms: f64) -> f64 {
+    if centers_ms.len() < 2 {
+        return 0.0;
+    }
+    let lo = centers_ms.iter().copied().filter(|c| c.is_finite()).fold(f64::INFINITY, f64::min);
+    let hi = centers_ms.iter().copied().filter(|c| c.is_finite()).fold(f64::NEG_INFINITY, f64::max);
+    if !lo.is_finite() || !hi.is_finite() || hi <= lo {
+        return 0.0;
+    }
+    crate::synchronization::deep_match::drift_tolerance_ms(hi - lo, rate_ms_per_min, floor_ms)
+}
+
 /// Posterior CI95 width (ms) above which a single-window run requests a lazy
 /// probe window (`GYROFLOW_SYNC_PROBE_CI95_MS`, default 30). A sharp single
 /// window (CI ≈ 0) is trusted; a wide CI signals an ambiguous basin that a
@@ -342,6 +427,40 @@ pub(crate) fn probe_escalation_disagree_ms() -> f64 {
             .and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v > 0.0)
             .unwrap_or(1000.0)
+    })
+}
+
+/// `GYROFLOW_SYNC_PROBE_FUSION_HINT` switch (change
+/// sync-probe-posterior-owns-escalation). Default OFF: the fusion-side signal
+/// quality warnings (`weak_signal` peak_h<0.20 / `wide_W` W>500ms) MUST NOT
+/// drive lazy-probe escalation — the posterior owns the escalation decision via
+/// its own ci95 / big-override hint. The fusion warn fires before the posterior
+/// computes its CI and only ever latches `escalation_hint=true`, so a razor-tight
+/// posterior (ci95≈5ms agreeing with fusion) could never un-latch it, over-firing
+/// the probe on stable single-window syncs (16-clip ledger FINDING-H, clips 6/12).
+/// `1|true|yes|on` restores the legacy fusion-driven hint byte-for-byte.
+/// OnceLock-cached; first resolve logs to `target="lifecycle"`.
+pub(crate) fn probe_fusion_hint_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_PROBE_FUSION_HINT").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (false, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_PROBE_FUSION_HINT={} invalid, falling back to default (off)",
+                        s
+                    );
+                    (false, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "probe_fusion_hint resolved enabled={} source={}", v, source);
+        v
     })
 }
 
@@ -1602,8 +1721,8 @@ impl FindOffsetsRssync<'_> {
     /// or cancellation leaves the fusion output untouched (graceful no-op).
     pub fn posterior_override(&mut self, offsets: &mut [(f64, f64, f64, f64)], cancel_flag: &AtomicBool) {
         use crate::synchronization::posterior::{
-            combine_windows_on_common_grid, posterior_decide, sigma_mad, window_log_likelihood,
-            Prior,
+            combine_windows_on_common_grid_dilated, posterior_decide, sigma_mad,
+            window_log_likelihood, Prior,
         };
         const GRID_STEP_MS: f64 = 5.0;
         const SAMPLE_EVERY_NTH: usize = 10;
@@ -1806,12 +1925,35 @@ impl FindOffsetsRssync<'_> {
             return;
         }
 
-        // D3: cross-window product on the common 5ms lattice.
+        // Drift tolerance T(D) for the cross-window joint (deep-match §3.8
+        // ported here). Camera/gyro clock skew makes each window's true offset
+        // drift linearly with time, so windows placed far apart (lazy-probe
+        // escalation, or multi-window batch sync on a long clip) legitimately
+        // disagree. Keyed on the window-center time span, NOT clip duration: a
+        // single window (span 0) gets T(D)=0 = identity, so the common fast path
+        // stays byte-for-byte. `GYROFLOW_SYNC_POSTERIOR_DRIFT=0` forces 0.
+        let drift_tol_ms = if posterior_drift_enabled() {
+            let centers_ms: Vec<f64> =
+                windows.iter().map(|w| (w.sp.0 + w.sp.1) as f64 / 2000.0).collect();
+            cross_window_drift_tol_ms(
+                &centers_ms,
+                sync_drift_rate_ms_per_min(),
+                sync_drift_floor_ms(),
+            )
+        } else {
+            0.0
+        };
+
+        // D3: cross-window product on the common 5ms lattice. Each window's logL
+        // is max-dilated by T(D)/2 first (dilate=0 is byte-identical to the
+        // plain product), so drift-separated peaks merge into one joint peak
+        // instead of splitting into a low-conf bimodal.
         let views: Vec<(&[f64], &[f64])> = windows
             .iter()
             .map(|w| (w.grid_ms.as_slice(), w.logl.as_slice()))
             .collect();
-        let Some((joint_grid, joint_logl)) = combine_windows_on_common_grid(&views, GRID_STEP_MS)
+        let Some((joint_grid, joint_logl)) =
+            combine_windows_on_common_grid_dilated(&views, GRID_STEP_MS, drift_tol_ms / 2.0)
         else {
             log::warn!(
                 target: "sync",
@@ -1890,7 +2032,7 @@ impl FindOffsetsRssync<'_> {
             let fusion_ms = offsets[w.seg].1;
             log::info!(
                 target: "sync",
-                "[posterior] seg {}: argmax={:.1}ms refined={:.1}ms ci95=[{:.0},{:.0}] conf={:.3} windows={} win=[{}-{}ms] g*={:.3} sigma={:.5} n_pairs={} star={:.1}ms prior={} fusion={:.1}ms diff={:+.1}ms",
+                "[posterior] seg {}: argmax={:.1}ms refined={:.1}ms ci95=[{:.0},{:.0}] conf={:.3} windows={} win=[{}-{}ms] t_d={:.1}ms g*={:.3} sigma={:.5} n_pairs={} star={:.1}ms prior={} fusion={:.1}ms diff={:+.1}ms",
                 w.seg,
                 post.argmax_ms,
                 out_ms,
@@ -1900,6 +2042,7 @@ impl FindOffsetsRssync<'_> {
                 n_windows,
                 w.sp.0 / 1000,
                 w.sp.1 / 1000,
+                drift_tol_ms,
                 w.gain_star,
                 w.sigma,
                 w.n_pairs,
@@ -1930,6 +2073,15 @@ impl FindOffsetsRssync<'_> {
                 let ci95_width = (post.ci95.1 - post.ci95.0).abs();
                 let basin = self.fusion_basin.get(w.seg).copied().flatten();
 
+                // Drift dilation deliberately widens the joint peak by ±T(D)/2,
+                // so the measured ci95 carries that bounded-drift plateau on top
+                // of the intrinsic basin width. Widen both arbitration gates by
+                // T(D) (design §3.5/§3.8) so a drift-merged-but-sharp peak is not
+                // mistaken for genuine ambiguity and handed to fusion / dropped.
+                // T(D)=0 (single window or drift disabled) leaves them unchanged.
+                let narrow_gate = arb_ci95_narrow_ms() + drift_tol_ms;
+                let wide_gate = arb_ci95_wide_ms() + drift_tol_ms;
+
                 // Unusable / non-finite data → graceful no-op (keep posterior).
                 // No Δ-agree gate (see note above): finite cases fall straight
                 // into the ci95 tiers below.
@@ -1938,7 +2090,7 @@ impl FindOffsetsRssync<'_> {
                     || !ci95_width.is_finite()
                 {
                     offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf);
-                } else if ci95_width <= arb_ci95_narrow_ms() {
+                } else if ci95_width <= narrow_gate {
                     // Branch 1 (narrow): posterior is trustworthy and rejects
                     // fusion false peaks (clip 13/15). Keep posterior.
                     log::info!(
@@ -1985,7 +2137,7 @@ impl FindOffsetsRssync<'_> {
                             basin.map(|b| format!("{:.3}", b.cost_sharpness_ratio)).unwrap_or_else(|| "n/a".into())
                         );
                         offsets[w.seg] = (offsets[w.seg].0, fusion_ms, arb_cost, ARB_FUSION_WIN_CONF);
-                    } else if ci95_width >= arb_ci95_wide_ms() {
+                    } else if ci95_width >= wide_gate {
                         // both-weak (wide): posterior wide AND fusion weak →
                         // conf-suppress below the downstream 0.4 filter so the
                         // point is dropped (don't bake a wrong value; clip 16).
@@ -2832,12 +2984,19 @@ impl FindOffsetsRssync<'_> {
             } else {
                 None
             };
-            // Lazy-probe escalation hint: a weak or wide fusion peak means this
-            // single window cannot be trusted on its own — request a probe
-            // window. periodic_ambiguity (echo) is excluded: the posterior with
-            // its prior usually resolves it sharply (a wide posterior CI below
-            // catches the cases it does not).
-            if matches!(quality_warn, Some("weak_signal") | Some("wide_W")) {
+            // Lazy-probe escalation hint (fusion side, OFF by default — change
+            // sync-probe-posterior-owns-escalation): a weak or wide fusion peak
+            // is fusion's OWN NCC-curve quality (peak_h excludes the gyro prior)
+            // and over-fires escalation on weak-motion clips whose posterior+prior
+            // is already razor-tight (ledger FINDING-H, clips 6/12). The posterior
+            // now owns escalation via its ci95 / big-override hint below; a truly
+            // wide fusion peak widens the likelihood -> the posterior ci95 path
+            // picks it up. Set GYROFLOW_SYNC_PROBE_FUSION_HINT=1 to restore the
+            // legacy fusion-driven hint. periodic_ambiguity (echo) was always
+            // excluded (resolved sharply by the prior).
+            if probe_fusion_hint_enabled()
+                && matches!(quality_warn, Some("weak_signal") | Some("wide_W"))
+            {
                 self.escalation_hint.set(true);
             }
             if let Some(reason) = quality_warn {
@@ -4318,5 +4477,49 @@ mod auto_bypass_tests {
     #[test]
     fn env_disable_forces_fusion() {
         assert!(!should_auto_bypass_fusion(-204692.5, 3000.0, true));
+    }
+}
+
+#[cfg(test)]
+mod drift_tol_tests {
+    use super::cross_window_drift_tol_ms;
+
+    #[test]
+    fn single_window_is_identity() {
+        // Fewer than 2 centers → 0 (no inter-window drift; keeps the fast path
+        // byte-identical via dilate=0).
+        assert_eq!(cross_window_drift_tol_ms(&[], 2.0, 10.0), 0.0);
+        assert_eq!(cross_window_drift_tol_ms(&[5000.0], 2.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn close_windows_floored() {
+        // Two centers 10s apart: rate term ≈ 0.33ms, floored to 10ms (absorbs
+        // sub-grid peak jitter between genuinely-aligned windows).
+        assert!((cross_window_drift_tol_ms(&[0.0, 10_000.0], 2.0, 10.0) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn far_windows_scale_with_span() {
+        // 30min apart: 2ms/min × 30 = 60ms (above floor).
+        assert!((cross_window_drift_tol_ms(&[0.0, 1_800_000.0], 2.0, 10.0) - 60.0).abs() < 1e-9);
+        // Span is max−min over ALL centers, order-independent (10min → 20ms).
+        assert!(
+            (cross_window_drift_tol_ms(&[600_000.0, 0.0, 300_000.0], 2.0, 10.0) - 20.0).abs() < 1e-9
+        );
+    }
+
+    #[test]
+    fn rate_zero_disables_rate_term() {
+        // rate=0 → only the floor remains regardless of span.
+        assert!((cross_window_drift_tol_ms(&[0.0, 1_800_000.0], 0.0, 10.0) - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn non_finite_or_degenerate_span_is_zero() {
+        // Non-finite centers leave no finite span → 0 (graceful, never panics).
+        assert_eq!(cross_window_drift_tol_ms(&[f64::NAN, f64::NAN], 2.0, 10.0), 0.0);
+        // Identical centers (zero span) → 0 (hi <= lo guard).
+        assert_eq!(cross_window_drift_tol_ms(&[5000.0, 5000.0], 2.0, 10.0), 0.0);
     }
 }
