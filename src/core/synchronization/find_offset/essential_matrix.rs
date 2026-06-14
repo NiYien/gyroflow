@@ -37,7 +37,7 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
         // (K = deep_match::scan_k_target()). Weak windows contribute ~0
         // evidence to the joint posterior, so scanning them is wasted work.
         // K = 0 (regular autosync, or POSTERIOR=0 left it 0) -> keep all ranges.
-        let scan_keep: Option<std::collections::HashSet<usize>> = {
+        let scan_keep: Option<std::collections::BTreeSet<usize>> = {
             let k = crate::synchronization::deep_match::scan_k_target();
             if k > 0 {
                 let mut scored: Vec<(usize, f64)> = ranges
@@ -56,14 +56,14 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                     })
                     .collect();
                 scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                let keep: std::collections::HashSet<usize> =
+                // BTreeSet iterates in sorted order, so the log line needs no
+                // extra sort and lookups stay O(log n) (n <= 8 windows).
+                let keep: std::collections::BTreeSet<usize> =
                     scored.into_iter().take(k).map(|(i, _)| i).collect();
-                let mut kept_sorted: Vec<usize> = keep.iter().copied().collect();
-                kept_sorted.sort();
                 ::log::info!(
                     target: "sync",
                     "[deep-match] window select: ranges={} scan_k={} kept={:?}",
-                    ranges.len(), k, kept_sorted
+                    ranges.len(), k, keep.iter().copied().collect::<Vec<_>>()
                 );
                 Some(keep)
             } else {
@@ -74,12 +74,14 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
             if cancel_flag.load(Relaxed) {
                 break;
             }
-            progress_cb(i as f64 / ranges_len);
+            // Skip non-kept windows before reporting progress so the bar
+            // advances only on windows that actually run the scan.
             if let Some(ref keep) = scan_keep {
                 if !keep.contains(&i) {
                     continue;
                 }
             }
+            progress_cb(i as f64 / ranges_len);
             if to_ts <= from_ts {
                 continue;
             }
@@ -220,9 +222,11 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                                     .collect();
                                 let dense_r = dm::post_dense_ms();
                                 let dense: Vec<(f64, f64)> = {
+                                    // ~12 points — plain iterator; rayon dispatch
+                                    // overhead would exceed the gain on a block
+                                    // this small.
                                     let dn = ((dense_r * 2.0) / 5.0) as usize;
                                     (0..=dn)
-                                        .into_par_iter()
                                         .map(|k| {
                                             let offs = lowest.0 - dense_r + k as f64 * 5.0;
                                             (offs, calculate_cost(offs, &of_item, &gyro_bintree))
