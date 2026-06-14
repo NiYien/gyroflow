@@ -1058,35 +1058,61 @@ pub(crate) fn probe_min_new_ms() -> f64 {
 /// windows are as independent as the clip allows. A fully disjoint probe is
 /// preferred, but when the user window already spans most of a short clip a
 /// partial overlap is allowed as long as the probe still contributes at least
-/// `probe_min_new_ms()` of NEW data (capped at the window width so a sub-1s
-/// window can still use a fully disjoint probe). Returns `None` only when even
-/// the extreme placement cannot reach that much new data — the posterior then
+/// `probe_min_new_ms()` of NEW data.
+///
+/// On a clip *shorter than one window* the user window itself clamps to the
+/// clip, so a sync point near a boundary occupies only part of the nominal
+/// window and leaves an unused gap at the far end (e.g. a 2.4s clip, 2.5s
+/// window, sync point at the head: the window covers ~1.24s, leaving ~1.16s of
+/// tail). Anchoring the probe's outer edge to the far clip extreme parks its
+/// clamped range over that gap with minimal overlap, so such clips are no
+/// longer rejected outright. Returns `None` only when even the extreme
+/// placement cannot reach `required_new` of new data (e.g. the sync point sits
+/// dead-center on a clip the window already covers) — the posterior then
 /// degrades to single-window (and an ambiguous result is dropped upstream).
 pub(crate) fn pick_probe_fraction(
     existing_fract: f64,
     duration_ms: f64,
     window_ms: f64,
 ) -> Option<f64> {
-    if duration_ms <= 0.0 || window_ms <= 0.0 || duration_ms < window_ms {
+    if duration_ms <= 0.0 || window_ms <= 0.0 {
         return None;
     }
-    let required_new = probe_min_new_ms().min(window_ms);
+    // New data can never exceed the clip itself; capping the floor by duration
+    // lets a boundary-anchored probe over the unused tail of a sub-window clip
+    // still qualify (the `duration < window` early-out used to reject these).
+    let required_new = probe_min_new_ms().min(window_ms).min(duration_ms);
     let half = window_ms / 2.0;
     let e_center = existing_fract * duration_ms;
-    let (e_start, e_end) = (e_center - half, e_center + half);
-    // Candidate centers clamped so the window fits inside [0, duration].
-    let start_center = half;
-    let end_center = duration_ms - half;
+    // Clamp the existing window to the clip, exactly like the decode-range map
+    // in `from_manager` does — a near-boundary point occupies only part of the
+    // nominal window, leaving a usable gap at the far end.
+    let e_start = (e_center - half).max(0.0);
+    let e_end = (e_center + half).min(duration_ms);
+    // New (non-overlapping) data a probe centered at `p_center` adds, measured
+    // with the same clamping so a probe hanging off the clip end is scored by
+    // its real in-clip width rather than the nominal window.
     let new_data = |p_center: f64| -> f64 {
-        let (p_start, p_end) = (p_center - half, p_center + half);
+        let p_start = (p_center - half).max(0.0);
+        let p_end = (p_center + half).min(duration_ms);
         let overlap = (p_end.min(e_end) - p_start.max(e_start)).max(0.0);
-        window_ms - overlap
+        (p_end - p_start) - overlap
     };
-    // Prefer the end farther from the existing window (more independence).
-    let order = if existing_fract >= 0.5 {
-        [start_center, end_center]
+    // Candidate probe centers, farther end (more independence) first.
+    // Long clip (>= window): a whole window fits, anchored half a window in
+    // from the boundary. Short clip (< window): a whole window cannot fit, so
+    // anchor the probe's outer edge to the clip extreme; clamping then parks it
+    // over the unused tail with minimal overlap of the user window.
+    let order = if duration_ms >= window_ms {
+        if existing_fract >= 0.5 {
+            [half, duration_ms - half]
+        } else {
+            [duration_ms - half, half]
+        }
+    } else if existing_fract >= 0.5 {
+        [0.0, duration_ms]
     } else {
-        [end_center, start_center]
+        [duration_ms, 0.0]
     };
     for c in order {
         if new_data(c) >= required_new {
@@ -1149,5 +1175,25 @@ mod tests {
         // Window wider than the clip, and degenerate duration.
         assert_eq!(pick_probe_fraction(0.5, 2_000.0, 3_000.0), None);
         assert_eq!(pick_probe_fraction(0.5, 0.0, 500.0), None);
+    }
+
+    #[test]
+    fn probe_uses_short_clip_tail() {
+        // P1032801 shape: 2.4s clip, 2.5s window wider than the clip, sync point
+        // at the head (~0.3%). The user window clamps to ~[0,1.25s], leaving
+        // ~1.15s of unused tail. The probe anchors at the clip end so its
+        // clamped range [~1.15s, 2.4s] covers that tail (only ~0.1s overlap),
+        // above the 1s floor. Previously the `duration < window` early-out
+        // rejected this outright and the single window was dropped.
+        let f = pick_probe_fraction(0.003, 2400.0, 2500.0).expect("tail probe");
+        assert!((f - 1.0).abs() < 1e-6, "head point -> tail-anchored probe, got {f}");
+        // Mirror: a sync point at the tail anchors the probe at the head.
+        let f = pick_probe_fraction(0.997, 2400.0, 2500.0).expect("head probe");
+        assert!(f.abs() < 1e-6, "tail point -> head-anchored probe, got {f}");
+        // Probe range from `from_manager`'s clamped formula lands over the tail.
+        let half: f64 = 2500.0 / 2.0;
+        let p_start: f64 = (2400.0_f64 - half).max(0.0);
+        let p_end: f64 = (2400.0_f64 + half).min(2400.0);
+        assert!((p_start - 1150.0).abs() < 1e-6 && (p_end - 2400.0).abs() < 1e-6);
     }
 }
