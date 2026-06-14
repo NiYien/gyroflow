@@ -18,11 +18,14 @@ use parking_lot::Mutex;
 
 use crate::log_context::LogContext;
 
-// 13 third-party noise targets that should be limited to Warn+ in the file
-// log. Top-level Debug stays unaffected for app code.
+// Third-party noise targets that should be limited to Warn+ in the file log.
+// Top-level Debug stays unaffected for app code. `cubecl_wgpu` is the NeuFlow
+// Burn GPU backend; its startup Vulkan-capability dump (features/CMMA sizes/MMA
+// configs) is ~900 lines of pure enumeration with no diagnostic value.
 const NOISE_TARGETS: &[&str] = &[
     "mp4parse",
     "wgpu",
+    "cubecl_wgpu",
     "naga",
     "akaze",
     "ureq",

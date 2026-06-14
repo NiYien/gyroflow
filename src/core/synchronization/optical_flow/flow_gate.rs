@@ -461,7 +461,14 @@ fn format_pair_line(method: &str, pair_ts_us: i64, stats: &GateStats) -> String 
 /// Record one pair's gate stats: per-pair debug log, run accumulator and
 /// (when `GYROFLOW_SYNC_DIAG=1`) a flow_quality.csv row.
 pub fn record_pair_stats(method: &'static str, pair_ts_us: i64, stats: &GateStats) {
-    log::debug!(target: "sync", "{}", format_pair_line(method, pair_ts_us, stats));
+    // The per-pair line is one row per frame pair (hundreds-to-thousands per
+    // run), which dominates the default log. Gate it behind GYROFLOW_SYNC_DIAG
+    // so routine logs stay readable. The info-level run summary (dump_and_reset_stats)
+    // and the flow_quality.csv row below keep full per-pair coverage, and the
+    // degraded warning still fires unconditionally.
+    if crate::synchronization::sync_diag::is_enabled() {
+        log::debug!(target: "sync", "{}", format_pair_line(method, pair_ts_us, stats));
+    }
     if stats.degraded {
         log::warn!(
             target: "sync",
