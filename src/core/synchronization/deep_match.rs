@@ -468,7 +468,7 @@ pub fn post_conf_min() -> f64 {
 /// Calibration pending (spec §5): sweep against recorded corpus before tightening.
 /// `GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS` overrides.
 pub fn post_ci95_base_ms() -> f64 {
-    env_f64("GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS", 25.0)
+    env_f64("GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS", 15.0)
 }
 pub fn post_dense_ms() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_POST_DENSE_MS", 30.0)
