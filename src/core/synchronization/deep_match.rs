@@ -756,13 +756,16 @@ mod tests {
     }
 
     fn wc(idx: usize, t_center: f64, peak: f64, n_eff: f64) -> DeepMatchWindowCurve {
-        // Synthetic cost curve over [-500,500] @25ms, min cost 1.0 at `peak`,
-        // rising toward ~2.0 at the edges.
-        let curve: Vec<(f64, f64)> = (0..=40)
+        // Synthetic cost curve over [-600, 600] @25ms step.  Min cost 1.0 at
+        // `peak`; rises steeply toward ~2.0 away from it.  Gaussian width
+        // divisor 13 gives sigma ~13ms so two peaks >30ms apart are clearly
+        // separated; only explicit drift dilation (max-dilation in
+        // combine_windows_on_common_grid_dilated) can merge them.
+        let curve: Vec<(f64, f64)> = (0..=48)
             .map(|k| {
-                let off = -500.0 + k as f64 * 25.0;
-                let d = (off - peak) / 40.0;
-                (off, 1.0 + 1.0 * (1.0 - (-0.5 * d * d).exp()))
+                let off = -600.0 + k as f64 * 25.0;
+                let d = (off - peak) / 13.0;
+                (off, 1.0 + (1.0 - (-0.5 * d * d).exp()))
             })
             .collect();
         DeepMatchWindowCurve { range_idx: idx, t_center_ms: t_center, argmin_ms: peak, cost_min: 1.0, n_eff, curve }
@@ -770,6 +773,8 @@ mod tests {
 
     #[test]
     fn decide_posterior_accepts_consistent_windows() {
+        // Peaks within 3ms of each other -> always merge regardless of drift;
+        // should be Accepted with any reasonable ci95_base.
         let curves = vec![wc(0, 1000.0, -100.0, 75.0), wc(1, 2000.0, -98.0, 75.0), wc(2, 3000.0, -101.0, 75.0)];
         match decide_posterior(&curves, 120_000.0, 0.4, 50.0, 2.0, 10.0) {
             DeepMatchVerdict::Accepted { offset_ms } => assert!((offset_ms + 100.0).abs() <= 10.0, "got {offset_ms}"),
@@ -785,19 +790,37 @@ mod tests {
 
     #[test]
     fn decide_posterior_drift_separated_long_clip_accepts() {
-        // 30min clip: T(D)=60ms. Two windows 50ms apart (within T) -> drift
-        // blur merges -> Accepted. Same gap on a 1min clip (T=10ms < 50ms) ->
-        // disagreement beyond tolerance -> not Accepted.
-        let curves = vec![wc(0, 100_000.0, -125.0, 75.0), wc(1, 1_700_000.0, -75.0, 75.0)];
-        match decide_posterior(&curves, 1_800_000.0, 0.4, 50.0, 2.0, 10.0) {
+        // Two windows whose cost-curve peaks are 80ms apart (a real clock-drift
+        // offset between the video clock and the gyro clock on a long clip).
+        //
+        // LONG clip (60 min): T(D) = max(10, 2.0*60) = 120ms.
+        //   Drift dilation half-width = 60ms > 40ms (half the separation) ->
+        //   the max-dilation smears each window's likelihood over ±60ms,
+        //   merging the two 80ms-apart peaks into a single unimodal joint.
+        //   ci95_gate = 20 + 120 = 140ms -> narrow joint -> Accepted.
+        //
+        // SHORT clip (1 min): T(D) = max(10, 2.0*1) = 10ms.
+        //   Blur half-width = 5ms << 40ms -> peaks stay separated ->
+        //   bimodal/wide joint -> ci95_width >> (20 + 10) = 30ms -> Inconsistent.
+        //
+        // The sharp Gaussian sigma (~13ms) ensures the curves do NOT overlap
+        // by shape alone; only explicit drift dilation can bridge the 80ms gap.
+        let long_curves = vec![
+            wc(0, 100_000.0, -140.0, 150.0),
+            wc(1, 3_500_000.0, -60.0, 150.0),
+        ];
+        match decide_posterior(&long_curves, 3_600_000.0, 0.4, 20.0, 2.0, 10.0) {
             DeepMatchVerdict::Accepted { .. } => {}
-            v => panic!("long clip within drift tolerance should accept, got {v:?}"),
+            v => panic!("long clip (T=120ms) within drift tolerance should accept, got {v:?}"),
         }
-        let short = vec![wc(0, 1000.0, -125.0, 75.0), wc(1, 59_000.0, -75.0, 75.0)];
-        assert!(!matches!(
-            decide_posterior(&short, 60_000.0, 0.4, 50.0, 2.0, 10.0),
-            DeepMatchVerdict::Accepted { .. }
-        ), "short clip beyond drift tolerance must not accept");
+        let short_curves = vec![
+            wc(0, 1_000.0, -140.0, 150.0),
+            wc(1, 59_000.0, -60.0, 150.0),
+        ];
+        match decide_posterior(&short_curves, 60_000.0, 0.4, 20.0, 2.0, 10.0) {
+            DeepMatchVerdict::Inconsistent { .. } => {}
+            v => panic!("short clip (T=10ms) beyond drift tolerance should be Inconsistent, got {v:?}"),
+        }
     }
 
     #[test]
