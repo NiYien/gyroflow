@@ -134,7 +134,12 @@ impl PoseEstimator {
             let l = self.sync_results.read();
             match l.get(&timestamp_us) {
                 None => true,
-                Some(existing) => !existing.of_method.has_data(), // Re-detect if RGB was cleaned
+                // Reuse an already-processed frame (rotation computed) regardless of
+                // whether its OF data was freed by cleanup(); re-detect only when the
+                // frame has neither data nor a computed rotation. Gives NeuFlow the
+                // same reuse DIS already has (DIS has_data() is always true), so a
+                // re-fed already-synced frame is not re-inferred from scratch.
+                Some(existing) => !existing.of_method.has_data() && existing.rotation.is_none(),
             }
         };
         if needs_insert {

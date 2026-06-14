@@ -1038,7 +1038,7 @@ pub(crate) fn probe_escalation_needed(offsets: &[(f64, f64, f64, f64)]) -> bool 
 
 /// Minimum NEW (non-overlapping) frames a probe window must add to be useful
 /// independent evidence (`GYROFLOW_SYNC_PROBE_MIN_NEW_MS`, last-resort floor,
-/// default 2000ms). The placement already anchors at the farthest clip extreme,
+/// default 1000ms). The placement already anchors at the farthest clip extreme,
 /// so a fully disjoint probe (≈5s total independent span) is used whenever the
 /// clip allows; this floor only governs how much overlap is tolerated on short
 /// clips before the single window is abandoned.
@@ -1049,7 +1049,7 @@ pub(crate) fn probe_min_new_ms() -> f64 {
             .ok()
             .and_then(|v| v.trim().parse::<f64>().ok())
             .filter(|v| v.is_finite() && *v > 0.0)
-            .unwrap_or(2000.0)
+            .unwrap_or(1000.0)
     })
 }
 
@@ -1058,7 +1058,7 @@ pub(crate) fn probe_min_new_ms() -> f64 {
 /// windows are as independent as the clip allows. A fully disjoint probe is
 /// preferred, but when the user window already spans most of a short clip a
 /// partial overlap is allowed as long as the probe still contributes at least
-/// `probe_min_new_ms()` of NEW data (capped at the window width so a sub-2.5s
+/// `probe_min_new_ms()` of NEW data (capped at the window width so a sub-1s
 /// window can still use a fully disjoint probe). Returns `None` only when even
 /// the extreme placement cannot reach that much new data — the posterior then
 /// degrades to single-window (and an ambiguous result is dropped upstream).
@@ -1140,12 +1140,12 @@ mod tests {
     fn probe_allows_overlap_when_min_new_data_met() {
         // R52 shape: 5.4s clip, ~2.8s window at 74% leaves <2.8s before it, so
         // a fully disjoint probe doesn't fit — but a start-anchored probe still
-        // adds ~2.57s of new data (265ms overlap), above the 2.5s floor.
+        // adds ~2.57s of new data (265ms overlap), above the 1s floor.
         let f = pick_probe_fraction(0.738, 5405.0, 2836.0).expect("overlap probe");
         assert!((f - 1418.0 / 5405.0).abs() < 1e-3, "start-anchored, got {f}");
-        // 4s clip, 3s window: only ~1.4s of space outside the window -> below
-        // the 2.5s new-data floor -> no probe.
-        assert_eq!(pick_probe_fraction(0.72, 4_000.0, 3_000.0), None);
+        // 4s clip, 3s window centered: both extreme placements leave only
+        // ~0.25s of new data -> below the 1s new-data floor -> no probe.
+        assert_eq!(pick_probe_fraction(0.5, 4_000.0, 3_500.0), None);
         // Window wider than the clip, and degenerate duration.
         assert_eq!(pick_probe_fraction(0.5, 2_000.0, 3_000.0), None);
         assert_eq!(pick_probe_fraction(0.5, 0.0, 500.0), None);

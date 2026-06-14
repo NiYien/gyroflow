@@ -380,6 +380,14 @@ Column {
         onCheckedChanged: {
             settings.setValue("simpleAiSync", checked);
             render_queue.batch_sync_ai_method = checked;
+            // Drive the live preview OF method in Simple mode so unchecking AI returns
+            // to DIS and clears the stale NeuFlow pose/flow overlay. set_of_method()
+            // already clears the pose estimator unconditionally, so this also wipes
+            // the previous method's displayed results. Batch sync still resolves its
+            // method from the toggle at sync time via getSettings(); Full mode lets
+            // the optical-flow dropdown own the live method.
+            if (window.isSimpleMode)
+                controller.set_of_method(checked && controller.has_neuflow_support() ? 4 : 2);
         }
         Component.onCompleted: render_queue.batch_sync_ai_method = checked;
     }
