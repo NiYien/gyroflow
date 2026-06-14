@@ -86,13 +86,11 @@ pub fn take() -> Vec<DeepMatchSegStats> {
     COLLECTOR.lock().take().unwrap_or_default()
 }
 
-/// Take all collected curves and fully disarm (both collectors + scan-K reset).
-/// After this call `is_armed()` returns false and `scan_k_target()` returns 0.
-/// If you also need the seg stats, call `record`/`take` separately — but note
-/// that in the posterior path curves are the primary output.
+/// Drain the curve collector only (does NOT disarm). Call this BEFORE `take()`
+/// in the consumer — `take()` then clears the (now-empty) curve slot and
+/// disarms. Drain-only here keeps `take()`'s `DeepMatchSegStats` intact for the
+/// legacy POSTERIOR=0 path.
 pub fn take_curves() -> Vec<DeepMatchWindowCurve> {
-    *SCAN_K.lock() = 0;
-    COLLECTOR.lock().take();
     CURVE_COLLECTOR.lock().take().unwrap_or_default()
 }
 
@@ -708,11 +706,17 @@ mod tests {
             n_eff: 75.0,
             curve: vec![(-204700.0, 2.0), (-204692.0, 1.0), (-204680.0, 2.0)],
         });
+        // take_curves is drain-only: curves come out, collector stays armed.
         let cs = take_curves();
         assert_eq!(cs.len(), 1);
-        assert!(!is_armed());
-        // Disarmed: scan_k_target falls back to 0 and take is empty.
-        assert_eq!(scan_k_target(), 0);
+        assert!(is_armed());
+        assert_eq!(scan_k_target(), 3);
+        // A second drain is empty; still armed.
         assert!(take_curves().is_empty());
+        assert!(is_armed());
+        // take() disarms everything.
+        let _ = take();
+        assert!(!is_armed());
+        assert_eq!(scan_k_target(), 0);
     }
 }
