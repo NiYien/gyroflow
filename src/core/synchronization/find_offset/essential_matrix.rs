@@ -32,11 +32,54 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
     let raw_imu_len = gyro.raw_imu(&gyro.file_metadata.read()).len();
 
     if !estimated_gyro.is_empty() && gyro.duration_ms > 0.0 && raw_imu_len > 0 {
+        // Deep-match top-K motion selection (design §3.2): when armed, rank
+        // ranges by OF-estimated motion and fully scan only the K highest
+        // (K = deep_match::scan_k_target()). Weak windows contribute ~0
+        // evidence to the joint posterior, so scanning them is wasted work.
+        // K = 0 (regular autosync, or POSTERIOR=0 left it 0) -> keep all ranges.
+        let scan_keep: Option<std::collections::HashSet<usize>> = {
+            let k = crate::synchronization::deep_match::scan_k_target();
+            if k > 0 {
+                let mut scored: Vec<(usize, f64)> = ranges
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, (from_ts, to_ts))| {
+                        if to_ts <= from_ts {
+                            return None;
+                        }
+                        let item: Vec<TimeIMU> =
+                            estimated_gyro.range(from_ts..to_ts).map(|v| v.1.clone()).collect();
+                        if item.is_empty() {
+                            return None;
+                        }
+                        Some((i, get_max_angle(&item)))
+                    })
+                    .collect();
+                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+                let keep: std::collections::HashSet<usize> =
+                    scored.into_iter().take(k).map(|(i, _)| i).collect();
+                let mut kept_sorted: Vec<usize> = keep.iter().copied().collect();
+                kept_sorted.sort();
+                ::log::info!(
+                    target: "sync",
+                    "[deep-match] window select: ranges={} scan_k={} kept={:?}",
+                    ranges.len(), k, kept_sorted
+                );
+                Some(keep)
+            } else {
+                None
+            }
+        };
         for (i, (from_ts, to_ts)) in ranges.iter().enumerate() {
             if cancel_flag.load(Relaxed) {
                 break;
             }
             progress_cb(i as f64 / ranges_len);
+            if let Some(ref keep) = scan_keep {
+                if !keep.contains(&i) {
+                    continue;
+                }
+            }
             if to_ts <= from_ts {
                 continue;
             }
@@ -157,45 +200,92 @@ pub fn find_offsets<F: Fn(f64) + Send + Sync>(
                     {
                         offsets.push((middle_timestamp, lowest.0, lowest.1, 0.5));
                         if crate::synchronization::deep_match::is_armed() {
-                            // Decimated cost curve for valley-quality stats.
-                            // 25ms step keeps this pass at ~2.5% of the 1ms
-                            // main scan cost.
-                            let step_ms = 25.0;
-                            let n_steps =
-                                ((sync_params.search_size * 2.0) / step_ms) as usize;
-                            let mut costs: Vec<f64> = (0..n_steps)
-                                .into_par_iter()
-                                .map(|k| {
-                                    let offs = sync_params.initial_offset
-                                        - sync_params.search_size
-                                        + k as f64 * step_ms;
-                                    calculate_cost(offs, &of_item, &gyro_bintree)
-                                })
-                                .filter(|c| c.is_finite() && *c != f64::MAX)
-                                .collect();
-                            costs.sort_by(|a, b| {
-                                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
-                            });
-                            let p25 = costs
-                                .get(costs.len() / 4)
-                                .copied()
-                                .unwrap_or(f64::MAX);
-                            crate::synchronization::deep_match::record(
-                                crate::synchronization::deep_match::DeepMatchSegStats {
+                            use crate::synchronization::deep_match as dm;
+                            if dm::posterior_enabled() {
+                                // Full 25ms coarse curve over the search domain
+                                // + 5ms densification within ±DENSE_MS of the
+                                // refined argmin + the refined point itself
+                                // (design §3.3). Fed to the joint posterior.
+                                let step_ms = 25.0;
+                                let n_steps = ((sync_params.search_size * 2.0) / step_ms) as usize;
+                                let mut curve: Vec<(f64, f64)> = (0..n_steps)
+                                    .into_par_iter()
+                                    .map(|k| {
+                                        let offs = sync_params.initial_offset
+                                            - sync_params.search_size
+                                            + k as f64 * step_ms;
+                                        (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                                    })
+                                    .filter(|(_, c)| c.is_finite() && *c != f64::MAX)
+                                    .collect();
+                                let dense_r = dm::post_dense_ms();
+                                let dense: Vec<(f64, f64)> = {
+                                    let dn = ((dense_r * 2.0) / 5.0) as usize;
+                                    (0..=dn)
+                                        .into_par_iter()
+                                        .map(|k| {
+                                            let offs = lowest.0 - dense_r + k as f64 * 5.0;
+                                            (offs, calculate_cost(offs, &of_item, &gyro_bintree))
+                                        })
+                                        .filter(|(_, c)| c.is_finite() && *c != f64::MAX)
+                                        .collect()
+                                };
+                                curve.extend(dense);
+                                curve.push((lowest.0, lowest.1));
+                                dm::record_curve(dm::DeepMatchWindowCurve {
                                     range_idx: i,
-                                    offset_ms: lowest.0,
+                                    t_center_ms: middle_timestamp,
+                                    argmin_ms: lowest.0,
                                     cost_min: lowest.1,
-                                    cost_p25: p25,
-                                    max_angle,
-                                },
-                            );
-                            ::log::info!(
-                                target: "sync",
-                                "[deep-match] window {} offset={:.1}ms cost_min={:.2} p25={:.2} ratio={:.3} max_angle={:.1}",
-                                i, lowest.0, lowest.1, p25,
-                                if p25 > 0.0 { lowest.1 / p25 } else { f64::NAN },
-                                max_angle
-                            );
+                                    n_eff: of_item.len() as f64,
+                                    curve,
+                                });
+                                ::log::info!(
+                                    target: "sync",
+                                    "[deep-match] window {} offset={:.1}ms cost_min={:.2} n_eff={} max_angle={:.1} (posterior)",
+                                    i, lowest.0, lowest.1, of_item.len(), max_angle
+                                );
+                            } else {
+                                // Legacy path (POSTERIOR=0): decimated cost curve
+                                // for valley-quality stats. 25ms step keeps this
+                                // pass at ~2.5% of the 1ms main scan cost.
+                                let step_ms = 25.0;
+                                let n_steps =
+                                    ((sync_params.search_size * 2.0) / step_ms) as usize;
+                                let mut costs: Vec<f64> = (0..n_steps)
+                                    .into_par_iter()
+                                    .map(|k| {
+                                        let offs = sync_params.initial_offset
+                                            - sync_params.search_size
+                                            + k as f64 * step_ms;
+                                        calculate_cost(offs, &of_item, &gyro_bintree)
+                                    })
+                                    .filter(|c| c.is_finite() && *c != f64::MAX)
+                                    .collect();
+                                costs.sort_by(|a, b| {
+                                    a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal)
+                                });
+                                let p25 = costs
+                                    .get(costs.len() / 4)
+                                    .copied()
+                                    .unwrap_or(f64::MAX);
+                                crate::synchronization::deep_match::record(
+                                    crate::synchronization::deep_match::DeepMatchSegStats {
+                                        range_idx: i,
+                                        offset_ms: lowest.0,
+                                        cost_min: lowest.1,
+                                        cost_p25: p25,
+                                        max_angle,
+                                    },
+                                );
+                                ::log::info!(
+                                    target: "sync",
+                                    "[deep-match] window {} offset={:.1}ms cost_min={:.2} p25={:.2} ratio={:.3} max_angle={:.1}",
+                                    i, lowest.0, lowest.1, p25,
+                                    if p25 > 0.0 { lowest.1 / p25 } else { f64::NAN },
+                                    max_angle
+                                );
+                            }
                         }
                     } else {
                         log::warn!(
