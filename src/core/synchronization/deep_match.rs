@@ -280,6 +280,7 @@ pub fn decide_posterior(
         return DeepMatchVerdict::Inconsistent { spread_ms: f64::INFINITY };
     };
     let Some(post) = posterior_decide(&joint_grid, &joint_logl, &Prior::Uniform) else {
+        // worst_ratio 1.0 = vacuous joint (no usable grid point); matches evaluate()'s convention
         return DeepMatchVerdict::WeakValley { worst_ratio: 1.0 };
     };
     let ci95_width = post.ci95.1 - post.ci95.0;
@@ -821,6 +822,32 @@ mod tests {
             DeepMatchVerdict::Inconsistent { .. } => {}
             v => panic!("short clip (T=10ms) beyond drift tolerance should be Inconsistent, got {v:?}"),
         }
+    }
+
+    fn flat_wc(idx: usize, t_center: f64) -> DeepMatchWindowCurve {
+        // Near-flat cost curve (no real valley): cost barely above cost_min
+        // across the whole domain -> logL ~= 0 everywhere -> uniform posterior ->
+        // low conf_posterior -> WeakValley ("noise match" rejection).
+        let curve: Vec<(f64, f64)> = (0..=240)
+            .map(|k| {
+                let off = -600.0 + k as f64 * 5.0;
+                (off, 1.0 + 1e-4 * (off / 600.0).abs()) // essentially flat
+            })
+            .collect();
+        DeepMatchWindowCurve { range_idx: idx, t_center_ms: t_center, argmin_ms: 0.0, cost_min: 1.0, n_eff: 75.0, curve }
+    }
+
+    #[test]
+    fn decide_posterior_flat_curves_are_weak_valley() {
+        // Two flat (no-valley) windows -> uniform joint -> conf far below
+        // conf_min, ci95 narrow enough to not be "Inconsistent" — the noise
+        // match must be rejected as WeakValley, never Accepted.
+        let curves = vec![flat_wc(0, 1000.0), flat_wc(1, 2000.0)];
+        let v = decide_posterior(&curves, 120_000.0, 0.4, 50.0, 2.0, 10.0);
+        assert!(
+            !matches!(v, DeepMatchVerdict::Accepted { .. }),
+            "flat noise curves must not be accepted, got {v:?}"
+        );
     }
 
     #[test]
