@@ -135,6 +135,29 @@ pub fn combine_windows(per_window: &[Vec<f64>]) -> Option<Vec<f64>> {
     Some(out)
 }
 
+/// Morphological dilation (sliding-window max) of a logL curve by `half_pts`
+/// grid points on each side. Represents bounded drift uncertainty: window w's
+/// true reference-offset could sit anywhere within ±half_pts of its measured
+/// peak, so the drift-marginalized log-likelihood at each grid point is the
+/// max over the band (max logL = max likelihood). `half_pts = 0` is identity.
+pub fn dilate_logl(logl: &[f64], half_pts: usize) -> Vec<f64> {
+    if half_pts == 0 {
+        return logl.to_vec();
+    }
+    let n = logl.len();
+    (0..n)
+        .map(|i| {
+            let lo = i.saturating_sub(half_pts);
+            let hi = (i + half_pts + 1).min(n);
+            logl[lo..hi]
+                .iter()
+                .copied()
+                .filter(|v| v.is_finite())
+                .fold(f64::NEG_INFINITY, f64::max)
+        })
+        .collect()
+}
+
 /// Linearly resample a log-likelihood (or log-posterior) curve onto a
 /// uniform `step_ms` grid spanning the input domain. Non-finite entries are
 /// dropped, the input may be unsorted and non-uniform (e.g. the residual
@@ -253,6 +276,32 @@ fn interp_ascending(pts: &[(f64, f64)], xs: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+/// Resample every window curve to the shared 5ms-snapped lattice over the
+/// intersection of their spans. Returns (common_grid, per_window_resampled).
+/// Shared by `combine_windows_on_common_grid` and the dilated variant.
+fn resample_windows_to_common_grid(
+    windows: &[(&[f64], &[f64])],
+    step_ms: f64,
+) -> Option<(Vec<f64>, Vec<Vec<f64>>)> {
+    if windows.is_empty() || !(step_ms > 0.0) || !step_ms.is_finite() {
+        return None;
+    }
+    let cleaned: Vec<Vec<(f64, f64)>> = windows
+        .iter()
+        .map(|(g, l)| clean_curve(g, l))
+        .collect::<Option<Vec<_>>>()?;
+    let lo = cleaned.iter().map(|p| p[0].0).fold(f64::NEG_INFINITY, f64::max);
+    let hi = cleaned.iter().map(|p| p[p.len() - 1].0).fold(f64::INFINITY, f64::min);
+    let k0 = (lo / step_ms - 1e-9).ceil() as i64;
+    let k1 = (hi / step_ms + 1e-9).floor() as i64;
+    if k1 < k0 + 1 {
+        return None;
+    }
+    let grid: Vec<f64> = (k0..=k1).map(|k| k as f64 * step_ms).collect();
+    let per_window: Vec<Vec<f64>> = cleaned.iter().map(|pts| interp_ascending(pts, &grid)).collect();
+    Some((grid, per_window))
+}
+
 /// Cross-window joint likelihood on one shared ALIGNED lattice (design D3 —
 /// the `sync_replay --join` entry point). Each window is an independent
 /// prior-free (grid_ms, logL) curve, possibly non-uniform / unsorted / with
@@ -271,25 +320,30 @@ fn interp_ascending(pts: &[(f64, f64)], xs: &[f64]) -> Vec<f64> {
 /// any window has fewer than 2 usable points, or the common span contains
 /// fewer than 2 lattice points (no usable overlap).
 pub fn combine_windows_on_common_grid(windows: &[(&[f64], &[f64])], step_ms: f64) -> Option<(Vec<f64>, Vec<f64>)> {
-    if windows.is_empty() || !(step_ms > 0.0) || !step_ms.is_finite() {
-        return None;
-    }
-    let cleaned: Vec<Vec<(f64, f64)>> = windows
-        .iter()
-        .map(|(g, l)| clean_curve(g, l))
-        .collect::<Option<Vec<_>>>()?;
-    // Intersection of the window spans, snapped inward to lattice multiples
-    // (1e-9 slack so exact-multiple endpoints survive float division).
-    let lo = cleaned.iter().map(|p| p[0].0).fold(f64::NEG_INFINITY, f64::max);
-    let hi = cleaned.iter().map(|p| p[p.len() - 1].0).fold(f64::INFINITY, f64::min);
-    let k0 = (lo / step_ms - 1e-9).ceil() as i64;
-    let k1 = (hi / step_ms + 1e-9).floor() as i64;
-    if k1 < k0 + 1 {
-        return None;
-    }
-    let grid: Vec<f64> = (k0..=k1).map(|k| k as f64 * step_ms).collect();
-    let per_window: Vec<Vec<f64>> = cleaned.iter().map(|pts| interp_ascending(pts, &grid)).collect();
+    let (grid, per_window) = resample_windows_to_common_grid(windows, step_ms)?;
     let joint = combine_windows(&per_window)?;
+    Some((grid, joint))
+}
+
+/// Cross-window joint with bounded drift tolerance (deep-match, design §3.8).
+/// Same as `combine_windows_on_common_grid`, but each resampled window is
+/// max-dilated by `round(dilate_half_ms / step_ms)` points before summing, so
+/// windows whose peaks disagree by up to `2 * dilate_half_ms` (= the clip's
+/// allowed drift range T(D)) still produce a joint peak. `dilate_half_ms = 0`
+/// is byte-identical to `combine_windows_on_common_grid`.
+pub fn combine_windows_on_common_grid_dilated(
+    windows: &[(&[f64], &[f64])],
+    step_ms: f64,
+    dilate_half_ms: f64,
+) -> Option<(Vec<f64>, Vec<f64>)> {
+    let (grid, per_window) = resample_windows_to_common_grid(windows, step_ms)?;
+    let half_pts = if dilate_half_ms > 0.0 {
+        (dilate_half_ms / step_ms).round() as usize
+    } else {
+        0
+    };
+    let dilated: Vec<Vec<f64>> = per_window.iter().map(|w| dilate_logl(w, half_pts)).collect();
+    let joint = combine_windows(&dilated)?;
     Some((grid, joint))
 }
 
@@ -796,6 +850,46 @@ mod tests {
         assert!(combine_windows_on_common_grid(&[(&a, &la)], 0.0).is_none());
         assert!(combine_windows_on_common_grid(&[(&a[..3], &la[..2])], 5.0).is_none());
         assert!(combine_windows_on_common_grid(&[(&[0.0, 5.0][..], &[f64::NAN, 1.0][..])], 5.0).is_none());
+    }
+
+    #[test]
+    fn dilate_logl_is_sliding_window_max() {
+        // half_pts=0 is identity.
+        let v = vec![-3.0, 0.0, -1.0, -5.0];
+        assert_eq!(dilate_logl(&v, 0), v);
+        // half_pts=1: each point becomes max of itself and neighbors.
+        assert_eq!(dilate_logl(&v, 1), vec![0.0, 0.0, 0.0, -1.0]);
+        // A single sharp peak widens into a plateau of width 2*half_pts+1.
+        let mut spike = vec![-10.0; 7];
+        spike[3] = 0.0;
+        assert_eq!(dilate_logl(&spike, 2), vec![-10.0, 0.0, 0.0, 0.0, 0.0, 0.0, -10.0]);
+        // Empty input -> empty.
+        assert!(dilate_logl(&[], 3).is_empty());
+    }
+
+    /// Drift-separated peaks (design §3.8): two clean windows whose sharp
+    /// peaks sit 60ms apart (real drift). Un-dilated, the joint splits into
+    /// two bumps. Dilated by T/2=40ms half-width (T=80ms ≥ 60ms gap), the
+    /// joint becomes a single plateau covering both → argmax between them,
+    /// high conf. dilate=0 must equal the plain combine.
+    #[test]
+    fn dilated_combine_merges_drift_separated_peaks() {
+        let g = grid(5.0, -500.0, 500.0);
+        let wa = bump_logl(&g, -30.0, 6.0, 25.0);
+        let wb = bump_logl(&g, 30.0, 6.0, 25.0);
+        // Plain combine: two separated peaks → bimodal, low conf.
+        let (pg, pl) = combine_windows_on_common_grid(&[(&g, &wa), (&g, &wb)], 5.0).unwrap();
+        let plain = posterior_decide(&pg, &pl, &Prior::Uniform).unwrap();
+        assert!(plain.conf_posterior < 0.5, "plain combine should be low-conf bimodal, got {}", plain.conf_posterior);
+        // Dilated by 40ms half-width (T=80ms ≥ 60ms gap): merged single peak.
+        let (dg, dl) = combine_windows_on_common_grid_dilated(&[(&g, &wa), (&g, &wb)], 5.0, 40.0).unwrap();
+        let dil = posterior_decide(&dg, &dl, &Prior::Uniform).unwrap();
+        assert!(dil.argmax_ms.abs() <= 35.0, "merged argmax should sit between the peaks, got {}", dil.argmax_ms);
+        assert!(dil.conf_posterior > plain.conf_posterior, "dilation must raise conf: {} vs {}", dil.conf_posterior, plain.conf_posterior);
+        // dilate=0 byte-identical to plain combine.
+        let (zg, zl) = combine_windows_on_common_grid_dilated(&[(&g, &wa), (&g, &wb)], 5.0, 0.0).unwrap();
+        assert_eq!(zg, pg);
+        assert_eq!(zl, pl);
     }
 
     /// g-profile entry point: degenerate problem returns the neutral gain.
