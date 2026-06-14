@@ -1040,8 +1040,11 @@ pub struct RenderQueue {
     // one parsed gyro pool file; one match in flight at a time.
     // probe_lens_index: confirmed lens group for bare manual-lens jobs
     // (-1 = no probe lens injection).
+    // Returns a reason-code string: "ok" on success, otherwise one of
+    // "queue_active" / "deep_match_in_flight" / "gyro_missing" /
+    // "gyro_not_ready" / "job_missing" so QML can show a specific message.
     start_deep_gyro_match:
-        qt_method!(fn(&mut self, job_id: u32, gyro_index: usize, probe_lens_index: i32) -> bool),
+        qt_method!(fn(&mut self, job_id: u32, gyro_index: usize, probe_lens_index: i32) -> QString),
     cancel_deep_gyro_match: qt_method!(fn(&mut self, job_id: u32)),
     // Pre-flight query for the lens-group confirmation dialog: "ok" /
     // "needs_choice" (bare manual-lens job, configured groups listed) /
@@ -8832,30 +8835,41 @@ impl RenderQueue {
         job_id: u32,
         gyro_index: usize,
         probe_lens_index: i32,
-    ) -> bool {
+    ) -> QString {
         use gyroflow_core::synchronization::deep_match;
+        // Every refusal below is a read-only guard placed before any state
+        // mutation, so returning a distinct reason code (instead of a bare
+        // bool) cannot change when or how a match actually starts. Success
+        // returns "ok"; QML maps the rest to specific user messages.
         // One deep match at a time; QML also guards, this is the backstop.
         if !self.deep_match_pending.is_empty() {
-            return false;
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=deep_match_in_flight job={job_id}");
+            return QString::from("deep_match_in_flight");
         }
         // Refuse while the queue is processing anything else — render_job
         // captures self.export_project at launch, so flipping it to 2 while
         // a batch is active would turn subsequently scheduled renders into
         // sync-only runs.
         if self.status.to_string() == "active" {
-            return false;
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=queue_active job={job_id}");
+            return QString::from("queue_active");
         }
         let Some(gyro_info) = self.gyro_files.get(gyro_index).cloned() else {
-            return false;
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=gyro_missing job={job_id} gyro_index={gyro_index}");
+            return QString::from("gyro_missing");
         };
         if !gyro_info.parsed {
-            return false;
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=gyro_not_ready job={job_id} gyro_index={gyro_index}");
+            return QString::from("gyro_not_ready");
         }
         let Some(job) = self.jobs.get(&job_id) else {
-            return false;
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=job_missing job={job_id}");
+            return QString::from("job_missing");
         };
         let Some(stab) = job.stab.clone() else {
-            return false;
+            // stab handle missing is functionally "job not usable" — same code.
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=job_missing (stab) job={job_id}");
+            return QString::from("job_missing");
         };
         // Snapshot every pre-probe store before the background load can touch
         // anything; the restore matrix in finish_deep_match puts them back.
@@ -8893,7 +8907,7 @@ impl RenderQueue {
         self.deep_match_pending.insert(job_id, state);
 
         self.spawn_deep_match_gyro_load(job_id, first_chunk);
-        true
+        QString::from("ok")
     }
 
     // Background (off-UI-thread) load of one scan chunk of the probe gyro
@@ -12154,6 +12168,78 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
         assert_eq!(v["state"], "ok");
+    }
+
+    #[test]
+    fn start_deep_gyro_match_refusal_reasons() {
+        // Each branch is a read-only guard that returns before any state
+        // mutation or background load, so the reason code can be asserted
+        // without spawning the probe.
+        let parsed_pool = || GyroFileInfo {
+            path: "file:///pool.bin".to_string(),
+            filename: "pool.bin".to_string(),
+            parsed: true,
+            ..Default::default()
+        };
+
+        // gyro_missing: no pool files loaded yet.
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            assert_eq!(
+                queue.start_deep_gyro_match(1, 0, -1).to_string(),
+                "gyro_missing"
+            );
+        }
+
+        // gyro_not_ready: pool entry present but still parsing.
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            queue.gyro_files = vec![GyroFileInfo {
+                parsed: false,
+                ..parsed_pool()
+            }];
+            assert_eq!(
+                queue.start_deep_gyro_match(1, 0, -1).to_string(),
+                "gyro_not_ready"
+            );
+        }
+
+        // job_missing: parsed pool entry but the target job is gone.
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            queue.gyro_files = vec![parsed_pool()];
+            assert_eq!(
+                queue.start_deep_gyro_match(999, 0, -1).to_string(),
+                "job_missing"
+            );
+        }
+
+        // queue_active: another job is rendering; checked before gyro/job.
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            queue.status = QString::from("active");
+            assert_eq!(
+                queue.start_deep_gyro_match(1, 0, -1).to_string(),
+                "queue_active"
+            );
+        }
+
+        // deep_match_in_flight: a match is already pending (highest priority,
+        // so it wins even with an active queue).
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap().clone();
+            let state = {
+                let job = queue.jobs.get(&1).unwrap();
+                RenderQueue::snapshot_deep_match_state(job, &stab, 0, None)
+            };
+            queue.deep_match_pending.insert(1, state);
+            queue.status = QString::from("active");
+            assert_eq!(
+                queue.start_deep_gyro_match(1, 0, -1).to_string(),
+                "deep_match_in_flight"
+            );
+        }
     }
 
     #[test]

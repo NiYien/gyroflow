@@ -3136,6 +3136,26 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>Невозможно начать глубокое сопоставление, пока очередь занята.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Другое глубокое сопоставление уже выполняется. Дождитесь его завершения.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Этот файл гироскопа больше недоступен.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Данные гироскопа ещё обрабатываются. Повторите попытку через мгновение.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Этой задачи больше нет в очереди.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Фокусные расстояния групп объективов не настроены. Сначала задайте их в «Сенсор и Объектив», затем запустите глубокое сопоставление.</translation>

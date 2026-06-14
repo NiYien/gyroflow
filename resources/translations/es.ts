@@ -3134,6 +3134,26 @@ Para los vídeos sin emparejar, puedes hacerlo manualmente: clic derecho en el v
         <translation>No se puede iniciar el emparejamiento profundo mientras la cola está ocupada.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Ya se está ejecutando otro emparejamiento profundo. Espere a que termine.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Este archivo de giroscopio ya no está disponible.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Los datos del giroscopio aún se están analizando. Inténtelo de nuevo en breve.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Este trabajo ya no está en la cola.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>No hay distancias focales de grupos de objetivos configuradas. Configúrelas primero en «Sensor &amp; Objetivo» y luego ejecute el emparejamiento profundo.</translation>

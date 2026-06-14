@@ -3134,6 +3134,26 @@ Per i video non accoppiati puoi farlo manualmente: clic destro sul video → **&
         <translation>Impossibile avviare l&apos;abbinamento profondo mentre la coda è occupata.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Un altro abbinamento profondo è già in corso. Attendi che termini.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Questo file giroscopio non è più disponibile.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>I dati del giroscopio sono ancora in elaborazione. Riprova tra poco.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Questo lavoro non è più nella coda.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Non sono configurate lunghezze focali dei gruppi di obiettivi. Impostale prima in «Sensore &amp; Obiettivo», poi esegui l&apos;abbinamento profondo.</translation>

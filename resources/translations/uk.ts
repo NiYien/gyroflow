@@ -3136,6 +3136,26 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>Неможливо розпочати глибоке зіставлення, поки черга зайнята.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Інше глибоке зіставлення вже виконується. Зачекайте, доки воно завершиться.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Цей файл гіроскопа більше недоступний.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Дані гіроскопа ще обробляються. Повторіть спробу за мить.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Цього завдання більше немає в черзі.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Фокусні відстані груп об&apos;єктивів не налаштовані. Спочатку задайте їх у «Сенсор і Об&apos;єктив», потім запустіть глибоке зіставлення.</translation>

@@ -3131,6 +3131,26 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
         <translation>Kuyruk meşgulken derin eşleştirme başlatılamaz.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Başka bir derin eşleştirme zaten çalışıyor. Lütfen tamamlanmasını bekleyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Bu jiroskop dosyası artık kullanılamıyor.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Jiroskop verileri hâlâ ayrıştırılıyor. Lütfen birazdan tekrar deneyin.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Bu iş artık kuyrukta değil.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Yapılandırılmış lens grubu odak uzaklığı yok. Önce &quot;Sensör &amp; Lens&quot; bölümünde ayarlayın, ardından derin eşleştirmeyi çalıştırın.</translation>

@@ -3135,6 +3135,26 @@ Nicht zugeordnete Videos kannst du manuell zuordnen: Rechtsklick auf das Video �
         <translation>Tiefenabgleich kann nicht gestartet werden, während die Warteschlange beschäftigt ist.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Ein anderer Tiefenabgleich läuft bereits. Bitte warten Sie, bis er abgeschlossen ist.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Diese Gyro-Datei ist nicht mehr verfügbar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Die Gyro-Daten werden noch verarbeitet. Bitte versuchen Sie es in Kürze erneut.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Dieser Auftrag ist nicht mehr in der Warteschlange.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Es sind keine Brennweiten für Objektivgruppen konfiguriert. Legen Sie sie zuerst unter „Sensor &amp; Objektiv“ fest und starten Sie dann den Tiefenabgleich.</translation>

@@ -3136,6 +3136,26 @@ Niesparowany film możesz sparować ręcznie: kliknij prawym przyciskiem na film
         <translation>Nie można rozpocząć głębokiego dopasowania, gdy kolejka jest zajęta.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Inne głębokie dopasowanie jest już uruchomione. Poczekaj na jego zakończenie.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Ten plik żyroskopu nie jest już dostępny.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Dane żyroskopu są nadal przetwarzane. Spróbuj ponownie za chwilę.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>To zadanie nie jest już w kolejce.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Nie skonfigurowano ogniskowych grup obiektywów. Najpierw ustaw je w „Matryca &amp; Obiektyw“, a następnie uruchom głębokie dopasowanie.</translation>

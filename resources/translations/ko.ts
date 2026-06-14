@@ -3135,6 +3135,26 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>대기열이 작동 중일 때는 딥 매칭을 시작할 수 없습니다.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>다른 딥 매칭이 이미 실행 중입니다. 완료될 때까지 기다려 주세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>이 자이로 파일을 더 이상 사용할 수 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>자이로 데이터를 아직 분석하는 중입니다. 잠시 후 다시 시도하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>이 작업이 더 이상 대기열에 없습니다.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>설정된 렌즈 그룹 초점 거리가 없습니다. 먼저 &quot;센서 및 렌즈&quot;에서 설정한 후 딥 매칭을 실행하세요.</translation>

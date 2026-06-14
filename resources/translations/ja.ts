@@ -3137,6 +3137,26 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>キューが動作中のため、ディープマッチングを開始できません。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>別のディープマッチングがすでに実行中です。完了するまでお待ちください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>このジャイロファイルは利用できなくなりました。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>ジャイロデータをまだ解析中です。しばらくしてからもう一度お試しください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>このジョブはキューに存在しません。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>レンズグループの焦点距離が設定されていません。まず「センサーとレンズ」で設定してから、ディープマッチングを実行してください。</translation>

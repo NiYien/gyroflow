@@ -3136,6 +3136,26 @@ Du kan parre manuelt: højreklik på videoen → **&quot;Par med gyro&quot;** og
         <translation>Dyb matchning kan ikke startes, mens køen er optaget.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>En anden dyb matchning kører allerede. Vent venligst, til den er færdig.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Denne gyrofil er ikke længere tilgængelig.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Gyrodataene behandles stadig. Prøv venligst igen om lidt.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Dette job er ikke længere i køen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Der er ikke konfigureret brændvidder for objektivgrupper. Indstil dem først under &quot;Sensor &amp; Objektiv&quot;, og kør derefter dyb matchning.</translation>

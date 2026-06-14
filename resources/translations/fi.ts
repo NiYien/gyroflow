@@ -3135,6 +3135,26 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation>Syväsovitusta ei voi aloittaa, kun jono on varattu.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Toinen syväsovitus on jo käynnissä. Odota, että se valmistuu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Tämä gyrotiedosto ei ole enää käytettävissä.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Gyrotietoja käsitellään edelleen. Yritä hetken kuluttua uudelleen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Tämä työ ei ole enää jonossa.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Objektiiviryhmien polttovälejä ei ole määritetty. Aseta ne ensin kohdassa &quot;Kenno &amp; Objektiivi&quot; ja suorita sitten syväsovitus.</translation>

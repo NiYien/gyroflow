@@ -3136,6 +3136,26 @@ Nespárované video môžete spárovať ručne: pravým tlačidlom na video → 
         <translation>Hlboké párovanie nie je možné spustiť, kým je front zaneprázdnený.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Iné hlboké párovanie už prebieha. Počkajte na jeho dokončenie.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Tento súbor gyroskopu už nie je k dispozícii.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Dáta gyroskopu sa stále spracúvajú. Skúste to prosím o chvíľu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Táto úloha už nie je vo fronte.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Nie sú nakonfigurované žiadne ohniskové vzdialenosti skupín objektívov. Najprv ich nastavte v „Snímač &amp; Objektív“ a potom spustite hlboké párovanie.</translation>

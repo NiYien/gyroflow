@@ -3135,6 +3135,26 @@ Pour toute vidéo non appariée, vous pouvez l&apos;apparier manuellement : clic
         <translation>Impossible de démarrer l&apos;appariement profond pendant que la file d&apos;attente est occupée.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Un autre appariement profond est déjà en cours. Veuillez attendre qu&apos;il se termine.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Ce fichier gyro n&apos;est plus disponible.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Les données gyro sont encore en cours d&apos;analyse. Veuillez réessayer dans un instant.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Cette tâche n&apos;est plus dans la file d&apos;attente.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Aucune focale de groupe d&apos;objectifs n&apos;est configurée. Définissez-les d&apos;abord dans « Capteur &amp; Objectif », puis lancez l&apos;appariement profond.</translation>

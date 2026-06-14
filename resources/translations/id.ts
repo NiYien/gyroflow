@@ -3133,6 +3133,26 @@ Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: kli
         <translation>Tidak dapat memulai pencocokan mendalam saat antrean sedang sibuk.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Pencocokan mendalam lain sedang berjalan. Harap tunggu hingga selesai.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>File giroskop ini sudah tidak tersedia.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Data giroskop masih diproses. Silakan coba lagi sebentar lagi.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Tugas ini sudah tidak ada dalam antrean.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Belum ada panjang fokus grup lensa yang dikonfigurasi. Atur dulu di &quot;Sensor &amp; Lensa&quot;, lalu jalankan pencocokan mendalam.</translation>

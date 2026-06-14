@@ -3135,6 +3135,26 @@ Para vídeos não pareados, você pode parear manualmente: clique com o botão d
         <translation>Não é possível iniciar a correspondência profunda enquanto a fila está ocupada.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>Outra correspondência profunda já está em execução. Aguarde até que termine.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>Este arquivo de giroscópio não está mais disponível.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>Os dados do giroscópio ainda estão sendo analisados. Tente novamente em instantes.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>Esta tarefa não está mais na fila.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>Não há distâncias focais de grupos de lentes configuradas. Defina-as primeiro em &quot;Sensor &amp; Lente&quot; e depois execute a correspondência profunda.</translation>

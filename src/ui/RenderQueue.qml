@@ -236,11 +236,21 @@ Item {
     // modal, so give immediate feedback here instead.
     // lensIdx: user-confirmed probe lens group (-1 = no injection).
     function startDeepMatch(jobId: int, gyroIdx: int, videoName: string, lensIdx: int): void {
-        // start_deep_gyro_match returns false only for synchronous refusals
-        // (another deep match in flight / queue active / job or gyro gone);
-        // gyro load failures now arrive asynchronously via deep_match_finished.
-        if (!render_queue.start_deep_gyro_match(jobId, gyroIdx, lensIdx)) {
-            messageBox(Modal.Warning, qsTr("Cannot start deep match while the queue is busy."), [{ text: qsTr("Ok") }]);
+        // start_deep_gyro_match returns "ok" on success, otherwise a reason
+        // code for the synchronous refusal; gyro load failures still arrive
+        // asynchronously via deep_match_finished.
+        const res = render_queue.start_deep_gyro_match(jobId, gyroIdx, lensIdx);
+        if (res !== "ok") {
+            let msg = qsTr("Cannot start deep match while the queue is busy.");
+            if (res === "deep_match_in_flight")
+                msg = qsTr("Another deep match is already running. Please wait for it to finish.");
+            else if (res === "gyro_missing")
+                msg = qsTr("This gyro file is no longer available.");
+            else if (res === "gyro_not_ready")
+                msg = qsTr("The gyro data is still being parsed. Please try again shortly.");
+            else if (res === "job_missing")
+                msg = qsTr("This job is no longer in the render queue.");
+            messageBox(Modal.Warning, msg, [{ text: qsTr("Ok") }]);
             return;
         }
         const gyroName = gyroIdx < gyroFilesInfo.length ? gyroFilesInfo[gyroIdx].filename : "";

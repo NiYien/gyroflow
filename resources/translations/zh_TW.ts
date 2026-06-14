@@ -3136,6 +3136,26 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>佇列忙碌時無法開始深度匹配。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <source>Another deep match is already running. Please wait for it to finish.</source>
+        <translation>已有一個深度匹配正在進行，請等待其完成。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <source>This gyro file is no longer available.</source>
+        <translation>該陀螺儀檔案已不可用。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <source>The gyro data is still being parsed. Please try again shortly.</source>
+        <translation>陀螺儀資料仍在解析，請稍後再試。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <source>This job is no longer in the render queue.</source>
+        <translation>該工作已不在算繪佇列中。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
         <translation>尚未設定任何鏡頭群組焦距。請先在「感光元件與鏡頭」中設定，再執行深度匹配。</translation>
