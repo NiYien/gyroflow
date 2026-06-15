@@ -3156,10 +3156,20 @@ impl RenderQueue {
                 }
             }
 
-            let mut config = effective_configs
-                .first()
-                .cloned()
-                .unwrap_or_else(|| default_configs[lens_index].clone());
+            // When no selected job is assigned to this lens_index (the universal
+            // case before matching, where no job carries a lens_index yet), fall
+            // back to the global lens_group_config for this group instead of the
+            // blank default. Otherwise the panel — which reads through this
+            // aggregation in batchScope but writes to the global config — would
+            // show 0 for a focal the user just typed, and the post-edit reload
+            // would clobber the edit back to 0. The assigned-job path above is
+            // untouched, so per-job overrides loaded from .gyroflow still win.
+            let mut config = effective_configs.first().cloned().unwrap_or_else(|| {
+                global_configs
+                    .get(lens_index)
+                    .cloned()
+                    .unwrap_or_else(|| default_configs[lens_index].clone())
+            });
             config.lens_index = lens_index;
 
             let mut mixed_focal_length = false;
@@ -11337,6 +11347,92 @@ mod tests {
             )]),
             ..Default::default()
         }
+    }
+
+    // Minimal job carrying no metadata (stab/base_lens_metadata both None), so
+    // metadata_snapshot_for_job returns None and current_lens_index collapses to
+    // the explicit lens_group_index. Used by the batchScope aggregation tests.
+    fn minimal_lens_job(
+        lens_group_index: Option<usize>,
+        lens_group_config_override: Option<JobLensGroupOverride>,
+    ) -> Job {
+        Job {
+            queue_index: 0,
+            render_options: RenderOptions::default(),
+            base_render_output_size: None,
+            original_output_size: (0, 0),
+            auto_rotate: false,
+            additional_data: String::new(),
+            cancel_flag: Default::default(),
+            render_epoch: Default::default(),
+            project_data: None,
+            last_finished_export_project: None,
+            last_written_offsets: None,
+            stab: None,
+            base_lens_metadata: None,
+            lens_group_config_override,
+            lens_index_override: None,
+            lens_group_index,
+            video_created_at: None,
+            original_video_rotation: 0.0,
+        }
+    }
+
+    fn queue_with_global_configs(
+        global_configs: Vec<niyien_lens_presets::LensGroupConfig>,
+        job: Job,
+    ) -> RenderQueue {
+        let stabilizer = Arc::new(StabilizationManager::default());
+        *stabilizer.lens_group_config.write() = global_configs;
+        let mut queue = RenderQueue::new(stabilizer);
+        queue.jobs.insert(1, job);
+        queue
+    }
+
+    fn aggregated_focal(queue: &RenderQueue, lens_index: usize) -> Option<f64> {
+        let json = queue
+            .get_selected_lens_group_config_json("[1]".to_string())
+            .to_string();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value
+            .get(lens_index)
+            .and_then(|c| c.get("focal_length_mm"))
+            .and_then(|f| f.as_f64())
+    }
+
+    // Regression sentinel: before matching, no job carries a lens_index, so every
+    // bucket is empty and the aggregation must fall back to the GLOBAL config — not
+    // the blank default — otherwise a focal the user just typed reads back as 0.
+    #[test]
+    fn batchscope_config_falls_back_to_global_when_no_job_assigned() {
+        let mut global = niyien_lens_presets::default_lens_group_configs();
+        global[0].focal_length_mm = Some(24.0);
+        let queue = queue_with_global_configs(global, minimal_lens_job(None, None));
+        assert_eq!(aggregated_focal(&queue, 0), Some(24.0));
+    }
+
+    // An assigned job's per-job override must still win over the global value, so
+    // the global fallback above doesn't clobber .gyroflow-loaded per-job overrides.
+    #[test]
+    fn batchscope_config_assigned_job_keeps_per_job_override() {
+        let mut global = niyien_lens_presets::default_lens_group_configs();
+        global[2].focal_length_mm = Some(50.0);
+        let mut requested = global.clone();
+        requested[2].focal_length_mm = Some(75.0);
+        let job_override = build_job_lens_group_override(&requested, &global, None);
+        assert!(job_override.is_some());
+        let queue =
+            queue_with_global_configs(global, minimal_lens_job(Some(2), job_override));
+        assert_eq!(aggregated_focal(&queue, 2), Some(75.0));
+    }
+
+    // A group with no assigned job AND no global focal stays blank (parity with the
+    // previous default fallback — no regression for genuinely unset groups).
+    #[test]
+    fn batchscope_config_unset_group_stays_blank() {
+        let global = niyien_lens_presets::default_lens_group_configs();
+        let queue = queue_with_global_configs(global, minimal_lens_job(None, None));
+        assert_eq!(aggregated_focal(&queue, 0), None);
     }
 
     fn queue_with_eta_job(status: JobStatus) -> RenderQueue {
