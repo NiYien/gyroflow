@@ -249,6 +249,11 @@ struct OffsetResult {
 struct Session {
     v_cluster: Vec<usize>,
     cal_video_indices: Vec<usize>,
+    // Per-calibration-video paired cal gyro: `(video_index, gyro_index)` taken
+    // from the winning inlier candidates' `gi_pair`. Used by
+    // assign_videos_by_coverage to short-circuit cal videos to CalibrationPair
+    // with a valid clip window, bypassing the 70% coverage gate.
+    cal_pairs: Vec<(usize, usize)>,
     g_cluster: Vec<usize>,
     anchor_ms: i64,
     offset: i64,
@@ -292,10 +297,9 @@ struct CandidateRaw {
     dur_diff1: f64,
     delay: i64,
     vi_pair: [usize; 2],
-    // Kept for diagnostic parity with the original NiYien Tool record even
-    // though downstream V<->G assignment is done by assign_videos_by_coverage
-    // rather than from this field.
-    #[allow(dead_code)]
+    // The cal gyros this video pair matched against. Propagated into the
+    // session's `cal_pairs` so assign_videos_by_coverage can short-circuit cal
+    // videos to CalibrationPair using their paired cal gyro.
     gi_pair: [usize; 2],
 }
 
@@ -314,21 +318,33 @@ impl CandidateRaw {
     }
 }
 
+/// Resolved offset for a single (v_cluster, g_cluster) session. Replaces the
+/// former 6-tuple return so the added `cal_pairs` field does not push the tuple
+/// past readability. `inlier_count` / `coverage` describe the chosen offset's
+/// support and are consumed by the multi-cluster Pass 2 selector to avoid
+/// locking onto a degenerate single-inlier candidate.
+struct SessionOffset {
+    offset: i64,
+    delay: i64,
+    spread: i64,
+    cal_video_indices: Vec<usize>,
+    cal_pairs: Vec<(usize, usize)>,
+    inlier_count: usize,
+    coverage: usize,
+}
+
 /// Compute offset/delay/spread for a single session.
 ///
 /// Equivalent to the legacy compute_global_offset but scoped to one
-/// (v_cluster, g_cluster) pair. Returns
-/// `Some((offset, delay, spread_ms, cal_videos, inlier_count, coverage))` when
-/// at least one candidate pair passes the duration / adjacency filters, or
-/// `None` when no candidate survived. `inlier_count` / `coverage` describe the
-/// chosen offset's support and are consumed by the multi-cluster Pass 2
-/// selector to avoid locking onto a degenerate single-inlier candidate.
+/// (v_cluster, g_cluster) pair. Returns `Some(SessionOffset)` when at least one
+/// candidate pair passes the duration / adjacency filters, or `None` when no
+/// candidate survived.
 fn compute_session_offset(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     v_cluster: &[usize],
     g_cluster: &[usize],
-) -> Option<(i64, i64, i64, Vec<usize>, usize, usize)> {
+) -> Option<SessionOffset> {
     if v_cluster.len() < 2 || g_cluster.len() < 2 {
         return None;
     }
@@ -447,8 +463,8 @@ fn compute_session_offset(
         CandidateOffsetMode::Avg,
     );
 
-    if let Some((_, _, spread, _, _, _)) = &result_avg {
-        if *spread <= SYNC_CREATE_OFFSET_MAX {
+    if let Some(avg) = &result_avg {
+        if avg.spread <= SYNC_CREATE_OFFSET_MAX {
             return result_avg;
         }
     }
@@ -474,7 +490,7 @@ fn compute_session_offset(
     );
 
     match (result_avg, result_sp) {
-        (Some(a), Some(s)) if s.2 < a.2 => Some(s),
+        (Some(a), Some(s)) if s.spread < a.spread => Some(s),
         (Some(a), _) => Some(a),
         (None, sp) => sp,
     }
@@ -494,9 +510,7 @@ fn select_session_from_candidates(
     videos: &[VideoMatchInfo],
     gyros: &[GyroMatchInfo],
     mode: CandidateOffsetMode,
-    // Returns `(offset, delay, spread, cal_videos, inlier_count, coverage)`;
-    // the last two describe the chosen offset's support for Pass 2 selection.
-) -> Option<(i64, i64, i64, Vec<usize>, usize, usize)> {
+) -> Option<SessionOffset> {
     if raw.is_empty() {
         return None;
     }
@@ -595,6 +609,33 @@ fn select_session_from_candidates(
     }
     let cal_video_indices: Vec<usize> = cal_videos.into_iter().collect();
 
+    // Per-cal-video paired gyro from the inliers' `gi_pair`. When the same cal
+    // video appears in multiple inlier candidates, keep the gyro from the pair
+    // with the smaller |dur_diff| (the better duration match). Drives the
+    // CalibrationPair short-circuit in assign_videos_by_coverage.
+    let mut cal_pair_map: std::collections::BTreeMap<usize, (usize, f64)> =
+        std::collections::BTreeMap::new();
+    for c in &inliers {
+        let r = c.1;
+        for (vi, gi, dd) in [
+            (r.vi_pair[0], r.gi_pair[0], r.dur_diff0.abs()),
+            (r.vi_pair[1], r.gi_pair[1], r.dur_diff1.abs()),
+        ] {
+            cal_pair_map
+                .entry(vi)
+                .and_modify(|e| {
+                    if dd < e.1 {
+                        *e = (gi, dd);
+                    }
+                })
+                .or_insert((gi, dd));
+        }
+    }
+    let cal_pairs: Vec<(usize, usize)> = cal_pair_map
+        .into_iter()
+        .map(|(vi, (gi, _))| (vi, gi))
+        .collect();
+
     log::info!(
         "[batch_match_diag] selected mode={:?} global_offset={}ms delay={}ms inlier_count={}/{} ties={} spread_ms={} cal_videos={:?} all_candidates={:?}",
         mode,
@@ -614,14 +655,15 @@ fn select_session_from_candidates(
     let chosen_inlier_count = inliers.len();
     let chosen_coverage = coverage(chosen_center);
 
-    Some((
-        median_offset,
+    Some(SessionOffset {
+        offset: median_offset,
         delay,
         spread,
         cal_video_indices,
-        chosen_inlier_count,
-        chosen_coverage,
-    ))
+        cal_pairs,
+        inlier_count: chosen_inlier_count,
+        coverage: chosen_coverage,
+    })
 }
 
 /// Mini-RANSAC anchor pool: collects measured offsets from locked-in sessions
@@ -733,6 +775,7 @@ fn pair_sessions(
     let make_session = |v_anchor: i64, v_cluster: &[usize], g_cluster: &[usize]| Session {
         v_cluster: v_cluster.to_vec(),
         cal_video_indices: Vec::new(),
+        cal_pairs: Vec::new(),
         g_cluster: g_cluster.to_vec(),
         // Anchor = V anchor: each session's "centre" is where the cal videos
         // were taken (camera clock). Used by assign_gyro_ownership (gyros snap
@@ -812,25 +855,25 @@ fn pair_sessions(
                 continue;
             }
             match compute_session_offset(videos, gyros, v_cluster, g_cluster) {
-                Some((offset, _delay, spread, _cal_v, inlier_count, coverage)) => {
+                Some(so) => {
                     log::info!(
                         "[batch_match_diag] candidate_session v_idx={} g_idx={} v_anchor={} g_anchor={} offset={} spread={} inlier={} coverage={}",
                         v_idx,
                         g_idx,
                         v_anchor,
                         g_anchor,
-                        offset,
-                        spread,
-                        inlier_count,
-                        coverage
+                        so.offset,
+                        so.spread,
+                        so.inlier_count,
+                        so.coverage
                     );
                     cands.push(Cand {
                         v_idx,
                         g_idx,
-                        offset,
-                        spread,
-                        inlier_count,
-                        coverage,
+                        offset: so.offset,
+                        spread: so.spread,
+                        inlier_count: so.inlier_count,
+                        coverage: so.coverage,
                     });
                 }
                 None => {
@@ -1169,6 +1212,67 @@ fn assign_videos_by_coverage(
                 continue;
             }
         };
+
+        // Calibration video short-circuit: a video identified as a session's
+        // calibration video (recorded in `cal_pairs`, whose keys mirror
+        // `cal_video_indices`) is tagged CalibrationPair using its paired cal
+        // gyro, BEFORE the coverage-window hit check and the 70% clip bounds
+        // gate. Its validity is established by compute_session_offset's
+        // duration + offset consistency; the coverage gate only guards content
+        // videos borrowing the wrong gyro and must not demote cal videos whose
+        // (deliberately short) cal gyro physically covers < 70% of the clip.
+        // Bypassing the hit check also handles cal videos whose averaged offset
+        // projects them just outside the owned gyro window.
+        if let Some((sid, gi)) = sessions.iter().enumerate().find_map(|(sid, s)| {
+            if !s.reliable {
+                return None;
+            }
+            s.cal_pairs
+                .iter()
+                .find(|(cv, _)| *cv == vi)
+                .map(|&(_, gi)| (sid, gi))
+        }) {
+            let s = &sessions[sid];
+            let video_offset = s.offset - s.delay;
+            let g = &gyros[gi];
+            let (gyro_start_ms, gyro_end_ms, front_comp, _calib_anchor_ms) = compute_clip_window(
+                v,
+                g,
+                v_created,
+                video_offset,
+                &s.cal_video_indices,
+                videos,
+            );
+            // Diagnostic-only coverage numbers (NOT used to gate). Lets the log
+            // show how far below 70% the cal gyro covers without rejecting it.
+            let (covered_ms, required_ms) = clip_bounds_coverage(
+                gyro_start_ms,
+                gyro_end_ms,
+                front_comp,
+                front_comp,
+                v.duration_ms,
+                g.duration_ms,
+            );
+            log::info!(
+                "[batch_match_diag] cal_pair_exempt vi={} sid={} gi={} status=calibration covered_ms={:.1} required_ms={:.1}",
+                vi,
+                sid,
+                gi,
+                covered_ms,
+                required_ms
+            );
+            results.push(MatchResult {
+                video_index: vi,
+                job_id: None,
+                gyro_index: Some(gi),
+                status: MatchStatus::CalibrationPair,
+                global_offset_ms: Some(s.offset),
+                gyro_start_ms: Some(gyro_start_ms),
+                gyro_end_ms: Some(gyro_end_ms),
+                init_offset_ms: Some(-front_comp),
+            });
+            continue;
+        }
 
         // Find every reliable session that covers this video; record
         // (session_id, gyro_id, depth). Coverage is restricted to gyros that
@@ -1950,6 +2054,7 @@ fn apply_deep_anchors(
                 sessions.push(Session {
                     v_cluster: Vec::new(),
                     cal_video_indices: Vec::new(),
+                    cal_pairs: Vec::new(),
                     g_cluster: vec![a.gyro_index],
                     anchor_ms: v_created,
                     offset: derived,
@@ -2015,10 +2120,12 @@ fn auto_match(
 
     for s in sessions.iter_mut() {
         match compute_session_offset(videos, gyros, &s.v_cluster, &s.g_cluster) {
-            Some((off, dly, spread, cal_videos, _inlier, _coverage)) => {
-                s.offset = off;
-                s.delay = dly;
-                s.cal_video_indices = cal_videos;
+            Some(so) => {
+                let spread = so.spread;
+                s.offset = so.offset;
+                s.delay = so.delay;
+                s.cal_video_indices = so.cal_video_indices;
+                s.cal_pairs = so.cal_pairs;
                 s.reliable = spread <= SYNC_CREATE_OFFSET_MAX;
                 log::info!(
                     "[batch_match_diag] session_offset anchor={} offset={}ms delay={}ms spread={}ms reliable={}",
@@ -2250,9 +2357,9 @@ mod tests {
         // The G cluster sort ADJACENT_GYRO_GAP_MAX (60s) filter inside
         // compute_session_offset will skip the (g1, g2) cross-pair, so we
         // get two distinct candidates: 200 and 1_000_000.
-        let (offset, _delay, _spread, _cal_v, _inlier, _coverage) =
-            compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1, 2, 3])
-                .expect("should produce candidates");
+        let offset = compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1, 2, 3])
+            .expect("should produce candidates")
+            .offset;
         // Both candidates have inlier count = 1; tie-break by coverage picks
         // the one that covers more videos -> the smaller offset (=200)
         // since the padded videos are near zero.
@@ -2483,8 +2590,8 @@ mod tests {
             g(1, 5_500.0, 32_200),
         ];
         let result = compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1]);
-        let (offset, _delay, spread, _cal_videos, _inlier, _coverage) =
-            result.expect("should succeed");
+        let so = result.expect("should succeed");
+        let (offset, spread) = (so.offset, so.spread);
         assert_eq!(spread, 0); // Single avg per (vi,gi) pair -> single offset in candidates.
         // offset = (1000+1200)/2 = 1100
         assert_eq!(offset, 1100);
@@ -2528,13 +2635,14 @@ mod tests {
             g(9, 6330.0, 1_775_296_847_000), // 18:00:47
         ];
 
-        let (offset, _delay, spread, _cal_videos, _inlier, _coverage) = compute_session_offset(
+        let so = compute_session_offset(
             &videos,
             &gyros,
             &[0, 1, 2, 3, 4],
             &[0, 1, 2, 3, 4, 5],
         )
         .expect("session should resolve via single-pick fallback");
+        let (offset, spread) = (so.offset, so.spread);
 
         assert!(
             offset == 43_091_942 || offset == 43_091_822,
@@ -2603,9 +2711,9 @@ mod tests {
             g(2, 5_500.0, 7_000),
             g(3, 5_500.0, 37_000),
         ];
-        let (offset, _delay, spread, _cal_videos, _inlier, _coverage) =
-            compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1, 2, 3])
-                .expect("should pick a winner from one of the two clusters");
+        let so = compute_session_offset(&videos, &gyros, &[0, 1], &[0, 1, 2, 3])
+            .expect("should pick a winner from one of the two clusters");
+        let (offset, spread) = (so.offset, so.spread);
         // Bucket-mode picks one of the two single-member clusters.
         assert!(offset == 1000 || offset == 6000, "got offset={}", offset);
         // Spread within the chosen bucket is small (single member -> 0).
@@ -2617,6 +2725,7 @@ mod tests {
     fn make_session(offset: i64, anchor: i64, v_cluster: Vec<usize>, g_cluster: Vec<usize>) -> Session {
         Session {
             cal_video_indices: v_cluster.clone(),
+            cal_pairs: Vec::new(),
             v_cluster,
             g_cluster,
             anchor_ms: anchor,
@@ -2788,6 +2897,7 @@ mod tests {
             Session {
                 v_cluster: vec![],
                 cal_video_indices: vec![],
+                cal_pairs: vec![],
                 g_cluster: vec![1],
                 anchor_ms: 18 * 3_600_000,
                 offset: 1_000,
@@ -2797,6 +2907,7 @@ mod tests {
             Session {
                 v_cluster: vec![],
                 cal_video_indices: vec![],
+                cal_pairs: vec![],
                 g_cluster: vec![0],
                 anchor_ms: 0,
                 offset: 2_000,
@@ -2902,6 +3013,66 @@ mod tests {
         let result = batch_match(&videos, &gyros, None, &[]);
         assert!(result.global_offset_ms.is_none());
         assert_eq!(result.results[0].status, MatchStatus::Unmatched);
+    }
+
+    #[test]
+    fn calibration_videos_short_cal_gyro_below_70pct_still_calibration_pair() {
+        // Regression guard (batch-match-calibration-coverage-gate): the 70%
+        // clip_bounds gate must NOT demote calibration videos whose
+        // (deliberately short) cal gyro covers < 70% of the clip, nor those
+        // whose averaged offset projects them outside the gyro window. Both
+        // sub-paths must surface as CalibrationPair with a gyro assigned.
+        //
+        // Two cal videos (3.0s) + two short cal gyros (2.3s). offset0=0,
+        // offset1=2800 -> averaged session offset 1400 misaligns both:
+        //   v0 created 10000 HITS g0 window [8600,10900] but partial coverage;
+        //   v1 created 14000 MISSES every owned gyro window (the C528-type
+        //   no_covering_gyro path) -> would have been Unmatched pre-fix.
+        // A long content video v2 (15s, no covering gyro) confirms the
+        // non-calibration path is untouched (still Unmatched, not exempted).
+        let videos = vec![
+            v(0, 3_000.0, Some(10_000)),
+            v(1, 3_000.0, Some(14_000)),
+            v(2, 15_000.0, Some(100_000)),
+        ];
+        let gyros = vec![
+            g(0, 2_300.0, 10_000),
+            g(1, 2_300.0, 16_800),
+        ];
+        let result = batch_match(&videos, &gyros, None, &[]);
+
+        // Sub-path (a): cal video that hit its gyro but covers < 70%.
+        assert_eq!(
+            result.results[0].status,
+            MatchStatus::CalibrationPair,
+            "v0 should be CalibrationPair, got {:?}",
+            result.results[0].status
+        );
+        assert!(
+            result.results[0].gyro_index.is_some(),
+            "v0 CalibrationPair must carry a paired cal gyro"
+        );
+
+        // Sub-path (b): cal video whose averaged offset misses every window.
+        assert_eq!(
+            result.results[1].status,
+            MatchStatus::CalibrationPair,
+            "v1 (window miss) should still be CalibrationPair, got {:?}",
+            result.results[1].status
+        );
+        assert!(
+            result.results[1].gyro_index.is_some(),
+            "v1 CalibrationPair must carry a paired cal gyro"
+        );
+
+        // Content video path unchanged: no covering gyro -> Unmatched, NOT
+        // short-circuited to CalibrationPair.
+        assert_eq!(
+            result.results[2].status,
+            MatchStatus::Unmatched,
+            "content video must stay on the gated path, got {:?}",
+            result.results[2].status
+        );
     }
 
     #[test]
@@ -3824,6 +3995,7 @@ mod tests {
         let sessions = vec![Session {
             v_cluster: vec![],
             cal_video_indices: vec![],
+            cal_pairs: vec![],
             g_cluster: vec![0],
             anchor_ms: 0,
             offset: 0,
