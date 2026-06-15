@@ -3726,7 +3726,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -7009,7 +7009,7 @@ dependencies = [
 [[package]]
 name = "qml-video-rs"
 version = "0.1.0"
-source = "git+https://github.com/NiYien/qml-video-rs?rev=153b86983c2ca0ca8380030517381c928883f7ff#153b86983c2ca0ca8380030517381c928883f7ff"
+source = "git+https://github.com/NiYien/qml-video-rs?rev=c43c673be3ed7576cf415384f5f55c24317af41d#c43c673be3ed7576cf415384f5f55c24317af41d"
 dependencies = [
  "cpp",
  "cpp_build",
@@ -7590,7 +7590,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -8402,7 +8402,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

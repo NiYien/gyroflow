@@ -5318,12 +5318,15 @@ mod tests {
     #[test]
     fn qml_video_rs_pins_raw_preview_pipeline_fixes() {
         // Pins the qml-video-rs fork at the commit that contains the R3D/NEV
-        // preview fix: Play immediately re-anchors to the last rendered frame
+        // preview fixes: Play immediately re-anchors to the last rendered frame
         // without a 500 ms timer, old R3D players are torn down off the GUI
-        // thread, callbacks are bound to their originating player, and loaded
-        // setup is de-duplicated. Reverting drops the fix and can reintroduce
-        // R3D Play stalls or clip-switch freezes.
-        const PINNED_REV: &str = "ea32009d086684a5a8c2e4e924a1e89e056df022";
+        // thread, callbacks are bound to their originating player, loaded setup
+        // is de-duplicated, the MDK download is pinned to the wang-bin 503d1ed
+        // nightly.link build (Nikon ZR .R3D native frame size), and the macOS
+        // R3D decoder requests a 16-aligned scale to avoid REDMetal red-channel
+        // stripes. Reverting drops these and can reintroduce R3D Play stalls,
+        // clip-switch freezes, a regressed MDK, or macOS preview striping.
+        const PINNED_REV: &str = "c43c673be3ed7576cf415384f5f55c24317af41d";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
         let expected = format!(
