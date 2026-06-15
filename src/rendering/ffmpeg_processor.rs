@@ -183,6 +183,20 @@ impl Default for VideoInfo {
     }
 }
 
+/// Returns true when the captured ffmpeg log indicates an unrecoverable GPU
+/// decode/transfer failure that warrants falling back to software decoding.
+/// Historically this only matched the hwaccel "failed to decode picture" error;
+/// it now also matches Vulkan device loss (VK_ERROR_DEVICE_LOST), which surfaces
+/// as a failed command-buffer submission during HW frame transfer/scale and would
+/// otherwise be swallowed per-frame, leaving the caller with zero decoded frames.
+fn ffmpeg_log_indicates_gpu_decode_failure() -> bool {
+    let log = FFMPEG_LOG.read();
+    log.contains("failed to decode picture")
+        || log.contains("VK_ERROR_DEVICE_LOST")
+        || log.contains("device lost")
+        || log.contains("Unable to submit command buffer")
+}
+
 impl<'a> FfmpegProcessor<'a> {
     pub fn from_file(
         url: &str,
@@ -279,6 +293,22 @@ impl<'a> FfmpegProcessor<'a> {
         });
 
         let codec = decoder_ctx.codec().ok_or(FFmpegError::DecoderNotFound)?;
+
+        // ProRes has no real hardware video decoder outside Apple Silicon, which
+        // has a dedicated ProRes decode block reachable via VideoToolbox. On every
+        // other platform the only "HW" path is software decode plus a Vulkan
+        // upload/scale/transfer that is fragile and can lose the device
+        // (VK_ERROR_DEVICE_LOST) on some GPUs, yielding zero decoded frames. Force
+        // software decode for ProRes everywhere except macOS on aarch64.
+        if gpu_decoding
+            && matches!(unsafe { (*decoder).id }, ffi::AVCodecID::AV_CODEC_ID_PRORES)
+            && !cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        {
+            ::log::info!(
+                "ProRes: forcing software decode (hardware decode only supported on Apple Silicon)"
+            );
+            gpu_decoding = false;
+        }
 
         let mut hw_backend = String::new();
         if gpu_decoding {
@@ -586,9 +616,7 @@ impl<'a> FfmpegProcessor<'a> {
                                 self.video.decoder.as_mut().ok_or(Error::DecoderNotFound)?;
                             packet.rescale_ts(stream.time_base(), (1, 1000000)); // rescale to microseconds
                             if let Err(err) = decoder.send_packet(&packet) {
-                                if self.gpu_decoding
-                                    && FFMPEG_LOG.read().contains("failed to decode picture")
-                                {
+                                if self.gpu_decoding && ffmpeg_log_indicates_gpu_decode_failure() {
                                     return Err(FFmpegError::GPUDecodingFailed);
                                 }
                                 if !any_encoded {
@@ -639,6 +667,20 @@ impl<'a> FfmpegProcessor<'a> {
                                 }
                             }
                             Err(e) => {
+                                // A HW frame transfer failure or a Vulkan device loss
+                                // means GPU decoding cannot continue; surface it as
+                                // GPUDecodingFailed so the caller retries in software
+                                // instead of swallowing every frame once encoding has
+                                // started (any_encoded == true).
+                                if self.gpu_decoding
+                                    && (matches!(
+                                        e,
+                                        FFmpegError::FromHWTransferError(_)
+                                            | FFmpegError::ToHWTransferError(_)
+                                    ) || ffmpeg_log_indicates_gpu_decode_failure())
+                                {
+                                    return Err(FFmpegError::GPUDecodingFailed);
+                                }
                                 if !any_encoded {
                                     return Err(e);
                                 }
@@ -784,9 +826,7 @@ impl<'a> FfmpegProcessor<'a> {
 
                     if let Err(err) = decoder.send_packet(&packet) {
                         ::log::error!("Decoder error {:?}", err);
-                        if self.gpu_decoding
-                            && FFMPEG_LOG.read().contains("failed to decode picture")
-                        {
+                        if self.gpu_decoding && ffmpeg_log_indicates_gpu_decode_failure() {
                             return Err(FFmpegError::GPUDecodingFailed);
                         }
                         if !any_encoded {
@@ -810,6 +850,20 @@ impl<'a> FfmpegProcessor<'a> {
                         }
                         Err(e) => {
                             ::log::error!("Encoder error {:?}", e);
+                            // A HW frame transfer failure or a Vulkan device loss is
+                            // unrecoverable for GPU decoding. Return GPUDecodingFailed
+                            // so the caller retries in software, instead of swallowing
+                            // every subsequent frame (any_encoded flips true on the
+                            // first buffered receive) and yielding zero frames.
+                            if self.gpu_decoding
+                                && (matches!(
+                                    e,
+                                    FFmpegError::FromHWTransferError(_)
+                                        | FFmpegError::ToHWTransferError(_)
+                                ) || ffmpeg_log_indicates_gpu_decode_failure())
+                            {
+                                return Err(FFmpegError::GPUDecodingFailed);
+                            }
                             if !any_encoded {
                                 return Err(e);
                             }
