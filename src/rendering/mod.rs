@@ -100,6 +100,49 @@ pub fn set_gpu_type_from_name(name: &str) {
     ::log::debug!("GPU type: {:?}, from name: {}", gpu_type, name);
 }
 
+/// Resolve the decoder `scale` string for a gyro-sync / batch-sync decode pass.
+///
+/// Normally the sync decoder is asked for `(proc_height*16)/9 × proc_height`
+/// (default 1080p → 1920×1080). On macOS, Apple's REDMetal decoder maps a
+/// 1920-wide request for a 6K `.r3d`/`.nev` source onto its quarter-resolution
+/// tier (~1512 wide), which is corrupted by a red-channel stripe artifact that
+/// poisons optical flow. To avoid that tier we request a REDMetal-clean scale
+/// (`3840×2160` → REDMetal half-res 3024) ONLY on macOS and ONLY for
+/// `.r3d`/`.nev`. This is decoupled from `proc_height`: the post-decode
+/// `converter.scale` still downscales to `proc_height` before NeuFlow, so the
+/// optical-flow input size and inference time are unchanged — decode clean,
+/// process small.
+///
+/// Returns `None` for native/Full processing (`proc_height <= 0`, no scale).
+/// On non-macOS, non-R3D inputs, or when `GYROFLOW_R3D_SYNC_RAW_SCALE` is set
+/// to a truthy value, the returned string is byte-identical to the raw request.
+pub fn sync_decoder_scale_string(proc_height: i32, url: &str) -> Option<String> {
+    if proc_height <= 0 {
+        // Full/native processing resolution: no decoder scale (current behavior).
+        return None;
+    }
+    let raw = format!("{}x{}", (proc_height * 16) / 9, proc_height);
+
+    let is_r3d = {
+        let lower = url.to_ascii_lowercase();
+        lower.ends_with(".r3d") || lower.ends_with(".nev")
+    };
+    let raw_hatch = std::env::var("GYROFLOW_R3D_SYNC_RAW_SCALE")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "on" || v == "yes"
+        })
+        .unwrap_or(false);
+
+    if cfg!(target_os = "macos") && is_r3d && !raw_hatch {
+        // REDMetal-clean tier; converter.scale still downscales to proc_height.
+        let resolved = "3840x2160".to_string();
+        ::log::info!(target: "video.load", "r3d_sync_scale resolved={} raw={} reason=macos_redmetal_clean", resolved, raw);
+        return Some(resolved);
+    }
+    Some(raw)
+}
+
 pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, bool)> {
     // -> (name, is_gpu)
     if codec.contains("PNG") || codec.contains("png") {

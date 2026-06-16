@@ -5643,11 +5643,11 @@ impl RenderQueue {
                             let mut abs_frame_no = 0;
 
                             let mut decoder_options = ffmpeg_next::Dictionary::new();
-                            if proc_height > 0 {
-                                decoder_options.set(
-                                    "scale",
-                                    &format!("{}x{}", (proc_height * 16) / 9, proc_height),
-                                );
+                            // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
+                            // this requests a REDMetal-clean tier; the converter.scale below
+                            // still downscales to proc_height so NeuFlow input is unchanged.
+                            if let Some(scale) = crate::rendering::sync_decoder_scale_string(proc_height, &url) {
+                                decoder_options.set("scale", &scale);
                             }
 
                             if input_file.image_sequence_fps > 0.0 {

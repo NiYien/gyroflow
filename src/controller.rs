@@ -1132,11 +1132,11 @@ impl Controller {
                             &format!("{}", input_file.image_sequence_start),
                         );
                     }
-                    if proc_height > 0 {
-                        decoder_options.set(
-                            "scale",
-                            &format!("{}x{}", (proc_height * 16) / 9, proc_height),
-                        );
+                    // Decoder scale is decoupled from proc_height: on macOS R3D/NEV
+                    // this requests a REDMetal-clean tier; the converter.scale below
+                    // still downscales to proc_height so NeuFlow input is unchanged.
+                    if let Some(scale) = rendering::sync_decoder_scale_string(proc_height, &input_file.url) {
+                        decoder_options.set("scale", &scale);
                     }
                     ::log::debug!("Decoder options: {:?}", decoder_options);
 
