@@ -2993,6 +2993,16 @@ Para vídeos não emparelhados, pode emparelhar manualmente: clique com o botão
         <translation>Concluído</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Correspondência automática agora</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Guardado. Faça a correspondência profunda de mais clipes ou distribua agora com a Correspondência automática.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Quando a renderização terminar: %1</translation>

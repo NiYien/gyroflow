@@ -2988,6 +2988,16 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
         <translation>Tamam</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Şimdi otomatik eşleştir</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Kaydedildi. Daha fazla klibi derin eşleştirin veya şimdi Otomatik eşleştirme ile dağıtın.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Render işlemi bittiğinde: %1</translation>

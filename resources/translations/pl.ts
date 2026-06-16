@@ -2993,6 +2993,16 @@ Niesparowany film możesz sparować ręcznie: kliknij prawym przyciskiem na film
         <translation>Gotowe</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Automatyczne dopasowanie teraz</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Zapisano. Wykonaj głębokie dopasowanie kolejnych klipów lub rozdziel teraz za pomocą Automatycznego dopasowania.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Po zakończeniu renderowania: %1</translation>

@@ -2992,6 +2992,16 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>완료</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>지금 자동 매칭</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>저장되었습니다. 다른 클립을 딥 매칭하거나 자동 매칭으로 지금 분배하세요.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>렌더링 완료 시: %1</translation>

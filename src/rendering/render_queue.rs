@@ -7040,6 +7040,7 @@ impl RenderQueue {
             );
             deep_anchors.push(core::gyro_match::DeepMatchAnchor {
                 gyro_index,
+                video_index,
                 offset_ms: r.offset_ms,
                 video_created_at_ms,
             });

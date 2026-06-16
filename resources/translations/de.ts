@@ -2992,6 +2992,16 @@ Nicht zugeordnete Videos kannst du manuell zuordnen: Rechtsklick auf das Video â
         <translation>Fertig</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Jetzt automatisch abgleichen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Gespeichert. Gleichen Sie weitere Clips tief ab oder verteilen Sie jetzt mit Automatischer Ãœbereinstimmung.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Wenn das Rendern beendet ist: %1</translation>

@@ -357,7 +357,8 @@ Item {
             property string videoName: "";
             property string gyroName: "";
             // Set on acceptance: the dialog switches to its success state and
-            // the single button becomes [Ok] (close + destroy).
+            // presents two buttons — [Done] (just close, keep accumulating
+            // anchors) and [Auto match now] (close + distribute immediately).
             property bool succeeded: false;
             // Current scan segment (1-based) and plan size, mirrored from
             // deep_match_chunk_changed. The modal presents segment-local
@@ -370,13 +371,14 @@ Item {
             iconType: Modal.Info;
             text: qsTr("Deep matching gyro data...") + "\n" + videoName + "\n⟷ " + gyroName;
             buttons: [qsTr("Cancel")];
-            onClicked: {
+            onClicked: (index, dontShowAgain) => {
                 if (deepMatchDialog.succeeded) {
+                    // Acquire and distribute are decoupled: acceptance only
+                    // records the anchor. [Done] (index 0) just closes so the
+                    // user can keep deep-matching more clips; [Auto match now]
+                    // (index 1) distributes all recorded anchors at once.
                     deepMatchDialog.close();
-                    // Chain straight into Auto match so the accepted deep-match
-                    // anchor is distributed to the whole queue without an
-                    // extra click.
-                    if (autoMatchBtn.enabled) autoMatchBtn.beginMatch();
+                    if (index === 1 && autoMatchBtn.enabled) autoMatchBtn.beginMatch();
                     return;
                 }
                 // Request cancellation; the dialog closes when
@@ -430,8 +432,8 @@ Item {
                             deepMatchDialog.loader.visible = false;
                         }
                         deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3))
-                                             + "\n" + qsTr("Click Ok to run Auto match and assign the data.");
-                        deepMatchDialog.buttons = [qsTr("Ok")];
+                                             + "\n" + qsTr("Saved. Deep match more clips, or distribute now with Auto match.");
+                        deepMatchDialog.buttons = [qsTr("Done"), qsTr("Auto match now")];
                         deepMatchDialog.succeeded = true;
                         return;
                     }

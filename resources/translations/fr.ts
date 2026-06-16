@@ -2992,6 +2992,16 @@ Pour toute vidéo non appariée, vous pouvez l&apos;apparier manuellement : clic
         <translation>Terminé</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Correspondance automatique maintenant</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Enregistré. Faites une correspondance profonde sur d&apos;autres clips, ou distribuez maintenant avec la correspondance automatique.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Quand le rendu est terminé : %1</translation>

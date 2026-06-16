@@ -2991,6 +2991,16 @@ Per i video non accoppiati puoi farlo manualmente: clic destro sul video → **&
         <translation>Fatto</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Corrispondenza automatica ora</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Salvato. Esegui l&apos;abbinamento profondo di altri clip oppure distribuisci ora con la Corrispondenza automatica.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Al termine del rendering: %1</translation>

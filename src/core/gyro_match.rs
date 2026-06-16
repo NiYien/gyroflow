@@ -44,6 +44,11 @@ pub struct DeepMatchAnchor {
     /// Index into the `gyros` array passed to `batch_match` (the caller maps
     /// its gyro-pool index to this filtered index).
     pub gyro_index: usize,
+    /// Index into the `videos` array passed to `batch_match` (same order as the
+    /// caller's `job_ids`). Used by `assign_videos_by_coverage` to pin the
+    /// deep-matched clip to its own deep gyro/offset before any coverage
+    /// competition.
+    pub video_index: usize,
     /// Deep-match offset in milliseconds, gyroflow sync convention: the video
     /// content start sits at gyro file-relative `-offset_ms`.
     pub offset_ms: f64,
@@ -1191,6 +1196,7 @@ fn assign_videos_by_coverage(
     gyros: &[GyroMatchInfo],
     sessions: &[Session],
     owned_gyros: &[Vec<usize>],
+    deep_anchors: &[DeepMatchAnchor],
 ) -> (Vec<MatchResult>, Vec<usize>) {
     let mut results: Vec<MatchResult> = Vec::with_capacity(videos.len());
     let mut pending: Vec<usize> = Vec::new();
@@ -1212,6 +1218,55 @@ fn assign_videos_by_coverage(
                 continue;
             }
         };
+
+        // Deep-anchor pin short-circuit (absolute highest priority, BEFORE the
+        // calibration-video short-circuit and the coverage competition). A
+        // deep-matched clip is content-level ground truth measured point-to-
+        // point; it must NOT be re-assigned or overwritten by the wall-clock
+        // statistical coverage path. If this video's index matches some
+        // DeepMatchAnchor (which must carry a valid created_at so the window
+        // can be projected — anchors without created_at degrade to self-only
+        // and never pin), assign it directly to its own deep gyro and deep
+        // offset, then `continue`, skipping the coverage competition and the
+        // clip-bounds gate entirely. With an empty anchor slice (or no index
+        // match) this branch is never taken and the assignment is byte-
+        // identical to the pre-change behaviour.
+        if let Some(a) = deep_anchors.iter().find(|a| {
+            a.video_index == vi && a.video_created_at_ms.is_some() && a.gyro_index < gyros.len()
+        }) {
+            let g = &gyros[a.gyro_index];
+            // Reproduce exactly what the coverage path would emit for this clip
+            // via the deep-anchor session: project with the derived session
+            // offset (delay = 0). This keeps init_offset_ms == -front_comp and
+            // gyro_start_ms == -deep_offset_ms - front_comp, byte-identical to
+            // the deep-anchor session's normal coverage output, but guaranteed
+            // (no coverage competition / clip-bounds gate).
+            let session_offset =
+                derive_session_offset_from_deep_match(g.created_at_ms, v_created, a.offset_ms);
+            let (gyro_start_ms, gyro_end_ms, front_comp, _calib_anchor_ms) =
+                compute_clip_window(v, g, v_created, session_offset, &[], videos);
+            log::info!(
+                "[batch_match_diag] deep_pin vi={} gyro={} session_offset={}ms deep_offset_ms={:.1} init_offset_ms={:.1} range=[{:.1},{:.1}]",
+                vi,
+                a.gyro_index,
+                session_offset,
+                a.offset_ms,
+                -front_comp,
+                gyro_start_ms,
+                gyro_end_ms
+            );
+            results.push(MatchResult {
+                video_index: vi,
+                job_id: None,
+                gyro_index: Some(a.gyro_index),
+                status: MatchStatus::Matched,
+                global_offset_ms: Some(session_offset),
+                gyro_start_ms: Some(gyro_start_ms),
+                gyro_end_ms: Some(gyro_end_ms),
+                init_offset_ms: Some(-front_comp),
+            });
+            continue;
+        }
 
         // Calibration video short-circuit: a video identified as a session's
         // calibration video (recorded in `cal_pairs`, whose keys mirror
@@ -2163,7 +2218,7 @@ fn auto_match(
     gyros_by_time.sort_by_key(|&i| gyros[i].created_at_ms);
 
     let (mut results, pending) =
-        assign_videos_by_coverage(videos, gyros, &sessions, &owned_gyros);
+        assign_videos_by_coverage(videos, gyros, &sessions, &owned_gyros, deep_anchors);
     assign_fallback(
         videos,
         gyros,
@@ -2750,7 +2805,7 @@ mod tests {
         ];
         let sessions = vec![make_session(1_000, 1_000, vec![0, 1], vec![0, 1])];
         let owned = assign_gyro_ownership(&gyros, &sessions);
-        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned);
+        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
         assert!(pending.is_empty(), "no pending expected, got {:?}", pending);
         let r2 = &results[2];
         assert_eq!(r2.status, MatchStatus::Matched);
@@ -2785,7 +2840,7 @@ mod tests {
             make_session(5_000, 1_000 + day, vec![2, 3], vec![3, 4]),
         ];
         let owned = assign_gyro_ownership(&gyros, &sessions);
-        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned);
+        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
         assert!(pending.is_empty(), "no pending expected, got {:?}", pending);
         // v4 should be Matched (regular) via session A.
         let r4 = &results[4];
@@ -2812,7 +2867,7 @@ mod tests {
             make_session(2_000, 7_000, vec![], vec![1]),
         ];
         let owned = assign_gyro_ownership(&gyros, &sessions);
-        let (_results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned);
+        let (_results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
         assert_eq!(pending, vec![0]);
     }
 
@@ -4003,7 +4058,7 @@ mod tests {
             reliable: true,
         }];
         let owned = assign_gyro_ownership(&gyros, &sessions);
-        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned);
+        let (results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
         assert_eq!(results[0].status, MatchStatus::Unmatched);
         assert!(results[0].gyro_index.is_none());
         assert_eq!(pending, vec![0], "rejected video must be in pending for fallback");
@@ -4296,6 +4351,7 @@ mod tests {
 
         let anchors = vec![DeepMatchAnchor {
             gyro_index: 0,
+            video_index: 0,
             offset_ms: deep_offset_ms,
             video_created_at_ms: Some(v0_created),
         }];
@@ -4353,6 +4409,7 @@ mod tests {
 
         let anchors = vec![DeepMatchAnchor {
             gyro_index: 2,
+            video_index: 2,
             offset_ms: deep_offset_ms,
             video_created_at_ms: videos[2].created_at_ms,
         }];
@@ -4390,6 +4447,7 @@ mod tests {
         ];
         let anchors = vec![DeepMatchAnchor {
             gyro_index: 0,
+            video_index: 0,
             offset_ms: -344_530.7,
             video_created_at_ms: None,
         }];
@@ -4401,6 +4459,225 @@ mod tests {
             assert_eq!(a.status, b.status);
             assert_eq!(a.gyro_index, b.gyro_index);
             assert_eq!(a.global_offset_ms, b.global_offset_ms);
+        }
+    }
+
+    // --- deep-match-decouple-from-auto-match: deep-pin short-circuit ---
+
+    #[test]
+    fn deep_pin_overrides_deeper_covering_session() {
+        // Task 5.1: a deep-matched clip whose wall-clock time is ALSO covered
+        // (more deeply) by another session's gyro must keep its own deep gyro
+        // and deep offset (pinned), not the covering session's gyro/offset.
+        // Built directly on assign_videos_by_coverage so the competing session
+        // is fully deterministic.
+        let g_deep_created: i64 = 1_000_000_000_000;
+        let v_created: i64 = 1_000_000_500_000;
+        let deep_offset_ms = -120_000.0f64; // content at gyro file-relative +120000ms
+
+        // gyro 0: the deep gyro (long). gyro 1: a competing session's gyro that
+        // also wall-clock-covers the clip, even more deeply.
+        let gyros = vec![
+            g(0, 2_000_000.0, g_deep_created),
+            g(1, 2_000_000.0, v_created - 1_000_000), // centred on the clip => deep coverage
+        ];
+        let videos = vec![v(0, 60_000.0, Some(v_created))];
+
+        // A reliable competing session owning gyro 1 with offset that places
+        // the clip near the centre of gyro 1 (maximal coverage depth). Without
+        // the pin this session would win the coverage competition.
+        let competing_offset = gyros[1].created_at_ms - v_created; // video_start == v_created
+        let sessions = vec![Session {
+            v_cluster: vec![],
+            cal_video_indices: vec![],
+            cal_pairs: vec![],
+            g_cluster: vec![1],
+            anchor_ms: v_created,
+            offset: competing_offset,
+            delay: 0,
+            reliable: true,
+        }];
+        let owned = assign_gyro_ownership(&gyros, &sessions);
+
+        let derived =
+            derive_session_offset_from_deep_match(g_deep_created, v_created, deep_offset_ms);
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 0,
+            video_index: 0,
+            offset_ms: deep_offset_ms,
+            video_created_at_ms: Some(v_created),
+        }];
+
+        let (results, pending) =
+            assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &anchors);
+        assert!(pending.is_empty());
+        let r0 = &results[0];
+        // Pinned to the DEEP gyro (0), not the competing session's gyro (1).
+        assert_eq!(r0.gyro_index, Some(0), "must keep the deep gyro, not the covering session's");
+        assert_eq!(r0.status, MatchStatus::Matched);
+        assert_eq!(r0.global_offset_ms, Some(derived));
+        // Sign lock: content start (= gyro_start_ms - init_offset_ms) lands at
+        // -deep_offset_ms, byte-aligned with finish_deep_match's convention.
+        let content_start = r0.gyro_start_ms.unwrap() - r0.init_offset_ms.unwrap();
+        assert!(
+            (content_start - (-deep_offset_ms)).abs() <= 0.5,
+            "content start {}ms must equal -deep_offset {}ms",
+            content_start,
+            -deep_offset_ms
+        );
+        // init_offset_ms == -front_comp == -(COMP_TIME_MS + drift_comp). drift_comp
+        // is a small positive term (no cal video inside the projected window), so
+        // init_offset is at or just below -COMP_TIME_MS, never above it.
+        let init_off = r0.init_offset_ms.unwrap();
+        assert!(
+            init_off <= -COMP_TIME_MS + 0.5,
+            "init_offset {}ms must be <= -COMP_TIME {}ms (= -front_comp)",
+            init_off,
+            -COMP_TIME_MS
+        );
+    }
+
+    #[test]
+    fn deep_pin_takes_precedence_over_calibration_pair() {
+        // Task 5.2 (pin-before-cal): a deep-matched clip that ALSO sits in a
+        // session's cal_video_indices must go through the deep pin, not the
+        // CalibrationPair short-circuit.
+        let g_deep_created: i64 = 2_000_000_000_000;
+        let v_created: i64 = 2_000_000_300_000;
+        let deep_offset_ms = -77_000.0f64;
+        let gyros = vec![
+            g(0, 2_000_000.0, g_deep_created), // deep gyro
+            g(1, 5_500.0, v_created + 2_000),  // a "cal" gyro for the same clip
+        ];
+        let videos = vec![v(0, 5_000.0, Some(v_created))];
+        // Session marks v0 as a calibration video paired with gyro 1.
+        let sessions = vec![Session {
+            v_cluster: vec![0],
+            cal_video_indices: vec![0],
+            cal_pairs: vec![(0usize, 1usize)],
+            g_cluster: vec![1],
+            anchor_ms: v_created,
+            offset: 2_000,
+            delay: 0,
+            reliable: true,
+        }];
+        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let anchors = vec![DeepMatchAnchor {
+            gyro_index: 0,
+            video_index: 0,
+            offset_ms: deep_offset_ms,
+            video_created_at_ms: Some(v_created),
+        }];
+
+        let (results, _pending) =
+            assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &anchors);
+        let r0 = &results[0];
+        // Deep pin wins: gyro 0 + Matched, NOT CalibrationPair on gyro 1.
+        assert_eq!(r0.gyro_index, Some(0));
+        assert_eq!(r0.status, MatchStatus::Matched);
+        assert_ne!(r0.status, MatchStatus::CalibrationPair);
+    }
+
+    #[test]
+    fn deep_pin_per_day_isolation_via_batch_match() {
+        // Task 5.2 (cross-day): two deep matches on clips from two different
+        // days (clock-inconsistent). Each day's clip is pinned to its own deep
+        // gyro/offset; the day-1 anchor is NOT borrowed by the day-2 clip.
+        let day1_g: i64 = 1_000_000_000_000;
+        let day2_g: i64 = day1_g + 3 * 86_400_000; // 3 days later
+
+        let v1_created: i64 = day1_g + 500_000;
+        let v2_created: i64 = day2_g + 700_000;
+        let deep1 = -200_000.0f64;
+        let deep2 = -350_000.0f64;
+
+        let gyros = vec![
+            g(0, 2_000_000.0, day1_g), // day-1 long gyro
+            g(1, 2_000_000.0, day2_g), // day-2 long gyro
+        ];
+        let videos = vec![
+            v(0, 60_000.0, Some(v1_created)), // deep-matched day-1 clip
+            v(1, 60_000.0, Some(v2_created)), // deep-matched day-2 clip
+        ];
+        let anchors = vec![
+            DeepMatchAnchor {
+                gyro_index: 0,
+                video_index: 0,
+                offset_ms: deep1,
+                video_created_at_ms: Some(v1_created),
+            },
+            DeepMatchAnchor {
+                gyro_index: 1,
+                video_index: 1,
+                offset_ms: deep2,
+                video_created_at_ms: Some(v2_created),
+            },
+        ];
+
+        let result = batch_match(&videos, &gyros, None, &anchors);
+        assert_eq!(result.error, None);
+        // Day-1 clip pinned to gyro 0 at -deep1; day-2 clip pinned to gyro 1
+        // at -deep2. No cross-day borrowing.
+        let r0 = &result.results[0];
+        let r1 = &result.results[1];
+        assert_eq!(r0.gyro_index, Some(0));
+        assert_eq!(r1.gyro_index, Some(1));
+        let cs0 = r0.gyro_start_ms.unwrap() - r0.init_offset_ms.unwrap();
+        let cs1 = r1.gyro_start_ms.unwrap() - r1.init_offset_ms.unwrap();
+        assert!((cs0 - (-deep1)).abs() <= 0.5, "day-1 content start {}", cs0);
+        assert!((cs1 - (-deep2)).abs() <= 0.5, "day-2 content start {}", cs1);
+    }
+
+    #[test]
+    fn deep_pin_empty_or_unmatched_anchor_is_byte_equivalent() {
+        // Task 5.3: with an empty anchor slice — or anchors that target a
+        // different video_index — assign_videos_by_coverage produces results
+        // byte-identical to the pre-change behaviour for the unpinned videos.
+        let videos = vec![
+            v(0, 5_000.0, Some(1_000)),   // cal
+            v(1, 5_000.0, Some(31_000)),  // cal
+            v(2, 6_000.0, Some(5_000)),   // regular video
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 2_000),
+            g(1, 5_500.0, 32_000),
+            g(2, 20_000.0, 2_000),
+        ];
+        let sessions = vec![make_session(1_000, 1_000, vec![0, 1], vec![0, 1])];
+        let owned = assign_gyro_ownership(&gyros, &sessions);
+
+        let baseline = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
+
+        // Anchor targets a non-existent video_index (99) => never pins => same.
+        let unmatched_anchor = vec![DeepMatchAnchor {
+            gyro_index: 2,
+            video_index: 99,
+            offset_ms: -50_000.0,
+            video_created_at_ms: Some(5_000),
+        }];
+        // Anchor with no created_at on video_index 2 => degrades to self-only,
+        // does NOT pin => same as baseline too.
+        let no_created_anchor = vec![DeepMatchAnchor {
+            gyro_index: 2,
+            video_index: 2,
+            offset_ms: -50_000.0,
+            video_created_at_ms: None,
+        }];
+
+        for anchors in [unmatched_anchor.as_slice(), no_created_anchor.as_slice()] {
+            let (results, pending) =
+                assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, anchors);
+            assert_eq!(pending, baseline.1, "pending must match baseline");
+            assert_eq!(results.len(), baseline.0.len());
+            for (a, b) in results.iter().zip(baseline.0.iter()) {
+                assert_eq!(a.video_index, b.video_index);
+                assert_eq!(a.gyro_index, b.gyro_index);
+                assert_eq!(a.status, b.status);
+                assert_eq!(a.global_offset_ms, b.global_offset_ms);
+                assert_eq!(a.gyro_start_ms, b.gyro_start_ms);
+                assert_eq!(a.gyro_end_ms, b.gyro_end_ms);
+                assert_eq!(a.init_offset_ms, b.init_offset_ms);
+            }
         }
     }
 }

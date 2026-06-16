@@ -2993,6 +2993,16 @@ Nespárované video můžete spárovat ručně: klikněte na video pravým tlač
         <translation>Hotovo</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Automatická shoda nyní</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Uloženo. Spárujte hluboce další klipy nebo nyní rozdělte pomocí Automatické shody.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Když je vykreslování dokončeno: %1</translation>

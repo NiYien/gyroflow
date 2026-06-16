@@ -2991,6 +2991,16 @@ Para vídeos sen emparellar, podes facelo manualmente: clic dereito no vídeo �
         <translation>Feito</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Coincidencia automática agora</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Gardado. Empareza en profundidade máis clips ou distribúe agora coa coincidencia automática.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Cando remate a renderización: %1</translation>

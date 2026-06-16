@@ -2990,6 +2990,16 @@ Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: kli
         <translation>Selesai</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Cocokkan otomatis sekarang</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Tersimpan. Cocokkan mendalam klip lainnya, atau distribusikan sekarang dengan Cocokkan otomatis.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Jika render sudah selesai: %1</translation>

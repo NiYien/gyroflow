@@ -2993,6 +2993,16 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>Ολοκληρώθηκε</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Αυτόματη αντιστοίχιση τώρα</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Αποθηκεύτηκε. Κάντε βαθιά αντιστοίχιση σε περισσότερα κλιπ ή διανείμετε τώρα με Αυτόματη αντιστοίχιση.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Όταν η απόδοση έχει ολοκληρωθεί: %1</translation>

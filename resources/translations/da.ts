@@ -2993,6 +2993,16 @@ Du kan parre manuelt: højreklik på videoen → **&quot;Par med gyro&quot;** og
         <translation>Udført</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
+        <source>Auto match now</source>
+        <translation>Auto match nu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
+        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
+        <translation>Gemt. Dybmatch flere klip, eller fordel nu med Auto match.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
         <source>When rendering is finished: %1</source>
         <translation>Når rendering er færdig: %1</translation>
