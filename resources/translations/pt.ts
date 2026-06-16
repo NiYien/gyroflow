@@ -187,9 +187,14 @@ Isto é apenas um indicador visual, não afeta a renderização.</translation>
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>Sincronização automática</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>Exportar para plugins</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>Já sincronizado</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -438,6 +443,16 @@ Devido a limitações dos codificadores de vídeo do sistema, a renderização e
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Tem certeza de que deseja remover todos os itens da fila de renderização?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>Repor emparelhamento</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>Tem a certeza de que pretende repor o estado de todas as tarefas?</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2993,14 +3008,9 @@ Para vídeos não emparelhados, pode emparelhar manualmente: clique com o botão
         <translation>Concluído</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>Correspondência automática agora</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>Guardado. Faça a correspondência profunda de mais clipes ou distribua agora com a Correspondência automática.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>Guardado. Faça a correspondência profunda de mais clipes, ou clique em Exportar para fazer a correspondência e sincronizar.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

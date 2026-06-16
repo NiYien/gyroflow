@@ -857,6 +857,7 @@ pub struct RenderQueue {
     pause: qt_method!(fn(&mut self)),
     resume: qt_method!(fn(&mut self)),
     stop: qt_method!(fn(&mut self)),
+    stop_job: qt_method!(fn(&mut self, job_id: u32)),
 
     render_job: qt_method!(fn(&mut self, job_id: u32)),
     cancel_job: qt_method!(fn(&self, job_id: u32)),
@@ -2542,6 +2543,47 @@ impl RenderQueue {
         self.status = QString::from("stopped");
         self.status_changed();
         self.progress_changed();
+    }
+
+    // [simple-mode-default-match-then-sync 11.1] Stop a single in-progress job without
+    // touching the queue's pause_flag or any other job. The stopped job lands in
+    // Skipped (skip_reason="user_stopped"): start()'s scheduler only picks Queued jobs
+    // (so it is NOT auto-rescheduled while the queue keeps rendering others), and
+    // render_job() rejects Skipped on entry — so the QML restart control must call
+    // reset_job() first (which clears skip_reason and resets to Queued) before
+    // render_job(), mirroring the existing "Render now" path. The skip_reason value
+    // lets QML show a per-row restart control only for user-stopped jobs.
+    pub fn stop_job(&mut self, job_id: u32) {
+        let is_rendering = self
+            .queue
+            .try_borrow()
+            .ok()
+            .and_then(|q| {
+                q.iter()
+                    .find(|v| v.job_id == job_id)
+                    .map(|v| v.status == JobStatus::Rendering)
+            })
+            .unwrap_or(false);
+        if !is_rendering {
+            return;
+        }
+
+        if let Some(job) = self.jobs.get(&job_id) {
+            job.cancel_flag.store(true, SeqCst);
+            // [cancel-epoch] Invalidate any in-flight progress/err callbacks so the
+            // trailing finished/error tick cannot overwrite the Skipped status below.
+            job.render_epoch.fetch_add(1, SeqCst);
+        }
+
+        update_model!(self, job_id, itm {
+            itm.skip_reason = QString::from("user_stopped");
+            itm.status = JobStatus::Skipped;
+        });
+
+        // The queue may still be "active" with other jobs rendering; leave its status
+        // alone. Only notify listeners so the row re-renders with stop→restart controls.
+        self.queue_changed();
+        self.status_changed();
     }
 
     // Proactively flip every Rendering job back to Queued so a follow-up start() can
@@ -16124,7 +16166,7 @@ mod tests {
     }
 
     #[test]
-    fn simple_mode_batch_auto_sync_requires_motion_data() {
+    fn simple_mode_batch_auto_sync_matches_before_syncing() {
         let qml = include_str!("../ui/App.qml");
         let marker_idx = qml
             .find("id: simpleExportBtnRow")
@@ -16135,27 +16177,42 @@ mod tests {
             .expect("simple export button exists after auto sync button");
         let branch = &remaining[..branch_end];
 
-        assert!(branch.contains("render_queue.batch_motion_ready()"));
+        // Row-level helpers / signal wiring that keep the queue row count fresh remain in place.
         assert!(branch.contains("function refreshQueueRowCount()"));
         assert!(branch.contains("Component.onCompleted: refreshQueueRowCount();"));
         assert!(branch.contains("function onMatch_apply_finished(): void"));
         assert!(branch.contains("simpleExportBtnRow.refreshQueueRowCount();"));
-        assert!(branch.contains("readonly property int _queueMatchVersion"));
-        assert!(branch.contains("readonly property bool _queueMode: videoArea.queue && simpleExportBtnRow.queueRowCount > 0"));
+
+        // Button is relabeled "Export for plugins" and exposes the queue-mode predicate.
+        assert!(branch.contains("text: qsTr(\"Export for plugins\")"));
+        assert!(branch.contains("readonly property bool _queueMode:"));
+
+        // Relaxed enable gate: queue mode with separate gyro files only requires the gyro
+        // files to be parsed (allGyroParsed), no longer a pre-match batch_motion_ready() check.
+        assert!(branch.contains("allGyroParsed"));
+
+        // The click handler matches first when the gyro set is dirty, then syncs; it must not
+        // drive the batch autosync state machine directly anymore (that moved to runSimpleBatchSync()).
         let click_idx = branch
             .find("onClicked:")
             .expect("auto sync button has click handler");
         let click_branch = &branch[click_idx..];
-        let ready_idx = click_branch
-            .find("if (!simpleAutoSyncBtn._queueMotionReady) return;")
-            .expect("auto sync click branch hard-checks batch motion readiness");
-        let start_idx = click_branch
-            .find("render_queue.start_batch_autosync();")
-            .expect("auto sync branch starts the batch autosync state machine");
+        let match_idx = click_branch
+            .find("matchDirty")
+            .expect("auto sync click branch checks whether the gyro set needs matching first");
+        let match_then_sync_idx = click_branch
+            .find("beginMatchThenSync(\"sync\")")
+            .expect("dirty gyro set triggers match-then-sync orchestration");
         assert!(
-            ready_idx < start_idx,
-            "simple-mode batch auto sync must check motion readiness before starting"
+            match_idx < match_then_sync_idx,
+            "simple-mode batch auto sync must detect a dirty match before kicking off match-then-sync"
         );
+        // Current-and-synced state is a lightweight notice, not a no-op.
+        assert!(branch.contains("Already synced"));
+
+        // The branch must not directly start/export the queue nor invoke the batch autosync
+        // state machine inline — those now live in the runSimpleBatchSync() helper.
+        assert!(!branch.contains("render_queue.start_batch_autosync();"));
         assert!(!branch.contains("render_queue.export_project = 2;"));
         assert!(!branch.contains("render_queue.start();"));
     }
@@ -16206,15 +16263,19 @@ mod tests {
         );
         assert!(
             qml.contains("property bool canStopProgress: isInProgress && !syncDonePending"),
-            "done_pending batch sync rows must not use the Stop/reset action"
+            "done_pending batch sync rows must not expose the per-row Stop control"
+        );
+        // [simple-mode-default-match-then-sync 10.2/11.2] The combined context-menu
+        // "Stop"/"Reset status" Action was removed; the per-row stop control now gates
+        // on dlg.canStopProgress so it is only shown for cancellable progress (and not
+        // for done_pending rows).
+        assert!(
+            !qml.contains("qsTr(\"Reset status\")"),
+            "the combined Stop/Reset status context-menu action must be removed"
         );
         assert!(
-            qml.contains("text: canStopProgress? qsTr(\"Stop\") : qsTr(\"Reset status\")"),
-            "Stop label must only be shown for cancellable progress"
-        );
-        assert!(
-            qml.contains("enabled: canResetStatus || canStopProgress"),
-            "done_pending batch sync rows must not enable reset while waiting for batch confirmation"
+            qml.contains("visible: dlg.canStopProgress;"),
+            "per-row Stop control must only be shown for cancellable progress"
         );
         assert!(
             qml.contains("function isDonePendingJob(id)"),

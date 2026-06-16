@@ -23,6 +23,9 @@ Rectangle {
 
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
+    // Simple-mode batch sync dirty flag (window-level because the AI sync toggle lives in
+    // SimpleStabilization.qml). true = never synced / inputs changed since last sync.
+    property bool syncDirty: true;
     // Android multi-pick callback. Set by a Button.onClicked just before opening
     // a FileDialog/FolderDialog; invoked by Connections.onUrls_opened (and the
     // single-URI Connections.onUrl_opened for parity) with the picked URL list.
@@ -103,8 +106,10 @@ Rectangle {
                 // so the Column positioner takes over without anchor warnings.
                 queueBtn.anchors.right       = undefined;
                 queueBtn.anchors.rightMargin = 0;
-                pushToEnd(clearQueueBtn, mobileQueueBtnCol);  // top of Column
-                pushToEnd(queueBtn,      mobileQueueBtnCol);  // bottom of Column
+                pushToEnd(resetPairingBtn, mobileQueueBtnCol);  // top of Column
+                pushToEnd(clearQueueBtn,   mobileQueueBtnCol);  // middle of Column
+                pushToEnd(queueBtn,        mobileQueueBtnCol);  // bottom of Column
+                resetPairingBtn.x = 0;
                 clearQueueBtn.x = 0;
                 queueBtn.x = 0;
             } else {
@@ -114,9 +119,10 @@ Rectangle {
                 pushToEnd(simpleExportStabilizedBtn, simpleExportBtnRow);
                 simpleAutoSyncBtn.width         = Qt.binding(function() { return simpleAutoSyncBtn.implicitWidth; });
                 simpleExportStabilizedBtn.width = Qt.binding(function() { return simpleExportStabilizedBtn.implicitWidth; });
-                // Restore original child order in renderBtnRow: clearQueueBtn before queueBtn.
-                pushToEnd(clearQueueBtn, renderBtnRow);
-                pushToEnd(queueBtn,      renderBtnRow);
+                // Restore original child order in renderBtnRow: resetPairingBtn, clearQueueBtn, queueBtn.
+                pushToEnd(resetPairingBtn, renderBtnRow);
+                pushToEnd(clearQueueBtn,   renderBtnRow);
+                pushToEnd(queueBtn,        renderBtnRow);
             }
         }
         Qt.callLater(() => {
@@ -785,7 +791,7 @@ Rectangle {
                     Component.onCompleted: refreshQueueRowCount();
                     Button {
                         id: simpleAutoSyncBtn;
-                        text: qsTr("Auto sync for plugins");
+                        text: qsTr("Export for plugins");
                         iconName: "spinner";
                         height: 36 * dpiScale;
                         leftPadding: 16 * dpiScale;
@@ -801,26 +807,39 @@ Rectangle {
                         // after right-click Edit on a job) the button falls back to single-video sync,
                         // matching simpleExportStabilizedBtn's batch-path predicate below.
                         readonly property bool _queueMode: videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
-                        readonly property int _queueMatchVersion: videoArea.queue ? videoArea.queue.matchVersion : -1;
-                        readonly property bool _queueMotionReady: _queueMode && _queueMatchVersion >= 0 && render_queue.batch_motion_ready();
+                        readonly property bool _hasGyroFiles: videoArea.queue ? videoArea.queue.hasGyroFiles : false;
+                        readonly property bool _allGyroParsed: videoArea.queue ? videoArea.queue.allGyroParsed : false;
+                        // Relaxed enable (D5): in queue mode a click may need to *trigger* the match,
+                        // so do not require batch_motion_ready() when separate gyro files exist; just
+                        // require them parsed. Without separate gyro files keep the original gate.
                         enabled: _queueMode
-                            ? (render_queue.status !== "active" && _queueMotionReady)
+                            ? (render_queue.status !== "active"
+                                && (_hasGyroFiles ? _allGyroParsed : render_queue.batch_motion_ready()))
                             : (window.videoArea.vid.loaded && !controller.sync_in_progress);
                         onClicked: {
-                            if (simpleAutoSyncBtn._queueMode) {
-                                if (!simpleAutoSyncBtn._queueMotionReady) return;
-                                const anamorphicCount = render_queue.get_anamorphic_applied_count();
-                                if (anamorphicCount > 0) {
-                                    messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
-                                        { text: qsTr("Cancel") },
-                                        { text: qsTr("Continue"), accent: true, clicked: () => render_queue.start_batch_autosync() }
-                                    ]);
-                                } else {
-                                    render_queue.start_batch_autosync();
+                            // Single video / embedded gyro: sync directly, no match step.
+                            if (!simpleAutoSyncBtn._queueMode || !simpleAutoSyncBtn._hasGyroFiles) {
+                                if (simpleAutoSyncBtn._queueMode) {
+                                    // Queue jobs with embedded gyro (no separate files): direct batch sync.
+                                    if (!render_queue.batch_motion_ready()) return;
+                                    window.runSimpleBatchSync();
+                                } else if (window.sync) {
+                                    window.sync.runAutosync();
                                 }
                                 return;
                             }
-                            if (window.sync) window.sync.runAutosync();
+                            // Queue mode with separate gyro files (D3 decision tree).
+                            const queue = videoArea.queue;
+                            if (queue.matchDirty) {
+                                // Gyro set changed / never matched: match first, then sync.
+                                queue.beginMatchThenSync("sync");
+                            } else if (window.syncDirty) {
+                                // AI toggle changed / never synced: re-sync without re-match.
+                                window.runSimpleBatchSync();
+                            } else {
+                                // Everything current: no-op with a lightweight notice.
+                                window.showNotification(Modal.Info, qsTr("Already synced"));
+                            }
                         }
                     }
                     Button {
@@ -840,9 +859,13 @@ Rectangle {
                         // Gate on stable layout flags rather than dynamic `parent` reference,
                         // so the binding reliably re-evaluates after theme/mode toggles.
                         width: (window.isMobileLayout && window.isSimpleMode) ? mobileSimpleExportBtnCol.width : implicitWidth;
+                        // Relaxed enable (D5 parity): with separate gyro files a click may need to
+                        // trigger the match first, so require only allGyroParsed (not batch_motion_ready).
                         enabled: render_queue.status === "active"
                               || ((videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
-                                  ? (videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready())
+                                  ? (videoArea.queue.hasGyroFiles
+                                      ? videoArea.queue.allGyroParsed
+                                      : (videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready()))
                                   : window.videoArea.vid.loaded);
 
                         // Set when we kicked off autosync and are waiting to resume render.
@@ -882,14 +905,16 @@ Rectangle {
                             }
                             // Batch path — render queue panel is open with pending jobs
                             if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
-                                if (!render_queue.batch_motion_ready()) return;
-                                if (render_queue.has_crm_proxy_jobs()) {
-                                    window.showCanonCrmProjectOnlyMessage();
+                                // Match-first (D4): with separate gyro files that have changed / never
+                                // matched, run Auto match first; export dispatches on match success
+                                // (zero-match reuses matchWarning and does not start rendering).
+                                if (videoArea.queue.hasGyroFiles && videoArea.queue.matchDirty) {
+                                    videoArea.queue.beginMatchThenSync("export");
                                     return;
                                 }
-                                render_queue.export_project = 4;
-                                render_queue.prepare_finished_jobs_for_video_export();
-                                render_queue.start();
+                                if (!render_queue.batch_motion_ready()) return;
+                                // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.
+                                window.runSimpleBatchExport();
                                 return;
                             }
                             // Single-video path — auto-sync first if needed, then render
@@ -1173,6 +1198,48 @@ Rectangle {
                             }
                         }
                     }
+                    // [simple-mode-default-match-then-sync 12.1] Reset-all ("Reset pairing")
+                    // shortcut, placed immediately left of clearQueueBtn. Resets every video
+                    // job's render/sync status after a confirmation, without removing jobs or
+                    // clearing gyro files/pairings. Follows the same reparent rules as
+                    // clearQueueBtn (see reparentSimplePanels).
+                    Item {
+                        id: resetPairingBtn;
+                        width: 36 * dpiScale;
+                        height: 44 * dpiScale;
+                        // Mobile Simple reparents this into mobileQueueBtnCol (Column),
+                        // where verticalCenter anchors are ignored by the positioner.
+                        anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
+                        visible: videoArea.queue.shown;
+                        LinkButton {
+                            anchors.centerIn: parent;
+                            leftPadding: 8 * dpiScale;
+                            rightPadding: 8 * dpiScale;
+                            icon.width: 22 * dpiScale;
+                            icon.height: 22 * dpiScale;
+                            iconName: "undo";
+                            tooltip: qsTr("Reset pairing");
+                            onClicked: {
+                                messageBox(Modal.Warning, qsTr("Are you sure you want to reset the status of all jobs?"), [
+                                    { text: qsTr("Yes"), clicked: function() {
+                                        let ids = [];
+                                        try { ids = JSON.parse(render_queue.get_all_video_job_ids_json()); } catch(e) { ids = []; }
+                                        for (let i = 0; i < ids.length; ++i) {
+                                            render_queue.reset_job(ids[i]);
+                                        }
+                                        // Resetting clears each job's synced motion, so the pipeline must be
+                                        // marked dirty — otherwise the next Export/Sync click dead-ends:
+                                        // matchDirty is false (no re-match) and batch_motion_ready() is false
+                                        // (nothing to render). Marking dirty routes the next click through
+                                        // beginMatchThenSync (re-match -> sync/render).
+                                        if (videoArea.queue) videoArea.queue.matchDirty = true;
+                                        window.syncDirty = true;
+                                    }},
+                                    { text: qsTr("No"), accent: true },
+                                ]);
+                            }
+                        }
+                    }
                     // [clear-queue] Clear render queue shortcut — visible only when the queue panel is open
                     Item {
                         id: clearQueueBtn;
@@ -1361,6 +1428,7 @@ Rectangle {
                     LinkButton {
                         id: videoGyroFullModeBtn;
                         anchors.horizontalCenter: parent.horizontalCenter;
+                        visible: controller.full_mode_enabled();
                         text: qsTr("Full mode →");
                         font.pixelSize: 14 * dpiScale;
                         opacity: 0.7;
@@ -1371,6 +1439,7 @@ Rectangle {
                     LinkButton {
                         id: stabSettingsFullModeBtn;
                         anchors.horizontalCenter: parent.horizontalCenter;
+                        visible: controller.full_mode_enabled();
                         text: qsTr("Full mode →");
                         font.pixelSize: 14 * dpiScale;
                         opacity: 0.7;
@@ -1769,6 +1838,7 @@ Rectangle {
                 LinkButton {
                     id: simpleContainerFullModeBtn;
                     anchors.horizontalCenter: parent.horizontalCenter;
+                    visible: controller.full_mode_enabled();
                     text: qsTr("Full mode →");
                     font.pixelSize: 14 * dpiScale;
                     opacity: 0.7;
@@ -1784,6 +1854,35 @@ Rectangle {
 
     Shortcuts {
         videoArea: videoArea;
+    }
+
+    // Simple-mode batch sync dispatch (queue mode). Shared by simpleAutoSyncBtn and by
+    // RenderQueue's match-then-sync orchestration. Keeps the anamorphic confirmation.
+    function runSimpleBatchSync(): void {
+        const anamorphicCount = render_queue.get_anamorphic_applied_count();
+        if (anamorphicCount > 0) {
+            messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
+                { text: qsTr("Cancel") },
+                { text: qsTr("Continue"), accent: true, clicked: function() {
+                    if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
+                    render_queue.start_batch_autosync();
+                } }
+            ]);
+        } else {
+            if (videoArea.queue) videoArea.queue.notifyBatchSyncStarted();
+            render_queue.start_batch_autosync();
+        }
+    }
+    // Simple-mode batch export dispatch (queue mode). Shared by simpleExportStabilizedBtn and
+    // by RenderQueue's match-then-sync orchestration. Batch render auto-syncs not-yet-synced jobs.
+    function runSimpleBatchExport(): void {
+        if (render_queue.has_crm_proxy_jobs()) {
+            window.showCanonCrmProjectOnlyMessage();
+            return;
+        }
+        render_queue.export_project = 4;
+        render_queue.prepare_finished_jobs_for_video_export();
+        render_queue.start();
     }
 
     function showNotification(type: int, text: string, textFormat: var): void {

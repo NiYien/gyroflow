@@ -186,9 +186,14 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>자동 동기화</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>플러그인용으로 내보내기</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>이미 동기화됨</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -437,6 +442,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>렌더링 대기열의 모든 항목을 제거하시겠습니까?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>페어링 재설정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>모든 작업의 상태를 재설정하시겠습니까?</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2992,14 +3007,9 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>완료</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>지금 자동 매칭</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>저장되었습니다. 다른 클립을 딥 매칭하거나 자동 매칭으로 지금 분배하세요.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>저장되었습니다. 다른 클립을 딥 매칭하거나, 내보내기를 클릭하여 매칭하고 동기화하세요.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

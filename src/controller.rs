@@ -91,6 +91,7 @@ pub struct Controller {
     lens_group_manual_edit_changed: qt_signal!(),
     get_lens_presets: qt_method!(fn(&self) -> QString),
     has_neuflow_support: qt_method!(fn(&self) -> bool),
+    full_mode_enabled: qt_method!(fn(&self) -> bool),
     export_lens_profile: qt_method!(fn(&mut self, url: QUrl, info: QJsonObject, upload: bool)),
     export_lens_profile_filename: qt_method!(fn(&mut self, info: QJsonObject) -> QString),
 
@@ -2141,6 +2142,10 @@ impl Controller {
     }
     fn has_neuflow_support(&self) -> bool {
         cfg!(any(feature = "neuflow-ort", neuflow_burn_enabled))
+    }
+    // Full mode is a debug/dev escape hatch only; gated behind GYROFLOW_NIYIEN_FULL_MODE=1.
+    fn full_mode_enabled(&self) -> bool {
+        std::env::var("GYROFLOW_NIYIEN_FULL_MODE").as_deref() == Ok("1")
     }
 
     fn set_preview_resolution(&mut self, target_height: i32, player: QJSValue) {

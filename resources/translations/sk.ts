@@ -187,9 +187,14 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>Automatická synchronizácia</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>Exportovať pre pluginy</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>Už synchronizované</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -438,6 +443,16 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Naozaj chceš odstrániť všetky položky z fronty na renderovanie?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>Obnoviť párovanie</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>Naozaj chcete obnoviť stav všetkých úloh?</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2993,14 +3008,9 @@ Nespárované video môžete spárovať ručne: pravým tlačidlom na video → 
         <translation>Hotovo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>Automatické párovanie teraz</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>Uložené. Hlboko spárujte ďalšie klipy alebo teraz rozdeľte pomocou Automatického párovania.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>Uložené. Hlboko spárujte ďalšie klipy alebo kliknite na Exportovať na spárovanie a synchronizáciu.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

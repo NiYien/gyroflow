@@ -188,9 +188,14 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>Sinkronisasi otomatis</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>Ekspor untuk plugin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>Sudah disinkronkan</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -439,6 +444,16 @@ Rendering di latar belakang tidak didukung, karena keterbatasan sistem encoder v
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Apakah anda yakin ingin mengosongkan semua item dari antrian render?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>Setel ulang pemasangan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>Yakin ingin menyetel ulang status semua tugas?</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2990,14 +3005,9 @@ Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: kli
         <translation>Selesai</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>Cocokkan otomatis sekarang</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>Tersimpan. Cocokkan mendalam klip lainnya, atau distribusikan sekarang dengan Cocokkan otomatis.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>Tersimpan. Cocokkan mendalam klip lainnya, atau klik Ekspor untuk mencocokkan dan menyinkronkan.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

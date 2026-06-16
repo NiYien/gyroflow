@@ -187,9 +187,14 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>Oto senkronizasyon</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>Eklentiler için dışa aktar</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>Zaten senkronize</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -436,6 +441,16 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Render sırasındaki her öğeyi kaldırmak istediğinize emin misiniz?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>Eşleştirmeyi sıfırla</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>Tüm işlerin durumunu sıfırlamak istediğinizden emin misiniz?</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2988,14 +3003,9 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
         <translation>Tamam</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>Şimdi otomatik eşleştir</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>Kaydedildi. Daha fazla klibi derin eşleştirin veya şimdi Otomatik eşleştirme ile dağıtın.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>Kaydedildi. Daha fazla klibi derin eşleştirin veya eşleştirip senkronize etmek için Dışa aktar&apos;a tıklayın.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

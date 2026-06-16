@@ -380,6 +380,9 @@ Column {
         onCheckedChanged: {
             settings.setValue("simpleAiSync", checked);
             render_queue.batch_sync_ai_method = checked;
+            // The AI sync toggle changes the optical-flow method consumed by sync, so any
+            // prior batch sync is now stale and must re-run on the next sync action.
+            window.syncDirty = true;
             // Drive the live preview OF method in Simple mode so unchecking AI returns
             // to DIS and clears the stale NeuFlow pose/flow overlay. set_of_method()
             // already clears the pose estimator unconditionally, so this also wipes

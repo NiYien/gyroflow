@@ -59,6 +59,36 @@ Item {
     property bool _queueLayoutPending: false
     // [T14] Global matchExecuted flag: whether matching has run.
     property bool matchExecuted: false
+    // Simple-mode match dirty flag. true = never matched / gyro file set changed since last match.
+    property bool matchDirty: true
+    // Auto-match in-flight flag (moved up from the removed standalone "Auto match" button).
+    property bool matching: false
+    // Simple-mode match-then-sync orchestration: "" | "sync" | "export".
+    // Set by beginMatchThenSync(); dispatched / cleared on match completion.
+    property string pendingAction: ""
+    // Tracks a batch autosync we kicked off so we can clear window.syncDirty when it settles.
+    property bool _batchSyncInFlight: false
+
+    // Record gyro files as needing a match, then run Auto match. The completion hook
+    // (onMatch_apply_finished) dispatches the pending action once matching settles.
+    function beginMatchThenSync(action): void {
+        root.pendingAction = action;
+        root.runAutoMatch();
+    }
+    // Run the batch gyro match. Moved from the removed standalone "Auto match" button
+    // (beginMatch) so beginMatchThenSync can drive it directly from the queue root.
+    function runAutoMatch(): void {
+        root.matching = true;
+        root.matchWarning = "";
+        render_queue.auto_rotate = window.batchState ? window.batchState.autoRotate : false;
+        loader.text = qsTr("Matching...");
+        loader.active = true;
+        matchTimer.start();
+    }
+    // Called by App.qml right before it starts a batch autosync so we can observe completion.
+    function notifyBatchSyncStarted(): void {
+        root._batchSyncInFlight = true;
+    }
     // [T19] Match version counter. Incrementing it forces delegate bindings to re-evaluate.
     property int matchVersion: 0
     property int syncStatusVersion: 0
@@ -357,8 +387,9 @@ Item {
             property string videoName: "";
             property string gyroName: "";
             // Set on acceptance: the dialog switches to its success state and
-            // presents two buttons — [Done] (just close, keep accumulating
-            // anchors) and [Auto match now] (close + distribute immediately).
+            // presents a single [Done] button. Acceptance only records the
+            // anchor and marks the batch dirty; distribution happens on the
+            // next main Export action (which matches first, then syncs).
             property bool succeeded: false;
             // Current scan segment (1-based) and plan size, mirrored from
             // deep_match_chunk_changed. The modal presents segment-local
@@ -374,11 +405,12 @@ Item {
             onClicked: (index, dontShowAgain) => {
                 if (deepMatchDialog.succeeded) {
                     // Acquire and distribute are decoupled: acceptance only
-                    // records the anchor. [Done] (index 0) just closes so the
-                    // user can keep deep-matching more clips; [Auto match now]
-                    // (index 1) distributes all recorded anchors at once.
+                    // records the anchor and marks the batch dirty. [Done]
+                    // just closes so the user can keep deep-matching more
+                    // clips; distribution is handed to the next main Export
+                    // action, which matches first (re-running the match picks
+                    // up the recorded anchors) and then syncs/renders.
                     deepMatchDialog.close();
-                    if (index === 1 && autoMatchBtn.enabled) autoMatchBtn.beginMatch();
                     return;
                 }
                 // Request cancellation; the dialog closes when
@@ -432,9 +464,14 @@ Item {
                             deepMatchDialog.loader.visible = false;
                         }
                         deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3))
-                                             + "\n" + qsTr("Saved. Deep match more clips, or distribute now with Auto match.");
-                        deepMatchDialog.buttons = [qsTr("Done"), qsTr("Auto match now")];
+                                             + "\n" + qsTr("Saved. Deep match more clips, or Export to match and sync.");
+                        deepMatchDialog.buttons = [qsTr("Done")];
                         deepMatchDialog.succeeded = true;
+                        // Deep match does not go through onGyro_files_changed, so
+                        // mark the batch dirty here. The next main Export action
+                        // then re-matches (distributing the recorded anchors) and
+                        // syncs/renders.
+                        root.matchDirty = true;
                         return;
                     }
                     deepMatchDialog.close();
@@ -469,6 +506,10 @@ Item {
             root.hasGyroFiles = render_queue.has_gyro_files();
             // [T14] Reset matchExecuted when gyro files are cleared.
             if (!root.hasGyroFiles) root.matchExecuted = false;
+            // Any gyro file add/remove/replace invalidates the prior match.
+            root.matchDirty = true;
+            // Drop any in-flight match-then-sync dispatch so it cannot fire stale.
+            root.pendingAction = "";
             // Recompute gyro time span (max - min of created_at_ms). Items
             // without created_at are skipped; if fewer than 2 valid items
             // remain, span stays 0 (intraday format applies).
@@ -493,7 +534,7 @@ Item {
             // [T19] Increment the version counter to refresh delegate bindings without rebuilding delegates.
             root.matchVersion++;
             // [T22] Only reset the matching state here; match_apply_finished closes the overlay.
-            autoMatchBtn.matching = false;
+            root.matching = false;
             root.requestQueueLayout();
             // Check unmatched items.
             Qt.callLater(function() {
@@ -518,6 +559,24 @@ Item {
             loader.active = false;
             root.matchVersion++;
             root.requestQueueLayout();
+            // Match just settled: inputs are now current.
+            root.matchDirty = false;
+            // Dispatch any pending match-then-sync action queued by beginMatchThenSync().
+            if (root.pendingAction !== "") {
+                const action = root.pendingAction;
+                root.pendingAction = "";
+                if (!render_queue.has_match_results()) {
+                    // Zero matches: keep matchWarning (set by onMatch_results_changed), abort silently.
+                    return;
+                }
+                // A fresh match invalidates any prior sync.
+                window.syncDirty = true;
+                if (action === "sync") {
+                    window.runSimpleBatchSync();
+                } else if (action === "export") {
+                    window.runSimpleBatchExport();
+                }
+            }
         }
         function onBatch_sync_status_changed(): void {
             root.syncStatusVersion++;
@@ -525,6 +584,11 @@ Item {
             const kind = render_queue.get_batch_sync_prompt_kind();
             if (kind === "none") {
                 root.lastBatchSyncPromptKind = "none";
+                // "none" after a sync we started = all green / settled clean: sync is now current.
+                if (root._batchSyncInFlight) {
+                    root._batchSyncInFlight = false;
+                    window.syncDirty = false;
+                }
                 return;
             }
             if (kind === root.lastBatchSyncPromptKind) {
@@ -540,10 +604,16 @@ Item {
                 // Replaced the old 3-section calibration-video guide (2026-06-12
                 // UX feedback): deep match is now the primary recovery path
                 // when no usable time-sync data exists.
+                // Terminal: sync ran (even if poor) — clear the dirty flag.
+                root._batchSyncInFlight = false;
+                window.syncDirty = false;
                 messageBox(Modal.Warning, qsTr("Could not establish time sync. Right-click a video with clear camera motion and select \"Deep match with gyro\"."), [
                     { text: qsTr("Ok") }
                 ]);
             } else if (kind === "finished_with_yellow") {
+                // Terminal after repair rounds: clear the dirty flag.
+                root._batchSyncInFlight = false;
+                window.syncDirty = false;
                 messageBox(Modal.Warning, qsTr("Some videos are still not reliably synchronized after repair."), [
                     { text: qsTr("Ok") }
                 ]);
@@ -1097,8 +1167,8 @@ Item {
         anchors.rightMargin: 10 * dpiScale;
         anchors.top: mobileAddArea.bottom;
         anchors.topMargin: 5 * dpiScale;
-        anchors.bottom: multiSelectBar.visible ? multiSelectBar.top : (topGyroButtons.visible ? topGyroButtons.top : parent.bottom);
-        anchors.bottomMargin: (multiSelectBar.visible || topGyroButtons.visible) ? 5 * dpiScale : 30 * dpiScale;
+        anchors.bottom: multiSelectBar.visible ? multiSelectBar.top : parent.bottom;
+        anchors.bottomMargin: multiSelectBar.visible ? 5 * dpiScale : 30 * dpiScale;
         clip: true;
         model: render_queue.queue;
         // [queue-lifecycle T1] Historical restore timer and save connections were removed.
@@ -1454,23 +1524,9 @@ Item {
                     }
                 }
                 // [queue-lifecycle T3] Manual "Move up" / "Move down" actions were removed.
-                Action {
-                    iconName: canStopProgress? "close" : "spinner";
-                    text: canStopProgress? qsTr("Stop") : qsTr("Reset status");
-                    enabled: canResetStatus || canStopProgress;
-                    // [batch-reset] If the right-clicked row is part of a multi-selection, reset every selected job
-                    onTriggered: {
-                        if (root.selectedCount > 1 && root.selectedJobs[job_id]) {
-                            const ids = Object.keys(root.selectedJobs).map(Number);
-                            for (const id of ids) {
-                                if (dlg.isDonePendingJob(id)) continue;
-                                render_queue.reset_job(id);
-                            }
-                        } else {
-                            render_queue.reset_job(job_id);
-                        }
-                    }
-                }
+                // [simple-mode-default-match-then-sync 10.2] The combined "Stop"/"Reset status"
+                // Action was removed: per-job stop/restart now lives in the in-row btnsRow
+                // controls, and a global reset-all lives next to the Clear render queue button.
                 // simple-mode-ux-overhaul: per-job framerate override.
                 // Replaces the Stabilization-panel batch-only field — now works for
                 // single jobs too, and the dialog gets reused for multi-select.
@@ -1505,47 +1561,10 @@ Item {
                         if (popup) popup.popup();
                     }
                 }
-                // T14: Manual gyro pairing sub-menu
-                Menu {
-                    id: gyroSubMenu;
-                    title: qsTr("Pair with Gyro");
-                    enabled: root.hasGyroFiles;
-                    width: 300 * dpiScale;
-                    property var dynamicGyroActions: []
-                    function clearDynamicGyroActions(): void {
-                        for (let i = 0; i < dynamicGyroActions.length; ++i) {
-                            const action = dynamicGyroActions[i];
-                            if (action) {
-                                gyroSubMenu.removeAction(action);
-                                action.destroy();
-                            }
-                        }
-                        dynamicGyroActions = [];
-                    }
-                    onAboutToShow: {
-                        clearDynamicGyroActions();
-                        let actions = [];
-                        // Add items for each gyro file
-                        for (let i = 0; i < root.gyroFilesInfo.length; i++) {
-                            const info = root.gyroFilesInfo[i];
-                            const label = info.filename + (info.duration_ms ? " (" + (info.duration_ms / 1000).toFixed(1) + "s)" : "");
-                            const action = gyroPairActionComponent.createObject(gyroSubMenu, {
-                                text: label,
-                                gyroIdx: i
-                            });
-                            if (!action)
-                                continue;
-                            action.triggered.connect(function() {
-                                render_queue.manual_set_calibration_pair(job_id, action.gyroIdx);
-                            });
-                            gyroSubMenu.addAction(action);
-                            actions.push(action);
-                        }
-                        dynamicGyroActions = actions;
-                    }
-                    onClosed: clearDynamicGyroActions()
-                    Component.onDestruction: clearDynamicGyroActions()
-                }
+                // [simple-mode-default-match-then-sync 10.1] The "Pair with Gyro" manual-pairing
+                // sub-menu was removed (matching is automatic via the main action plus deep match).
+                // gyroPairActionComponent is intentionally kept — it is still used by
+                // deepMatchSubMenu below.
                 // Deep gyro match sub-menu (render-queue-deep-gyro-match): single
                 // job × one pool gyro file, whole-file coarse offset search.
                 // Mirrors the T14 dynamic-Action pattern above.
@@ -2318,6 +2337,28 @@ Item {
                             tooltip: qsTr("Open file location");
                             onClicked: filesystem.open_file_externally(output_folder);
                         }
+                        // [simple-mode-default-match-then-sync 11.2] Per-row stop control for
+                        // an in-progress job. Cancels only this job (Rust stop_job), leaving
+                        // other in-progress jobs running.
+                        IconButton {
+                            visible: dlg.canStopProgress;
+                            iconName: "pause";
+                            tooltip: qsTr("Stop");
+                            onClicked: render_queue.stop_job(job_id);
+                        }
+                        // [simple-mode-default-match-then-sync 11.3] Per-row restart control,
+                        // shown only for jobs the user stopped via the control above
+                        // (skip_reason == "user_stopped"). Re-renders from frame 0: reset_job
+                        // clears the Skipped state back to Queued, then render_job starts it.
+                        IconButton {
+                            visible: dlg.isSkipped && dlg.skipReason === "user_stopped";
+                            iconName: "play";
+                            tooltip: qsTr("Render now");
+                            onClicked: {
+                                render_queue.reset_job(job_id);
+                                render_queue.render_job(job_id);
+                            }
+                        }
                         IconButton {
                             tooltip: qsTr("Remove");
                             textColor: "#f67575"
@@ -2338,8 +2379,8 @@ Item {
         id: multiSelectBar;
         visible: root.selectedCount > 0;
         anchors.horizontalCenter: parent.horizontalCenter;
-        anchors.bottom: topGyroButtons.visible ? topGyroButtons.top : parent.bottom;
-        anchors.bottomMargin: topGyroButtons.visible ? 5 * dpiScale : 30 * dpiScale;
+        anchors.bottom: parent.bottom;
+        anchors.bottomMargin: 30 * dpiScale;
         spacing: 10 * dpiScale;
 
         BasicText {
@@ -2375,56 +2416,9 @@ Item {
         }
     }
 
-    // Auto match / Clear 按钮（从标题下方移至 ListView 下方居中）
-    Row {
-        id: topGyroButtons;
-        anchors.bottom: parent.bottom;
-        anchors.bottomMargin: 30 * dpiScale;
-        anchors.horizontalCenter: parent.horizontalCenter;
-        spacing: 8 * dpiScale;
-        height: root.hasGyroFiles ? 30 * dpiScale : 0;
-        visible: height > 0;
-        clip: true;
-        Ease on height { }
-
-        Button {
-            id: autoMatchBtn;
-            property bool matching: false;
-            text: matching ? qsTr("Matching...") : qsTr("Auto match");
-            enabled: root.hasGyroFiles && root.allGyroParsed && !matching;
-            accent: true;
-            height: 30 * dpiScale;
-            font.pixelSize: 13 * dpiScale;
-            leftPadding: 16 * dpiScale;
-            rightPadding: 16 * dpiScale;
-            function beginMatch(): void {
-                matching = true;
-                root.matchWarning = "";
-                render_queue.auto_rotate = window.batchState ? window.batchState.autoRotate : false;
-                loader.text = qsTr("Matching...");
-                loader.active = true;
-                matchTimer.start();
-            }
-            onClicked: {
-                // Part B fix B: per user request, don't wipe L1-L6 manual focal
-                // when re-matching — manual configurations should persist across
-                // match passes. (Used to pop a "Re-matching will clear lens group
-                // settings. Continue?" modal that called set_lens_group_config("[]").)
-                beginMatch();
-            }
-        }
-        Button {
-            text: qsTr("Clear");
-            height: 30 * dpiScale;
-            font.pixelSize: 13 * dpiScale;
-            leftPadding: 16 * dpiScale;
-            rightPadding: 16 * dpiScale;
-            onClicked: {
-                render_queue.clear_gyro_files();
-                root.matchWarning = "";
-            }
-        }
-    }
+    // [simple-mode-default-match-then-sync 6.5] The standalone "Auto match" button (and
+    // its containing topGyroButtons Row) was removed: matching now runs implicitly via the
+    // simple-mode main export buttons (beginMatchThenSync -> runAutoMatch).
 
     // [queue-gyro-column] 旧的 batchEditPanel 和 gyroButtonRow 已删除
 

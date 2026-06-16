@@ -186,9 +186,14 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>Automaattinen synkronointi</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>Vie liitännäisiä varten</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>Jo synkronoitu</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -437,6 +442,16 @@ Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tu
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Haluatko varmasti poistaa kaikki kohteet renderöintijonosta?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>Nollaa parinmuodostus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>Haluatko varmasti nollata kaikkien töiden tilan?</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2992,14 +3007,9 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation>Valmis</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>Automaattinen ottelu nyt</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>Tallennettu. Tee syväsovitus useammille leikkeille tai jaa nyt automaattisella ottelulla.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>Tallennettu. Tee syväsovitus useammille leikkeille tai napsauta Vie, niin sovitus ja synkronointi tehdään.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

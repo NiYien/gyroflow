@@ -187,9 +187,14 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="788"/>
-        <source>Auto sync for plugins</source>
-        <translation>Αυτόματος Συγχρονισμός</translation>
+        <location filename="../../src/ui/App.qml" line="791"/>
+        <source>Export for plugins</source>
+        <translation>Εξαγωγή για πρόσθετα</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="838"/>
+        <source>Already synced</source>
+        <translation>Ήδη συγχρονισμένο</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="816"/>
@@ -438,6 +443,16 @@ Due to limitations of the system video encoders, rendering in the background is 
         <location filename="../../src/ui/App.qml" line="1194"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Είστε βέβαιοι ότι θέλετε να αφαιρέσετε όλα τα στοιχεία από την ουρά απόδοσης;</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1217"/>
+        <source>Reset pairing</source>
+        <translation>Επαναφορά αντιστοίχισης</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1218"/>
+        <source>Are you sure you want to reset the status of all jobs?</source>
+        <translation>Είστε βέβαιοι ότι θέλετε να επαναφέρετε την κατάσταση όλων των εργασιών;</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1396"/>
@@ -2993,14 +3008,9 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
         <translation>Ολοκληρώθηκε</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="436"/>
-        <source>Auto match now</source>
-        <translation>Αυτόματη αντιστοίχιση τώρα</translation>
-    </message>
-    <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="435"/>
-        <source>Saved. Deep match more clips, or distribute now with Auto match.</source>
-        <translation>Αποθηκεύτηκε. Κάντε βαθιά αντιστοίχιση σε περισσότερα κλιπ ή διανείμετε τώρα με Αυτόματη αντιστοίχιση.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
+        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <translation>Αποθηκεύτηκε. Κάντε βαθιά αντιστοίχιση σε περισσότερα κλιπ ή κάντε κλικ στην Εξαγωγή για αντιστοίχιση και συγχρονισμό.</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
