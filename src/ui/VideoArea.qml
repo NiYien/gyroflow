@@ -421,6 +421,16 @@ Item {
             return;
         }
 
+        // macOS TCC: probe access before handing the file to MDK. A permission
+        // denial otherwise reaches MDK as videoWidth=0 and surfaces the misleading
+        // "unsupported or invalid". User-picked files are usually granted
+        // (user-intent), so this mainly catches programmatic/restored/CLI paths
+        // (and GYROFLOW_FORCE_ACCESS_DENIED for testing).
+        if (filesystem.check_file_access(url) === "denied") {
+            window.showAccessDeniedDialog(url, false);
+            return;
+        }
+
         if (isMobile || filename.toLowerCase().endsWith(".r3d") || filename.toLowerCase().endsWith(".nev") || filename.toLowerCase().endsWith(".braw")) {
             // Preview resolution to 1080p
             if (isCalibrator && calibrator_window.lensCalib) {
@@ -507,7 +517,11 @@ Item {
                 return;
             }
         }
-        vidInfo.hasAccessToInputDirectory = folder.toString().length > 3;
+        // Folder-scan (sidecar/sequence/project detection) needs the input directory.
+        // Non-sandboxed: even when the file itself is readable via a user-intent grant,
+        // scanning the folder can be TCC-denied — detect it so the InfoMessage offers
+        // the Settings affordance instead of silently finding nothing.
+        vidInfo.hasAccessToInputDirectory = folder.toString().length > 3 && (isSandboxed || filesystem.check_file_access(folder) !== "denied");
 
         window.stab.fovSlider.value = 1.0;
         vid.loaded = false;
@@ -984,7 +998,14 @@ Item {
                                 bufferTrigger.start();
                             }
                         } else if (!errorShown) {
-                            messageBox(Modal.Error, qsTr("Failed to load the selected file, it may be unsupported or invalid."), [ { "text": qsTr("Ok") } ]);
+                            // Re-probe: MDK reports videoWidth=0 for permission denials too.
+                            // Upgrade the generic "unsupported" message to the actionable
+                            // permission dialog when the real cause is a TCC block.
+                            if (filesystem.check_file_access(root.loadedFileUrl) === "denied") {
+                                window.showAccessDeniedDialog(root.loadedFileUrl, false);
+                            } else {
+                                messageBox(Modal.Error, qsTr("Failed to load the selected file, it may be unsupported or invalid."), [ { "text": qsTr("Ok") } ]);
+                            }
                             errorShown = true;
                             dropText.loadingFile = "";
                             root.pendingGyroflowData = null;

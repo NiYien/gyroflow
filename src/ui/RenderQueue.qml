@@ -857,11 +857,16 @@ Item {
             }
             function onError(job_id: real, text: string, arg: string, callback: string): void {
                 if (job_id == render_queue.main_job_id || loader.pendingJobs[job_id]) {
-                    text = getReadableError(qsTr(text).arg(arg));
-                    if (text) {
-                        // if (text.includes("failed to decode picture"))
-                        //     window.advanced.gpudecode.checked = false;
-                        messageBox(Modal.Error, text, [ { "text": qsTr("Ok"), clicked: window[callback] } ]);
+                    if (text.startsWith("access_denied:")) {
+                        // macOS TCC: denied output folder — guide to Settings, not a raw error.
+                        window.showAccessDeniedDialog(text.substring(14), true);
+                    } else {
+                        text = getReadableError(qsTr(text).arg(arg));
+                        if (text) {
+                            // if (text.includes("failed to decode picture"))
+                            //     window.advanced.gpudecode.checked = false;
+                            messageBox(Modal.Error, text, [ { "text": qsTr("Ok"), clicked: window[callback] } ]);
+                        }
                     }
                 }
                 delete loader.pendingJobs[job_id];

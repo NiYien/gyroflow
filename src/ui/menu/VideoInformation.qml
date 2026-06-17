@@ -233,6 +233,13 @@ MenuItem {
             anchors.fill: parent;
             cursorShape: Qt.PointingHandCursor;
             onClicked: {
+                // Non-sandboxed: re-selecting can't bypass a TCC deny — guide the user
+                // to System Settings. Sandboxed: the folder picker re-grants via a
+                // security-scoped bookmark.
+                if (!isSandboxed) {
+                    window.showAccessDeniedDialog(window.videoArea.loadedFileUrl, false);
+                    return;
+                }
                 opf.selectFolder("", function(_) {
                     window.videoArea.loadFile(window.videoArea.loadedFileUrl);
                 });

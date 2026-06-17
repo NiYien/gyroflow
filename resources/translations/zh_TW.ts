@@ -187,6 +187,18 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Please enable folder access permission.</source>
+        <translation>請開啟資料夾存取權限</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>開啟設定</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>輸出資料夾存取被拒 — 請在 設定 → 檔案與資料夾 中允許 Gyroflow。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>匯出（搭配外掛使用）</translation>

@@ -4314,6 +4314,16 @@ impl RenderQueue {
                                     continue;
                                 }
                             }
+                            if let rendering::FFmpegError::CannotOpenOutputFile((ref url, ref fe)) = e {
+                                // macOS TCC: a denied output folder surfaces as a PermissionDenied
+                                // output-open. Route it to the in-app Settings-guidance dialog (via
+                                // the access_denied: prefix) instead of a raw ffmpeg error.
+                                if matches!(fe, filesystem::FilesystemError::IOError(io) if io.kind() == std::io::ErrorKind::PermissionDenied) {
+                                    err(("access_denied:".to_string() + url, "access_denied:".to_string() + url));
+                                    render_ok = false;
+                                    break 'ranges;
+                                }
+                            }
                             err(("An error occured: %1".to_string(), e.to_string()));
                             render_ok = false;
                             break 'ranges;

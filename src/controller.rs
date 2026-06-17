@@ -5354,6 +5354,8 @@ pub struct Filesystem {
     can_create_file: qt_method!(fn(&self, folder: QUrl, filename: QString) -> bool),
     exists: qt_method!(fn(&self, url: QUrl) -> bool),
     is_dir: qt_method!(fn(&self, url: QUrl) -> bool),
+    check_file_access: qt_method!(fn(&self, url: QUrl) -> QString),
+    protected_folder_kind: qt_method!(fn(&self, url: QUrl) -> QString),
     get_filename: qt_method!(fn(&self, url: QUrl) -> QString),
     get_folder: qt_method!(fn(&self, url: QUrl) -> QString),
     filename_with_extension: qt_method!(fn(&self, filename: QString, ext: QString) -> QString),
@@ -5387,6 +5389,12 @@ impl Filesystem {
     }
     fn is_dir(&self, url: QUrl) -> bool {
         filesystem::is_dir(&util::qurl_to_encoded(url))
+    }
+    fn check_file_access(&self, url: QUrl) -> QString {
+        QString::from(filesystem::check_access(&util::qurl_to_encoded(url)))
+    }
+    fn protected_folder_kind(&self, url: QUrl) -> QString {
+        QString::from(filesystem::protected_folder_kind(&util::qurl_to_encoded(url)))
     }
     fn get_filename(&self, url: QUrl) -> QString {
         QString::from(filesystem::get_filename(&util::qurl_to_encoded(url)))

@@ -1901,6 +1901,26 @@ Rectangle {
         });
     }
 
+    // macOS file-permission (TCC) denial recovery. A non-sandboxed build cannot
+    // re-trigger the system prompt or bypass a deny, so deep-link the user to the
+    // Settings pane where Gyroflow is listed. A sandboxed build routes to the
+    // in-app re-grant (powerbox + bookmark) instead.
+    function showAccessDeniedDialog(url: url, isWrite: bool): void {
+        if (isSandboxed) {
+            if (isWrite) outputFile.selectFolder(outputFile.folderUrl, function(_) {});
+            else         window.openMainFileDialog();
+            return;
+        }
+        // External/network volumes need Full Disk Access; everything else Files and Folders.
+        const kind = filesystem.protected_folder_kind(url);
+        const pane = (kind === "removable" || kind === "network") ? "Privacy_AllFiles" : "Privacy_FilesAndFolders";
+        messageBox(Modal.Error,
+            qsTr("Please enable folder access permission."),
+            [
+                { text: qsTr("Open Settings"), accent: true, clicked: () => { Qt.openUrlExternally("x-apple.systempreferences:com.apple.preference.security?" + pane); return false; } },
+                { text: qsTr("Close") },
+            ]);
+    }
     function messageBox(type: int, text: string, buttons: list<var>, parent: QtObject, textFormat: var, identifier: var): Modal {
         if (typeof textFormat === "undefined" || !textFormat) textFormat = text.includes("<b>")? Text.StyledText : Text.AutoText; // default
         if (typeof identifier === "undefined") identifier = "";
@@ -2163,6 +2183,13 @@ Rectangle {
             Qt.quit();
         }
         function onRequest_location(url: string, type: string): void {
+            // request_location is only emitted on a write PermissionDenied. A
+            // non-sandboxed build can't re-grant by re-selecting (TCC is enforced
+            // at the syscall regardless of the picker), so guide to System Settings.
+            if (!isSandboxed) {
+                window.showAccessDeniedDialog(url, true);
+                return;
+            }
             gfFileDialog.projectType = type;
             gfFileDialog.currentFolder = filesystem.get_folder(url);
             gfFileDialog.open();
@@ -2256,6 +2283,11 @@ Rectangle {
     }
 
     function getReadableError(text: string): string {
+        // macOS TCC denied output folder. Pure text for the inline queue-item label;
+        // the modal is raised separately in RenderQueue.onError (avoid double dialogs).
+        if (text.startsWith("access_denied:")) {
+            return qsTr("Output folder access denied — enable Gyroflow in Settings → Files and Folders.");
+        }
         if (text.includes("ffmpeg")) {
             if (text.includes("Encoder not found") && text.includes("libx26") && controller.check_external_sdk("ffmpeg_gpl")) {
                 if (videoArea.externalSdkModal === null) {

@@ -928,3 +928,90 @@ pub fn is_sandboxed() -> bool {
     }
     false
 }
+
+// Diagnostic override: when GYROFLOW_FORCE_ACCESS_DENIED is set, check_access()
+// returns "denied" for any URL. Lets the permission-denied UI (dialog, Settings
+// deep-link, the wired surfaces) be tested without reproducing a real macOS TCC
+// deny, which is fiddly (user-intent grant + relaunch + Full Disk Access state).
+fn force_access_denied() -> bool {
+    use std::sync::OnceLock;
+    static FORCE: OnceLock<bool> = OnceLock::new();
+    *FORCE.get_or_init(|| {
+        let on = matches!(
+            std::env::var("GYROFLOW_FORCE_ACCESS_DENIED").ok().as_deref(),
+            Some("1") | Some("true") | Some("yes") | Some("on")
+        );
+        if on {
+            log::warn!(target: "video.load", "force_access_denied resolved=true source=env");
+        }
+        on
+    })
+}
+
+// Probe access to a file/folder URL, distinguishing a permission denial (EPERM /
+// PermissionDenied) from a missing or merely-unsupported target. Returns one of
+// "ok" | "denied" | "not_found" | "other". This is the signal the UI uses to tell
+// a macOS TCC block apart from a corrupt/unsupported file (MDK reports both
+// identically as videoWidth=0). On non-macOS it simply reflects real fs errors.
+pub fn check_access(url: &str) -> &'static str {
+    if force_access_denied() {
+        return "denied";
+    }
+    if url.is_empty() {
+        return "not_found";
+    }
+    // content:// (Android SAF) is governed by the picker grant, not POSIX errno;
+    // this affordance is macOS-targeted, so treat it as accessible there.
+    #[cfg(target_os = "android")]
+    if url.starts_with("content://") {
+        return "ok";
+    }
+
+    start_accessing_url(url, false);
+    let path = url_to_path(url);
+    // A denied directory fails is_dir() (metadata is itself EPERM) and falls through
+    // to File::open, which also returns PermissionDenied — so both map to "denied".
+    let probe = if std::path::Path::new(&path).is_dir() {
+        std::fs::read_dir(&path).map(|_| ())
+    } else {
+        std::fs::File::open(&path).map(|_| ())
+    };
+    stop_accessing_url(url, false);
+    match probe {
+        Ok(_) => "ok",
+        Err(e) => match e.kind() {
+            std::io::ErrorKind::PermissionDenied => {
+                log::warn!(target: "video.load", "check_access denied url={url} kind={}", protected_folder_kind(url));
+                "denied"
+            }
+            std::io::ErrorKind::NotFound => "not_found",
+            _ => "other",
+        },
+    }
+}
+
+// Classify a URL's location into a macOS TCC-protected-folder kind, for messaging
+// and Settings deep-linking: "downloads" | "documents" | "desktop" | "removable" |
+// "network" | "other". Path-only (no fs access), so it is safe to call after a deny.
+pub fn protected_folder_kind(url: &str) -> &'static str {
+    let path = url_to_path(url);
+    if path.is_empty() {
+        return "other";
+    }
+    let home = std::env::var("HOME").unwrap_or_default();
+    let under = |sub: &str| !home.is_empty() && path.starts_with(&format!("{home}/{sub}"));
+    if under("Downloads") {
+        "downloads"
+    } else if under("Documents") {
+        "documents"
+    } else if under("Desktop") {
+        "desktop"
+    } else if path.starts_with("/Volumes/") {
+        // External and network mounts both live under /Volumes; we can't reliably
+        // tell them apart by path, so report the broader "removable" bucket which
+        // the UI maps to the Full Disk Access pane.
+        "removable"
+    } else {
+        "other"
+    }
+}

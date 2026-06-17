@@ -201,7 +201,9 @@ deploy *param:
         cp -f  "$PROJECT_DIR/target/deploy/gyroflow"          "$APP_BUNDLE/Contents/MacOS/"
         strip "$APP_BUNDLE/Contents/MacOS/gyroflow"
         cp -Rf "$PROJECT_DIR/target/Frameworks/mdk.framework" "$APP_BUNDLE/Contents/Frameworks/" || true
-        cp -Rf "$PROJECT_DIR/target/x86_64-apple-darwin/Frameworks/mdk.framework" "$APP_BUNDLE/Contents/Frameworks/"
+        # The x86_64 framework is absent in the arm64-only `local` build; tolerate it
+        # so a local deploy doesn't abort before copying the remaining resources.
+        cp -Rf "$PROJECT_DIR/target/x86_64-apple-darwin/Frameworks/mdk.framework" "$APP_BUNDLE/Contents/Frameworks/" || true
         # cp -Rf "$PROJECT_DIR/resources/camera_presets"        "$APP_BUNDLE/Contents/Resources/"
         # rm -rf "$APP_BUNDLE/Contents/Resources/camera_presets/.git"
         cp -f "$PROJECT_DIR/resources/camera_presets/profiles.cbor.gz" "$APP_BUNDLE/Contents/Resources/camera_presets/profiles.cbor.gz"
