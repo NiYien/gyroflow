@@ -142,6 +142,9 @@ Rectangle {
         if (window.exportSettings) window.exportSettings.simpleModePreserveActive = isSimpleMode;
         if (isSimpleMode) applySimpleModeDefaults();
         reparentSimplePanels();
+        // [tutorial] The overlay only knows simple-mode anchors; if the user
+        // switches to full mode mid-tour, close it cleanly (treated as seen).
+        if (!isSimpleMode && tutorialOverlay && tutorialOverlay.active) tutorialOverlay.skip();
     }
 
     function _isSenseFlow(s) { return (s || "").indexOf("SenseFlow") >= 0; }
