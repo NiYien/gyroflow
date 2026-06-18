@@ -1567,6 +1567,7 @@ Rectangle {
                     opacity: _selectionDrivenBatch ? 0.4 : 1.0;
                     innerItem.enabled: !_selectionDrivenBatch;
                     Button {
+                        id: simpleOpenFileBtn;
                         text: qsTranslate("VideoInformation", "Open file");
                         iconName: "video";
                         anchors.horizontalCenter: parent.horizontalCenter;
@@ -1802,10 +1803,18 @@ Rectangle {
                         onClicked: window.showAvailableAppVersions();
                     }
                     LinkButton {
+                        id: reportProblemBtn;
                         text: qsTr("Report a problem");
                         iconName: "info";
                         anchors.horizontalCenter: parent.horizontalCenter;
                         onClicked: window.feedbackDialog.open();
+                    }
+                    LinkButton {
+                        text: qsTr("Replay tutorial");
+                        iconName: "question";
+                        visible: !isMobileLayout;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        onClicked: window.showTutorial();
                     }
 
                     // 16-20px gap between Other settings and NLE plugin card.
@@ -2228,6 +2237,43 @@ Rectangle {
     // Feedback (Phase 4) — instance + crash startup hook.
     property alias feedbackDialog: feedbackDialog;
     FeedbackDialog { id: feedbackDialog; }
+
+    // [tutorial] First-launch spotlight onboarding (desktop simple mode only).
+    property alias tutorialOverlay: tutorialOverlay;
+    TutorialOverlay {
+        id: tutorialOverlay;
+        scrollPanel: rightPanel;
+        onClosed: (completed) => settings.setValue("niyien_tutorial_seen_v1", "1");
+    }
+    function showTutorial() {
+        tutorialOverlay.steps = window.buildTutorialSteps();
+        tutorialOverlay.start();
+    }
+    function buildTutorialSteps() {
+        return [
+            { target: simpleOpenFileBtn,         section: null,                 title: qsTr("Load your video"),
+              body: qsTr("Click \"Open file\" (top-left) to pick the clip you want to stabilize — you can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.") },
+            { target: simpleMountingCard,        section: null,                 title: qsTr("Set the mounting orientation"),
+              body: qsTr("Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.") },
+            { target: lensGroupConfigCard,       section: null,                 title: qsTr("Lens groups"),
+              body: qsTr("Configure the lens and sensor so lens distortion is corrected correctly for your footage.") },
+            { target: simpleStabSection,         section: simpleStabSection,    title: qsTr("Stabilization settings"),
+              body: qsTr("Adjust smoothness, horizon lock and how much the frame is cropped.") },
+            { target: null,                      section: null,                 title: qsTr("Deep search"),
+              body: qsTr("When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose \"Deep match with gyro\" to find the offset automatically.") },
+            { target: simpleExportStabilizedBtn, section: null,                 title: qsTr("Export"),
+              body: qsTr("Click \"Export stabilized video\" to render the result, or \"Export for plugins\" to produce a project file for the editor plugins.") },
+            { target: null,                      section: null,                 title: qsTr("Preview the result"),
+              body: qsTr("Pick any video in the render queue, right-click and choose \"Edit\" to load it into the main preview and check the stabilization in real time.") },
+            { target: queueBtn,                  section: null,                 title: qsTr("Render queue"),
+              body: qsTr("Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.") },
+            { target: nlePluginsCard,            section: simpleSettingsSection, title: qsTr("Editor plugins"),
+              body: qsTr("Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.") },
+            { target: reportProblemBtn,          section: simpleSettingsSection, title: qsTr("Report a problem"),
+              body: qsTr("Run into a bug? Click here to upload logs and send us feedback.") },
+        ];
+    }
+
     Connections {
         target: controller;
         function onCrashCheckpointFound(count) {
@@ -2280,6 +2326,12 @@ Rectangle {
         QT_TRANSLATE_NOOP("App", "Gyroflow will reboot the computer in 60 seconds because all tasks have been completed.");
 
         Qt.callLater(filesystem.restore_allowed_folders);
+
+        // [tutorial] Auto-show the onboarding once, on first desktop simple-mode launch.
+        // Double callLater so the panel layout is settled before we measure anchors.
+        if (!isMobileLayout && isSimpleMode && settings.value("niyien_tutorial_seen_v1", "0") === "0") {
+            Qt.callLater(() => Qt.callLater(window.showTutorial));
+        }
     }
 
     function getReadableError(text: string): string {
