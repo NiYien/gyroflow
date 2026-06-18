@@ -2,7 +2,6 @@
 // Copyright © 2026 NiYien
 
 import QtQuick
-import QtQuick.Controls as QQC
 
 // First-launch onboarding overlay. Driven by `steps` + `index`. Each step
 // either spotlights a real control (4 dim bands around a hole + a bubble) or
@@ -101,8 +100,8 @@ Item {
     }
     Connections {
         target: window;
-        function onWidthChanged()  { root.recomputePlacement(); }
-        function onHeightChanged() { root.recomputePlacement(); }
+        function onWidthChanged()  { if (root.active) root.recomputePlacement(); }
+        function onHeightChanged() { if (root.active) root.recomputePlacement(); }
     }
 
     // Block all interaction with the UI underneath.
