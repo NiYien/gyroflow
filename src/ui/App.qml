@@ -2255,7 +2255,7 @@ Rectangle {
     function buildTutorialSteps() {
         return [
             { target: simpleOpenFileBtn,         section: null,                 title: qsTr("Load your video"),
-              body: qsTr("Click \"Open file\" (top-left) to pick the clip you want to stabilize — you can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.") },
+              body: qsTr("Click \"Open file\" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.") },
             { target: simpleMountingCard,        section: null,                 title: qsTr("Set the mounting orientation"),
               body: qsTr("Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.") },
             { target: lensGroupConfigCard,       section: null,                 title: qsTr("Lens groups"),
