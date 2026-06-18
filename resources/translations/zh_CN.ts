@@ -187,6 +187,78 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Replay tutorial</source>
+        <translation>重新观看教程</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>加载视频</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>点左上角「打开文件」选择要稳定的视频。可一次多选。大多数相机的陀螺仪数据已嵌在视频里，会被自动识别。</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>设置安装方向</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>告诉软件相机是怎么安装的。方向选错会让稳定往反方向纠。</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>镜头组数据</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>配置镜头和传感器信息，让画面畸变得到正确矫正。</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>稳定参数</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>调整平滑度、地平线锁定，以及画面裁切的程度。</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>深度搜索</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>当陀螺仪数据在单独的文件里、且时间对不齐时，在渲染队列里右键某个视频，选择「Deep match with gyro」自动找到时间偏移。</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>点「导出稳定视频」渲染成片；或用「导出（搭配插件使用）」生成工程文件，配合剪辑软件插件使用。</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>预览效果</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>在渲染队列里随机选一个视频，右键选择「Edit」（编辑），把它载入主预览，实时查看稳定效果。</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>用这个按钮展开或收起渲染队列。批量处理多个视频都在队列里进行。</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>安装插件</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>把 Gyroflow 插件安装到你的剪辑软件（Premiere、DaVinci Resolve 等），即可在时间线上稳定。</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>遇到问题？点这里上传日志并反馈给我们。</translation>
+    </message>
+    <message>
         <source>Please enable folder access permission.</source>
         <translation>请打开文件夹访问权限</translation>
     </message>
@@ -5498,6 +5570,25 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>否</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Skip</source>
+        <translation>跳过</translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation>上一步</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>下一步</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>完成</translation>
     </message>
 </context>
 </TS>

@@ -186,6 +186,78 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Replay tutorial</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation type="unfinished"></translation>
@@ -5307,6 +5379,25 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Skip</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Back</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Done</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
