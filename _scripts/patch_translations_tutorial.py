@@ -110,6 +110,32 @@ APP_ENTRIES: list[tuple[str, str]] = [
         "Run into a bug? Click here to upload logs and send us feedback.",
         "遇到问题？点这里上传日志并反馈给我们。",
     ),
+    # --- Condensed 5-step tour (added 2026-06-18) ---
+    (
+        "Sensor and lens",
+        "传感器与镜头",
+    ),
+    (
+        'Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.',
+        "把视频拖进主窗口或渲染队列，或点左上角「打开文件」。大多数相机的陀螺仪数据已嵌在视频里，会被自动识别。",
+    ),
+    (
+        "Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.",
+        "设置相机的安装方向（方向选错会让稳定往反方向纠），再选择镜头组让画面畸变得到正确矫正。",
+    ),
+    (
+        'Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).',
+        "批量处理多个视频都在这里进行。右键某个视频可选「Deep match with gyro」（陀螺在单独文件、时间对不齐时自动找偏移）或「Edit」（载入主预览查看稳定效果）。",
+    ),
+    # --- 6-step refinement: deep match split out, queue step edit-only (added 2026-06-18) ---
+    (
+        "Deep match",
+        "深度匹配",
+    ),
+    (
+        'Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.',
+        "批量处理多个视频都在这里进行。右键某个视频选「Edit」（编辑），把它载入主预览查看稳定效果。",
+    ),
 ]
 
 # ---------------------------------------------------------------------------

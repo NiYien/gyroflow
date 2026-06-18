@@ -2253,27 +2253,32 @@ Rectangle {
         tutorialOverlay.start();
     }
     function buildTutorialSteps() {
+        // Each step: { target, section, title, body, openQueue }.
+        //   section  - MenuItem to expand (opened=true) so the target is visible; the
+        //              simple-mode sections persist their collapse state, so even the
+        //              top sections must be expanded explicitly before anchoring.
+        //   openQueue - show the render queue panel for queue-centric steps.
+        // Condensed 5-step tour. Sensor+lens are merged, and the queue/deep-search/
+        // preview steps are merged into one "Render queue" step that opens and
+        // highlights the real queue. NLE-plugins and Report-a-problem were dropped
+        // (both remain reachable in the Settings card at any time).
+        // Step fields: { target, section, title, body, openQueue, image }.
+        //   image - optional qrc path shown above the text (screenshot for how-to steps);
+        //           empty string = text-only. Deep match has a reserved slot for a
+        //           right-click screenshot to be added later.
         return [
-            { target: simpleOpenFileBtn,         section: null,                 title: qsTr("Load your video"),
-              body: qsTr("Click \"Open file\" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.") },
-            { target: simpleMountingCard,        section: null,                 title: qsTr("Set the mounting orientation"),
-              body: qsTr("Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.") },
-            { target: lensGroupConfigCard,       section: null,                 title: qsTr("Lens groups"),
-              body: qsTr("Configure the lens and sensor so lens distortion is corrected correctly for your footage.") },
-            { target: simpleStabSection,         section: simpleStabSection,    title: qsTr("Stabilization settings"),
+            { target: videoArea.previewArea,     section: null,                    title: qsTr("Load your video"),
+              body: qsTr("Drag a video into the main window or the render queue, or click \"Open file\" (top-left). Most cameras embed gyro data, so it is detected automatically.") },
+            { target: simpleSensorLensSection,   section: simpleSensorLensSection, title: qsTr("Sensor and lens"),
+              body: qsTr("Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.") },
+            { target: simpleStabSection,         section: simpleStabSection,       title: qsTr("Stabilization settings"),
               body: qsTr("Adjust smoothness, horizon lock and how much the frame is cropped.") },
-            { target: null,                      section: null,                 title: qsTr("Deep search"),
+            { target: queueBtn,                  section: null,                    openQueue: true, title: qsTr("Render queue"),
+              body: qsTr("Batch processing of multiple videos happens here. Right-click a video and choose \"Edit\" to load it into the main preview and check the result.") },
+            { target: null,                      section: null,                    openQueue: true, image: "", title: qsTr("Deep match"),
               body: qsTr("When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose \"Deep match with gyro\" to find the offset automatically.") },
-            { target: simpleExportStabilizedBtn, section: null,                 title: qsTr("Export"),
+            { target: simpleExportBtnRow,        section: null,                    title: qsTr("Export"),
               body: qsTr("Click \"Export stabilized video\" to render the result, or \"Export for plugins\" to produce a project file for the editor plugins.") },
-            { target: null,                      section: null,                 title: qsTr("Preview the result"),
-              body: qsTr("Pick any video in the render queue, right-click and choose \"Edit\" to load it into the main preview and check the stabilization in real time.") },
-            { target: queueBtn,                  section: null,                 title: qsTr("Render queue"),
-              body: qsTr("Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.") },
-            { target: nlePluginsCard,            section: simpleSettingsSection, title: qsTr("Editor plugins"),
-              body: qsTr("Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.") },
-            { target: reportProblemBtn,          section: simpleSettingsSection, title: qsTr("Report a problem"),
-              body: qsTr("Run into a bug? Click here to upload logs and send us feedback.") },
         ];
     }
 

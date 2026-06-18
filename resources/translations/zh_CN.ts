@@ -187,6 +187,30 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Deep match</source>
+        <translation>深度匹配</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>批量处理多个视频都在这里进行。右键某个视频选「Edit」（编辑），把它载入主预览查看稳定效果。</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>传感器与镜头</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>把视频拖进主窗口或渲染队列，或点左上角「打开文件」。大多数相机的陀螺仪数据已嵌在视频里，会被自动识别。</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>设置相机的安装方向（方向选错会让稳定往反方向纠），再选择镜头组让画面畸变得到正确矫正。</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>批量处理多个视频都在这里进行。右键某个视频可选「Deep match with gyro」（陀螺在单独文件、时间对不齐时自动找偏移）或「Edit」（载入主预览查看稳定效果）。</translation>
+    </message>
+    <message>
         <source>Replay tutorial</source>
         <translation>重新观看教程</translation>
     </message>

@@ -44,8 +44,13 @@ Item {
     function finish() { active = false; closed(true); }
     function skip()   { active = false; closed(false); }
 
+    // Read the step straight from the array by index. prepareStep() runs inside
+    // onIndexChanged, where the `currentStep` binding has NOT re-evaluated yet, so
+    // reading it there returns the PREVIOUS step (off-by-one). Indexing directly is
+    // always fresh.
+    function stepAt(i) { return (i >= 0 && i < steps.length) ? steps[i] : null; }
     function resolveTarget() {
-        var s = currentStep;
+        var s = stepAt(index);
         if (!s) return null;
         var t = s.target;
         if (typeof t === "function") t = t();
@@ -53,11 +58,19 @@ Item {
     }
 
     function scrollIntoView(t) {
-        if (!scrollPanel || !t) return;
+        if (!scrollPanel || !scrollPanel.col || !t) return;
         var col = scrollPanel.col;
-        if (!col) return;
+        // Only scroll when the target actually lives inside the panel's column.
+        // Bottom-bar / preview targets (Load video, Render queue, Export) are always
+        // visible and must NOT move the panel.
+        var inPanel = false, p = t;
+        while (p) { if (p === col) { inPanel = true; break; } p = p.parent; }
+        if (!inPanel) return;
+        // Flickable puts its declared children into contentItem, so col.parent is that
+        // contentItem (no contentY), not the Flickable. Walk up to the item that scrolls.
         var flick = col.parent;
-        if (!flick || typeof flick.contentY !== "number") return;
+        while (flick && typeof flick.contentY !== "number") flick = flick.parent;
+        if (!flick) return;
         var yInCol = t.mapToItem(col, 0, 0).y;
         var margin = 40 * dpiScale;
         var maxY = Math.max(0, flick.contentHeight - flick.height);
@@ -77,31 +90,31 @@ Item {
 
     function prepareStep() {
         holeActive = false;
-        var s = currentStep;
+        var s = stepAt(index);
         if (!s) return;
+        // Reveal the target: open the queue panel and/or expand its collapsed section.
+        if (s.openQueue && window.videoArea && window.videoArea.queue) window.videoArea.queue.shown = true;
         if (s.section) s.section.opened = true;
         var t = resolveTarget();
-        if (t && t.visible) scrollIntoView(t);
+        // Scroll even if the target reads !visible right now — a just-expanded section
+        // animates its content opacity, so visibility settles a frame later; geometry
+        // (mapToItem) is already valid for scrolling.
+        if (t) scrollIntoView(t);
         recomputePlacement();
-        settleTimer.restart(); // re-place after expand/scroll animations settle
     }
 
     onIndexChanged: if (active) prepareStep();
     onActiveChanged: if (active) prepareStep();
 
+    // Continuously re-place the hole while the tour is open so it glues to the target
+    // through scroll / section-expand / queue-open animations and window resizes —
+    // mapToItem is not reactive, so a per-frame recompute keeps the highlight in sync
+    // (replaces the old one-shot settle timer that caused a ~0.75s lag/jump).
     Timer {
-        id: settleTimer;
-        interval: 750; // > MenuItem expand animation (700ms)
-        onTriggered: {
-            var t = root.resolveTarget();
-            if (t && t.visible) root.scrollIntoView(t);
-            root.recomputePlacement();
-        }
-    }
-    Connections {
-        target: window;
-        function onWidthChanged()  { if (root.active) root.recomputePlacement(); }
-        function onHeightChanged() { if (root.active) root.recomputePlacement(); }
+        interval: 16;
+        repeat: true;
+        running: root.active;
+        onTriggered: root.recomputePlacement();
     }
 
     // Block all interaction with the UI underneath.
@@ -168,6 +181,15 @@ Item {
             y: 14 * dpiScale;
             width: parent.width - 36 * dpiScale;
             spacing: 10 * dpiScale;
+            // Optional how-to screenshot (e.g. the render-queue right-click menu).
+            // Empty source -> hidden; a path is embedded later when provided.
+            Image {
+                width: parent.width;
+                source: (root.currentStep && root.currentStep.image) ? root.currentStep.image : "";
+                visible: source != "";
+                fillMode: Image.PreserveAspectFit;
+                sourceSize.width: parent.width;
+            }
             BasicText {
                 width: parent.width;
                 text: root.currentStep ? root.currentStep.title : "";

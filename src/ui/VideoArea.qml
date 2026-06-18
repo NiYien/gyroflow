@@ -16,6 +16,8 @@ Item {
     anchors.horizontalCenter: parent.horizontalCenter;
 
     property alias vid: vid;
+    // Preview/drop area only (excludes the timeline), used by the tutorial overlay.
+    property alias previewArea: vidParentParent;
     property alias timeline: timeline;
     property alias durationMs: timeline.durationMs;
     property alias videoLoader: videoLoader;

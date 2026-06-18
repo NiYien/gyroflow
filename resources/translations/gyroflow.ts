@@ -186,6 +186,30 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Deep match</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Replay tutorial</source>
         <translation type="unfinished"></translation>
     </message>
