@@ -450,6 +450,11 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
         <translation>Obnoviť párovanie</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Už exportované. Exportovať znova?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Naozaj chcete obnoviť stav všetkých úloh?</translation>

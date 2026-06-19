@@ -23,6 +23,7 @@ Item {
     property alias videoLoader: videoLoader;
     property alias stabEnabledBtn: stabEnabledBtn;
     property alias fovOverviewBtn: fovOverviewBtn;
+    property alias stabPreviewBtn: stabPreviewBtn;
     property alias queue: queue.item;
     property alias statistics: statistics;
     property alias infoMessages: infoMessages;
@@ -1392,23 +1393,67 @@ Item {
                     bottomPadding: 8 * dpiScale;
                 }
 
+                // Single 3-state preview toggle button. It drives two hidden
+                // state-holders (stabEnabledBtn / fovOverviewBtn) that keep their
+                // original `checked` semantics so external references (public
+                // aliases, Shortcuts.qml "s"/"d" keys, and other read sites in
+                // this file) and their controller-apply handlers keep working.
+                // previewState: 0 = original, 1 = stabilized, 2 = overview.
+                // Raw LinkButton (NOT the SmallLinkButton inline component): SmallLinkButton
+                // binds its colour to its own `checked` AND runs `onClicked: checked = !checked`,
+                // which fights an instance override and desyncs the icon colour from the real
+                // state. A raw LinkButton has none of those bindings, so `textColor` applies
+                // directly and the colour always matches previewState.
+                LinkButton {
+                    id: stabPreviewBtn;
+                    height: Math.round(parent.height);
+                    anchors.verticalCenter: parent.verticalCenter;
+                    leftPadding: 6 * dpiScale;
+                    rightPadding: 6 * dpiScale;
+                    topPadding: 8 * dpiScale;
+                    bottomPadding: 8 * dpiScale;
+                    // Derive state from the holders so it stays in sync even when toggled
+                    // externally (e.g. keyboard "s"/"d"). 0=original 1=stabilized 2=overview.
+                    readonly property int previewState: !stabEnabledBtn.checked ? 0 : (fovOverviewBtn.checked ? 2 : 1);
+                    iconName: previewState === 2 ? "fov-overview" : "gyroflow";
+                    // White gyroflow (original) -> blue gyroflow (stabilized) -> blue fov-overview (overview).
+                    textColor: previewState === 0 ? styleTextColor : styleAccentColor;
+                    tooltip: previewState === 0 ? qsTr("Preview: original")
+                           : previewState === 2 ? qsTr("Preview: overview")
+                           : qsTr("Preview: stabilized");
+                    // Cycle order: stabilized (1) -> original (0) -> overview (2) -> stabilized (1).
+                    onClicked: {
+                        var next = previewState === 1 ? 0 : (previewState === 0 ? 2 : 1);
+                        stabEnabledBtn.checked = (next !== 0);
+                        fovOverviewBtn.checked = (next === 2);
+                        // Overview is a single zoomed-out view, never the old Ctrl+ split pane.
+                        secondPreview.show = false;
+                    }
+                }
+
+                // Hidden state-holder: stabilization on/off. Keeps its id, public
+                // alias and controller-apply handler. Driven by stabPreviewBtn and
+                // by external writers (Shortcuts.qml, video load handlers).
+                SmallLinkButton {
+                    id: stabEnabledBtn;
+                    iconName: "gyroflow";
+                    visible: false;
+                    width: 0;
+                    onCheckedChanged: { controller.stab_enabled = checked; vid.forceRedraw(); vid.fovChanged(); }
+                    tooltip: qsTr("Toggle stabilization");
+                }
+
+                // Hidden state-holder: stabilization overview on/off. Same rationale
+                // as stabEnabledBtn. The former Ctrl+click second-preview gesture
+                // has been removed per the redesign.
                 SmallLinkButton {
                     id: fovOverviewBtn;
                     iconName: "fov-overview";
                     checked: false;
+                    visible: false;
+                    width: 0;
                     onCheckedChanged: { controller.fov_overview = checked; vid.forceRedraw(); }
                     tooltip: qsTr("Toggle stabilization overview");
-                    TapHandler {
-                        acceptedModifiers: Qt.ControlModifier
-                        onTapped: { if (fovOverviewBtn.checked) { secondPreview.show = !secondPreview.show; fovOverviewBtn.checked = false; vid.forceRedraw(); } }
-                    }
-                }
-
-                SmallLinkButton {
-                    id: stabEnabledBtn;
-                    iconName: "gyroflow";
-                    onCheckedChanged: { controller.stab_enabled = checked; vid.forceRedraw(); vid.fovChanged(); }
-                    tooltip: qsTr("Toggle stabilization");
                 }
 
                 SmallLinkButton {

@@ -449,6 +449,11 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
         <translation>Zuordnung zurücksetzen</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Bereits exportiert. Erneut exportieren?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Möchten Sie den Status aller Aufträge wirklich zurücksetzen?</translation>

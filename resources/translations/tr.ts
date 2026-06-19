@@ -448,6 +448,11 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
         <translation>Eşleştirmeyi sıfırla</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Zaten dışa aktarıldı. Yeniden dışa aktarılsın mı?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Tüm işlerin durumunu sıfırlamak istediğinizden emin misiniz?</translation>

@@ -450,6 +450,11 @@ En raison des limitations du système d&apos;encodage vidéo, le rendu en arriè
         <translation>Réinitialiser l&apos;association</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Déjà exporté. Exporter à nouveau ?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Voulez-vous vraiment réinitialiser l&apos;état de toutes les tâches ?</translation>

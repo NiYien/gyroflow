@@ -449,6 +449,11 @@ Devido às limitações dos codificadores de vídeo do sistema, a renderização
         <translation>Redefinir pareamento</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Já exportado. Exportar novamente?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Tem certeza de que deseja redefinir o status de todos os trabalhos?</translation>

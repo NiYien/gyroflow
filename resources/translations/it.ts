@@ -450,6 +450,11 @@ A causa delle limitazioni degli encoder video di sistema, il rendering in backgr
         <translation>Reimposta abbinamento</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Già esportato. Esportare di nuovo?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Vuoi davvero reimpostare lo stato di tutti i lavori?</translation>

@@ -450,6 +450,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Скинути зіставлення</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Вже експортовано. Експортувати знову?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Ви впевнені, що хочете скинути стан усіх завдань?</translation>

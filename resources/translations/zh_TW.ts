@@ -539,6 +539,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>重設配對</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>已匯出。是否重新匯出？</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>確定要重設所有工作的狀態嗎？</translation>

@@ -840,8 +840,9 @@ Rectangle {
                                 // AI toggle changed / never synced: re-sync without re-match.
                                 window.runSimpleBatchSync();
                             } else {
-                                // Everything current: no-op with a lightweight notice.
-                                window.showNotification(Modal.Info, qsTr("Already synced"));
+                                // Everything current: offer a re-export (re-sync) instead of a
+                                // passive notice.
+                                window.confirmReExport("plugins");
                             }
                         }
                     }
@@ -915,7 +916,14 @@ Rectangle {
                                     videoArea.queue.beginMatchThenSync("export");
                                     return;
                                 }
-                                if (!render_queue.batch_motion_ready()) return;
+                                if (!render_queue.batch_motion_ready()) {
+                                    // No renderable job: if every renderable job is already a
+                                    // finished video export, offer a re-export instead of a
+                                    // silent no-op; otherwise stay a genuine no-op.
+                                    if (render_queue.has_finished_video_exports())
+                                        window.confirmReExport("video");
+                                    return;
+                                }
                                 // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.
                                 window.runSimpleBatchExport();
                                 return;
@@ -1230,6 +1238,11 @@ Rectangle {
                                         for (let i = 0; i < ids.length; ++i) {
                                             render_queue.reset_job(ids[i]);
                                         }
+                                        // simple-mode-reexport: clear all pairing registries so every
+                                        // pairing label (deep match, regular match, manual) disappears,
+                                        // returning the queue to the just-loaded, unmatched state. Loaded
+                                        // gyro files and embedded gyro are kept (registries only).
+                                        render_queue.reset_all_video_pairings();
                                         // Resetting clears each job's synced motion, so the pipeline must be
                                         // marked dirty — otherwise the next Export/Sync click dead-ends:
                                         // matchDirty is false (no re-match) and batch_motion_ready() is false
@@ -1237,6 +1250,9 @@ Rectangle {
                                         // beginMatchThenSync (re-match -> sync/render).
                                         if (videoArea.queue) videoArea.queue.matchDirty = true;
                                         window.syncDirty = true;
+                                        // Bump matchVersion so delegate bindings re-read get_match_status_json
+                                        // and drop the now-cleared pairing labels immediately.
+                                        if (videoArea.queue) videoArea.queue.matchVersion++;
                                     }},
                                     { text: qsTr("No"), accent: true },
                                 ]);
@@ -1896,6 +1912,31 @@ Rectangle {
         render_queue.prepare_finished_jobs_for_video_export();
         render_queue.start();
     }
+    // simple-mode-reexport: when all of a Simple-mode batch button's work is
+    // already done, ask before re-running it instead of a silent no-op / bare
+    // notice. kind === "video" re-renders finished video exports with the baked
+    // offsets (no re-match, no re-sync); kind === "plugins" re-runs sync (no
+    // re-match). Declining changes nothing.
+    function confirmReExport(kind: string): void {
+        messageBox(Modal.Question, qsTr("Already exported. Re-export?"), [
+            { text: qsTr("Yes"), clicked: function() {
+                if (kind === "video") {
+                    // Mirror runSimpleBatchExport's CRM-proxy guard + export_project,
+                    // but requeue already-rendered video exports for re-render.
+                    if (render_queue.has_crm_proxy_jobs()) {
+                        window.showCanonCrmProjectOnlyMessage();
+                        return;
+                    }
+                    render_queue.export_project = 4;
+                    render_queue.prepare_video_exports_for_rerender();
+                    render_queue.start();
+                } else if (kind === "plugins") {
+                    window.runSimpleBatchSync();
+                }
+            } },
+            { text: qsTr("No"), accent: true },
+        ]);
+    }
 
     function showNotification(type: int, text: string, textFormat: var): void {
         if (typeof textFormat === "undefined" || !textFormat) textFormat = text.includes("<b>")? Text.StyledText : Text.AutoText; // default
@@ -2253,32 +2294,47 @@ Rectangle {
         tutorialOverlay.start();
     }
     function buildTutorialSteps() {
-        // Each step: { target, section, title, body, openQueue }.
-        //   section  - MenuItem to expand (opened=true) so the target is visible; the
-        //              simple-mode sections persist their collapse state, so even the
-        //              top sections must be expanded explicitly before anchoring.
-        //   openQueue - show the render queue panel for queue-centric steps.
-        // Condensed 5-step tour. Sensor+lens are merged, and the queue/deep-search/
-        // preview steps are merged into one "Render queue" step that opens and
-        // highlights the real queue. NLE-plugins and Report-a-problem were dropped
-        // (both remain reachable in the Settings card at any time).
-        // Step fields: { target, section, title, body, openQueue, image }.
-        //   image - optional qrc path shown above the text (screenshot for how-to steps);
-        //           empty string = text-only. Deep match has a reserved slot for a
-        //           right-click screenshot to be added later.
+        // Eight-step tour. Step fields:
+        //   { target, section, openQueue, title, body, note, image, imageAnchor }.
+        //   target      - control to spotlight, or null for a centered card.
+        //   section     - MenuItem to expand (opened=true) so the target is visible;
+        //                 the simple-mode sections persist their collapse state, so even
+        //                 the top sections must be expanded explicitly before anchoring.
+        //   openQueue   - show the render queue panel for queue-centric steps.
+        //   title/body  - already-translated strings.
+        //   note        - optional smaller, greyer caption rendered below the body
+        //                 (only present on steps 4 and 8); empty/absent => no caption.
+        //   image       - optional qrc path for a canvas-anchored visual (NOT inside the
+        //                 card); empty string => no visual. Reserved slots for steps
+        //                 4/7/8 screenshots to be added later.
+        //   imageAnchor - "queue" | "preview"; where the canvas visual is anchored.
         return [
-            { target: videoArea.previewArea,     section: null,                    title: qsTr("Load your video"),
-              body: qsTr("Drag a video into the main window or the render queue, or click \"Open file\" (top-left). Most cameras embed gyro data, so it is detected automatically.") },
-            { target: simpleSensorLensSection,   section: simpleSensorLensSection, title: qsTr("Sensor and lens"),
-              body: qsTr("Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.") },
-            { target: simpleStabSection,         section: simpleStabSection,       title: qsTr("Stabilization settings"),
-              body: qsTr("Adjust smoothness, horizon lock and how much the frame is cropped.") },
-            { target: queueBtn,                  section: null,                    openQueue: true, title: qsTr("Render queue"),
-              body: qsTr("Batch processing of multiple videos happens here. Right-click a video and choose \"Edit\" to load it into the main preview and check the result.") },
-            { target: null,                      section: null,                    openQueue: true, image: "", title: qsTr("Deep match"),
-              body: qsTr("When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose \"Deep match with gyro\" to find the offset automatically.") },
-            { target: simpleExportBtnRow,        section: null,                    title: qsTr("Export"),
-              body: qsTr("Click \"Export stabilized video\" to render the result, or \"Export for plugins\" to produce a project file for the editor plugins.") },
+            { target: videoArea.previewArea,   section: null,                    image: "", imageAnchor: "",
+              title: qsTr("Load your footage"),
+              body:  qsTr("Drag your videos and gyro data right here.") },
+            { target: simpleSensorLensSection, section: simpleSensorLensSection, image: "", imageAnchor: "",
+              title: qsTr("Check mounting and lens data"),
+              body:  qsTr("Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.") },
+            { target: renderBtnRow,            section: null, openQueue: true,    image: "", imageAnchor: "",
+              title: qsTr("Render queue"),
+              body:  qsTr("Open the queue to batch-manage videos; you can also reset processing or clear the queue.") },
+            { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue",
+              title: qsTr("Deep search"),
+              body:  qsTr("Pick a clip with clear motion, then right-click and choose \"Deep match with gyro\" to align the video with the gyro data."),
+              note:  qsTr("Note: the video must fall within the gyro's recorded time range.") },
+            { target: simpleStabSection,       section: simpleStabSection,        image: "", imageAnchor: "",
+              title: qsTr("Stabilization settings"),
+              body:  qsTr("Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.") },
+            { target: simpleExportBtnRow,      section: null,                    image: "", imageAnchor: "",
+              title: qsTr("Export"),
+              body:  qsTr("For a finished clip choose \"Export stabilized video\"; to use the editor plugins choose \"Export for plugins\". After you export, stabilization begins.") },
+            { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue",
+              title: qsTr("Preview"),
+              body:  qsTr("Right-click a video in the queue and choose \"Edit\" to preview the result.") },
+            { target: videoArea.stabPreviewBtn, section: null, closeQueue: true, image: "", imageAnchor: "preview",
+              title: qsTr("Preview and adjust"),
+              body:  qsTr("Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip."),
+              note:  qsTr("Press Ctrl+S / Cmd+S to save once you're happy.") },
         ];
     }
 

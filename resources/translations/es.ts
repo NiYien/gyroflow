@@ -449,6 +449,11 @@ Debido a las limitaciones de los codificadores de vídeo del sistema, no se admi
         <translation>Restablecer emparejamiento</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Ya exportado. ¿Volver a exportar?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>¿Seguro que quieres restablecer el estado de todos los trabajos?</translation>

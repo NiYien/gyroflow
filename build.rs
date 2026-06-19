@@ -258,6 +258,13 @@ fn main() {
     // Translations are embedded via the qrc! macro in src/resources.rs; if any .qm file
     // changes after lrelease, cargo needs to recompile resources.rs to re-embed them.
     println!("cargo:rerun-if-changed=resources/translations");
+    // QML/JS UI files are embedded by the same qrc! macro at compile time (live reload is
+    // off). Without these, a QML-only edit does not invalidate the cached embed and
+    // `just run` silently runs the stale binary. Watch the UI dirs (and subdirs, since
+    // directory watching is not recursive) so QML edits always trigger a re-embed.
+    println!("cargo:rerun-if-changed=src/ui");
+    println!("cargo:rerun-if-changed=src/ui/components");
+    println!("cargo:rerun-if-changed=src/ui/menu");
 
     if target_os == "ios" {
         println!("cargo:rerun-if-changed=_deployment/ios/qml_plugins.cpp");

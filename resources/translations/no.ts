@@ -450,6 +450,11 @@ På grunn av begrensninger for systemets videokodere, støttes ikke gjengivelse 
         <translation>Tilbakestill paring</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Allerede eksportert. Eksporter på nytt?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Er du sikker på at du vil tilbakestille statusen for alle jobber?</translation>

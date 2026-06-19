@@ -449,6 +449,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>페어링 재설정</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>이미 내보냈습니다. 다시 내보낼까요?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>모든 작업의 상태를 재설정하시겠습니까?</translation>

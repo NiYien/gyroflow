@@ -187,6 +187,62 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>加载素材</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>将视频和陀螺仪数据全部拖放到这里</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>检查陀螺仪安装和镜头数据</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>设置安装方向，手动对焦或变宽镜头还需设置镜头组数据。</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>展开队列批量管理视频，可重置处理或清空队列。</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>选一段运动明显的视频，右键选择 "与陀螺仪深度匹配"，自动对齐视频与陀螺仪数据。</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>注意：视频时间需落在陀螺仪记录范围内。</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>调整平滑度、地平线锁定、缩放模式，在渲染队列中可以多选修改，也可以批量修改。</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>直接出成片选"导出稳定后的视频"，用插件选"导出（搭配插件使用）"。导出后，视频开始稳定处理。</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>预览</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>队列里右键视频，选"编辑"预览效果。</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>预览与调整</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>点稳定预览按钮，在原片/稳定/概览间切换对比。也可以单独调整稳定参数。</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>调好参数后 Ctrl+S/Cmd+S 保存。</translation>
+    </message>
+    <message>
         <source>Deep match</source>
         <translation>深度匹配</translation>
     </message>
@@ -638,6 +694,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <location filename="../../src/ui/App.qml" line="1217"/>
         <source>Reset pairing</source>
         <translation>重置配对</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>已导出。是否重新导出？</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
@@ -5557,6 +5618,18 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <source>Playback speed</source>
         <translation>回放速度</translation>
     </message>
+    <message>
+        <source>Preview: original</source>
+        <translation>预览：原片</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>预览：稳定</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>预览：稳定概览</translation>
+    </message>
 </context>
 <context>
     <name>VideoInformation</name>
@@ -5613,6 +5686,10 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
     <message>
         <source>Done</source>
         <translation>完成</translation>
+    </message>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>第 %1 / %2 步</translation>
     </message>
 </context>
 </TS>

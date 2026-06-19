@@ -863,6 +863,12 @@ pub struct RenderQueue {
     cancel_job: qt_method!(fn(&self, job_id: u32)),
     reset_job: qt_method!(fn(&mut self, job_id: u32)),
     prepare_finished_jobs_for_video_export: qt_method!(fn(&mut self)),
+    // simple-mode-reexport: true iff any finished job is a full video export
+    // (export_project == 4); gates the Simple-mode "re-export?" dialog.
+    has_finished_video_exports: qt_method!(fn(&self) -> bool),
+    // simple-mode-reexport: requeue finished video exports for re-render using
+    // the already-baked offsets (no re-sync).
+    prepare_video_exports_for_rerender: qt_method!(fn(&mut self)),
     get_gyroflow_data: qt_method!(fn(&self, job_id: u32) -> QString),
 
     add_file:
@@ -1053,6 +1059,10 @@ pub struct RenderQueue {
     deep_match_needs_lens_choice: qt_method!(fn(&self, job_id: u32) -> QString),
     get_deep_match_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
+    // simple-mode-reexport: clear all video jobs' pairing registries (deep
+    // match, regular match, manual pairs) without touching stab.gyro, so the
+    // Reset-pairing control returns the queue to the unmatched state.
+    reset_all_video_pairings: qt_method!(fn(&mut self)),
     get_match_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
     get_batch_sync_status_json: qt_method!(fn(&self, job_id: u32) -> QString),
     get_batch_sync_prompt_kind: qt_method!(fn(&self) -> QString),
@@ -2806,6 +2816,65 @@ impl RenderQueue {
             .collect::<Vec<_>>();
 
         for job_id in sync_only_job_ids {
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                remove_do_autosync_from_project_json(&mut job.additional_data);
+                if let Some(ref mut project_data) = job.project_data {
+                    remove_do_autosync_from_project_json(project_data);
+                }
+                if let Some(ref stab) = job.stab {
+                    remove_do_autosync_from_stab(stab);
+                }
+            }
+            self.reset_job(job_id);
+            if let Some(job) = self.jobs.get(&job_id) {
+                if let Some(ref stab) = job.stab {
+                    remove_do_autosync_from_stab(stab);
+                }
+            }
+        }
+    }
+    // True iff any job is a finished full video export (export_project == 4).
+    // Used by the Simple-mode video export button to distinguish "already
+    // video-exported, offer re-export" from an unrelated no-op (export == 2,
+    // or a non-renderable job): the dialog must only appear for the former.
+    fn has_finished_video_exports(&self) -> bool {
+        let Ok(queue) = self.queue.try_borrow() else {
+            return false;
+        };
+        queue.iter().any(|item| {
+            item.status == JobStatus::Finished
+                && self
+                    .jobs
+                    .get(&item.job_id)
+                    .map(|job| job.last_finished_export_project == Some(4))
+                    .unwrap_or(false)
+        })
+    }
+    // Sibling of `prepare_finished_jobs_for_video_export`, but targets finished
+    // full video exports (export_project == 4) so the user can re-render with the
+    // already-baked offsets. Mirrors the same recipe: strip do_autosync from
+    // additional_data / project_data / live stab, then reset_job to requeue and
+    // restore the stab (with baked offsets) from project_data. No re-sync runs.
+    pub fn prepare_video_exports_for_rerender(&mut self) {
+        let finished_job_ids = {
+            let q = self.queue.borrow();
+            q.iter()
+                .filter(|v| v.status == JobStatus::Finished)
+                .map(|v| v.job_id)
+                .collect::<Vec<_>>()
+        };
+
+        let video_export_job_ids = finished_job_ids
+            .into_iter()
+            .filter(|job_id| {
+                self.jobs
+                    .get(job_id)
+                    .map(|job| job.last_finished_export_project == Some(4))
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>();
+
+        for job_id in video_export_job_ids {
             if let Some(job) = self.jobs.get_mut(&job_id) {
                 remove_do_autosync_from_project_json(&mut job.additional_data);
                 if let Some(ref mut project_data) = job.project_data {
@@ -9697,6 +9766,44 @@ impl RenderQueue {
         self.match_results_changed();
     }
 
+    // Reset-pairing path: clear every video job's pairing registries so all
+    // pairing labels disappear, returning the queue to the just-loaded,
+    // unmatched state. Mirrors `unpair_video`'s per-job clearing (manual_pairs,
+    // deep_match_results, the match_results entry → Unmatched) for all video
+    // jobs at once. Unlike `unpair_video`, it MUST NOT touch `stab.gyro`: the
+    // visible labels are registry-driven, and clearing the gyro would wipe an
+    // embedded-gyro job's in-video data that the loaded state must keep (D5).
+    // This logic lives only here, never in `reset_job`, because reset_job is
+    // reused by the re-render / batch-sync paths that must preserve pairings (D4).
+    fn reset_all_video_pairings(&mut self) {
+        let video_job_ids = self.collect_video_job_ids();
+        let ordered_ids = self.get_ordered_job_ids();
+        for job_id in video_job_ids {
+            self.manual_pairs.retain(|p| p.job_id != job_id);
+            self.deep_match_results.remove(&job_id);
+            if let Some(ref mut results) = self.match_results {
+                let idx = results
+                    .results
+                    .iter()
+                    .position(|r| r.job_id == Some(job_id))
+                    .or_else(|| {
+                        let video_index = ordered_ids.iter().position(|&id| id == job_id)?;
+                        results
+                            .results
+                            .iter()
+                            .position(|r| r.video_index == video_index)
+                    });
+                if let Some(i) = idx {
+                    results.results[i].status = core::gyro_match::MatchStatus::Unmatched;
+                    results.results[i].gyro_index = None;
+                    results.results[i].gyro_start_ms = None;
+                    results.results[i].gyro_end_ms = None;
+                }
+            }
+        }
+        self.match_results_changed();
+    }
+
     fn enter_pairing_mode(&mut self, gyro_index: usize) {
         self.pairing_mode_gyro_index = Some(gyro_index);
         self.pairing_mode_changed();
@@ -13023,6 +13130,116 @@ mod tests {
 
         let job = queue.jobs.get(&1).unwrap();
         assert!(RenderQueue::estimated_sync_frames_for_job(job) > 0);
+    }
+
+    #[test]
+    fn has_finished_video_exports_only_for_export_4() {
+        // Empty queue → false.
+        let queue = RenderQueue::default();
+        assert!(!queue.has_finished_video_exports());
+
+        // Finished + export == 2 (sync-only) → false.
+        let queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+        assert!(!queue.has_finished_video_exports());
+
+        // Finished + export == 4 (full video export) → true.
+        let queue = queue_with_autosync_project(JobStatus::Finished, true, Some(4));
+        assert!(queue.has_finished_video_exports());
+    }
+
+    #[test]
+    fn prepare_video_exports_for_rerender_requeues_video_exports() {
+        // Finished + export == 4 is requeued with do_autosync stripped and
+        // baked offsets preserved.
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(4));
+        assert!(queue.jobs.get(&1).unwrap().stab.is_none());
+
+        queue.prepare_video_exports_for_rerender();
+
+        assert_eq!(queue.queue.borrow()[0].get_status(), &JobStatus::Queued);
+        let job = queue.jobs.get(&1).unwrap();
+        let project_data = job.project_data.as_ref().unwrap();
+        assert!(job.stab.is_some());
+        assert!(!has_top_level_do_autosync(project_data));
+        assert!(!has_calibration_do_autosync(project_data));
+        assert!(!has_top_level_do_autosync(&job.additional_data));
+        assert!(!job_lens_has_do_autosync(job));
+        assert!(!job
+            .stab
+            .as_ref()
+            .unwrap()
+            .gyro
+            .read()
+            .get_offsets()
+            .is_empty());
+        assert_eq!(job.last_finished_export_project, None);
+    }
+
+    #[test]
+    fn prepare_video_exports_for_rerender_leaves_sync_only_jobs_unchanged() {
+        // Finished + export == 2 must NOT be touched by the video re-export path.
+        let mut queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
+
+        queue.prepare_video_exports_for_rerender();
+
+        assert_eq!(queue.queue.borrow()[0].get_status(), &JobStatus::Finished);
+        assert!(queue.jobs.get(&1).unwrap().stab.is_none());
+        let job = queue.jobs.get(&1).unwrap();
+        let project_data = job.project_data.as_ref().unwrap();
+        assert!(has_top_level_do_autosync(project_data));
+        assert!(has_calibration_do_autosync(project_data));
+        assert_eq!(job.last_finished_export_project, Some(2));
+    }
+
+    #[test]
+    fn reset_all_video_pairings_clears_registries() {
+        // Video job 1 with live stab + motion + all three pairing registries set.
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+
+        queue.manual_pairs.push(core::gyro_match::ManualCalibrationPair {
+            job_id: 1,
+            video_index: 0,
+            gyro_index: 0,
+        });
+        queue.deep_match_results.insert(
+            1,
+            DeepMatchResult {
+                gyro_index: 0,
+                offset_ms: 12.0,
+            },
+        );
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results: vec![core::gyro_match::MatchResult {
+                video_index: 0,
+                job_id: Some(1),
+                gyro_index: Some(0),
+                status: core::gyro_match::MatchStatus::Matched,
+                global_offset_ms: None,
+                gyro_start_ms: Some(100.0),
+                gyro_end_ms: Some(200.0),
+                init_offset_ms: None,
+            }],
+            global_offset_ms: None,
+            error: None,
+        });
+
+        queue.reset_all_video_pairings();
+
+        // All three registries cleared / Unmatched.
+        assert!(queue.manual_pairs.is_empty());
+        assert!(queue.deep_match_results.is_empty());
+        let r = &queue.match_results.as_ref().unwrap().results[0];
+        assert_eq!(r.status, core::gyro_match::MatchStatus::Unmatched);
+        assert!(r.gyro_index.is_none());
+        assert!(r.gyro_start_ms.is_none());
+        assert!(r.gyro_end_ms.is_none());
+
+        // stab.gyro must NOT be cleared — its motion survives the reset (D5).
+        let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap().clone();
+        let gyro = stab.gyro.read();
+        let file_metadata = gyro.file_metadata.read();
+        assert!(!gyro.raw_imu(&file_metadata).is_empty());
     }
 
     #[test]

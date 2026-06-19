@@ -450,6 +450,11 @@ På grund af begrænsninger af systemets videokodere understøttes gengivelse i 
         <translation>Nulstil parring</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Allerede eksporteret. Eksportér igen?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Er du sikker på, at du vil nulstille status for alle job?</translation>

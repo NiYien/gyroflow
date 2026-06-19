@@ -450,6 +450,11 @@ Devido a limitações dos codificadores de vídeo do sistema, a renderização e
         <translation>Repor emparelhamento</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1921"/>
+        <source>Already exported. Re-export?</source>
+        <translation>Já exportado. Exportar novamente?</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1218"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Tem a certeza de que pretende repor o estado de todas as tarefas?</translation>
