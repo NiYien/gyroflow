@@ -35,7 +35,7 @@ DEFAULT_CONFIG: dict = {
     "translate_api_base": "",
     "translate_api_key": "",
     "translate_model": "",
-    "network_proxy": "127.0.0.1:6063",
+    "network_proxy": "127.0.0.1:7897",
     "git_remote": "origin",
     "publish_defaults": {
         "lens_data_tag": "",
