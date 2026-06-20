@@ -465,10 +465,14 @@ pub fn post_conf_min() -> f64 {
 }
 
 /// Effective CI95 gate = this base + drift_tolerance T(D) (design §3.5/§3.8).
-/// Calibration pending (spec §5): sweep against recorded corpus before tightening.
+/// Calibrated against real S1H-via-BRAW ground truth (2026-06-20): normal clips
+/// whose two probe windows agree on the correct offset landed at ci95≈40ms (blurred
+/// by fast/noisy optical flow) and were false-rejected at the old base=25 (gate 35ms),
+/// while genuinely ambiguous matches sat at ci95≈100000ms. base=35 (gate 45ms for a
+/// single clip, T(D)=10) admits the former and still rejects the latter by a wide margin.
 /// `GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS` overrides.
 pub fn post_ci95_base_ms() -> f64 {
-    env_f64("GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS", 25.0)
+    env_f64("GYROFLOW_DEEP_MATCH_POST_CI95_BASE_MS", 35.0)
 }
 pub fn post_dense_ms() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_POST_DENSE_MS", 30.0)
