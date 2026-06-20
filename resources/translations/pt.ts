@@ -4004,7 +4004,7 @@ Clique em Ok e selecione a pasta de destino.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>Sincronização IA</translation>
     </message>
 </context>
 <context>

@@ -4003,7 +4003,7 @@ Napsauta Ok ja valitse kohdekansio.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>AI-synkronointi</translation>
     </message>
 </context>
 <context>

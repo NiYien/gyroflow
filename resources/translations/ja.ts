@@ -4005,7 +4005,7 @@ OKをクリックして保存先フォルダを選択します。</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>AI 同期</translation>
     </message>
 </context>
 <context>

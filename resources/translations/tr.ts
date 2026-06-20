@@ -3997,7 +3997,7 @@ Click Ok and select the destination folder.</source>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>AI senkronizasyonu</translation>
     </message>
 </context>
 <context>

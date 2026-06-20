@@ -4004,7 +4004,7 @@ Klikni na OK pre výber cieľovej zložky.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>AI synchronizácia</translation>
     </message>
 </context>
 <context>

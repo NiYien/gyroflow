@@ -4000,7 +4000,7 @@ Klik Ok dan pilih folder tujuan.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>Sinkronisasi AI</translation>
     </message>
 </context>
 <context>

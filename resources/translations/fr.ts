@@ -4003,7 +4003,7 @@ Cliquez sur Ok et sélectionnez le fichier de destination.</translation>
     <message>
         <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
         <source>AI SYNC</source>
-        <translation type="unfinished"></translation>
+        <translation>Synchro IA</translation>
     </message>
 </context>
 <context>
