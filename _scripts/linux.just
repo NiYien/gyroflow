@@ -175,6 +175,7 @@ deploy *param:
             export VULKAN_SDK=$VULKAN_SDK
             export CARGO_TARGET=$CARGO_TARGET
             export IN_DOCKER=1
+            export GYROFLOW_QML_HASH=$GYROFLOW_QML_HASH
             curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
             source \$HOME/.cargo/env
             cargo install --force just
