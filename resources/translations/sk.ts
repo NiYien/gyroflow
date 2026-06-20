@@ -681,7 +681,7 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Ďalšie nastavenia</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

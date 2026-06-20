@@ -679,7 +679,7 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Diğer ayarlar</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

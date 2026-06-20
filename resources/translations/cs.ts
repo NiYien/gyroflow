@@ -681,7 +681,7 @@ Z důvodu omezení systémových kodérů není vykreslování na pozadí podpor
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Další nastavení</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

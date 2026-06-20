@@ -681,7 +681,7 @@ En raison des limitations du système d&apos;encodage vidéo, le rendu en arriè
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Autres paramètres</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

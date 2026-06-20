@@ -681,7 +681,7 @@ Due to limitations of the system video encoders, rendering in the background is 
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Άλλες ρυθμίσεις</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

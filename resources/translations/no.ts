@@ -681,7 +681,7 @@ På grunn av begrensninger for systemets videokodere, støttes ikke gjengivelse 
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Andre innstillinger</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

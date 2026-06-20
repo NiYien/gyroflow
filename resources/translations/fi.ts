@@ -680,7 +680,7 @@ Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tu
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Muut asetukset</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

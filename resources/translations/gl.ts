@@ -680,7 +680,7 @@ Debido ás limitacións dos codificadores de vídeo do sistema, non se admite a 
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Outros axustes</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

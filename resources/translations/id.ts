@@ -682,7 +682,7 @@ Rendering di latar belakang tidak didukung, karena keterbatasan sistem encoder v
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Pengaturan lainnya</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

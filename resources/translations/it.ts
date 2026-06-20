@@ -681,7 +681,7 @@ A causa delle limitazioni degli encoder video di sistema, il rendering in backgr
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Altre impostazioni</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

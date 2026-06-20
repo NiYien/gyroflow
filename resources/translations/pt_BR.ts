@@ -680,7 +680,7 @@ Devido às limitações dos codificadores de vídeo do sistema, a renderização
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Outras configurações</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>

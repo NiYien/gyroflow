@@ -680,7 +680,7 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
     <message>
         <location filename="../../src/ui/App.qml" line="1646"/>
         <source>Other settings</source>
-        <translation type="unfinished"></translation>
+        <translation>Weitere Einstellungen</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="1736"/>
