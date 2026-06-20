@@ -114,8 +114,6 @@ jobs:
         if: ${{ matrix.targets.type == 'macos' }}
         env:
           SIGNING_FINGERPRINT: ${{ secrets.MACOS_CERTIFICATE_FINGERPRINT }}
-          # See build.rs GYROFLOW_QML_HASH: rerun qmlcache embed when UI QML/JS changes.
-          GYROFLOW_QML_HASH: ${{ hashFiles('src/ui/**/*.qml', 'src/ui/**/*.js') }}
         run: |
           just install-deps
           just deploy universal
@@ -124,17 +122,10 @@ jobs:
 
       - name: Build gyroflow(niyien) (Linux)
         if: ${{ matrix.targets.type == 'linux' }}
-        env:
-          # Passed into the docker build via _scripts/linux.just; see build.rs GYROFLOW_QML_HASH.
-          GYROFLOW_QML_HASH: ${{ hashFiles('src/ui/**/*.qml', 'src/ui/**/*.js') }}
         run: just deploy docker
 
       - name: Build gyroflow(niyien) (Windows)
         if: ${{ matrix.targets.type == 'windows' }}
-        env:
-          # Force a build-script rerun (qmlcache re-embed) whenever UI QML/JS changes,
-          # bypassing rust-cache mtime staleness. See build.rs GYROFLOW_QML_HASH.
-          GYROFLOW_QML_HASH: ${{ hashFiles('src/ui/**/*.qml', 'src/ui/**/*.js') }}
         run: |
           just install-deps
           just deploy
@@ -145,8 +136,6 @@ jobs:
           KEY_STORE_ALIAS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_ALIAS }}
           KEY_STORE_PASS: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASS }}
           BUILD_PROFILE: deploy
-          # See build.rs GYROFLOW_QML_HASH: rerun qmlcache embed when UI QML/JS changes.
-          GYROFLOW_QML_HASH: ${{ hashFiles('src/ui/**/*.qml', 'src/ui/**/*.js') }}
         run: |
           $Env:JAVA_HOME = $Env:JAVA_HOME_21_X64
           if (Test-Path "${{ github.workspace }}/android_release.keystore") {

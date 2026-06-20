@@ -265,14 +265,6 @@ fn main() {
     println!("cargo:rerun-if-changed=src/ui");
     println!("cargo:rerun-if-changed=src/ui/components");
     println!("cargo:rerun-if-changed=src/ui/menu");
-    // Belt-and-suspenders for cached CI builds: directory mtimes are unreliable when a
-    // cache restore (e.g. Swatinem/rust-cache) leaves restored build artifacts newer than
-    // the freshly checked-out sources. cargo then judges this build script "fresh" by
-    // mtime and reuses a stale qmlcache that can miss a newly-added QML type (observed:
-    // ni.73 shipped without TutorialQueueRow -> "TutorialOverlay is not a type" -> no UI).
-    // CI injects a content hash of all UI QML/JS into GYROFLOW_QML_HASH; a hash change
-    // forces a rerun (and re-embed) regardless of mtime. Unset locally -> no effect.
-    println!("cargo:rerun-if-env-changed=GYROFLOW_QML_HASH");
 
     if target_os == "ios" {
         println!("cargo:rerun-if-changed=_deployment/ios/qml_plugins.cpp");
