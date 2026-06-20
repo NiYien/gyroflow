@@ -59,7 +59,7 @@ MinVersion=10.0
 CloseApplications=no
 RestartApplications=no
 SetupLogging=yes
-ArchiveExtraction=basic
+ArchiveExtraction=full
 VersionInfoVersion={#AppFileVersion}
 VersionInfoCompany=Niyien
 VersionInfoDescription={#AppDisplayName} web installer
@@ -108,13 +108,18 @@ SetupMissingPackageSha256=Missing package SHA256. Provide /PACKAGESHA256=<zip_sh
 SetupDownloadVerifyFailed=Failed to download or verify Gyroflow(NiYien) package.
 SetupMissingPackageFile=Local package file was not found.
 SetupPackageFileVerifyFailed=Failed to verify local Gyroflow(NiYien) package.
-SetupExtractPackageFailed=Failed to extract Gyroflow(NiYien) package.
+SetupVerifyTitle=Verifying Gyroflow(NiYien)
+SetupVerifyDescription=Please wait while setup verifies the integrity of the application package.
+SetupVerifyProgress=Verifying package integrity (SHA-256)...
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "{tmp}\package\*"; DestDir: "{app}"; ExternalSize: {#PackageExternalSize}; Flags: external recursesubdirs createallsubdirs ignoreversion; Check: PackageWasDownloaded
+; Extract the downloaded archive natively via Inno's full ArchiveExtraction (is7z engine; zip-capable).
+; full is required for .zip (enhanced uses is7zxr.dll which fails on .zip with "Cannot get class object").
+; This shows Inno's own extraction progress and avoids the slow, progress-less PowerShell Expand-Archive.
+Source: "{tmp}\{#PackageFilename}"; DestDir: "{app}"; ExternalSize: {#PackageExternalSize}; Flags: external extractarchive recursesubdirs createallsubdirs ignoreversion; Check: PackageWasDownloaded
 
 [Icons]
 Name: "{userprograms}\{#AppDisplayName}"; Filename: "{app}\Gyroflow.exe"; WorkingDir: "{app}"
@@ -140,9 +145,19 @@ const
   PROCESS_QUERY_LIMITED_INFORMATION = $1000;
   WAIT_FAILED = $FFFFFFFF;
   INFINITE = $FFFFFFFF;
+  PROV_RSA_AES = 24;
+  CRYPT_VERIFYCONTEXT = $F0000000;
+  CALG_SHA_256 = $0000800C;
+  HP_HASHVAL = 2;
+  SHA256_CHUNK_SIZE = 1048576;
+  GENERIC_READ = $80000000;
+  FILE_SHARE_READ = $00000001;
+  OPEN_EXISTING = 3;
+  INVALID_HANDLE_VALUE = $FFFFFFFF;
 
 var
   DownloadPage: TDownloadWizardPage;
+  VerifyPage: TOutputProgressWizardPage;
   IsUpdateMode: Boolean;
   PackageWasFetched: Boolean;
   LaunchAfterInstall: Boolean;
@@ -163,6 +178,26 @@ function OpenProcess(dwDesiredAccess: LongWord; bInheritHandle: Boolean; dwProce
   external 'OpenProcess@kernel32.dll stdcall';
 function GetProcessTimes(hProcess: LongWord; var lpCreationTime: TWinFileTime; var lpExitTime: TWinFileTime; var lpKernelTime: TWinFileTime; var lpUserTime: TWinFileTime): Boolean;
   external 'GetProcessTimes@kernel32.dll stdcall';
+function CryptAcquireContext(var phProv: LongWord; pszContainer: LongWord; pszProvider: LongWord; dwProvType: LongWord; dwFlags: LongWord): Boolean;
+  external 'CryptAcquireContextW@advapi32.dll stdcall';
+function CryptCreateHash(hProv: LongWord; Algid: LongWord; hKey: LongWord; dwFlags: LongWord; var phHash: LongWord): Boolean;
+  external 'CryptCreateHash@advapi32.dll stdcall';
+function CryptHashData(hHash: LongWord; const pbData: array of Byte; dwDataLen: LongWord; dwFlags: LongWord): Boolean;
+  external 'CryptHashData@advapi32.dll stdcall';
+// NB: CryptoAPI byte-array params must NOT be 'var array of Byte' — Inno passes a
+// bad pointer for 'var', causing ERROR_NOACCESS. Plain 'array of Byte' passes the
+// raw data pointer (writable), which is what these out-buffers need.
+function CryptGetHashParam(hHash: LongWord; dwParam: LongWord; pbData: array of Byte; var pdwDataLen: LongWord; dwFlags: LongWord): Boolean;
+  external 'CryptGetHashParam@advapi32.dll stdcall';
+function CryptDestroyHash(hHash: LongWord): Boolean;
+  external 'CryptDestroyHash@advapi32.dll stdcall';
+function CryptReleaseContext(hProv: LongWord; dwFlags: LongWord): Boolean;
+  external 'CryptReleaseContext@advapi32.dll stdcall';
+// File reading via Win32 (TStream.Read is not usable for byte buffers in Pascal Script).
+function CreateFileW(lpFileName: String; dwDesiredAccess: LongWord; dwShareMode: LongWord; lpSecurityAttributes: LongWord; dwCreationDisposition: LongWord; dwFlagsAndAttributes: LongWord; hTemplateFile: LongWord): LongWord;
+  external 'CreateFileW@kernel32.dll stdcall';
+function ReadFile(hFile: LongWord; lpBuffer: array of Byte; nNumberOfBytesToRead: LongWord; var lpNumberOfBytesRead: LongWord; lpOverlapped: LongWord): Boolean;
+  external 'ReadFile@kernel32.dll stdcall';
 
 function StartsWithText(const Value, Prefix: String): Boolean;
 begin
@@ -354,10 +389,84 @@ begin
     DownloadPage.SetProgress(0, 0);
 end;
 
+// Compute SHA-256 of a file in 1 MB chunks so a real progress bar can be shown.
+// GetSHA256OfFile is a single blocking call with no progress; CryptoAPI lets us
+// feed the hash incrementally and update VerifyPage per chunk.
+function ComputeSha256WithProgress(const FileName: String): String;
+var
+  hFile, Prov, Hash: LongWord;
+  Buffer: array of Byte;
+  BytesRead: LongWord;
+  HashBytes: array of Byte;
+  HashLen: LongWord;
+  Total, Done: Integer;
+  I: Integer;
+begin
+  Result := '';
+  hFile := INVALID_HANDLE_VALUE;
+  Prov := 0;
+  Hash := 0;
+  try
+    hFile := CreateFileW(FileName, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, 0, 0);
+    if hFile = INVALID_HANDLE_VALUE then
+      RaiseException('CreateFile failed');
+    if not CryptAcquireContext(Prov, 0, 0, PROV_RSA_AES, CRYPT_VERIFYCONTEXT) then
+      RaiseException('CryptAcquireContext failed');
+    if not CryptCreateHash(Prov, CALG_SHA_256, 0, 0, Hash) then
+      RaiseException('CryptCreateHash failed');
+
+    if not FileSize(FileName, Total) then
+      Total := 0;
+    Done := 0;
+    SetLength(Buffer, SHA256_CHUNK_SIZE);
+    VerifyPage.SetProgress(0, 100);
+    repeat
+      if not ReadFile(hFile, Buffer, SHA256_CHUNK_SIZE, BytesRead, 0) then
+        RaiseException('ReadFile failed');
+      if BytesRead > 0 then
+      begin
+        if not CryptHashData(Hash, Buffer, BytesRead, 0) then
+          RaiseException('CryptHashData failed');
+        Done := Done + Integer(BytesRead);
+        if Total > 0 then
+          VerifyPage.SetProgress(Done, Total);
+      end;
+    until BytesRead = 0;
+
+    SetLength(HashBytes, 32);
+    HashLen := 32;
+    if not CryptGetHashParam(Hash, HP_HASHVAL, HashBytes, HashLen, 0) then
+      RaiseException('CryptGetHashParam failed');
+    for I := 0 to 31 do
+      Result := Result + Copy('0123456789abcdef', (HashBytes[I] shr 4) + 1, 1) + Copy('0123456789abcdef', (HashBytes[I] and 15) + 1, 1);
+  finally
+    if Hash <> 0 then
+      CryptDestroyHash(Hash);
+    if Prov <> 0 then
+      CryptReleaseContext(Prov, 0);
+    if hFile <> INVALID_HANDLE_VALUE then
+      CloseHandle(hFile);
+  end;
+end;
+
+// Verify a file's SHA-256 against the expected value while showing a progress bar.
+function VerifyFileSha256WithProgress(const FileName, ExpectedSha: String): Boolean;
+var
+  Actual: String;
+begin
+  VerifyPage.SetText(ExpandConstant('{cm:SetupVerifyProgress}'), '');
+  VerifyPage.Show;
+  try
+    Actual := ComputeSha256WithProgress(FileName);
+  finally
+    VerifyPage.Hide;
+  end;
+  Result := (Actual = LowerCase(ExpectedSha));
+end;
+
 function StageLocalPackageFile: Boolean;
 var
   ZipPath: String;
-  ActualSha256: String;
 begin
   Result := False;
   if not FileExists(ActivePackageFile) then
@@ -369,8 +478,7 @@ begin
   ZipPath := ExpandConstant('{tmp}\{#PackageFilename}');
   Log('Using local Gyroflow package file ' + ActivePackageFile);
   try
-    ActualSha256 := LowerCase(GetSHA256OfFile(ActivePackageFile));
-    if ActualSha256 <> LowerCase(ActivePackageSha256) then
+    if not VerifyFileSha256WithProgress(ActivePackageFile, ActivePackageSha256) then
       RaiseException('Local package SHA256 mismatch.');
     if not FileCopy(ActivePackageFile, ZipPath, False) then
       RaiseException('Failed to stage local package file.');
@@ -384,7 +492,6 @@ end;
 function DownloadAndVerifyPackage: Boolean;
 var
   ZipPath: String;
-  ActualSha256: String;
 begin
   Result := False;
 
@@ -411,9 +518,10 @@ begin
   DownloadPage.Show;
   try
     try
-      DownloadTemporaryFile(ActivePackageUrl, '{#PackageFilename}', ActivePackageSha256, @OnDownloadProgress);
-      ActualSha256 := LowerCase(GetSHA256OfFile(ZipPath));
-      if ActualSha256 <> LowerCase(ActivePackageSha256) then
+      // Download without Inno's built-in verify (empty hash), then verify ourselves
+      // with a progress bar so the integrity check is not a silent stall.
+      DownloadTemporaryFile(ActivePackageUrl, '{#PackageFilename}', '', @OnDownloadProgress);
+      if not VerifyFileSha256WithProgress(ZipPath, ActivePackageSha256) then
         RaiseException('Downloaded package SHA256 mismatch.');
       PackageWasFetched := True;
       Result := True;
@@ -423,53 +531,6 @@ begin
   finally
     DownloadPage.Hide;
   end;
-end;
-
-function PowerShellSingleQuotedLiteral(const Value: String): String;
-var
-  I: Integer;
-  Ch: String;
-begin
-  Result := #39;
-  for I := 1 to Length(Value) do
-  begin
-    Ch := Copy(Value, I, 1);
-    if Ch = #39 then
-      Result := Result + #39 + #39
-    else
-      Result := Result + Ch;
-  end;
-  Result := Result + #39;
-end;
-
-function ExtractPackageToTempDir: Boolean;
-var
-  ZipPath: String;
-  ExtractDir: String;
-  PowerShellPath: String;
-  Params: String;
-  ResultCode: Integer;
-begin
-  Result := False;
-  ZipPath := ExpandConstant('{tmp}\{#PackageFilename}');
-  ExtractDir := ExpandConstant('{tmp}\package');
-  DelTree(ExtractDir, True, True, True);
-  if not ForceDirectories(ExtractDir) then
-  begin
-    SuppressibleMsgBox(ExpandConstant('{cm:SetupExtractPackageFailed}') + #13#10 + ExtractDir, mbCriticalError, MB_OK, IDOK);
-    Exit;
-  end;
-
-  PowerShellPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
-  Params := '-NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath ' + PowerShellSingleQuotedLiteral(ZipPath) + ' -DestinationPath ' + PowerShellSingleQuotedLiteral(ExtractDir) + ' -Force"';
-  Log('Extracting Gyroflow package to ' + ExtractDir);
-  if Exec(PowerShellPath, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
-  begin
-    PackageWasFetched := True;
-    Result := True;
-  end
-  else
-    SuppressibleMsgBox(ExpandConstant('{cm:SetupExtractPackageFailed}') + #13#10 + 'Exit code: ' + IntToStr(ResultCode), mbCriticalError, MB_OK, IDOK);
 end;
 
 function InitializeSetup: Boolean;
@@ -494,6 +555,7 @@ procedure InitializeWizard;
 begin
   DownloadPage := CreateDownloadPage(ExpandConstant('{cm:SetupDownloadTitle}'), ExpandConstant('{cm:SetupDownloadDescription}'), @OnDownloadProgress);
   DownloadPage.ShowBaseNameInsteadOfUrl := True;
+  VerifyPage := CreateOutputProgressPage(ExpandConstant('{cm:SetupVerifyTitle}'), ExpandConstant('{cm:SetupVerifyDescription}'));
   if ActiveInstallDir <> '' then
     WizardForm.DirEdit.Text := ActiveInstallDir;
 end;
@@ -504,7 +566,8 @@ begin
   if CurPageID = wpReady then
   begin
     WaitForUpdateTarget;
-    Result := DownloadAndVerifyPackage and ExtractPackageToTempDir;
+    // Inno extracts the downloaded archive itself via the [Files] extractarchive flag.
+    Result := DownloadAndVerifyPackage;
   end;
 end;
 
