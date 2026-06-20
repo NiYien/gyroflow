@@ -19,13 +19,18 @@ use parking_lot::Mutex;
 use crate::log_context::LogContext;
 
 // Third-party noise targets that should be limited to Warn+ in the file log.
-// Top-level Debug stays unaffected for app code. `cubecl_wgpu` is the NeuFlow
-// Burn GPU backend; its startup Vulkan-capability dump (features/CMMA sizes/MMA
-// configs) is ~900 lines of pure enumeration with no diagnostic value.
+// Top-level Debug stays unaffected for app code. Two NeuFlow Burn GPU-stack
+// sub-crates flood Debug with pure compiler internals: `cubecl_wgpu` (startup
+// Vulkan-capability dump, ~900 lines) and `cubecl_opt` (per-kernel SSA
+// optimization-pass trace, 8000+ lines per compile/autotune session). Both are
+// filtered specifically — other cubecl sub-crates (e.g. cubecl_runtime's
+// autotune-cache INFO) are low-volume and useful, so stay unfiltered. Warn+
+// (e.g. kernel-compile failures) still passes through.
 const NOISE_TARGETS: &[&str] = &[
     "mp4parse",
     "wgpu",
     "cubecl_wgpu",
+    "cubecl_opt",
     "naga",
     "akaze",
     "ureq",
@@ -285,6 +290,23 @@ mod tests {
             Level::Error,
             "Unknown Cooke data: Length: 71 (0x47) bytes",
         ));
+    }
+
+    #[test]
+    fn logger_limits_noisy_cubecl_subcrates_only() {
+        // The SSA optimization-pass trace from `cubecl_opt` floods Debug at
+        // ~8000 lines per compile; it and the `cubecl_wgpu` Vulkan dump are
+        // filtered to Warn+.
+        assert!(GyroflowLogger::matches_noise_target("cubecl_opt"));
+        assert!(GyroflowLogger::matches_noise_target("cubecl_opt::gvn::apply"));
+        assert!(GyroflowLogger::matches_noise_target("cubecl_wgpu"));
+        // Other cubecl sub-crates stay unfiltered (e.g. cubecl_runtime's
+        // low-volume, useful autotune-cache INFO must survive).
+        assert!(!GyroflowLogger::matches_noise_target("cubecl_runtime::tune::tune_cache"));
+        assert!(!GyroflowLogger::matches_noise_target("cubecl_common::cache_file"));
+        // App code must not be caught by the prefix rule.
+        assert!(!GyroflowLogger::matches_noise_target("gyroflow::controller"));
+        assert!(!GyroflowLogger::matches_noise_target("gpu"));
     }
 }
 
