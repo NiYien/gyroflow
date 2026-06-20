@@ -187,6 +187,106 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Yumuşaklığı, ufuk kilidini ve karenin ne kadar kırpıldığını ayarlayın.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Birden fazla videonun toplu işlenmesi burada gerçekleşir. Bir videoya sağ tıklayıp "Düzenle" seçeneğini seçerek videoyu ana önizlemeye yükleyin ve sonucu kontrol edin.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Birden fazla videonun toplu işlenmesi burada gerçekleşir. Bir videoya sağ tıklayarak "Jiroskopla derin eşleştirme" (jiroskop ayrı bir dosyadayken kaymayı bulur) ya da "Düzenle" (sonucu kontrol etmek için ana önizlemeye yükler) seçeneğini seçin.</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Sonucu işlemek için "Sabitlenmiş videoyu dışa aktar" ögesine, editör eklentileri için bir proje dosyası oluşturmak istiyorsanız "Eklentiler için dışa aktar" ögesine tıklayın.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Sabitlemek istediğiniz klibi seçmek için sol üstteki "Dosya aç" ögesine tıklayın. Aynı anda birden çok klip seçebilirsiniz. Çoğu kamera jiroskop verisini videoya gömdüğü için bu veri otomatik olarak algılanır.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Lens bozulmasının görüntünüz için doğru biçimde düzeltilmesi amacıyla lensi ve sensörü yapılandırın.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Derin eşleştirme</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Bir videoyu ana pencereye ya da işleme kuyruğuna sürükleyin veya sol üstteki "Dosya aç" ögesine tıklayın. Çoğu kamera jiroskop verisini gömdüğü için bu veri otomatik olarak algılanır.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Editör eklentileri</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Zaman çizelgesi üzerinde sabitleme yapmak için Gyroflow eklentisini editörünüze (Premiere, DaVinci Resolve ve diğerleri) kurun.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Lens grupları</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Videonuzu yükleyin</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Ayarları aç</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Çıktı klasörüne erişim reddedildi. Gyroflow'u Ayarlar &gt; Dosyalar ve Klasörler bölümünden etkinleştirin.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>İşleme kuyruğundaki herhangi bir videoyu seçin, sağ tıklayın ve "Düzenle" seçeneğini seçerek videoyu ana önizlemeye yükleyin ve sabitlemeyi gerçek zamanlı kontrol edin.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Lütfen klasör erişim iznini etkinleştirin.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Sonucu önizleyin</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Eğitimi yeniden oynat</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Bir hatayla mı karşılaştınız? Günlükleri yüklemek ve bize geri bildirim göndermek için buraya tıklayın.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Sensör ve lens</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Kameranın nasıl monte edildiğini ayarlayın (yanlış yön düzeltmeyi ters yönde yapar), ardından bozulmanın doğru biçimde düzeltilmesi için lens grubunu seçin.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Montaj yönünü ayarlayın</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Gyroflow'a kameranın nasıl monte edildiğini bildirin. Yanlış yön, sabitlemenin düzeltmeyi ters yönde yapmasına neden olur.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>İşleme kuyruğunu göstermek veya gizlemek için bu düğmeyi kullanın. Birden fazla videonun toplu işlenmesinin tamamı kuyrukta gerçekleşir.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Jiroskop verisi ayrı bir dosyadayken ve zamanlama tutmadığında, işleme kuyruğundaki bir videoya sağ tıklayın ve kaymayı otomatik bulmak için "Jiroskopla derin eşleştirme" seçeneğini seçin.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Görüntülerini yükle</translation>
     </message>
@@ -5565,6 +5665,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Geri</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Bitti</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>İleri</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Atla</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Adım %1 / %2</translation>

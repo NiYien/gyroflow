@@ -187,6 +187,106 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Ρυθμίστε την ομαλότητα, το κλείδωμα ορίζοντα και πόσο περικόπτεται το κάδρο.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Η μαζική επεξεργασία πολλών βίντεο γίνεται εδώ. Κάντε δεξί κλικ σε ένα βίντεο και επιλέξτε "Επεξεργασία" για να το φορτώσετε στην κύρια προεπισκόπηση και να ελέγξετε το αποτέλεσμα.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Η μαζική επεξεργασία πολλών βίντεο γίνεται εδώ. Κάντε δεξί κλικ σε ένα βίντεο για "Βαθιά αντιστοίχιση με γυροσκόπιο" (βρίσκει τη μετατόπιση όταν το γυροσκόπιο είναι ξεχωριστό αρχείο) ή "Επεξεργασία" (το φορτώνει στην κύρια προεπισκόπηση για έλεγχο του αποτελέσματος).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Κάντε κλικ στο "Εξαγωγή σταθεροποιημένου βίντεο" για απόδοση του αποτελέσματος ή στο "Εξαγωγή για πρόσθετα" για να δημιουργήσετε ένα αρχείο έργου για τα πρόσθετα του προγράμματος επεξεργασίας.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Κάντε κλικ στο "Άνοιγμα αρχείου" (επάνω αριστερά) για να επιλέξετε το κλιπ που θέλετε να σταθεροποιήσετε. Μπορείτε να επιλέξετε πολλά μαζί. Οι περισσότερες κάμερες ενσωματώνουν δεδομένα γυροσκοπίου στο βίντεο, οπότε εντοπίζονται αυτόματα.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Ρυθμίστε τον φακό και τον αισθητήρα ώστε η παραμόρφωση του φακού να διορθώνεται σωστά για το υλικό σας.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Βαθιά αντιστοίχιση</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Σύρετε ένα βίντεο στο κύριο παράθυρο ή στην ουρά απόδοσης ή κάντε κλικ στο "Άνοιγμα αρχείου" (επάνω αριστερά). Οι περισσότερες κάμερες ενσωματώνουν δεδομένα γυροσκοπίου, οπότε εντοπίζονται αυτόματα.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Πρόσθετα προγράμματος επεξεργασίας</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Εγκαταστήστε το πρόσθετο Gyroflow στο πρόγραμμα επεξεργασίας σας (Premiere, DaVinci Resolve και άλλα) για σταθεροποίηση στη γραμμή χρόνου.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Ομάδες φακών</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Φορτώστε το βίντεό σας</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Άνοιγμα ρυθμίσεων</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Δεν επιτράπηκε η πρόσβαση στον φάκελο εξόδου. Ενεργοποιήστε το Gyroflow στις Ρυθμίσεις &gt; Αρχεία και φάκελοι.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Επιλέξτε οποιοδήποτε βίντεο στην ουρά απόδοσης, κάντε δεξί κλικ και επιλέξτε "Επεξεργασία" για να το φορτώσετε στην κύρια προεπισκόπηση και να ελέγξετε τη σταθεροποίηση σε πραγματικό χρόνο.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Ενεργοποιήστε το δικαίωμα πρόσβασης στον φάκελο.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Προεπισκόπηση αποτελέσματος</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Επανάληψη οδηγού</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Συναντήσατε σφάλμα; Κάντε κλικ εδώ για να ανεβάσετε αρχεία καταγραφής και να μας στείλετε σχόλια.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Αισθητήρας και φακός</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Ορίστε πώς ήταν τοποθετημένη η κάμερα (ο λάθος προσανατολισμός διορθώνει προς τη λάθος κατεύθυνση) και έπειτα επιλέξτε την ομάδα φακών ώστε η παραμόρφωση να διορθώνεται σωστά.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Ορίστε τον προσανατολισμό τοποθέτησης</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Πείτε στο Gyroflow πώς ήταν τοποθετημένη η κάμερα. Ο λάθος προσανατολισμός κάνει τη σταθεροποίηση να διορθώνει προς τη λάθος κατεύθυνση.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Χρησιμοποιήστε αυτό το κουμπί για να εμφανίσετε ή να αποκρύψετε την ουρά απόδοσης. Η μαζική επεξεργασία πολλών βίντεο γίνεται όλη στην ουρά.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Όταν τα δεδομένα γυροσκοπίου βρίσκονται σε ξεχωριστό αρχείο και ο συγχρονισμός δεν ταιριάζει, κάντε δεξί κλικ σε ένα βίντεο στην ουρά απόδοσης και επιλέξτε "Βαθιά αντιστοίχιση με γυροσκόπιο" για να βρεθεί αυτόματα η μετατόπιση.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Φόρτωσε το υλικό σου</translation>
     </message>
@@ -5579,6 +5679,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Πίσω</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Τέλος</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Επόμενο</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Παράλειψη</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Βήμα %1 από %2</translation>

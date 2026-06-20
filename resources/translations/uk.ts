@@ -187,6 +187,106 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Налаштуйте згладжування, горизонтальне блокування та ступінь обрізки кадру.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Пакетна обробка кількох відео відбувається тут. Клацніть відео правою кнопкою та виберіть "Редагувати", щоб завантажити його в основний перегляд і перевірити результат.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Пакетна обробка кількох відео відбувається тут. Клацніть відео правою кнопкою для "Глибоке зіставлення з гіроскопом" (знаходить зміщення, коли гіроскоп в окремому файлі) або "Редагувати" (завантажує в основний перегляд для перевірки результату).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Натисніть "Експортувати стабілізоване відео", щоб відрендерити результат, або "Експорт для плагінів", щоб створити файл проєкту для плагінів редактора.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Натисніть "Відкрити файл" (вгорі ліворуч), щоб вибрати кліп для стабілізації. Можна вибрати кілька одразу. Більшість камер вбудовують дані гіроскопа у відео, тож вони визначаються автоматично.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Налаштуйте об'єктив і сенсор, щоб спотворення об'єктива виправлялися правильно для вашого матеріалу.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Глибоке зіставлення</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Перетягніть відео в головне вікно або чергу рендеру, або натисніть "Відкрити файл" (вгорі ліворуч). Більшість камер вбудовують дані гіроскопа, тож вони визначаються автоматично.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Плагіни редактора</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Встановіть плагін Gyroflow у ваш редактор (Premiere, DaVinci Resolve та інші), щоб стабілізувати прямо на таймлайні.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Групи об'єктивів</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Завантажте відео</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Відкрити налаштування</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Доступ до папки виводу заборонено. Увімкніть Gyroflow у Налаштування &gt; Файли та папки.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Виберіть будь-яке відео в черзі рендеру, клацніть правою кнопкою та виберіть "Редагувати", щоб завантажити його в основний перегляд і перевірити стабілізацію в реальному часі.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Будь ласка, увімкніть дозвіл на доступ до папки.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Перегляньте результат</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Повторити навчання</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Натрапили на помилку? Натисніть тут, щоб завантажити журнали та надіслати нам відгук.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Сенсор і об'єктив</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Укажіть, як була закріплена камера (неправильна орієнтація виправить не в той бік), потім виберіть групу об'єктивів, щоб спотворення виправлялися правильно.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Задайте орієнтацію кріплення</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Повідомте Gyroflow, як була закріплена камера. Неправильна орієнтація змусить стабілізацію виправляти не в той бік.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Використовуйте цю кнопку, щоб показати або сховати чергу рендеру. Пакетна обробка кількох відео повністю відбувається в черзі.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Коли дані гіроскопа знаходяться в окремому файлі й тайминг не збігається, клацніть відео в черзі рендеру правою кнопкою та виберіть "Глибоке зіставлення з гіроскопом", щоб знайти зміщення автоматично.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Завантажте матеріал</translation>
     </message>
@@ -5579,6 +5679,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Назад</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Готово</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Далі</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Пропустити</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Крок %1 з %2</translation>

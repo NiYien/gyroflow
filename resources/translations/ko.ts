@@ -186,6 +186,106 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>평활도, 수평 잠금, 화면을 얼마나 잘라낼지를 조정합니다.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>여러 영상의 일괄 처리는 여기서 이루어집니다. 영상을 마우스 오른쪽 버튼으로 클릭하고 "편집"을 선택하면 메인 미리보기에 불러와 결과를 확인할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>여러 영상의 일괄 처리는 여기서 이루어집니다. 영상을 마우스 오른쪽 버튼으로 클릭해 "자이로와 딥 매칭"(자이로가 별도 파일일 때 오프셋을 찾음) 또는 "편집"(메인 미리보기에 불러와 결과 확인)을 선택할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>"안정화된 영상 내보내기"를 클릭하면 결과를 렌더링하고, "플러그인용으로 내보내기"를 클릭하면 편집기 플러그인용 프로젝트 파일을 만듭니다.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>왼쪽 위의 "파일 열기"를 클릭해 안정화할 클립을 선택하세요. 여러 개를 한 번에 선택할 수 있습니다. 대부분의 카메라는 영상에 자이로 데이터를 포함하므로 자동으로 감지됩니다.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>렌즈와 센서를 설정해 촬영 영상의 렌즈 왜곡이 올바르게 보정되도록 하세요.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>딥 매칭</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>메인 창이나 렌더링 대기열로 영상을 끌어다 놓거나 왼쪽 위의 "파일 열기"를 클릭하세요. 대부분의 카메라는 자이로 데이터를 포함하므로 자동으로 감지됩니다.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>편집기 플러그인</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Gyroflow 플러그인을 편집기(Premiere, DaVinci Resolve 등)에 설치하면 타임라인에서 안정화할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>렌즈 그룹</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>영상 불러오기</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>설정 열기</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>출력 폴더 접근이 거부되었습니다. 설정 &gt; 파일 및 폴더 에서 Gyroflow를 허용하세요.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>렌더링 대기열에서 영상을 하나 선택하고 마우스 오른쪽 버튼으로 클릭해 "편집"을 선택하면 메인 미리보기에 불러와 안정화를 실시간으로 확인할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>폴더 접근 권한을 허용해 주세요.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>결과 미리보기</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>튜토리얼 다시 보기</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>문제가 발생했나요? 여기를 클릭해 로그를 업로드하고 의견을 보내주세요.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>센서와 렌즈</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>카메라 장착 방향을 설정한 뒤(방향이 틀리면 반대 방향으로 보정됩니다) 렌즈 그룹을 선택해 왜곡이 올바르게 보정되도록 하세요.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>장착 방향 설정</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>카메라가 어떻게 장착되었는지 Gyroflow에 알려주세요. 방향이 틀리면 안정화가 반대 방향으로 보정합니다.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>이 버튼으로 렌더링 대기열을 표시하거나 숨깁니다. 여러 영상의 일괄 처리는 모두 대기열에서 이루어집니다.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>자이로 데이터가 별도 파일에 있고 타이밍이 맞지 않을 때는 렌더링 대기열에서 영상을 마우스 오른쪽 버튼으로 클릭해 "자이로와 딥 매칭"을 선택하면 오프셋을 자동으로 찾습니다.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>영상 불러오기</translation>
     </message>
@@ -5578,6 +5678,22 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>뒤로</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>완료</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>다음</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>건너뛰기</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>%2단계 중 %1단계</translation>

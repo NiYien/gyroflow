@@ -186,6 +186,106 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Säädä pehmeyttä, horisonttilukitusta ja sitä, kuinka paljon kuvaa rajataan.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Useamman videon eräajo tapahtuu täällä. Napsauta videota hiiren oikealla ja valitse "Muokkaa", niin se ladataan pääesikatseluun ja voit tarkistaa tuloksen.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Useamman videon eräajo tapahtuu täällä. Napsauta videota hiiren oikealla ja valitse "Syväsovitus gyroon" (etsii siirtymän, kun gyro on erillinen tiedosto) tai "Muokkaa" (lataa sen pääesikatseluun tuloksen tarkistamista varten).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Napsauta "Vie vakautettu video", niin tulos renderöidään, tai "Vie liitännäisiä varten", niin saat projektitiedoston editorin liitännäisille.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Napsauta vasemmassa yläkulmassa "Avaa tiedosto" ja valitse vakautettava leike. Voit valita useita kerralla. Useimmat kamerat tallentavat gyrotiedot videoon, joten ne tunnistetaan automaattisesti.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Määritä objektiivi ja kenno, jotta objektiivin vääristymä korjataan oikein materiaalillesi.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Syväsovitus</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Vedä video pääikkunaan tai renderöintijonoon, tai napsauta vasemmassa yläkulmassa "Avaa tiedosto". Useimmat kamerat tallentavat gyrotiedot, joten ne tunnistetaan automaattisesti.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Editorin liitännäiset</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Asenna Gyroflow-liitännäinen editoriisi (Premiere, DaVinci Resolve ja muut), niin voit vakauttaa aikajanalla.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Objektiiviryhmät</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Lataa videosi</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Avaa asetukset</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Pääsy tulostekansioon estetty. Salli Gyroflow kohdassa Asetukset &gt; Tiedostot ja kansiot.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Valitse mikä tahansa video renderöintijonosta, napsauta hiiren oikealla ja valitse "Muokkaa", niin se ladataan pääesikatseluun ja näet vakautuksen reaaliajassa.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Salli kansion käyttöoikeus.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Esikatsele tulos</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Toista opastus uudelleen</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Löysitkö virheen? Napsauta tästä lähettääksesi lokit ja palautetta meille.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Kenno ja objektiivi</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Aseta, miten kamera oli kiinnitetty (väärä asento korjaa väärään suuntaan), ja valitse sitten objektiiviryhmä, jotta vääristymä korjataan oikein.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Aseta kiinnitysasento</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Kerro Gyroflowille, miten kamera oli kiinnitetty. Väärä asento saa vakautuksen korjaamaan väärään suuntaan.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Tällä painikkeella voit näyttää tai piilottaa renderöintijonon. Useamman videon eräajo tapahtuu kokonaan jonossa.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Kun gyrotiedot ovat erillisessä tiedostossa eivätkä ajoitukset täsmää, napsauta videota renderöintijonossa hiiren oikealla ja valitse "Syväsovitus gyroon", niin siirtymä löytyy automaattisesti.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Lataa materiaalisi</translation>
     </message>
@@ -5578,6 +5678,22 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Takaisin</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Valmis</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Seuraava</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Ohita</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Vaihe %1 / %2</translation>

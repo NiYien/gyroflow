@@ -1,0 +1,212 @@
+[
+  {
+    "context": "App",
+    "source": "Adjust smoothness, horizon lock and how much the frame is cropped.",
+    "comment": null,
+    "zh": "调整平滑度、地平线锁定，以及画面裁切的程度。",
+    "idx": 1
+  },
+  {
+    "context": "App",
+    "source": "Batch processing of multiple videos happens here. Right-click a video and choose \"Edit\" to load it into the main preview and check the result.",
+    "comment": null,
+    "zh": "批量处理多个视频都在这里进行。右键某个视频选「Edit」（编辑），把它载入主预览查看稳定效果。",
+    "idx": 2
+  },
+  {
+    "context": "App",
+    "source": "Batch processing of multiple videos happens here. Right-click a video for \"Deep match with gyro\" (finds the offset when the gyro is a separate file) or \"Edit\" (loads it into the main preview to check the result).",
+    "comment": null,
+    "zh": "批量处理多个视频都在这里进行。右键某个视频可选「Deep match with gyro」（陀螺在单独文件、时间对不齐时自动找偏移）或「Edit」（载入主预览查看稳定效果）。",
+    "idx": 3
+  },
+  {
+    "context": "App",
+    "source": "Click \"Export stabilized video\" to render the result, or \"Export for plugins\" to produce a project file for the editor plugins.",
+    "comment": null,
+    "zh": "点「导出稳定视频」渲染成片；或用「导出（搭配插件使用）」生成工程文件，配合剪辑软件插件使用。",
+    "idx": 4
+  },
+  {
+    "context": "App",
+    "source": "Click \"Open file\" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.",
+    "comment": null,
+    "zh": "点左上角「打开文件」选择要稳定的视频。可一次多选。大多数相机的陀螺仪数据已嵌在视频里，会被自动识别。",
+    "idx": 5
+  },
+  {
+    "context": "App",
+    "source": "Configure the lens and sensor so lens distortion is corrected correctly for your footage.",
+    "comment": null,
+    "zh": "配置镜头和传感器信息，让画面畸变得到正确矫正。",
+    "idx": 6
+  },
+  {
+    "context": "App",
+    "source": "Deep match",
+    "comment": null,
+    "zh": "深度匹配",
+    "idx": 7
+  },
+  {
+    "context": "App",
+    "source": "Drag a video into the main window or the render queue, or click \"Open file\" (top-left). Most cameras embed gyro data, so it is detected automatically.",
+    "comment": null,
+    "zh": "把视频拖进主窗口或渲染队列，或点左上角「打开文件」。大多数相机的陀螺仪数据已嵌在视频里，会被自动识别。",
+    "idx": 8
+  },
+  {
+    "context": "App",
+    "source": "Editor plugins",
+    "comment": null,
+    "zh": "安装插件",
+    "idx": 9
+  },
+  {
+    "context": "App",
+    "source": "Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.",
+    "comment": null,
+    "zh": "把 Gyroflow 插件安装到你的剪辑软件（Premiere、DaVinci Resolve 等），即可在时间线上稳定。",
+    "idx": 10
+  },
+  {
+    "context": "App",
+    "source": "Lens groups",
+    "comment": null,
+    "zh": "镜头组数据",
+    "idx": 11
+  },
+  {
+    "context": "App",
+    "source": "Load your video",
+    "comment": null,
+    "zh": "加载视频",
+    "idx": 12
+  },
+  {
+    "context": "App",
+    "source": "Open Settings",
+    "comment": null,
+    "zh": "打开设置",
+    "idx": 13
+  },
+  {
+    "context": "App",
+    "source": "Other settings",
+    "comment": null,
+    "zh": "其他设置",
+    "idx": 14
+  },
+  {
+    "context": "App",
+    "source": "Output folder access denied — enable Gyroflow in Settings → Files and Folders.",
+    "comment": null,
+    "zh": "输出文件夹访问被拒绝 — 请在 设置 → 文件和文件夹 中允许 Gyroflow。",
+    "idx": 15
+  },
+  {
+    "context": "App",
+    "source": "Pick any video in the render queue, right-click and choose \"Edit\" to load it into the main preview and check the stabilization in real time.",
+    "comment": null,
+    "zh": "在渲染队列里随机选一个视频，右键选择「Edit」（编辑），把它载入主预览，实时查看稳定效果。",
+    "idx": 16
+  },
+  {
+    "context": "App",
+    "source": "Please enable folder access permission.",
+    "comment": null,
+    "zh": "请打开文件夹访问权限",
+    "idx": 17
+  },
+  {
+    "context": "App",
+    "source": "Preview the result",
+    "comment": null,
+    "zh": "预览效果",
+    "idx": 18
+  },
+  {
+    "context": "App",
+    "source": "Replay tutorial",
+    "comment": null,
+    "zh": "重新观看教程",
+    "idx": 19
+  },
+  {
+    "context": "App",
+    "source": "Run into a bug? Click here to upload logs and send us feedback.",
+    "comment": null,
+    "zh": "遇到问题？点这里上传日志并反馈给我们。",
+    "idx": 20
+  },
+  {
+    "context": "App",
+    "source": "Sensor and lens",
+    "comment": null,
+    "zh": "传感器与镜头",
+    "idx": 21
+  },
+  {
+    "context": "App",
+    "source": "Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.",
+    "comment": null,
+    "zh": "设置相机的安装方向（方向选错会让稳定往反方向纠），再选择镜头组让画面畸变得到正确矫正。",
+    "idx": 22
+  },
+  {
+    "context": "App",
+    "source": "Set the mounting orientation",
+    "comment": null,
+    "zh": "设置安装方向",
+    "idx": 23
+  },
+  {
+    "context": "App",
+    "source": "Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.",
+    "comment": null,
+    "zh": "告诉软件相机是怎么安装的。方向选错会让稳定往反方向纠。",
+    "idx": 24
+  },
+  {
+    "context": "App",
+    "source": "Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.",
+    "comment": null,
+    "zh": "用这个按钮展开或收起渲染队列。批量处理多个视频都在队列里进行。",
+    "idx": 25
+  },
+  {
+    "context": "App",
+    "source": "When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose \"Deep match with gyro\" to find the offset automatically.",
+    "comment": null,
+    "zh": "当陀螺仪数据在单独的文件里、且时间对不齐时，在渲染队列里右键某个视频，选择「Deep match with gyro」自动找到时间偏移。",
+    "idx": 26
+  },
+  {
+    "context": "TutorialOverlay",
+    "source": "Back",
+    "comment": null,
+    "zh": "上一步",
+    "idx": 27
+  },
+  {
+    "context": "TutorialOverlay",
+    "source": "Done",
+    "comment": null,
+    "zh": "完成",
+    "idx": 28
+  },
+  {
+    "context": "TutorialOverlay",
+    "source": "Next",
+    "comment": null,
+    "zh": "下一步",
+    "idx": 29
+  },
+  {
+    "context": "TutorialOverlay",
+    "source": "Skip",
+    "comment": null,
+    "zh": "跳过",
+    "idx": 30
+  }
+]

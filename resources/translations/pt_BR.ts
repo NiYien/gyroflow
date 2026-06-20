@@ -186,6 +186,106 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Ajuste a suavidade, o bloqueio de horizonte e o quanto a imagem é recortada.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>O processamento em lote de vários vídeos acontece aqui. Clique com o botão direito em um vídeo e escolha "Editar" para carregá-lo na pré-visualização principal e conferir o resultado.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>O processamento em lote de vários vídeos acontece aqui. Clique com o botão direito em um vídeo para "Correspondência profunda com giroscópio" (encontra o deslocamento quando o giroscópio está em um arquivo separado) ou "Editar" (carrega-o na pré-visualização principal para conferir o resultado).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Clique em "Exportar vídeo estabilizado" para renderizar o resultado, ou em "Exportar para plugins" para gerar um arquivo de projeto para os plugins do editor.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Clique em "Abrir arquivo" (canto superior esquerdo) para escolher o clipe que deseja estabilizar. Você pode selecionar vários de uma vez. A maioria das câmeras embute os dados do giroscópio no vídeo, então eles são detectados automaticamente.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Configure a lente e o sensor para que a distorção da lente seja corrigida corretamente nas suas imagens.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Correspondência profunda</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Arraste um vídeo para a janela principal ou para a fila de renderização, ou clique em "Abrir arquivo" (canto superior esquerdo). A maioria das câmeras embute os dados do giroscópio, então eles são detectados automaticamente.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Plugins do editor</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Instale o plugin do Gyroflow no seu editor (Premiere, DaVinci Resolve e outros) para estabilizar na linha do tempo.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Grupos de lentes</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Carregar seu vídeo</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Abrir Configurações</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Acesso à pasta de saída negado: ative o Gyroflow em Configurações &gt; Arquivos e Pastas.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Escolha qualquer vídeo na fila de renderização, clique com o botão direito e escolha "Editar" para carregá-lo na pré-visualização principal e conferir a estabilização em tempo real.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Ative a permissão de acesso à pasta.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Pré-visualizar o resultado</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Repetir tutorial</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Encontrou um erro? Clique aqui para enviar os registros e nos dar seu feedback.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Sensor e lente</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Defina como a câmera estava montada (uma orientação errada corrige no sentido errado) e depois escolha o grupo de lentes para que a distorção seja corrigida corretamente.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Definir a orientação de montagem</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Diga ao Gyroflow como a câmera estava montada. Uma orientação errada faz a estabilização corrigir no sentido errado.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Use este botão para mostrar ou ocultar a fila de renderização. O processamento em lote de vários vídeos acontece todo na fila.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Quando os dados do giroscópio estão em um arquivo separado e o tempo não coincide, clique com o botão direito em um vídeo na fila de renderização e escolha "Correspondência profunda com giroscópio" para encontrar o deslocamento automaticamente.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Carregue suas filmagens</translation>
     </message>
@@ -5578,6 +5678,22 @@ Desative a estabilização da lente (Optical SteadyShot) para usar Gyroflow.</tr
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Voltar</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Concluído</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Avançar</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Pular</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Passo %1 de %2</translation>

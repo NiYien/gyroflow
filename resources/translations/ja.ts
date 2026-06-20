@@ -187,6 +187,106 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>滑らかさ、水平線ロック、画面のクロップ量を調整します。</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>複数の動画のバッチ処理はここで行います。動画を右クリックして「編集」を選ぶと、メインプレビューに読み込んで結果を確認できます。</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>複数の動画のバッチ処理はここで行います。動画を右クリックして「ジャイロとディープマッチング」（ジャイロが別ファイルのときにオフセットを検出）または「編集」（メインプレビューに読み込んで結果を確認）を選べます。</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>「手ブレ補正動画を書き出し」をクリックすると結果をレンダリングします。「プラグイン用に書き出し」をクリックすると、エディタープラグイン用のプロジェクトファイルを作成します。</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>左上の「ファイルを開く」をクリックして、補正したいクリップを選びます。複数同時に選択できます。ほとんどのカメラは動画にジャイロデータを埋め込んでいるため、自動的に検出されます。</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>レンズとセンサーを設定して、お使いの映像のレンズ歪みが正しく補正されるようにします。</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>ディープマッチング</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>メインウィンドウまたはレンダーキューに動画をドラッグするか、左上の「ファイルを開く」をクリックします。ほとんどのカメラはジャイロデータを埋め込んでいるため、自動的に検出されます。</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>エディタープラグイン</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Gyroflow プラグインをお使いのエディター（Premiere、DaVinci Resolve など）にインストールすると、タイムライン上で手ブレ補正できます。</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>レンズグループ</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>動画を読み込む</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>設定を開く</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>出力フォルダーへのアクセスが拒否されました。設定 &gt; ファイルとフォルダー で Gyroflow を有効にしてください。</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>レンダーキューの任意の動画を選び、右クリックして「編集」を選ぶと、メインプレビューに読み込んでリアルタイムで手ブレ補正を確認できます。</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>フォルダーアクセス権限を有効にしてください。</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>結果をプレビュー</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>チュートリアルを再生</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>不具合に遭遇しましたか? ここをクリックしてログをアップロードし、フィードバックをお送りください。</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>センサーとレンズ</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>カメラの取り付け方向を設定し（方向を間違えると逆方向に補正されます）、次にレンズグループを選んで歪みが正しく補正されるようにします。</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>取り付け方向を設定</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>カメラの取り付け方向を Gyroflow に伝えます。方向を間違えると、手ブレ補正が逆方向に働きます。</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>このボタンでレンダーキューの表示と非表示を切り替えます。複数の動画のバッチ処理はすべてキューで行われます。</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>ジャイロデータが別ファイルにあり、タイミングが合わない場合は、レンダーキューの動画を右クリックして「ジャイロとディープマッチング」を選ぶと、オフセットを自動的に検出します。</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>素材を読み込む</translation>
     </message>
@@ -5581,6 +5681,22 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>戻る</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>完了</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>次へ</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>スキップ</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>ステップ %1 / %2</translation>

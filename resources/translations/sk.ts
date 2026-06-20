@@ -187,6 +187,106 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Upravte vyhladenie, zamknutý horizont a mieru orezania obrazu.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Dávkové spracovanie viacerých videí prebieha tu. Kliknite pravým tlačidlom na video a zvoľte "Upraviť", aby ste ho načítali do hlavného náhľadu a skontrolovali výsledok.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Dávkové spracovanie viacerých videí prebieha tu. Kliknite pravým tlačidlom na video pre "Hlboké párovanie s gyroskopom" (nájde posun, keď je gyroskop v samostatnom súbore) alebo "Upraviť" (načíta ho do hlavného náhľadu na kontrolu výsledku).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Kliknite na "Exportovať stabilizované video" pre vykreslenie výsledku, alebo na "Exportovať pre pluginy" pre vytvorenie súboru projektu pre pluginy editora.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Kliknite na "Otvor súbor" (vľavo hore) a vyberte klip, ktorý chcete stabilizovať. Môžete ich vybrať niekoľko naraz. Väčšina kamier ukladá dáta gyroskopu priamo do videa, takže sa rozpoznajú automaticky.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Nastavte objektív a snímač, aby bolo skreslenie objektívu pre vaše zábery správne korigované.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Hlboké párovanie</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Pretiahnite video do hlavného okna alebo do fronty na renderovanie, alebo kliknite na "Otvor súbor" (vľavo hore). Väčšina kamier ukladá dáta gyroskopu, takže sa rozpoznajú automaticky.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Pluginy editora</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Nainštalujte plugin Gyroflow do svojho editora (Premiere, DaVinci Resolve a ďalšie) a stabilizujte priamo na časovej osi.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Skupiny objektívov</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Načítajte svoje video</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Otvoriť nastavenia</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Prístup k výstupnému priečinku bol odmietnutý. Povoľte Gyroflow v Nastavenia &gt; Súbory a priečinky.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Vyberte ľubovoľné video vo fronte na renderovanie, kliknite pravým tlačidlom a zvoľte "Upraviť", aby ste ho načítali do hlavného náhľadu a skontrolovali stabilizáciu v reálnom čase.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Povoľte prosím oprávnenie na prístup k priečinku.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Náhľad výsledku</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Prehrať návod znova</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Narazili ste na chybu? Kliknite sem a nahrajte protokoly a pošlite nám spätnú väzbu.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Snímač a objektív</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Nastavte, ako bola kamera upevnená (nesprávna orientácia koriguje opačným smerom), potom vyberte skupinu objektívov, aby bolo skreslenie správne korigované.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Nastavte orientáciu upevnenia</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Povedzte Gyroflow, ako bola kamera upevnená. Nesprávna orientácia spôsobí, že stabilizácia koriguje opačným smerom.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Týmto tlačidlom zobrazíte alebo skryjete frontu na renderovanie. Dávkové spracovanie viacerých videí prebieha vždy vo fronte.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Keď sú dáta gyroskopu v samostatnom súbore a časovanie nesedí, kliknite pravým tlačidlom na video vo fronte na renderovanie a zvoľte "Hlboké párovanie s gyroskopom" pre automatické nájdenie posunu.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Načítajte svoje zábery</translation>
     </message>
@@ -5578,6 +5678,22 @@ Vypnite stabilizáciu objektívu (Optical SteadyShot), aby ste mohli používať
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Späť</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Hotovo</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Ďalej</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Preskočiť</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Krok %1 z %2</translation>

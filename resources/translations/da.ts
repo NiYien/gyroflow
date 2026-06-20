@@ -187,6 +187,106 @@ Bemærk, at dette kun er en visuel indikator og påvirker ikke resultatet.</tran
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Justér udjævning, horisontlås og hvor meget billedet beskæres.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Batchbehandling af flere videoer foregår her. Højreklik på en video og vælg "Rediger" for at indlæse den i hovedvisningen og tjekke resultatet.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Batchbehandling af flere videoer foregår her. Højreklik på en video for "Dyb matchning med gyro" (finder forskydningen, når gyroen er en separat fil) eller "Rediger" (indlæser den i hovedvisningen, så du kan tjekke resultatet).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Klik "Eksportér stabiliseret video" for at rendere resultatet, eller "Eksportér til plugins" for at oprette en projektfil til editor-plugins.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Klik "Åbn fil" (øverst til venstre) for at vælge det klip, du vil stabilisere. Du kan vælge flere på én gang. De fleste kameraer indlejrer gyrodata i videoen, så de registreres automatisk.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Konfigurér objektiv og sensor, så objektivforvrængning korrigeres korrekt for dit materiale.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Dyb matchning</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Træk en video ind i hovedvinduet eller renderkøen, eller klik "Åbn fil" (øverst til venstre). De fleste kameraer indlejrer gyrodata, så de registreres automatisk.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Editor-plugins</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Installér Gyroflow-pluginet i din editor (Premiere, DaVinci Resolve og flere) for at stabilisere på tidslinjen.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Objektivgrupper</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Indlæs din video</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Åbn indstillinger</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Adgang til outputmappen nægtet. Aktivér Gyroflow under Indstillinger &gt; Filer og mapper.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Vælg en video i renderkøen, højreklik og vælg "Rediger" for at indlæse den i hovedvisningen og se stabiliseringen i realtid.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Aktivér venligst tilladelse til mappeadgang.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Se resultatet</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Afspil vejledning igen</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Stødt på en fejl? Klik her for at uploade logfiler og sende os feedback.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Sensor og objektiv</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Angiv, hvordan kameraet var monteret (en forkert retning korrigerer den forkerte vej), og vælg derefter objektivgruppen, så forvrængningen korrigeres korrekt.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Angiv monteringsretningen</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Fortæl Gyroflow, hvordan kameraet var monteret. En forkert retning får stabiliseringen til at korrigere den forkerte vej.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Brug denne knap til at vise eller skjule renderkøen. Batchbehandling af flere videoer foregår helt i køen.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Når gyrodataene ligger i en separat fil, og timingen ikke passer, så højreklik på en video i renderkøen og vælg "Dyb matchning med gyro" for automatisk at finde forskydningen.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Indlæs dit materiale</translation>
     </message>
@@ -5579,6 +5679,22 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for at bruge Gyroflow.</tra
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Tilbage</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Færdig</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Næste</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Spring over</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Trin %1 af %2</translation>

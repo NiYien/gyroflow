@@ -188,6 +188,106 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>Sesuaikan kehalusan, penguncian horizon, dan seberapa banyak bingkai dipangkas.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>Pemrosesan batch beberapa video terjadi di sini. Klik kanan sebuah video dan pilih "Edit" untuk memuatnya ke pratinjau utama dan memeriksa hasilnya.</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>Pemrosesan batch beberapa video terjadi di sini. Klik kanan sebuah video untuk "Pencocokan mendalam dengan giroskop" (menemukan offset ketika giroskop berada di file terpisah) atau "Edit" (memuatnya ke pratinjau utama untuk memeriksa hasilnya).</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>Klik "Ekspor video yang distabilkan" untuk merender hasilnya, atau "Ekspor untuk plugin" untuk membuat file project bagi plugin editor.</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>Klik "Membuka file" (kiri atas) untuk memilih klip yang ingin Anda stabilkan. Anda dapat memilih beberapa sekaligus. Sebagian besar kamera menyematkan data giroskop di video, sehingga terdeteksi secara otomatis.</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>Konfigurasikan lensa dan sensor agar distorsi lensa dikoreksi dengan benar untuk rekaman Anda.</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>Pencocokan mendalam</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>Seret video ke jendela utama atau antrean render, atau klik "Membuka file" (kiri atas). Sebagian besar kamera menyematkan data giroskop, sehingga terdeteksi secara otomatis.</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>Plugin editor</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>Pasang plugin Gyroflow ke editor Anda (Premiere, DaVinci Resolve, dan lainnya) untuk menstabilkan di timeline.</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>Grup lensa</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>Muat video Anda</translation>
+    </message>
+    <message>
+        <source>Open Settings</source>
+        <translation>Buka pengaturan</translation>
+    </message>
+    <message>
+        <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
+        <translation>Akses folder keluaran ditolak. Aktifkan Gyroflow di Pengaturan &gt; File dan Folder.</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>Pilih video mana pun di antrean render, klik kanan, dan pilih "Edit" untuk memuatnya ke pratinjau utama dan memeriksa stabilisasi secara real time.</translation>
+    </message>
+    <message>
+        <source>Please enable folder access permission.</source>
+        <translation>Harap aktifkan izin akses folder.</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>Pratinjau hasilnya</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>Putar ulang tutorial</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>Menemukan bug? Klik di sini untuk mengunggah log dan mengirimkan masukan kepada kami.</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>Sensor dan lensa</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>Atur bagaimana kamera dipasang (orientasi yang salah akan mengoreksi ke arah yang salah), lalu pilih grup lensa agar distorsi dikoreksi dengan benar.</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>Atur orientasi pemasangan</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>Beri tahu Gyroflow bagaimana kamera dipasang. Orientasi yang salah membuat stabilisasi mengoreksi ke arah yang salah.</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>Gunakan tombol ini untuk menampilkan atau menyembunyikan antrean render. Pemrosesan batch beberapa video sepenuhnya terjadi di antrean.</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>Ketika data giroskop berada di file terpisah dan waktunya tidak sejajar, klik kanan sebuah video di antrean render dan pilih "Pencocokan mendalam dengan giroskop" untuk menemukan offset secara otomatis.</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>Muat rekamanmu</translation>
     </message>
@@ -5574,6 +5674,22 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>Kembali</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>Selesai</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>Berikutnya</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>Lewati</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>Langkah %1 dari %2</translation>

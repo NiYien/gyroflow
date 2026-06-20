@@ -187,6 +187,94 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
+        <translation>調整平滑度、地平線鎖定，以及畫面裁切的程度。</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
+        <translation>批次處理多個影片都在這裡進行。在影片上按右鍵選「編輯」，把它載入主預覽查看穩定效果。</translation>
+    </message>
+    <message>
+        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
+        <translation>批次處理多個影片都在這裡進行。在影片上按右鍵可選「與陀螺儀深度匹配」（陀螺儀在獨立檔案、時間對不齊時自動找偏移）或「編輯」（載入主預覽查看穩定效果）。</translation>
+    </message>
+    <message>
+        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
+        <translation>點「匯出穩定後的影片」算繪成片；或用「匯出（搭配外掛使用）」產生專案檔，搭配剪輯軟體外掛使用。</translation>
+    </message>
+    <message>
+        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation>點左上角「打開檔案」選擇要穩定的影片。可一次多選。大多數相機的陀螺儀資料已嵌在影片裡，會被自動辨識。</translation>
+    </message>
+    <message>
+        <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
+        <translation>設定鏡頭和感測器資訊，讓畫面畸變得到正確矯正。</translation>
+    </message>
+    <message>
+        <source>Deep match</source>
+        <translation>深度匹配</translation>
+    </message>
+    <message>
+        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation>把影片拖進主視窗或渲染列，或點左上角「打開檔案」。大多數相機的陀螺儀資料已嵌在影片裡，會被自動辨識。</translation>
+    </message>
+    <message>
+        <source>Editor plugins</source>
+        <translation>安裝外掛</translation>
+    </message>
+    <message>
+        <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
+        <translation>把 Gyroflow 外掛安裝到你的剪輯軟體（Premiere、DaVinci Resolve 等），即可在時間軸上穩定。</translation>
+    </message>
+    <message>
+        <source>Lens groups</source>
+        <translation>鏡頭群組資料</translation>
+    </message>
+    <message>
+        <source>Load your video</source>
+        <translation>載入影片</translation>
+    </message>
+    <message>
+        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
+        <translation>在渲染列裡任選一個影片，按右鍵選擇「編輯」，把它載入主預覽，即時查看穩定效果。</translation>
+    </message>
+    <message>
+        <source>Preview the result</source>
+        <translation>預覽效果</translation>
+    </message>
+    <message>
+        <source>Replay tutorial</source>
+        <translation>重新觀看教學</translation>
+    </message>
+    <message>
+        <source>Run into a bug? Click here to upload logs and send us feedback.</source>
+        <translation>遇到問題? 點這裡上傳記錄並回報給我們。</translation>
+    </message>
+    <message>
+        <source>Sensor and lens</source>
+        <translation>感測器與鏡頭</translation>
+    </message>
+    <message>
+        <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
+        <translation>設定相機的安裝方向（方向選錯會讓穩定往反方向修正），再選擇鏡頭群組讓畫面畸變得到正確矯正。</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation</source>
+        <translation>設定安裝方向</translation>
+    </message>
+    <message>
+        <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
+        <translation>告訴 Gyroflow 相機是怎麼安裝的。方向選錯會讓穩定往反方向修正。</translation>
+    </message>
+    <message>
+        <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
+        <translation>用這個按鈕展開或收起渲染列。批次處理多個影片都在渲染列裡進行。</translation>
+    </message>
+    <message>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
+        <translation>當陀螺儀資料在獨立檔案裡、且時間對不齊時，在渲染列裡按右鍵某個影片，選擇「與陀螺儀深度匹配」自動找到時間偏移。</translation>
+    </message>
+    <message>
         <source>Load your footage</source>
         <translation>載入素材</translation>
     </message>
@@ -5587,6 +5675,22 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
 </context>
 <context>
     <name>TutorialOverlay</name>
+    <message>
+        <source>Back</source>
+        <translation>上一步</translation>
+    </message>
+    <message>
+        <source>Done</source>
+        <translation>完成</translation>
+    </message>
+    <message>
+        <source>Next</source>
+        <translation>下一步</translation>
+    </message>
+    <message>
+        <source>Skip</source>
+        <translation>跳過</translation>
+    </message>
     <message>
         <source>Step %1 of %2</source>
         <translation>第 %1 / %2 步</translation>
