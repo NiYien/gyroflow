@@ -51,4 +51,6 @@ TimelineAxisButton 1.0 TimelineAxisButton.qml
 TimelineRangeIndicator 1.0 TimelineRangeIndicator.qml
 TimelineSyncPoint 1.0 TimelineSyncPoint.qml
 ToolTip 1.0 ToolTip.qml
+TutorialOverlay 1.0 TutorialOverlay.qml
+TutorialQueueRow 1.0 TutorialQueueRow.qml
 WindowCloseButton 1.0 WindowCloseButton.qml
