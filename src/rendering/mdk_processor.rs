@@ -11,8 +11,19 @@ use itertools::Itertools;
 use qmetaobject::QString;
 use qmetaobject::QUrl;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering::Relaxed;
+
+// Blackmagic RAW (driven here through MDK) is not safe to decode from several
+// threads at once: decoding a batch of .braw files concurrently (e.g. fetching
+// queue thumbnails) corrupts the process heap and crashes with an access
+// violation in the native decoder (observed as MSVCP140 0xc0000005, with the
+// crash site drifting between runs and even defeating the crash handler —
+// classic heap corruption). A single .braw decodes fine. Serialize every BRAW
+// decode session behind this global lock so the native SDK is only ever
+// touched by one thread at a time. Non-BRAW formats never take this lock.
+static BRAW_DECODE_LOCK: Mutex<()> = Mutex::new(());
 
 pub struct MDKProcessor {
     pub mdk: qml_video_rs::video_item::MDKVideoItem,
@@ -31,6 +42,10 @@ pub struct MDKProcessor {
                 + 'static,
         >,
     >,
+    // Held for the whole decode session when the source is a .braw file so the
+    // native Blackmagic RAW SDK is accessed by only one thread at a time; None
+    // for every other format. See BRAW_DECODE_LOCK above.
+    _braw_guard: Option<std::sync::MutexGuard<'static, ()>>,
 }
 impl Drop for MDKProcessor {
     fn drop(&mut self) {
@@ -46,6 +61,7 @@ impl MDKProcessor {
         let mut custom_decoder = String::new(); // eg. BRAW:format=rgba64le
         let mut format = ffmpeg_next::format::Pixel::RGBA;
         let filename = gyroflow_core::filesystem::get_filename(url);
+        let is_braw = filename.to_ascii_lowercase().ends_with("braw");
 
         let mut options: String = decoder_options
             .map(|x| x.into_iter().map(|x| format!("{}={}", x.0, x.1)).join(":"))
@@ -54,7 +70,7 @@ impl MDKProcessor {
             options.insert(0, ':');
         }
 
-        if filename.to_ascii_lowercase().ends_with("braw") {
+        if is_braw {
             let gpu = if gpu_edcoding { "auto" } else { "no" }; // Disable GPU decoding for BRAW
             custom_decoder = format!("BRAW:gpu={}{}", gpu, options);
         }
@@ -66,6 +82,16 @@ impl MDKProcessor {
         }
         ::log::info!("Custom decoder: {custom_decoder}");
 
+        // Take the global BRAW lock BEFORE setUrl (which spins up the native
+        // Blackmagic RAW decoder) and hold it until this processor is dropped,
+        // so the whole create → decode → stop session is serialized against any
+        // other BRAW decode running on another thread.
+        let braw_guard = if is_braw {
+            Some(BRAW_DECODE_LOCK.lock().unwrap_or_else(|p| p.into_inner()))
+        } else {
+            None
+        };
+
         mdk.setUrl(
             QUrl::from(QString::from(url)),
             QString::from(custom_decoder.clone()),
@@ -76,6 +102,7 @@ impl MDKProcessor {
             format,
             custom_decoder,
             on_frame_callback: None,
+            _braw_guard: braw_guard,
         }
     }
     pub fn on_frame<F>(&mut self, cb: F)
