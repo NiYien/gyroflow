@@ -187,6 +187,70 @@ Merk at dette bare en en visuel indikator, den påvirker ikke resultatet.</trans
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Last inn materialet</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Dra videoene og gyro-dataene rett hit.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Sjekk montering og objektivdata</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Angi monteringsretningen; for objektiver med manuelt fokus eller anamorfe objektiver må du også angi objektivgruppen.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Stabiliseringsinnstillinger</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Juster utjevning, lås horisont og zoommodus. I render kø kan du velge flere klipp eller redigere flere samtidig.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Dypt søk</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Velg et klipp med tydelig bevegelse, høyreklikk og velg "Dyp matching med gyro" for å justere videoen mot gyro-dataene.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Merk: Videoen må ligge innenfor gyroens registrerte tidsintervall.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>For et ferdig klipp velg "Eksporter stabilisert video"; for å bruke editor-pluginene velg "Eksporter for plugins". Etter at du eksporterer, starter stabiliseringen.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Forhåndsvisning</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Høyreklikk på en video i køen og velg "Rediger" for å forhåndsvise resultatet.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Forhåndsvis og juster</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Klikk på knappen for stabiliseringsforhåndsvisning for å bytte mellom Original, Stabilisert og Oversikt. Du kan også finjustere stabiliseringsinnstillingene for hvert klipp.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Trykk Ctrl+S / Cmd+S for å lagre når du er fornøyd.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Åpne køen for å administrere videoer samlet; du kan også tilbakestille behandlingen eller tømme køen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Eksporter for plugins</translation>
@@ -5187,6 +5251,18 @@ Er du sikker på at du vil fortsette?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Forhåndsvisning: original</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Forhåndsvisning: stabilisert</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Forhåndsvisning: oversikt</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5499,6 +5575,13 @@ Deaktiver objektivstabilisering (Optical SteadyShot) for å bruke Gyroflow.</tra
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Nei</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Steg %1 av %2</translation>
     </message>
 </context>
 </TS>

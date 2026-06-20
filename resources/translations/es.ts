@@ -186,6 +186,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Carga tu material</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Arrastra aquí tus vídeos y los datos del giroscopio.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Comprueba el montaje y los datos del objetivo</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Ajusta la orientación del montaje; para objetivos de enfoque manual o anamórficos, define también el grupo de objetivos.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Ajustes de estabilización</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Ajusta el suavizado, el bloqueo de horizonte y el modo de zoom. En la cola de renderizado puedes seleccionar o editar varios clips a la vez.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Búsqueda profunda</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Elige un clip con movimiento claro, luego haz clic derecho y selecciona "Emparejamiento profundo con giroscopio" para alinear el vídeo con los datos del giroscopio.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Nota: el vídeo debe quedar dentro del rango de tiempo grabado por el giroscopio.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Para un clip terminado elige "Exportar vídeo estabilizado"; para usar los complementos del editor elige "Exportar para complementos". Tras exportar, comienza la estabilización.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Vista previa</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Haz clic derecho en un vídeo de la cola y elige "Editar" para previsualizar el resultado.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Vista previa y ajustes</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Pulsa el botón de vista previa de estabilización para alternar entre Original, Estabilizado y Vista general. También puedes ajustar la estabilización por clip.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Pulsa Ctrl+S / Cmd+S para guardar cuando estés satisfecho.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Abre la cola para gestionar vídeos por lotes; también puedes reiniciar el procesamiento o vaciar la cola.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Exportar para complementos</translation>
@@ -5183,6 +5247,18 @@ Esta característica es experimental, los resultados pueden no ser correctos del
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Vista previa: original</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Vista previa: estabilizado</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Vista previa: vista general</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5494,6 +5570,13 @@ Desactive la estabilización de la lente (SteadyShot óptico) para poder utiliza
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>No</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Paso %1 de %2</translation>
     </message>
 </context>
 </TS>

@@ -186,6 +186,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>영상 불러오기</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>동영상과 자이로 데이터를 여기에 끌어다 놓으세요.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>장착 및 렌즈 데이터 확인</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>장착 방향을 설정하세요. 수동 초점 또는 아나모픽 렌즈의 경우 렌즈 그룹도 설정합니다.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>안정화 설정</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>평활도, 수평 잠금, 줌 모드를 조정합니다. 렌더링 대기열에서는 클립을 여러 개 선택하거나 일괄 편집할 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>딥 서치</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>움직임이 분명한 클립을 고른 뒤 마우스 오른쪽 버튼을 눌러 "자이로와 딥 매칭"을 선택하면 영상과 자이로 데이터를 맞출 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>참고: 동영상은 자이로의 기록 시간 범위 안에 있어야 합니다.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>완성된 클립은 "안정화된 영상 내보내기"를, 편집기 플러그인을 사용하려면 "플러그인용으로 내보내기"를 선택하세요. 내보내면 안정화가 시작됩니다.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>미리보기</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>대기열의 동영상을 마우스 오른쪽 버튼으로 클릭하고 "편집"을 선택하면 결과를 미리 볼 수 있습니다.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>미리보기 및 조정</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>안정화 미리보기 버튼을 누르면 원본, 안정화됨, 개요 사이를 전환할 수 있습니다. 클립별로 안정화 설정을 세밀하게 조정할 수도 있습니다.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>마음에 들면 Ctrl+S / Cmd+S 를 눌러 저장하세요.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>대기열을 열어 동영상을 일괄 관리하세요. 처리를 초기화하거나 대기열을 비울 수도 있습니다.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>플러그인용으로 내보내기</translation>
@@ -5186,6 +5250,18 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>미리보기: 원본</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>미리보기: 안정화됨</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>미리보기: 개요</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5498,6 +5574,13 @@ Gyroflow를 사용하려면 렌즈 안정화(광학 SteadyShot)를 비활성화�
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>아니요</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>%2단계 중 %1단계</translation>
     </message>
 </context>
 </TS>

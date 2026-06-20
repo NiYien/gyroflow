@@ -187,6 +187,70 @@ Isto é apenas um indicador visual, não afeta a renderização.</translation>
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Carregue o seu material</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Arraste os seus vídeos e dados de giroscópio para aqui.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Verifique a montagem e os dados da objetiva</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Defina a posição de montagem; para objetivas de foco manual ou anamórficas, defina também o grupo de objetivas.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Definições de estabilização</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Ajuste a suavidade, o bloqueio de horizonte e o modo de zoom. Na fila de renderização pode selecionar vários clipes ou editá-los em lote.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Pesquisa profunda</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Escolha um clipe com movimento nítido, depois clique com o botão direito e selecione "Correspondência profunda com giroscópio" para alinhar o vídeo com os dados de giroscópio.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Nota: o vídeo tem de estar dentro do intervalo de tempo gravado pelo giroscópio.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Para um clipe finalizado escolha "Exportar vídeo estabilizado"; para usar os plugins do editor escolha "Exportar para plugins". Depois de exportar, a estabilização começa.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Pré-visualização</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Clique com o botão direito num vídeo da fila e selecione "Editar" para pré-visualizar o resultado.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Pré-visualizar e ajustar</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Clique no botão de pré-visualização da estabilização para alternar entre Original, Estabilizado e Visão geral. Também pode afinar as definições de estabilização por clipe.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Prima Ctrl+S / Cmd+S para guardar quando estiver satisfeito.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Abra a fila para gerir os vídeos em lote; também pode repor o processamento ou limpar a fila.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Exportar para plugins</translation>
@@ -5187,6 +5251,18 @@ Tem a certeza que pretende continuar?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Pré-visualização: original</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Pré-visualização: estabilizado</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Pré-visualização: visão geral</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5499,6 +5575,13 @@ Desative a estabilização da lente (Optical SteadyShot) para usar Gyroflow.</tr
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Não</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Passo %1 de %2</translation>
     </message>
 </context>
 </TS>

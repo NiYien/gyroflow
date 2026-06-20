@@ -187,6 +187,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Завантажте матеріал</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Перетягніть сюди відео та дані гіроскопа.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Перевірте встановлення та дані об'єктива</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Задайте орієнтацію встановлення; для об'єктивів із ручним фокусуванням або анаморфотних також укажіть групу об'єктивів.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Параметри стабілізації</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Налаштуйте згладжування, горизонтальне блокування та режим масштабування. У черзі рендеру можна виділяти кілька кліпів і редагувати їх пакетно.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Глибокий пошук</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Виберіть кліп із помітним рухом, потім клацніть правою кнопкою та виберіть "Глибоке зіставлення з гіроскопом", щоб поєднати відео з даними гіроскопа.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Примітка: відео має потрапляти в діапазон часу запису гіроскопа.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Для готового кліпа виберіть "Експортувати стабілізоване відео"; для роботи з плагінами редактора виберіть "Експорт для плагінів". Після експорту почнеться стабілізація.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Перегляд</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Клацніть відео в черзі правою кнопкою та виберіть "Редагувати", щоб переглянути результат.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Перегляд і налаштування</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Натисніть кнопку перегляду стабілізації, щоб перемикатися між Оригіналом, Стабілізованим і Оглядом. Ви також можете точно налаштувати параметри стабілізації для кожного кліпа.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Коли все влаштує, натисніть Ctrl+S / Cmd+S, щоб зберегти.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Відкрийте чергу для пакетного керування відео; ви також можете скинути обробку або очистити чергу.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Експорт для плагінів</translation>
@@ -5187,6 +5251,18 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Перегляд: оригінал</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Перегляд: стабілізований</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Перегляд: огляд</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5499,6 +5575,13 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Ні</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Крок %1 з %2</translation>
     </message>
 </context>
 </TS>

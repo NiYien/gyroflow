@@ -2284,9 +2284,59 @@ Rectangle {
 
     // [tutorial] First-launch spotlight onboarding (desktop simple mode only).
     property alias tutorialOverlay: tutorialOverlay;
+    // Static mock for the persistent simulated queue row (display-only). Real values
+    // get captured via GYROFLOW_TUTORIAL_CAPTURE and pasted here later; shape matches
+    // TutorialQueueRow. The row is shown by TutorialOverlay whenever the render queue
+    // panel is open during the tour, representing the (simulated) loaded video.
+    // Three real test clips (Nikon Z 30 + external SenseFlow .bin gyro), values
+    // from the user's actual render-queue screenshot / gyroflow.log. Row 0
+    // (DSC_0379) is the deep-matched anchor; rows 1-2 are auto-matched siblings.
+    readonly property var tutorialQueueMock: [
+        { thumbnail:        "qrc:/resources/tutorial/queue_row_thumb.png",
+          filename:         "DSC_0379.MOV",
+          duration_ms:      7007,
+          smoothness:       0.15,
+          horizon_lock:     false,
+          auto_rotate:      false,
+          zoom_mode:        "dynamic",
+          framerate:        59.94,
+          focal_mm:         30,
+          gyro_filename:    "2025-08-20_09-18-05_mix.bin",
+          gyro_time:        "09:18:05",
+          gyro_duration_ms: 2573300,
+          gyro_color_index: 0,
+          deep:             true },
+        { thumbnail:        "qrc:/resources/tutorial/queue_row_thumb_0380.png",
+          filename:         "DSC_0380.MOV",
+          duration_ms:      5806,
+          smoothness:       0.15,
+          horizon_lock:     false,
+          auto_rotate:      false,
+          zoom_mode:        "dynamic",
+          framerate:        59.94,
+          focal_mm:         32,
+          gyro_filename:    "2025-08-20_09-18-05_mix.bin",
+          gyro_time:        "",
+          gyro_color_index: 0,
+          deep:             false },
+        { thumbnail:        "qrc:/resources/tutorial/queue_row_thumb_0385.png",
+          filename:         "DSC_0385.MOV",
+          duration_ms:      5706,
+          smoothness:       0.15,
+          horizon_lock:     false,
+          auto_rotate:      false,
+          zoom_mode:        "dynamic",
+          framerate:        59.94,
+          focal_mm:         43,
+          gyro_filename:    "2025-08-20_09-18-05_mix.bin",
+          gyro_time:        "",
+          gyro_color_index: 0,
+          deep:             false }
+    ];
     TutorialOverlay {
         id: tutorialOverlay;
         scrollPanel: rightPanel;
+        queueRowMock: window.tutorialQueueMock;
         onClosed: (completed) => settings.setValue("niyien_tutorial_seen_v1", "1");
     }
     function showTutorial() {
@@ -2303,38 +2353,60 @@ Rectangle {
         //   openQueue   - show the render queue panel for queue-centric steps.
         //   title/body  - already-translated strings.
         //   note        - optional smaller, greyer caption rendered below the body
-        //                 (only present on steps 4 and 8); empty/absent => no caption.
-        //   image       - optional qrc path for a canvas-anchored visual (NOT inside the
-        //                 card); empty string => no visual. Reserved slots for steps
-        //                 4/7/8 screenshots to be added later.
+        //                 (only present on steps 4 and 7); empty/absent => no caption.
+        //   image       - legacy canvas-anchored screenshot path; now unused (the
+        //                 simulated queue row + replica menu replaced static screenshots),
+        //                 kept as "" for shape compatibility.
         //   imageAnchor - "queue" | "preview"; where the canvas visual is anchored.
+        //   menuHighlight - which menu item the persistent simulated queue row should
+        //                   highlight on this step ("deep" | "edit"). The row itself is
+        //                   shown by TutorialOverlay whenever the render queue is open
+        //                   (its data is window.tutorialQueueMock), so it persists across
+        //                   every queue-visible step rather than appearing per-step.
+        // Final order (2026-06-20): load / mounting+lens / stabilization / deep search /
+        // export / preview / preview-and-adjust / render queue. Menu steps are 4 (deep) and
+        // 6 (edit). Simulated row is `matched` from step 5 (export) and `synced` from step 6
+        // (preview). The queue is open from step 2 through 6; steps 7-8 close it
+        // (preview-and-adjust shows stabPreviewBtn; render queue keeps the panel closed and
+        // highlights renderBtnRow in the bottom bar — no close→reopen flicker).
         return [
+            // 1. Load footage — queue not open yet, no row.
             { target: videoArea.previewArea,   section: null,                    image: "", imageAnchor: "",
               title: qsTr("Load your footage"),
               body:  qsTr("Drag your videos and gyro data right here.") },
-            { target: simpleSensorLensSection, section: simpleSensorLensSection, image: "", imageAnchor: "",
+            // 2. Mounting/lens — queue opens (after load); row appears, unmatched.
+            { target: simpleSensorLensSection, section: simpleSensorLensSection, openQueue: true, image: "", imageAnchor: "", rowMatched: false, rowSynced: false,
               title: qsTr("Check mounting and lens data"),
               body:  qsTr("Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.") },
-            { target: renderBtnRow,            section: null, openQueue: true,    image: "", imageAnchor: "",
-              title: qsTr("Render queue"),
-              body:  qsTr("Open the queue to batch-manage videos; you can also reset processing or clear the queue.") },
-            { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue",
+            // 3. Stabilization — row still unmatched.
+            { target: simpleStabSection,       section: simpleStabSection,        image: "", imageAnchor: "", rowMatched: false, rowSynced: false,
+              title: qsTr("Stabilization settings"),
+              body:  qsTr("Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.") },
+            // 4. Deep search — row unmatched (about to match); menu highlights deep match.
+            { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue", menuHighlight: "deep", rowMatched: false, rowSynced: false,
               title: qsTr("Deep search"),
               body:  qsTr("Pick a clip with clear motion, then right-click and choose \"Deep match with gyro\" to align the video with the gyro data."),
               note:  qsTr("Note: the video must fall within the gyro's recorded time range.") },
-            { target: simpleStabSection,       section: simpleStabSection,        image: "", imageAnchor: "",
-              title: qsTr("Stabilization settings"),
-              body:  qsTr("Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.") },
-            { target: simpleExportBtnRow,      section: null,                    image: "", imageAnchor: "",
+            // 5. Export — row matched (after deep search), not yet synced.
+            { target: simpleExportBtnRow,      section: null,                    image: "", imageAnchor: "", rowMatched: true, rowSynced: false,
               title: qsTr("Export"),
               body:  qsTr("For a finished clip choose \"Export stabilized video\"; to use the editor plugins choose \"Export for plugins\". After you export, stabilization begins.") },
-            { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue",
+            // 6. Preview — row matched + synced (after export); menu highlights edit.
+            { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue", menuHighlight: "edit", rowMatched: true, rowSynced: true,
               title: qsTr("Preview"),
               body:  qsTr("Right-click a video in the queue and choose \"Edit\" to preview the result.") },
-            { target: videoArea.stabPreviewBtn, section: null, closeQueue: true, image: "", imageAnchor: "preview",
+            // 7. Preview and adjust — queue closes, real preview button.
+            { target: videoArea.stabPreviewBtn, section: null, closeQueue: true,
               title: qsTr("Preview and adjust"),
               body:  qsTr("Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip."),
               note:  qsTr("Press Ctrl+S / Cmd+S to save once you're happy.") },
+            // 8. Render queue — final step. Queue stays CLOSED: renderBtnRow lives in the
+            // bottom button bar (visible whether or not the queue panel is open), so we
+            // highlight it without reopening the panel — avoids the close→reopen flicker
+            // after step 7 closed it. No openQueue / no simulated row here.
+            { target: renderBtnRow,            section: null,                    image: "", imageAnchor: "",
+              title: qsTr("Render queue"),
+              body:  qsTr("Open the queue to batch-manage videos; you can also reset processing or clear the queue.") },
         ];
     }
 

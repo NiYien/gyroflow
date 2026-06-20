@@ -186,6 +186,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Lataa materiaalisi</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Vedä videosi ja gyrodata tähän.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Tarkista asennus- ja objektiivitiedot</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Aseta asennussuunta; manuaalitarkennus- tai anamorfisille objektiiveille aseta myös objektiiviryhmä.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Vakautusasetukset</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Säädä pehmeyttä, horisonttilukkoa ja zoomaustilaa. Renderöintijonossa voit valita useita tai muokata leikkeitä eränä.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Syvähaku</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Valitse leike, jossa on selvää liikettä, napsauta hiiren oikealla ja valitse "Syväsovitus gyroon", jolloin video kohdistuu gyrodataan.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Huom: videon on oltava gyron tallentaman aikavälin sisällä.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Valmiille leikkeelle valitse "Vie vakautettu video"; editorin liitännäisiä varten valitse "Vie liitännäisiä varten". Viennin jälkeen vakautus alkaa.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Esikatselu</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Napsauta jonossa videota hiiren oikealla ja valitse "Muokkaa" esikatsellaksesi tulosta.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Esikatselu ja säätö</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Napsauta vakautuksen esikatselupainiketta vaihtaaksesi tilojen Alkuperäinen, Vakautettu ja Yleiskatsaus välillä. Voit myös hienosäätää vakautusasetuksia leikekohtaisesti.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Paina Ctrl+S / Cmd+S tallentaaksesi, kun olet tyytyväinen.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Avaa jono hallitaksesi videoita eränä; voit myös nollata käsittelyn tai tyhjentää jonon.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Vie liitännäisiä varten</translation>
@@ -5186,6 +5250,18 @@ Oletko varma, että haluat jatkaa?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Esikatselu: alkuperäinen</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Esikatselu: vakautettu</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Esikatselu: yleiskatsaus</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5498,6 +5574,13 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Ei</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Vaihe %1 / %2</translation>
     </message>
 </context>
 </TS>

@@ -188,6 +188,70 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Muat rekamanmu</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Seret video dan data giroskopmu ke sini.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Periksa data pemasangan dan lensa</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Atur orientasi pemasangan; untuk lensa fokus manual atau anamorfik, atur juga grup lensa.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Pengaturan stabilisasi</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Sesuaikan tingkat kehalusan, kunci horizon, dan mode zoom. Di antrian render kamu bisa memilih banyak atau mengedit klip secara massal.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Pencarian mendalam</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Pilih klip dengan gerakan yang jelas, lalu klik kanan dan pilih "Pencocokan mendalam dengan giroskop" untuk menyelaraskan video dengan data giroskop.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Catatan: video harus berada dalam rentang waktu yang direkam giroskop.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Untuk klip yang sudah selesai pilih "Ekspor video yang distabilkan"; untuk memakai plugin editor pilih "Ekspor untuk plugin". Setelah ekspor, stabilisasi dimulai.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Pratinjau</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Klik kanan video di antrian dan pilih "Edit" untuk melihat pratinjau hasilnya.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Pratinjau dan sesuaikan</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Klik tombol pratinjau stabilisasi untuk beralih antara Orisinil, Stabil, dan Ikhtisar. Kamu juga bisa menyetel halus pengaturan stabilisasi per klip.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Tekan Ctrl+S / Cmd+S untuk menyimpan setelah kamu puas.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Buka antrian untuk mengelola video secara massal; kamu juga bisa mereset pemrosesan atau mengosongkan antrian.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Ekspor untuk plugin</translation>
@@ -5182,6 +5246,18 @@ Apakah anda yakin ingin melanjutkan?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Pratinjau: orisinil</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Pratinjau: stabil</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Pratinjau: ikhtisar</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5494,6 +5570,13 @@ Nonaktifkan stabilisasi lensa (Optical SteadyShot) untuk menggunakan Gyroflow.</
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Tidak</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Langkah %1 dari %2</translation>
     </message>
 </context>
 </TS>

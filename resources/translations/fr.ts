@@ -187,6 +187,70 @@ Notez que ce n&apos;est qu&apos;un indicateur visuel, il n&apos;affecte pas le r
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Importez vos rushes</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Glissez ici vos vidéos et vos données gyro.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Vérifiez le montage et les données d'objectif</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Réglez l'orientation du montage ; pour les objectifs à mise au point manuelle ou anamorphiques, définissez aussi le groupe d'objectifs.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Réglages de stabilisation</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Ajustez le lissage, le verrouillage de l'horizon et le mode de recadrage. Dans la file d'attente de rendu, vous pouvez sélectionner ou modifier plusieurs clips à la fois.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Recherche approfondie</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Choisissez un clip avec un mouvement net, puis faites un clic droit et sélectionnez "Appariement profond avec gyro" pour aligner la vidéo sur les données gyro.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Remarque : la vidéo doit se situer dans la plage de temps enregistrée par le gyro.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Pour un clip terminé, choisissez "Exporter la vidéo stabilisée" ; pour utiliser les plugins de l'éditeur, choisissez "Exporter pour les plugins". Après l'export, la stabilisation démarre.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Aperçu</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Faites un clic droit sur une vidéo de la file et choisissez "Éditer" pour prévisualiser le résultat.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Aperçu et réglages</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Cliquez sur le bouton d'aperçu de stabilisation pour basculer entre Original, Stabilisé et Vue d'ensemble. Vous pouvez aussi affiner les réglages de stabilisation pour chaque clip.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Appuyez sur Ctrl+S / Cmd+S pour enregistrer une fois satisfait.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Ouvrez la file pour gérer vos vidéos par lot ; vous pouvez aussi réinitialiser le traitement ou vider la file.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Exporter pour les plugins</translation>
@@ -5186,6 +5250,18 @@ Cette fonctionnalité est expérimentale, les résultats peuvent ne pas du tout 
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Aperçu : original</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Aperçu : stabilisé</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Aperçu : vue d'ensemble</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5498,6 +5574,13 @@ Désactivez la stabilisation de l&apos;objectif (Optical SteadyShot) afin d&apos
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Non</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Étape %1 sur %2</translation>
     </message>
 </context>
 </TS>

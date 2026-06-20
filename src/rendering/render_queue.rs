@@ -16,9 +16,37 @@ use regex::Regex;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{
-    Arc,
+    Arc, OnceLock,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
 };
+
+// ── Dev-time tutorial mock-data capture ──────────────────────────────────────
+// When GYROFLOW_TUTORIAL_CAPTURE is truthy ("1"/"true"/"yes"/"on", case-
+// insensitive), confirmed-green batch-sync jobs emit one log line per job
+// at target="app" with enough JSON to mock a render-queue row in the first-
+// launch tutorial. Default OFF: with the env unset, code paths are never
+// entered and behavior is byte-identical to the unpatched build.
+static TUTORIAL_CAPTURE_ENABLED: OnceLock<bool> = OnceLock::new();
+static TUTORIAL_CAPTURE_LOGGED: OnceLock<()> = OnceLock::new();
+
+fn tutorial_capture_enabled() -> bool {
+    let enabled = *TUTORIAL_CAPTURE_ENABLED.get_or_init(|| {
+        std::env::var("GYROFLOW_TUTORIAL_CAPTURE")
+            .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
+            .unwrap_or(false)
+    });
+    // Emit the lifecycle log exactly once, on first call.
+    if TUTORIAL_CAPTURE_LOGGED.set(()).is_ok() {
+        ::log::info!(
+            target: "lifecycle",
+            "tutorial_capture resolved={} source={}",
+            enabled,
+            if std::env::var("GYROFLOW_TUTORIAL_CAPTURE").is_ok() { "env" } else { "default" }
+        );
+    }
+    enabled
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
 pub struct RenderQueueItem {
@@ -1798,6 +1826,8 @@ impl RenderQueue {
                         }
                     }
                 }
+                // Emit dev-time tutorial mock-data capture (env-gated; no-op by default).
+                self.tutorial_capture_dump(video.job_id);
             } else if video.color == BatchSyncVideoColor::Yellow {
                 // T2 Yellow: clear `offsets` field in the on-disk .gyroflow but
                 // leave stab.gyro untouched so the user can manually re-sync from
@@ -3047,6 +3077,59 @@ impl RenderQueue {
         } else {
             QString::default()
         }
+    }
+
+    /// Dev-time helper: emit one `[tutorial-capture]` log line for the given
+    /// confirmed-green job. Called only when GYROFLOW_TUTORIAL_CAPTURE is set.
+    fn tutorial_capture_dump(&self, job_id: u32) {
+        if !tutorial_capture_enabled() {
+            return;
+        }
+
+        // Gather source filename and URL from the job's render options.
+        let (input_filename, source_path) = match self.jobs.get(&job_id) {
+            Some(job) => (
+                job.render_options.input_filename.clone(),
+                job.render_options.input_url.clone(),
+            ),
+            None => return,
+        };
+
+        // Duration is stored in the RenderQueueItem (ListView model), not in Job.
+        let duration_ms: i64 = self
+            .queue
+            .try_borrow()
+            .ok()
+            .and_then(|q| {
+                let job = self.jobs.get(&job_id)?;
+                let idx = (job.queue_index < q.row_count() as usize
+                    && q[job.queue_index].job_id == job_id)
+                    .then_some(job.queue_index)
+                    .or_else(|| q.iter().position(|item| item.job_id == job_id))?;
+                Some(q[idx].duration_ms as i64)
+            })
+            .unwrap_or(0);
+
+        // Reuse existing Qt methods to build the display_params / match_status payloads.
+        let display_params_raw = self.get_job_display_params(job_id).to_string();
+        let match_status_raw = self.get_match_status_json(job_id).to_string();
+
+        // Parse nested JSON; fall back to embedding as a string if parsing fails.
+        let display_params_value: serde_json::Value = serde_json::from_str(&display_params_raw)
+            .unwrap_or(serde_json::Value::String(display_params_raw));
+        let match_status_value: serde_json::Value = serde_json::from_str(&match_status_raw)
+            .unwrap_or(serde_json::Value::String(match_status_raw));
+
+        let payload = serde_json::json!({
+            "input_filename": input_filename,
+            "duration_ms": duration_ms,
+            "source_path": source_path,
+            "sync_color": "green",
+            "display_params": display_params_value,
+            "match_status": match_status_value,
+        });
+
+        ::log::info!(target: "app", "[tutorial-capture] {}", payload);
     }
 
     pub fn get_job_display_params(&self, job_id: u32) -> QString {

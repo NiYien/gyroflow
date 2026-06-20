@@ -187,6 +187,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Φόρτωσε το υλικό σου</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Σύρε εδώ τα βίντεο και τα δεδομένα γυροσκοπίου.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Έλεγξε τη στερέωση και τα δεδομένα φακού</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Όρισε τον προσανατολισμό στερέωσης. Για χειροκίνητη εστίαση ή αναμορφικούς φακούς, όρισε και την ομάδα φακών.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Ρυθμίσεις σταθεροποίησης</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Ρύθμισε την ομαλότητα, το κλείδωμα ορίζοντα και τη λειτουργία ζουμ. Στην ουρά αποτύπωσης μπορείς να επιλέξεις πολλά ή να επεξεργαστείς κλιπ μαζικά.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Βαθιά αναζήτηση</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Διάλεξε ένα κλιπ με καθαρή κίνηση, κάνε δεξί κλικ και επίλεξε "Βαθιά αντιστοίχιση με γυροσκόπιο" για να ευθυγραμμίσεις το βίντεο με τα δεδομένα γυροσκοπίου.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Σημείωση: το βίντεο πρέπει να βρίσκεται μέσα στο καταγεγραμμένο χρονικό εύρος του γυροσκοπίου.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Για ένα έτοιμο κλιπ επίλεξε "Εξαγωγή σταθεροποιημένου βίντεο". Για χρήση με τα πρόσθετα του προγράμματος επεξεργασίας επίλεξε "Εξαγωγή για πρόσθετα". Μετά την εξαγωγή ξεκινά η σταθεροποίηση.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Προεπισκόπηση</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Κάνε δεξί κλικ σε ένα βίντεο στην ουρά και επίλεξε "Επεξεργασία" για προεπισκόπηση του αποτελέσματος.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Προεπισκόπηση και ρύθμιση</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Κάνε κλικ στο κουμπί προεπισκόπησης σταθεροποίησης για εναλλαγή ανάμεσα σε Πρωτότυπο, Σταθεροποιημένο και Επισκόπηση. Μπορείς επίσης να ρυθμίσεις λεπτομερώς τη σταθεροποίηση ανά κλιπ.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Πάτησε Ctrl+S / Cmd+S για αποθήκευση όταν είσαι ικανοποιημένος.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Άνοιξε την ουρά για μαζική διαχείριση βίντεο. Μπορείς επίσης να επαναφέρεις την επεξεργασία ή να καθαρίσεις την ουρά.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Εξαγωγή για πρόσθετα</translation>
@@ -5187,6 +5251,18 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Προεπισκόπηση: πρωτότυπο</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Προεπισκόπηση: σταθεροποιημένο</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Προεπισκόπηση: επισκόπηση</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5499,6 +5575,13 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Όχι</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Βήμα %1 από %2</translation>
     </message>
 </context>
 </TS>

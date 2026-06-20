@@ -30,6 +30,15 @@ Item {
     // (set to rightPanel from App.qml). Used to scroll a target into view.
     property var scrollPanel: null;
 
+    // styleTextColor is injected from Rust as a QString ("#ffffff"), not a QColor.
+    // Declaring a `property color` coerces it to a real colour so .r/.g/.b resolve
+    // (reading them off the raw string yields undefined -> Qt.rgba collapses to
+    // black, which disappears on the dark card surface).
+    readonly property color textColorC: styleTextColor;
+
+    // Mock data for the persistent simulated queue row (set from App.qml).
+    property var queueRowMock: [];   // array of row mock objects (see App.qml)
+
     // Spotlight hole geometry (root-local). holeActive=false => centered card.
     property bool holeActive: false;
     property real holeX: 0;
@@ -40,6 +49,9 @@ Item {
     readonly property var currentStep: (active && index >= 0 && index < steps.length) ? steps[index] : null;
     readonly property bool isLast: index >= steps.length - 1;
     readonly property bool isFirst: index <= 0;
+    // True on steps that demonstrate a right-click action (carry `menuHighlight`):
+    // the simulated queue row shows its dropdown menu with that item highlighted.
+    readonly property bool simMenuShown: !!(currentStep && currentStep.menuHighlight);
 
     signal closed(bool completed);
 
@@ -151,8 +163,16 @@ Item {
         Rectangle { color: "#9A000000"; x: 0; y: root.holeY; width: Math.max(0, root.holeX); height: Math.max(0, root.holeH); }
         Rectangle { color: "#9A000000"; x: root.holeX + root.holeW; y: root.holeY; width: Math.max(0, parent.width - (root.holeX + root.holeW)); height: Math.max(0, root.holeH); }
         Rectangle {
-            x: root.holeX - 2 * dpiScale; y: root.holeY - 2 * dpiScale;
-            width: root.holeW + 4 * dpiScale; height: root.holeH + 4 * dpiScale;
+            // Clamp the accent border into the overlay so an edge-flush target (e.g. step
+            // 1's previewArea, whose left/top map to holeX/holeY ≈ 0) still shows all four
+            // sides. Drawing unconditionally at holeX-2 / holeY-2 pushes the left/top lines
+            // to ≈ -2px, where the window clips them — the bug where the blue box lost its
+            // left and top edges. Right/bottom are unaffected (positive, on-screen).
+            readonly property real bx: Math.max(0, root.holeX - 2 * dpiScale);
+            readonly property real by: Math.max(0, root.holeY - 2 * dpiScale);
+            x: bx; y: by;
+            width:  Math.min(parent.width,  root.holeX + root.holeW + 2 * dpiScale) - bx;
+            height: Math.min(parent.height, root.holeY + root.holeH + 2 * dpiScale) - by;
             color: "transparent";
             radius: 8 * dpiScale;
             border.color: styleAccentColor;
@@ -160,93 +180,67 @@ Item {
         }
     }
 
-    // ---- Canvas-anchored visual (steps 4/7/8). ----
-    // The how-to screenshot/diagram lives ON THE CANVAS over the dim layer, not
-    // inside the card, anchored to the real UI region named by `imageAnchor`.
-    // While `image` is an empty placeholder it stays invisible (source != "").
+    // ---- Persistent simulated queue row. ----
+    // Appears whenever the render queue panel is shown during the tutorial (step 2
+    // onward) and stays until it closes (step 7) — representing the (simulated) loaded
+    // video, so every queue-visible step shows it without flicker. The replica
+    // right-click menu only appears on steps that demonstrate a click (4/6).
     Item {
-        id: anchoredVisual;
-        // Reference geometry of the anchor region, root-local. The render-queue
-        // ("queue") anchor falls back to the right portion of the screen when the
-        // queue item is not reachable; the "preview" anchor uses the main preview.
-        readonly property string anchorKind: root.currentStep && root.currentStep.imageAnchor ? root.currentStep.imageAnchor : "";
+        id: queueRowLayer;
+        anchors.fill: parent;
+
+        readonly property var q: (window.videoArea && window.videoArea.queue) ? window.videoArea.queue : null;
+        // The render queue's root binds `visible: opacity > 0`, so this tracks open/close.
+        readonly property bool queueShown: root.active && q && q.visible && q.width > 0 && q.height > 0;
         property real refX: 0;
         property real refY: 0;
         property real refW: 0;
-        property real refH: 0;
 
-        // Recompute the anchor reference rect each frame (mapToItem is not reactive).
-        function recomputeAnchor() {
-            if (anchorKind === "preview" && window.videoArea && window.videoArea.previewArea) {
-                var pv = window.videoArea.previewArea;
-                if (pv.visible && pv.width > 0 && pv.height > 0) {
-                    var pp = pv.mapToItem(root, 0, 0);
-                    refX = pp.x; refY = pp.y; refW = pv.width; refH = pv.height;
-                    return;
-                }
-            } else if (anchorKind === "queue" && window.videoArea && window.videoArea.queue) {
-                var q = window.videoArea.queue;
-                if (q.visible && q.width > 0 && q.height > 0) {
-                    var qp = q.mapToItem(root, 0, 0);
-                    refX = qp.x; refY = qp.y; refW = q.width; refH = q.height;
-                    return;
-                }
-            }
-            // Fallback: right portion of the canvas (queue lives on the right edge).
-            refW = Math.min(420 * dpiScale, root.width * 0.4);
-            refH = Math.min(300 * dpiScale, root.height * 0.5);
-            refX = root.width - refW - 40 * dpiScale;
-            refY = (root.height - refH) / 2;
-        }
-
-        Timer { interval: 16; repeat: true; running: root.active; onTriggered: anchoredVisual.recomputeAnchor(); }
-        Component.onCompleted: recomputeAnchor();
-
-        // The framed visual: only shown when the step actually provides an image.
-        visible: tutorialImage.source != "";
-
-        // Soft drop shadow built from stacked semi-transparent rounded rects
-        // (no MultiEffect / DropShadow — those crash on Qt 6.7.3 here).
-        Repeater {
-            model: 4;
-            Rectangle {
-                property real grow: (index + 1) * 3 * dpiScale;
-                x: imageFrame.x - grow;
-                y: imageFrame.y - grow + 8 * dpiScale;
-                width: imageFrame.width + grow * 2;
-                height: imageFrame.height + grow * 2;
-                radius: imageFrame.radius + grow;
-                color: "#000000";
-                opacity: 0.10;
+        // mapToItem is not reactive — recompute the queue rect each frame while shown.
+        function recompute() {
+            if (queueShown) {
+                var p = q.mapToItem(root, 0, 0);
+                refX = p.x; refY = p.y; refW = q.width;
             }
         }
-        // "Tutorial sticker" frame around the screenshot.
-        Rectangle {
-            id: imageFrame;
-            // Centered inside the anchor region, sized to fit but never overflowing.
-            property real maxW: Math.min(360 * dpiScale, Math.max(120 * dpiScale, anchoredVisual.refW - 24 * dpiScale));
-            width: maxW;
-            height: tutorialImage.height + 16 * dpiScale;
-            x: anchoredVisual.refX + (anchoredVisual.refW - width) / 2;
-            y: anchoredVisual.refY + (anchoredVisual.refH - height) / 2;
-            radius: 12 * dpiScale;
-            color: Qt.lighter(styleBackground2, 1.2);
-            border.color: styleAccentColor;
-            border.width: 2 * dpiScale;
-            Image {
-                id: tutorialImage;
-                x: 8 * dpiScale;
-                y: 8 * dpiScale;
-                width: parent.width - 16 * dpiScale;
-                source: (root.currentStep && root.currentStep.image) ? root.currentStep.image : "";
-                fillMode: Image.PreserveAspectFit;
-                sourceSize.width: parent.width - 16 * dpiScale;
+        Timer { interval: 16; repeat: true; running: queueRowLayer.queueShown; onTriggered: queueRowLayer.recompute(); }
+        onQueueShownChanged: if (queueShown) recompute();
+
+        visible: queueShown;
+
+        // Three stacked replica rows (root.queueRowMock is an array). Row 0 is the
+        // deep-matched anchor; rows 1-2 are auto-matched siblings of the same gyro.
+        Column {
+            id: tutorialRows;
+            visible: queueRowLayer.queueShown && queueRowLayer.refW > 0;
+            x: queueRowLayer.refX + 8 * dpiScale;
+            // Below the queue header (title + progress row), where the first real row sits.
+            y: queueRowLayer.refY + 92 * dpiScale;
+            spacing: 4 * dpiScale;
+            Repeater {
+                model: root.queueRowMock;
+                TutorialQueueRow {
+                    rowData: modelData;
+                    width: implicitWidth;
+                    height: implicitHeight;
+                    // Full queue width so the params Flow wraps like a real row.
+                    rowWidth: Math.max(220 * dpiScale, queueRowLayer.refW - 16 * dpiScale);
+                    // Evolving row state: matched after the deep-search step, synced after export.
+                    matched: !!(root.currentStep && root.currentStep.rowMatched);
+                    synced: !!(root.currentStep && root.currentStep.rowSynced);
+                    // The replica right-click menu only hangs off the first (deep-matched)
+                    // anchor row, and only on steps that demonstrate a right-click action.
+                    menuShown: index === 0 && root.simMenuShown;
+                    highlightItem: (index === 0 && root.simMenuShown) ? root.currentStep.menuHighlight : "";
+                    // First row stacks above the others so its floating menu overlays them.
+                    z: index === 0 ? 10 : 0;
+                }
             }
         }
     }
 
     // ---- Lean isolated explanatory card. ----
-    // The screenshot/diagram is NOT inside the card anymore (see anchoredVisual);
+    // The screenshot/diagram is NOT inside the card anymore (see queueRowLayer);
     // the card stays a slim text panel that clearly floats above the chrome via a
     // large soft shadow + an elevated surface + a 4px accent top bar.
     Item {
@@ -261,6 +255,21 @@ Item {
            ? (root.width - width) / 2
            : Math.max(10 * dpiScale, Math.min(root.width - width - 10 * dpiScale, root.holeX + root.holeW / 2 - width / 2));
         y: {
+            // Steps that show the simulated dropdown menu (4/6): the row + menu (+submenu)
+            // sit in the upper part of the queue region. Center the card in the empty band
+            // BELOW the menu instead of gluing it to the screen bottom (which read as "too
+            // low"). Estimate the menu region bottom from the queue-row-layer geometry:
+            //   rows top (refY + 92) + row0 height (~86) + menu gap (4) + menu/submenu (~150).
+            if (!root.holeActive && root.simMenuShown) {
+                var q = queueRowLayer;
+                var menuBottom = (q && q.queueShown)
+                    ? q.refY + (92 + 86 + 4 + 150) * dpiScale
+                    : root.height * 0.40;
+                var bandTop = menuBottom + gap;
+                var maxY = root.height - height - 16 * dpiScale;
+                var yMid = (bandTop + maxY) / 2;          // midpoint of the band below the menu
+                return Math.min(maxY, Math.max(bandTop, yMid));
+            }
             if (!root.holeActive) return (root.height - height) / 2;
             if (root.holeY + root.holeH + gap + height < root.height) return root.holeY + root.holeH + gap;
             if (root.holeY - gap - height > 0) return root.holeY - gap - height;
@@ -361,7 +370,8 @@ Item {
                     wrapMode: Text.WordWrap;
                 }
 
-                // Enlarged progress dots.
+                // Progress dots — equal round dots; the active step is an accent
+                // dot, the others are dimmed text-colour dots (no wide pill).
                 Row {
                     anchors.horizontalCenter: parent.horizontalCenter;
                     topPadding: 4 * dpiScale;
@@ -369,11 +379,10 @@ Item {
                     Repeater {
                         model: root.steps.length;
                         Rectangle {
-                            // Active step is a wider accent pill; the others are dimmer dots.
-                            width: (index === root.index ? 22 : 9) * dpiScale;
-                            height: 9 * dpiScale;
-                            radius: height / 2;
-                            color: index === root.index ? styleAccentColor : Qt.rgba(styleTextColor.r, styleTextColor.g, styleTextColor.b, 0.6);
+                            width: 8 * dpiScale;
+                            height: 8 * dpiScale;
+                            radius: width / 2;
+                            color: index === root.index ? styleAccentColor : Qt.rgba(root.textColorC.r, root.textColorC.g, root.textColorC.b, 0.35);
                         }
                     }
                 }
@@ -387,7 +396,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter;
                         leftPadding: 0;
                         text: qsTr("Skip");
-                        textColor: Qt.rgba(styleTextColor.r, styleTextColor.g, styleTextColor.b, 0.6);
+                        textColor: Qt.rgba(root.textColorC.r, root.textColorC.g, root.textColorC.b, 0.6);
                         transparent: true;
                         onClicked: root.skip();
                     }

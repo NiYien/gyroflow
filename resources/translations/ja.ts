@@ -187,6 +187,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>素材を読み込む</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>動画とジャイロデータをここにドラッグしてください。</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>取り付けとレンズデータを確認</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>取り付け方向を設定します。マニュアルフォーカスやアナモルフィックレンズの場合は、レンズグループも設定してください。</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>スタビライズ設定</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>滑らかさ、水平線ロック、ズームモードを調整します。レンダーキューでは複数選択や一括編集ができます。</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>ディープサーチ</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>動きがはっきりした動画を選び、右クリックして「ジャイロとディープマッチング」を選ぶと、動画とジャイロデータを自動で合わせられます。</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>注意: 動画はジャイロの記録時間範囲内に収まっている必要があります。</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>そのまま完成させるには「手ブレ補正動画を書き出し」を、エディタープラグインを使うには「プラグイン用に書き出し」を選びます。エクスポートするとスタビライズ処理が始まります。</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>プレビュー</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>キュー内の動画を右クリックして「編集」を選ぶと、結果をプレビューできます。</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>プレビューと調整</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>スタビライズプレビューボタンを押すと、オリジナル、スタビライズ済み、概要を切り替えられます。クリップごとにスタビライズ設定を微調整することもできます。</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>気に入ったら Ctrl+S / Cmd+S で保存してください。</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>キューを開くと動画を一括管理できます。処理のリセットやキューのクリアも可能です。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>プラグイン用に書き出し</translation>
@@ -5189,6 +5253,18 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>プレビュー: オリジナル</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>プレビュー: スタビライズ済み</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>プレビュー: 概要</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5501,6 +5577,13 @@ Gyroflowを使用するには、レンズの手ぶれ補正（Optical SteadyShot
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>いいえ</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>ステップ %1 / %2</translation>
     </message>
 </context>
 </TS>

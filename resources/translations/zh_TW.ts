@@ -187,6 +187,70 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>載入素材</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>將影片和陀螺儀資料全部拖放到這裡。</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>檢查安裝與鏡頭資料</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>設定安裝方向；手動對焦或變形鏡頭還需設定鏡頭群組。</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>增穩設定</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>調整平滑度、地平線鎖定與縮放模式。在渲染列中可多選或批次編輯片段。</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>深度搜尋</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>選一段運動明顯的影片，按右鍵選擇「與陀螺儀深度匹配」，即可將影片與陀螺儀資料對齊。</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>注意：影片時間需落在陀螺儀記錄範圍內。</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>要直接完成片段請選「匯出穩定後的影片」；要搭配編輯器外掛請選「匯出（搭配外掛使用）」。匯出後即開始增穩處理。</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>預覽</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>在佇列中對影片按右鍵，選擇「編輯」即可預覽效果。</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>預覽與調整</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>點擊增穩預覽按鈕，可在原始、增穩後與概覽之間切換。也可針對各片段微調增穩設定。</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>調整滿意後，按 Ctrl+S / Cmd+S 儲存。</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>開啟佇列以批次管理影片；也可重置處理或清空佇列。</translation>
+    </message>
+    <message>
         <source>Please enable folder access permission.</source>
         <translation>請開啟資料夾存取權限</translation>
     </message>
@@ -5195,6 +5259,18 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>預覽：原始</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>預覽：增穩後</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>預覽：概覽</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5507,6 +5583,13 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>否</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>第 %1 / %2 步</translation>
     </message>
 </context>
 </TS>

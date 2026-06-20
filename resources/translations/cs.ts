@@ -187,6 +187,70 @@ Obdélník je pouze vizuální pomůcka, která NEMÁ vliv na vykreslování.</t
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Načtěte své záběry</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Sem přetáhněte svá videa i data z gyroskopu.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Zkontrolujte upevnění a data objektivu</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Nastavte orientaci upevnění; u objektivů s ručním ostřením nebo anamorfních nastavte i skupinu objektivů.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Nastavení stabilizace</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Upravte plynulost, horizontální zámek a režim přiblížení. Ve frontě renderování můžete klipy vybírat hromadně nebo upravovat dávkově.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Hluboké hledání</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Vyberte klip s výrazným pohybem, klikněte pravým tlačítkem a zvolte "Hluboké párování s gyroskopem", aby se video zarovnalo s daty z gyroskopu.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Poznámka: video musí spadat do zaznamenaného časového rozsahu gyroskopu.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Pro hotový klip zvolte "Exportovat stabilizované video"; pro použití pluginů editoru zvolte "Exportovat pro pluginy". Po exportu se spustí stabilizace.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Náhled</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Klikněte pravým tlačítkem na video ve frontě a zvolte "Upravit" pro náhled výsledku.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Náhled a úpravy</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Klikněte na tlačítko náhledu stabilizace a přepínejte mezi Původní, Stabilizované a Přehled. Nastavení stabilizace můžete také doladit pro každý klip zvlášť.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Po dokončení uložte stisknutím Ctrl+S / Cmd+S.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Otevřete frontu pro dávkovou správu videí; můžete také resetovat zpracování nebo vymazat frontu.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Exportovat pro pluginy</translation>
@@ -5186,6 +5250,18 @@ Opravdu chcete pokračovat?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Náhled: původní</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Náhled: stabilizované</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Náhled: přehled</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5498,6 +5574,13 @@ Chcete-li použít Gyroflow, vypněte stabilizaci objektivu (Optical SteadyShot)
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Ne</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Krok %1 z %2</translation>
     </message>
 </context>
 </TS>

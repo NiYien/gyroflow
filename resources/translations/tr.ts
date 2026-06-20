@@ -187,6 +187,70 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
 <context>
     <name>App</name>
     <message>
+        <source>Load your footage</source>
+        <translation>Görüntülerini yükle</translation>
+    </message>
+    <message>
+        <source>Drag your videos and gyro data right here.</source>
+        <translation>Videolarını ve jiroskop verini buraya sürükle.</translation>
+    </message>
+    <message>
+        <source>Check mounting and lens data</source>
+        <translation>Montaj ve lens verilerini kontrol et</translation>
+    </message>
+    <message>
+        <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
+        <translation>Montaj yönünü ayarla; manuel odak veya anamorfik lensler için lens grubunu da ayarla.</translation>
+    </message>
+    <message>
+        <source>Stabilization settings</source>
+        <translation>Stabilizasyon ayarları</translation>
+    </message>
+    <message>
+        <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
+        <translation>Yumuşaklığı, ufuk kilidini ve yakınlaştırma modunu ayarla. Render sırasında klipleri çoklu seçebilir veya toplu düzenleyebilirsin.</translation>
+    </message>
+    <message>
+        <source>Deep search</source>
+        <translation>Derin arama</translation>
+    </message>
+    <message>
+        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
+        <translation>Net hareketi olan bir klip seç, sağ tıkla ve videoyu jiroskop verisiyle hizalamak için "Jiroskopla derin eşleştirme" seçeneğini seç.</translation>
+    </message>
+    <message>
+        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <translation>Not: video, jiroskobun kaydettiği zaman aralığı içinde olmalıdır.</translation>
+    </message>
+    <message>
+        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
+        <translation>Bitmiş bir klip için "Sabitlenmiş videoyu dışa aktar" seçeneğini seç; düzenleyici eklentilerini kullanmak için "Eklentiler için dışa aktar" seçeneğini seç. Dışa aktardıktan sonra stabilizasyon başlar.</translation>
+    </message>
+    <message>
+        <source>Preview</source>
+        <translation>Önizleme</translation>
+    </message>
+    <message>
+        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
+        <translation>Sıradaki bir videoya sağ tıkla ve sonucu önizlemek için "Düzenle" seçeneğini seç.</translation>
+    </message>
+    <message>
+        <source>Preview and adjust</source>
+        <translation>Önizle ve ayarla</translation>
+    </message>
+    <message>
+        <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
+        <translation>Orijinal, Stabilize edilmiş ve Genel görünüm arasında geçiş yapmak için stabilizasyon önizleme düğmesine tıkla. Stabilizasyon ayarlarını klip başına ince ayar da yapabilirsin.</translation>
+    </message>
+    <message>
+        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <translation>Memnun kaldığında kaydetmek için Ctrl+S / Cmd+S tuşlarına bas.</translation>
+    </message>
+    <message>
+        <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
+        <translation>Videoları toplu yönetmek için sırayı aç; işlemi sıfırlayabilir veya sırayı temizleyebilirsin.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="791"/>
         <source>Export for plugins</source>
         <translation>Eklentiler için dışa aktar</translation>
@@ -5176,6 +5240,18 @@ Bu özellik deneyseldir, sonuçlar hiç düzgün görünmeyebilir. Devam etmek i
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Preview: original</source>
+        <translation>Önizleme: orijinal</translation>
+    </message>
+    <message>
+        <source>Preview: stabilized</source>
+        <translation>Önizleme: stabilize edilmiş</translation>
+    </message>
+    <message>
+        <source>Preview: overview</source>
+        <translation>Önizleme: genel görünüm</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <location filename="../../src/ui/VideoArea.qml" line="597"/>
         <location filename="../../src/ui/VideoArea.qml" line="655"/>
@@ -5485,6 +5561,13 @@ Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</sourc
         <location filename="../../src/ui/main_window.qml" line="102"/>
         <source>No</source>
         <translation>Hayır</translation>
+    </message>
+</context>
+<context>
+    <name>TutorialOverlay</name>
+    <message>
+        <source>Step %1 of %2</source>
+        <translation>Adım %1 / %2</translation>
     </message>
 </context>
 </TS>
