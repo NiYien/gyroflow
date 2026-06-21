@@ -950,6 +950,7 @@ pub struct RenderQueue {
     pub convert_format: qt_signal!(job_id: u32, format: QString, supported: QString, candidate: QString),
     pub error: qt_signal!(job_id: u32, text: QString, arg: QString, callback: QString),
     pub added: qt_signal!(job_id: u32),
+    pub add_skipped: qt_signal!(job_id: u32, filename: QString, reason: QString),
     pub processing_done: qt_signal!(job_id: u32, by_preset: bool),
     pub processing_progress: qt_signal!(job_id: u32, progress: f64),
 
@@ -4690,6 +4691,26 @@ impl RenderQueue {
                 this.processing_done(job_id, false);
             },
         );
+        // Emitted when an add ends in a terminal state that neither queues the
+        // job nor raises `error` (e.g. opened OK but VideoInfo invalid). Lets the
+        // QML loader balance its pending count instead of spinning forever; the
+        // UI aggregates skipped files into a single notice.
+        let add_skipped = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, (filename, reason): (String, String)| {
+                ::log::info!(
+                    "[queue_signal] add_skipped job_id={} source=add_file filename='{}' reason='{}'",
+                    job_id,
+                    filename,
+                    reason
+                );
+                this.add_skipped(
+                    job_id,
+                    QString::from(filename),
+                    QString::from(reason),
+                );
+            },
+        );
 
         let suffix = self.default_suffix.to_string();
 
@@ -4704,6 +4725,26 @@ impl RenderQueue {
             if let Some(sync) = additional_data.get("synchronization") {
                 sync_options = sync.clone();
             }
+            // Optional image-sequence descriptor (folder-load path injects this
+            // for collapsed `%0Nd` sequence jobs). Absent for ordinary videos,
+            // in which case the InputFile fields stay at 0 / 0.0.
+            let (seq_fps, seq_start, seq_frame_count, seq_first_frame) = additional_data
+                .get("image_sequence")
+                .map(|s| {
+                    (
+                        s.get("fps").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                        s.get("start").and_then(|x| x.as_i64()).unwrap_or(0),
+                        s.get("frame_count").and_then(|x| x.as_i64()).unwrap_or(0),
+                        // First-frame url: telemetry (camera model, lens params,
+                        // frame readout time) must be read from a real frame, not
+                        // the `%0Nd` pattern which `open_file` cannot resolve.
+                        s.get("first_frame_url")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    )
+                })
+                .unwrap_or((0.0, 0, 0, String::new()));
             if let Some(out) = additional_data.get("output") {
                 let has_output_width = out
                     .as_object()
@@ -4766,8 +4807,8 @@ impl RenderQueue {
                                 url.clone()
                             },
                             project_file_url: None,
-                            image_sequence_start: 0,
-                            image_sequence_fps: 0.0,
+                            image_sequence_start: seq_start.clamp(0, i32::MAX as i64) as i32,
+                            image_sequence_fps: seq_fps,
                             preset_name: None,
                             preset_output_size: None,
                         })),
@@ -5007,7 +5048,7 @@ impl RenderQueue {
                                 filesystem::get_filename(&url)
                             );
                             match rendering::VideoProcessor::get_video_info(&url) {
-                                Ok(info) => {
+                                Ok(mut info) => {
                                     ::log::info!(
                                         "[queue_add:get_video_info] end job_id={} file='{}' elapsed_ms={:.1} width={} height={} fps={:.6} duration_ms={:.3} frame_count={} created_at={:?} rotation={} bitrate={}",
                                         job_id,
@@ -5023,6 +5064,33 @@ impl RenderQueue {
                                         info.bitrate
                                     );
                                     ::log::debug!("Loaded {:?}", &info);
+
+                                    // Image-sequence jobs: get_video_info on a
+                                    // `%0Nd` image2 input gives a reliable
+                                    // width/height/fps for a single frame but an
+                                    // unreliable duration/frame_count. Synthesize
+                                    // duration & frame_count from the resolved fps
+                                    // and the on-disk frame count so the validity
+                                    // gate (duration>0 && fps>0) passes. Only when
+                                    // the probed width is valid; a broken first
+                                    // frame (width<=0) falls through to the invalid
+                                    // branch and is reported via add_skipped.
+                                    if seq_fps > 0.0 && info.width > 0 {
+                                        let frame_count = seq_frame_count.max(0) as usize;
+                                        info.fps = seq_fps;
+                                        info.frame_count = frame_count;
+                                        info.duration_ms =
+                                            frame_count as f64 / seq_fps * 1000.0;
+                                        ::log::info!(
+                                            "[queue_add] image_sequence synth job_id={} file='{}' fps={:.6} start={} frame_count={} duration_ms={:.3}",
+                                            job_id,
+                                            filesystem::get_filename(&url),
+                                            info.fps,
+                                            seq_start,
+                                            info.frame_count,
+                                            info.duration_ms
+                                        );
+                                    }
 
                                     render_options.bitrate =
                                         render_options.bitrate.max(info.bitrate);
@@ -5068,6 +5136,11 @@ impl RenderQueue {
                                 let is_main_video = gyro_url.is_empty();
                                 let gyro_url = if !gyro_url.is_empty() {
                                     &gyro_url
+                                } else if !seq_first_frame.is_empty() {
+                                    // Image sequence: read telemetry/lens from the
+                                    // first frame; the `%0Nd` pattern url cannot be
+                                    // opened as a file.
+                                    &seq_first_frame
                                 } else {
                                     &url
                                 };
@@ -5449,6 +5522,14 @@ impl RenderQueue {
                                             info.duration_ms,
                                             info.fps
                                         );
+                                        // Terminal-but-silent path: balance the QML
+                                        // loader's pending count so it never spins
+                                        // forever. The UI aggregates these into one
+                                        // notice (see add_skipped signal).
+                                        add_skipped((
+                                            filesystem::get_filename(&url),
+                                            "invalid_video_info".to_string(),
+                                        ));
                                     }
                                 }
                                 Err(e) => {
@@ -6505,9 +6586,15 @@ impl RenderQueue {
         result
     }
 
-    // Recursively list video files under a folder, filtered by extension whitelist
-    // and excluding files whose stem ends with the configured default output suffix
-    // (e.g. "_stabilized"). Returns a JSON array of URL strings.
+    // Recursively list renderable inputs under a folder, filtered by extension
+    // whitelist and excluding files whose stem ends with the configured default
+    // output suffix (e.g. "_stabilized"). Detects numbered image sequences
+    // (dng/png/jpg/exr, >=5 consecutive frames per directory) and folds each into
+    // a single `%0Nd` entry; lone non-source images (jpg/jpeg/png/exr) are still
+    // dropped. Returns a JSON array of objects:
+    //   {"url": <str>, "is_sequence": <bool>,
+    //    "image_sequence_start": <int>, "frame_count": <int>}
+    // Ordinary files use is_sequence=false, start=0, frame_count=0.
     fn list_video_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
         const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
         const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
@@ -6528,6 +6615,9 @@ impl RenderQueue {
 
         let suffix_lower = self.default_suffix.to_string().to_ascii_lowercase();
 
+        // Regular video scan: keeps videos + dng, drops non-source images
+        // (jpg/jpeg/png/exr). dng frames that turn out to belong to a sequence
+        // are removed below via `consumed`.
         let mut found: Vec<std::path::PathBuf> = Vec::new();
         Self::scan_video_folder(
             dir,
@@ -6549,20 +6639,186 @@ impl RenderQueue {
         found.sort();
         found.dedup();
 
+        // Separate candidate scan that keeps ALL image-sequence frames
+        // (dng/png/jpg/exr) so png/jpg/exr sequences survive long enough to be
+        // detected before the non-source image exclusion is applied.
+        let mut image_candidates: Vec<std::path::PathBuf> = Vec::new();
+        Self::scan_image_sequence_candidates(
+            dir,
+            0,
+            MAX_VIDEO_FOLDER_DEPTH,
+            MAX_VIDEO_FOLDER_RESULTS,
+            &suffix_lower,
+            &mut image_candidates,
+        );
+        image_candidates.sort();
+        image_candidates.dedup();
+
+        let collapsed = collapse_image_sequences(&image_candidates);
+
+        // Pattern URLs + start/count + first-frame URL for every detected
+        // sequence, and the set of frame paths consumed by a sequence (so the
+        // same dng frames are not also emitted individually from the regular
+        // video scan).
+        let mut sequences: Vec<(String, i32, i32, String)> = Vec::new();
+        let mut consumed: HashSet<std::path::PathBuf> = HashSet::new();
+        for entry in &collapsed {
+            if !entry.is_sequence {
+                continue;
+            }
+            // Build the `%0Nd` pattern URL exactly like the single-image path
+            // (`VideoArea.qml::detectImageSequence`): via get_file_url so the `%`
+            // is percent-encoded the same way and round-trips to ffmpeg image2.
+            let parent = entry
+                .path
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let folder_url = filesystem::path_to_url(&parent);
+            let pattern_url =
+                filesystem::get_file_url(&folder_url, &entry.pattern_filename, false);
+            // First-frame URL: `entry.path` is the minimum-numbered member (the
+            // frame at `image_sequence_start`). Encode it the same way ordinary
+            // file URLs are, so QML can feed it to `get_image_sequence_fps`
+            // without reversing the percent-encoded `%0Nd` pattern.
+            let first_frame_url = filesystem::path_to_url(&entry.path.to_string_lossy());
+            sequences.push((
+                pattern_url,
+                entry.image_sequence_start,
+                entry.frame_count,
+                first_frame_url,
+            ));
+            // The scanned frames folded into this sequence must not also be
+            // listed individually by the regular video scan (dng frames).
+            for m in &entry.member_paths {
+                consumed.insert(m.clone());
+            }
+        }
+
+        // Ordinary (non-sequence) file URLs from the regular video scan, minus
+        // any dng frame consumed by a sequence.
         let urls: Vec<String> = found
             .iter()
+            .filter(|p| !consumed.contains(*p))
             .map(|p| filesystem::path_to_url(&p.to_string_lossy()))
             .collect();
         let urls = filter_raw_proxy_siblings_impl(&urls, &exts_lower);
 
+        // Final JSON: ordinary files first (preserving scan order), then sequence
+        // entries.
+        let mut items: Vec<serde_json::Value> = Vec::with_capacity(urls.len() + sequences.len());
+        for u in &urls {
+            items.push(serde_json::json!({
+                "url": u,
+                "is_sequence": false,
+                "image_sequence_start": 0,
+                "frame_count": 0,
+                // Empty for non-sequence entries (shape parity with sequences).
+                "first_frame_url": ""
+            }));
+        }
+        for (pattern_url, start, count, first_frame_url) in &sequences {
+            items.push(serde_json::json!({
+                "url": pattern_url,
+                "is_sequence": true,
+                "image_sequence_start": start,
+                "frame_count": count,
+                // Actual `file://` URL of the frame at `image_sequence_start`,
+                // for `controller.get_image_sequence_fps` in QML.
+                "first_frame_url": first_frame_url
+            }));
+        }
+
         ::log::info!(
-            "[list_video_files_in_folder] root={}, returned {} videos (max_depth={}, cap={})",
+            "[list_video_files_in_folder] root={}, returned {} files ({} sequences, {} videos) (max_depth={}, cap={})",
             path,
+            items.len(),
+            sequences.len(),
             urls.len(),
             MAX_VIDEO_FOLDER_DEPTH,
             MAX_VIDEO_FOLDER_RESULTS
         );
-        QString::from(serde_json::to_string(&urls).unwrap_or_else(|_| "[]".to_string()))
+        QString::from(serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    // Recursively collect every image-sequence-candidate frame (dng/png/jpg/exr,
+    // case-insensitive) under `dir`, excluding stems ending in the default output
+    // suffix. Unlike `scan_video_folder` this keeps png/jpg/exr so that sequence
+    // detection can run before the non-source image exclusion.
+    fn scan_image_sequence_candidates(
+        dir: &std::path::Path,
+        depth: usize,
+        max_depth: usize,
+        max_results: usize,
+        suffix_lower: &str,
+        out: &mut Vec<std::path::PathBuf>,
+    ) {
+        if depth > max_depth || out.len() >= max_results {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) => {
+                ::log::warn!(
+                    "[scan_image_sequence_candidates] cannot read dir {}: {:?}",
+                    dir.display(),
+                    e
+                );
+                return;
+            }
+        };
+
+        let mut files: Vec<std::path::PathBuf> = Vec::new();
+        let mut subdirs: Vec<std::path::PathBuf> = Vec::new();
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                subdirs.push(p);
+            } else if p.is_file() && !is_ignored_system_file_path(&p) {
+                files.push(p);
+            }
+        }
+        files.sort();
+        subdirs.sort();
+
+        for p in files {
+            if out.len() >= max_results {
+                return;
+            }
+            let ext_ok = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| is_image_sequence_ext(e))
+                .unwrap_or(false);
+            if !ext_ok {
+                continue;
+            }
+            if !suffix_lower.is_empty() {
+                let stem_matches = p
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.to_ascii_lowercase().ends_with(suffix_lower))
+                    .unwrap_or(false);
+                if stem_matches {
+                    continue;
+                }
+            }
+            out.push(p);
+        }
+
+        for d in subdirs {
+            if out.len() >= max_results {
+                return;
+            }
+            Self::scan_image_sequence_candidates(
+                &d,
+                depth + 1,
+                max_depth,
+                max_results,
+                suffix_lower,
+                out,
+            );
+        }
     }
 
     fn list_crm_proxy_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
@@ -11438,6 +11694,217 @@ fn is_non_source_image_ext(ext: &str) -> bool {
         .any(|x| x.eq_ignore_ascii_case(ext))
 }
 
+// Image extensions that can participate in a numbered image sequence. Mirrors
+// `VideoArea.qml::detectImageSequence` (`\d+\.(png|jpg|exr|dng)$`).
+const IMAGE_SEQUENCE_EXTS: &[&str] = &["dng", "png", "jpg", "exr"];
+
+fn is_image_sequence_ext(ext: &str) -> bool {
+    IMAGE_SEQUENCE_EXTS
+        .iter()
+        .any(|x| x.eq_ignore_ascii_case(ext))
+}
+
+// One result of image-sequence collapsing. A non-sequence entry passes through
+// a single source file; a sequence entry stands in for >=5 consecutive numbered
+// frames in one directory.
+#[derive(Clone, Debug, PartialEq)]
+struct CollapsedFileEntry {
+    // For non-sequence entries: the original file path.
+    // For sequence entries: a representative frame path (used to derive the
+    // parent folder + `%0Nd` pattern filename).
+    path: std::path::PathBuf,
+    is_sequence: bool,
+    // 0 for non-sequence entries; first (lowest) frame number for sequences.
+    image_sequence_start: i32,
+    // 0 for non-sequence entries; consecutive frame count for sequences.
+    frame_count: i32,
+    // Empty for non-sequence entries; the `%0Nd` pattern filename for sequences
+    // (e.g. `A001_%06d.dng`).
+    pattern_filename: String,
+    // Sequence-only: the scanned frame paths folded into this entry (exactly the
+    // members the caller passed in, with their real on-disk extension case).
+    // Used to suppress the same frames from the ordinary video list.
+    member_paths: Vec<std::path::PathBuf>,
+}
+
+// Split a filename into (stem-before-trailing-digits, digit-string, ext) when it
+// matches the image-sequence shape `<prefix><digits>.<ext>` and `ext` is one of
+// IMAGE_SEQUENCE_EXTS. Returns None for any file that does not match.
+fn split_image_sequence_name(filename: &str) -> Option<(String, String, String)> {
+    let dot = filename.rfind('.')?;
+    if dot == 0 {
+        return None;
+    }
+    let ext = &filename[dot + 1..];
+    if ext.is_empty() || !is_image_sequence_ext(ext) {
+        return None;
+    }
+    let stem = &filename[..dot];
+    // Find the trailing run of ASCII digits in the stem.
+    let digits_start = stem
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| c.is_ascii_digit())
+        .last()
+        .map(|(i, _)| i);
+    let digits_start = digits_start?;
+    let prefix = &stem[..digits_start];
+    let digits = &stem[digits_start..];
+    if digits.is_empty() {
+        return None;
+    }
+    Some((prefix.to_string(), digits.to_string(), ext.to_string()))
+}
+
+// Group a flat list of files (videos + image frames) and collapse each set of
+// >=5 consecutive, identically-named-and-padded image frames in the same
+// directory into a single `%0Nd` sequence entry. Everything else (videos, lone
+// images, <5-frame runs, cross-directory same-name frames) passes through
+// untouched. Mirrors `VideoArea.qml::detectImageSequence` semantics: ext in
+// {dng,png,jpg,exr} (case-insensitive), >=5 consecutive frames from the minimum
+// number, pad width = digit-string length.
+//
+// `frame_count` / `image_sequence_start` are re-globbed from disk for each
+// detected pattern (not derived solely from `files`) so a caller-side result cap
+// does not truncate the true frame count of a long sequence.
+fn collapse_image_sequences(files: &[std::path::PathBuf]) -> Vec<CollapsedFileEntry> {
+    use std::collections::BTreeMap;
+
+    // Group key: (parent_dir, prefix, pad_width, ext_lowercase).
+    type GroupKey = (std::path::PathBuf, String, usize, String);
+    struct GroupMember {
+        path: std::path::PathBuf,
+        number: i64,
+    }
+
+    let mut groups: BTreeMap<GroupKey, Vec<GroupMember>> = BTreeMap::new();
+    // Preserve original order for pass-through (non-sequence) entries.
+    let mut order: Vec<std::path::PathBuf> = Vec::new();
+
+    for p in files {
+        order.push(p.clone());
+        let filename = match p.file_name().and_then(|n| n.to_str()) {
+            Some(f) => f,
+            None => continue,
+        };
+        let (prefix, digits, ext) = match split_image_sequence_name(filename) {
+            Some(v) => v,
+            None => continue,
+        };
+        let parent = p.parent().map(|x| x.to_path_buf()).unwrap_or_default();
+        let pad_width = digits.len();
+        let number: i64 = match digits.parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let key: GroupKey = (parent, prefix, pad_width, ext.to_ascii_lowercase());
+        groups.entry(key).or_default().push(GroupMember {
+            path: p.clone(),
+            number,
+        });
+    }
+
+    // Decide which groups are real sequences (>=5 consecutive from the minimum).
+    // For sequences, re-glob the directory to obtain the true frame count.
+    let mut sequence_entries: HashMap<std::path::PathBuf, CollapsedFileEntry> = HashMap::new();
+    // Paths that ended up collapsed into a sequence (removed from pass-through).
+    let mut consumed_paths: HashSet<std::path::PathBuf> = HashSet::new();
+
+    for ((parent, prefix, pad_width, ext_lower), mut members) in groups {
+        if members.len() < 5 {
+            // Not enough members even before checking consecutiveness; pass
+            // through as ordinary files.
+            continue;
+        }
+        members.sort_by_key(|m| m.number);
+        let min_number = members[0].number;
+
+        // Count consecutive frames from `min_number` on disk (authoritative,
+        // not limited by the caller's scan cap). Stop at the first gap.
+        let mut frame_count: i64 = 0;
+        let mut number = min_number;
+        loop {
+            let candidate_name = format!(
+                "{}{:0width$}.{}",
+                prefix,
+                number,
+                ext_lower,
+                width = pad_width
+            );
+            let candidate_path = parent.join(&candidate_name);
+            // A frame counts if it is present on disk (re-glob, authoritative
+            // past the caller's scan cap) or already known in the scanned set
+            // (covers in-memory test fixtures and differing-ext-case files).
+            let exists = candidate_path.is_file() || members.iter().any(|m| m.number == number);
+            if exists {
+                frame_count += 1;
+                number += 1;
+            } else {
+                break;
+            }
+        }
+
+        if frame_count < 5 {
+            // The members were not actually consecutive (>=5 members but gaps
+            // within the first run). Pass through as ordinary files.
+            continue;
+        }
+
+        // Build the `%0Nd` pattern filename from a representative member.
+        let pattern_filename = format!("{}%0{}d.{}", prefix, pad_width, ext_lower);
+        // Representative frame path = the minimum-numbered member (drives parent
+        // folder derivation downstream).
+        let rep_path = members
+            .iter()
+            .find(|m| m.number == min_number)
+            .map(|m| m.path.clone())
+            .unwrap_or_else(|| members[0].path.clone());
+
+        let start = min_number.clamp(0, i32::MAX as i64) as i32;
+        let count = frame_count.clamp(0, i32::MAX as i64) as i32;
+
+        sequence_entries.insert(
+            rep_path.clone(),
+            CollapsedFileEntry {
+                path: rep_path.clone(),
+                is_sequence: true,
+                image_sequence_start: start,
+                frame_count: count,
+                pattern_filename,
+                member_paths: members.iter().map(|m| m.path.clone()).collect(),
+            },
+        );
+        // Every member of this group is consumed by the sequence entry.
+        for m in &members {
+            consumed_paths.insert(m.path.clone());
+        }
+    }
+
+    // Emit results in original scan order: sequence entries appear at the
+    // position of their representative frame; consumed members are dropped;
+    // everything else passes through unchanged.
+    let mut out: Vec<CollapsedFileEntry> = Vec::new();
+    for p in order {
+        if let Some(seq) = sequence_entries.remove(&p) {
+            out.push(seq);
+            continue;
+        }
+        if consumed_paths.contains(&p) {
+            // A non-representative member of an emitted sequence; skip.
+            continue;
+        }
+        out.push(CollapsedFileEntry {
+            path: p,
+            is_sequence: false,
+            image_sequence_start: 0,
+            frame_count: 0,
+            pattern_filename: String::new(),
+            member_paths: Vec::new(),
+        });
+    }
+    out
+}
+
 fn stem_matches_default_suffix(filename: &str, default_suffix_lower: &str) -> bool {
     if default_suffix_lower.is_empty() {
         return false;
@@ -15540,7 +16007,13 @@ mod tests {
             filesystem::path_to_url(&dir.path().to_string_lossy()),
             serde_json::to_string(&default_exts()).unwrap(),
         );
-        let urls: Vec<String> = serde_json::from_str(&out.to_string()).unwrap();
+        // list_video_files_in_folder now returns an array of objects; extract the
+        // url field to keep these legacy ordering/dedup assertions meaningful.
+        let items: Vec<serde_json::Value> = serde_json::from_str(&out.to_string()).unwrap();
+        let urls: Vec<String> = items
+            .iter()
+            .map(|v| v["url"].as_str().unwrap().to_string())
+            .collect();
 
         assert_eq!(
             urls,
@@ -15566,7 +16039,13 @@ mod tests {
             filesystem::path_to_url(&dir.path().to_string_lossy()),
             serde_json::to_string(&default_exts()).unwrap(),
         );
-        let urls: Vec<String> = serde_json::from_str(&out.to_string()).unwrap();
+        // list_video_files_in_folder now returns an array of objects; extract the
+        // url field to keep these legacy ordering/dedup assertions meaningful.
+        let items: Vec<serde_json::Value> = serde_json::from_str(&out.to_string()).unwrap();
+        let urls: Vec<String> = items
+            .iter()
+            .map(|v| v["url"].as_str().unwrap().to_string())
+            .collect();
 
         assert_eq!(
             urls,
@@ -17309,5 +17788,180 @@ mod tests {
         // LENS_GROUP_COUNT = 6, so index 99 is invalid; treat as None.
         let data = r#"{"lens_index_override":99}"#;
         assert_eq!(read_additional_data_lens_index_override(data), None);
+    }
+
+    // --- image-sequence collapsing -----------------------------------------
+
+    fn touch(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+        let p = dir.join(name);
+        std::fs::write(&p, []).unwrap();
+        p
+    }
+
+    #[test]
+    fn collapse_folds_five_or_more_consecutive_dng_into_one_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in 1..=7 {
+            files.push(touch(dir.path(), &format!("A001_{n:06}.dng")));
+        }
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        let seqs: Vec<_> = collapsed.iter().filter(|e| e.is_sequence).collect();
+        assert_eq!(seqs.len(), 1, "exactly one sequence entry");
+        let seq = seqs[0];
+        assert_eq!(seq.image_sequence_start, 1);
+        assert_eq!(seq.frame_count, 7);
+        assert_eq!(seq.pattern_filename, "A001_%06d.dng");
+        // No individual frames pass through.
+        assert!(collapsed.iter().all(|e| e.is_sequence));
+    }
+
+    #[test]
+    fn collapse_does_not_fold_three_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in 1..=3 {
+            files.push(touch(dir.path(), &format!("frame_{n:03}.dng")));
+        }
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        assert!(
+            collapsed.iter().all(|e| !e.is_sequence),
+            "fewer than 5 frames must not be a sequence"
+        );
+        assert_eq!(collapsed.len(), 3);
+    }
+
+    #[test]
+    fn collapse_does_not_merge_across_subdirectories() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("clipA");
+        let b = dir.path().join("clipB");
+        std::fs::create_dir(&a).unwrap();
+        std::fs::create_dir(&b).unwrap();
+        let mut files = Vec::new();
+        for n in 1..=6 {
+            files.push(touch(&a, &format!("IMG_{n:05}.dng")));
+            files.push(touch(&b, &format!("IMG_{n:05}.dng")));
+        }
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        let seqs: Vec<_> = collapsed.iter().filter(|e| e.is_sequence).collect();
+        assert_eq!(seqs.len(), 2, "one sequence per directory");
+        for seq in seqs {
+            assert_eq!(seq.frame_count, 6);
+            assert_eq!(seq.pattern_filename, "IMG_%05d.dng");
+        }
+    }
+
+    #[test]
+    fn collapse_keeps_video_alongside_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in 1..=5 {
+            files.push(touch(dir.path(), &format!("SEQ_{n:05}.dng")));
+        }
+        let mp4 = touch(dir.path(), "Clip.mp4");
+        files.push(mp4.clone());
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        let seqs: Vec<_> = collapsed.iter().filter(|e| e.is_sequence).collect();
+        let passthrough: Vec<_> = collapsed.iter().filter(|e| !e.is_sequence).collect();
+        assert_eq!(seqs.len(), 1);
+        assert_eq!(seqs[0].frame_count, 5);
+        assert_eq!(passthrough.len(), 1, "the mp4 passes through");
+        assert_eq!(passthrough[0].path, mp4);
+    }
+
+    #[test]
+    fn collapse_folds_png_sequence() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in 1..=60 {
+            files.push(touch(dir.path(), &format!("render_{n:05}.png")));
+        }
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        let seqs: Vec<_> = collapsed.iter().filter(|e| e.is_sequence).collect();
+        assert_eq!(seqs.len(), 1);
+        assert_eq!(seqs[0].image_sequence_start, 1);
+        assert_eq!(seqs[0].frame_count, 60);
+        assert_eq!(seqs[0].pattern_filename, "render_%05d.png");
+    }
+
+    #[test]
+    fn collapse_breaks_sequence_at_gap_below_threshold() {
+        // 4 consecutive from the minimum (1..=4), then a gap, then more frames.
+        // Consecutive run from min is only 4 < 5 → not a sequence.
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in [1, 2, 3, 4, 10, 11].iter() {
+            files.push(touch(dir.path(), &format!("g_{n:04}.dng")));
+        }
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        assert!(
+            collapsed.iter().all(|e| !e.is_sequence),
+            "run from min is 4 frames, below the 5-frame threshold"
+        );
+    }
+
+    #[test]
+    fn collapse_starts_count_at_lowest_number() {
+        // Frames 100..=106 (7 consecutive). Start = 100, count = 7.
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for n in 100..=106 {
+            files.push(touch(dir.path(), &format!("clip_{n:04}.exr")));
+        }
+        files.sort();
+
+        let collapsed = collapse_image_sequences(&files);
+        let seq = collapsed.iter().find(|e| e.is_sequence).unwrap();
+        assert_eq!(seq.image_sequence_start, 100);
+        assert_eq!(seq.frame_count, 7);
+        assert_eq!(seq.pattern_filename, "clip_%04d.exr");
+    }
+
+    #[test]
+    fn image_sequence_additional_data_shape_parses() {
+        // Contract mirror for add_file's `image_sequence` extraction (D3).
+        let v: serde_json::Value =
+            serde_json::from_str(r#"{"image_sequence":{"fps":25.0,"start":7,"frame_count":305}}"#)
+                .unwrap();
+        let (fps, start, frame_count) = v
+            .get("image_sequence")
+            .map(|s| {
+                (
+                    s.get("fps").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                    s.get("start").and_then(|x| x.as_i64()).unwrap_or(0),
+                    s.get("frame_count").and_then(|x| x.as_i64()).unwrap_or(0),
+                )
+            })
+            .unwrap_or((0.0, 0, 0));
+        assert_eq!(fps, 25.0);
+        assert_eq!(start, 7);
+        assert_eq!(frame_count, 305);
+
+        // Ordinary video: no image_sequence key → all zero, behavior unchanged.
+        let v2: serde_json::Value = serde_json::from_str(r#"{"output":{}}"#).unwrap();
+        let (fps2, start2, count2) = v2
+            .get("image_sequence")
+            .map(|s| {
+                (
+                    s.get("fps").and_then(|x| x.as_f64()).unwrap_or(0.0),
+                    s.get("start").and_then(|x| x.as_i64()).unwrap_or(0),
+                    s.get("frame_count").and_then(|x| x.as_i64()).unwrap_or(0),
+                )
+            })
+            .unwrap_or((0.0, 0, 0));
+        assert_eq!((fps2, start2, count2), (0.0, 0, 0));
     }
 }

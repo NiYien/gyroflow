@@ -20,6 +20,20 @@ Item {
     // (simple-mode only). Cleared on queue_finished / clear / stop so the next batch re-asks.
     property string pendingConvertFormatChoice: ""
 
+    // Per-url image-sequence metadata pending injection into add_file's
+    // additional_data, keyed by a normalized form of the %0Nd pattern url.
+    // Populated while scanning dropped folders, consumed (and deleted) in add()'s
+    // per-url loop.
+    property var pendingSequenceMeta: ({})
+    // Normalize a url for use as a pendingSequenceMeta key. The pattern url is
+    // stored from Rust JSON with percent-encoded non-ASCII (e.g. CJK folder
+    // names) but reaches add()'s loop after list<url> coercion has decoded it,
+    // so the raw strings differ. decodeURIComponent fully decodes both forms to
+    // the same canonical string.
+    function seqKey(u: var): string {
+        try { return decodeURIComponent(u.toString()); } catch (e) { return u.toString(); }
+    }
+
     function ensureExternalSdkForQueue(urls, continuation) {
         const sdkUrl = render_queue.first_file_requiring_external_sdk(JSON.stringify(urls.map(u => u.toString())));
         if (!sdkUrl) return true;
@@ -854,6 +868,21 @@ Item {
                     r3dSeqLoader.loadNext();
                 }
                 loader.updateStatus();
+                root.checkBatchDrain();
+            }
+            function onAdd_skipped(job_id: real, filename: string, reason: string): void {
+                // The job opened but produced no usable VideoInfo, so add_file's
+                // async body emits this instead of added/error. Clear the pending
+                // entry (otherwise the loader spinner leaks) and collect the
+                // filename for an aggregate notice when the batch drains.
+                delete loader.pendingJobs[job_id];
+                loader.skippedFiles.push(filename);
+                if (r3dSeqLoader.waiting) {
+                    r3dSeqLoader.waiting = false;
+                    r3dSeqLoader.loadNext();
+                }
+                loader.updateStatus();
+                root.checkBatchDrain();
             }
             function onError(job_id: real, text: string, arg: string, callback: string): void {
                 if (job_id == render_queue.main_job_id || loader.pendingJobs[job_id]) {
@@ -875,6 +904,7 @@ Item {
                     r3dSeqLoader.loadNext();
                 }
                 loader.updateStatus();
+                root.checkBatchDrain();
             }
             function onRender_progress(job_id: real, progress: real, frame: int, total_frames: int, finished: bool, start_time: real, is_conversion: bool): void {
                 if (job_id == render_queue.main_job_id) {
@@ -1107,52 +1137,16 @@ Item {
                                 console.log("[AddFolder] folder_access_granted FAILED:", e);
                                 return;
                             }
+                            // Hand the folder url straight to the queue's loadFiles
+                            // handler — the single path that scans gyro files,
+                            // collapses image sequences (consecutive frames -> one
+                            // %0Nd job), resolves their frame rate, and enqueues
+                            // videos + crm proxies. Expanding the folder inline here
+                            // broke once list_video_files_in_folder began returning
+                            // structured objects instead of plain url strings.
                             try {
-                                render_queue.add_gyro_folder(folderUrl.toString());
-                                console.log("[AddFolder] add_gyro_folder ok");
-                            } catch (e) {
-                                console.log("[AddFolder] add_gyro_folder FAILED:", e);
-                                return;
-                            }
-                            let more = [];
-                            try {
-                                const jsonStr = render_queue.list_video_files_in_folder(
-                                    folderUrl.toString(),
-                                    JSON.stringify(fileDialog.extensions)
-                                );
-                                console.log("[AddFolder] list_video_files_in_folder json.length=" + (jsonStr ? jsonStr.length : 0));
-                                more = JSON.parse(jsonStr);
-                                console.log("[AddFolder] parsed more.length=" + more.length);
-                            } catch (e) {
-                                console.log("[AddFolder] list_video_files_in_folder FAILED:", e);
-                                return;
-                            }
-                            try {
-                                const crmJsonStr = render_queue.list_crm_proxy_files_in_folder(
-                                    folderUrl.toString(),
-                                    JSON.stringify(fileDialog.extensions)
-                                );
-                                const crmMore = JSON.parse(crmJsonStr);
-                                for (const v of crmMore) {
-                                    if (!more.includes(v)) more.push(v);
-                                }
-                                console.log("[AddFolder] parsed crmMore.length=" + crmMore.length);
-                            } catch (e) {
-                                console.log("[AddFolder] list_crm_proxy_files_in_folder FAILED:", e);
-                                return;
-                            }
-                            if (more.length === 0) {
-                                console.log("[AddFolder] no video files found in folder; nothing to enqueue");
-                                return;
-                            }
-                            console.log("[AddFolder] first video URL=" + more[0]);
-                            try {
-                                // Real video URLs from list_video_files_in_folder: safe to
-                                // hand back to dt.loadFiles which routes through
-                                // add() -> render_queue.add_file. If any are still
-                                // tree-style URIs the per-step log above will show it.
-                                dt.loadFiles(more);
-                                console.log("[AddFolder] dt.loadFiles dispatched " + more.length + " urls");
+                                dt.loadFiles([folderUrl]);
+                                console.log("[AddFolder] dt.loadFiles dispatched folder " + folderUrl);
                             } catch (e) {
                                 console.log("[AddFolder] dt.loadFiles FAILED:", e);
                             }
@@ -2581,7 +2575,11 @@ Item {
                 root.ensureExternalSdkForQueue(urlsRequiringSdk, function() { add(outFolder, urlsRequiringSdk, crmProxyGyroByProxy); });
                 return;
             }
-            additional = JSON.stringify(additional);
+            // Keep the base additional_data as an object so per-url image
+            // sequence metadata can be merged in below; stringify a shared copy
+            // for the r3d/nev sequential path (sequences never go there).
+            const additionalObj = additional;
+            additional = JSON.stringify(additionalObj);
 
             // Natural sort the URLs
             const ne = str => str.toString().replace(/\d+/g, n => n.padStart(8, "0"));
@@ -2598,7 +2596,16 @@ Item {
                 return !lower.endsWith(".r3d") && !lower.endsWith(".nev");
             });
             for (const url of otherUrls) {
-                const job_id = render_queue.add_file(url.toString(), crmProxyGyroByProxy[url.toString()] || "", additional);
+                // Inject per-url image-sequence metadata (folder-scanned dng
+                // patterns) so a whole sequence loads as one job. Plain files
+                // keep the unmodified shared additional_data.
+                const seqMeta = root.pendingSequenceMeta[root.seqKey(url)];
+                let perUrlAdditional = additional;
+                if (seqMeta) {
+                    perUrlAdditional = JSON.stringify(Object.assign({}, additionalObj, { image_sequence: seqMeta }));
+                    delete root.pendingSequenceMeta[root.seqKey(url)];
+                }
+                const job_id = render_queue.add_file(url.toString(), crmProxyGyroByProxy[url.toString()] || "", perUrlAdditional);
                 if (job_id > 0) loader.pendingJobs[job_id] = true;
             }
             if (otherUrls.length > 0) loader.updateStatus();
@@ -2640,6 +2647,10 @@ Item {
                 return;
             }
             let videoUrls = [];
+            // Image sequences found while scanning dropped folders that still
+            // need a user-provided frame rate (no telemetry fps). Resolved via
+            // a chained prompt before add() runs (see resolveFpsPromptsThen).
+            let pendingFpsPrompts = [];
             for (const url of urls) {
                 const fname = filesystem.get_filename(url).toLowerCase();
                 if (render_queue.is_gyro_mix_file(url.toString())) {
@@ -2663,7 +2674,31 @@ Item {
                             JSON.stringify(fileDialog.extensions)
                         );
                         const more = JSON.parse(jsonStr);
-                        for (const v of more) videoUrls.push(v);
+                        // list_video_files_in_folder now returns objects (not
+                        // plain strings). Plain files come first, image-sequence
+                        // entries (consecutively-numbered frames merged into one
+                        // %0Nd pattern) come last. For sequences, resolve the fps
+                        // and remember the image_sequence metadata keyed by the
+                        // pattern url so add() can inject it per-url later.
+                        for (const entry of more) {
+                            if (entry && entry.is_sequence) {
+                                videoUrls.push(entry.url);
+                                let seqFps = 0;
+                                try { seqFps = controller.get_image_sequence_fps(entry.first_frame_url); } catch (e) { seqFps = 0; }
+                                if (seqFps > 0) {
+                                    root.pendingSequenceMeta[root.seqKey(entry.url)] = { fps: seqFps, start: entry.image_sequence_start, frame_count: entry.frame_count, first_frame_url: entry.first_frame_url };
+                                } else {
+                                    // No telemetry fps: defer to a frame-rate prompt (chained later).
+                                    root.pendingSequenceMeta[root.seqKey(entry.url)] = { fps: 0, start: entry.image_sequence_start, frame_count: entry.frame_count, first_frame_url: entry.first_frame_url };
+                                    pendingFpsPrompts.push({ url: entry.url.toString(), key: root.seqKey(entry.url), first_frame_url: entry.first_frame_url });
+                                }
+                            } else if (entry && entry.url !== undefined) {
+                                videoUrls.push(entry.url);
+                            } else {
+                                // Defensive: tolerate legacy string return shape.
+                                videoUrls.push(entry);
+                            }
+                        }
                     } catch (e) {
                         console.log("list_video_files_in_folder failed:", e);
                     }
@@ -2688,31 +2723,64 @@ Item {
                 return;
             }
             console.log("[queue_drop:queue] queued=" + videoUrls.length);
-            const firstVideoUrl = render_queue.first_renderable_video_file(
-                JSON.stringify(videoUrls.map(u => u.toString())),
-                JSON.stringify(fileDialog.extensions)
-            );
-            if (!firstVideoUrl) {
-                add("", videoUrls);
-            } else {
-                // [queue-batch-streamline T4] 使用 Export 设置的默认路径，跳过弹窗
-                let outFolder = "";
-                if (window.exportSettings && window.exportSettings.queueOutputMode === 1) {
-                    const fixedPath = window.exportSettings.queueFixedOutputPath;
-                    if (fixedPath) {
-                        outFolder = fixedPath;
-                    } else {
-                        window.outputFile.selectFolder("", function(folder_url) {
-                            if (window.exportSettings) {
-                                window.exportSettings.queueFixedOutputPath = folder_url;
-                            }
-                            add(folder_url, videoUrls);
-                        });
-                        return;
-                    }
+            const proceed = () => {
+                if (!videoUrls.length) {
+                    // All sequence fps prompts were cancelled.
+                    console.log("[queue_drop:drop] reason=all_sequences_cancelled");
+                    return;
                 }
-                add(outFolder, videoUrls);
-            }
+                const firstVideoUrl = render_queue.first_renderable_video_file(
+                    JSON.stringify(videoUrls.map(u => u.toString())),
+                    JSON.stringify(fileDialog.extensions)
+                );
+                if (!firstVideoUrl) {
+                    add("", videoUrls);
+                } else {
+                    // [queue-batch-streamline T4] 使用 Export 设置的默认路径，跳过弹窗
+                    let outFolder = "";
+                    if (window.exportSettings && window.exportSettings.queueOutputMode === 1) {
+                        const fixedPath = window.exportSettings.queueFixedOutputPath;
+                        if (fixedPath) {
+                            outFolder = fixedPath;
+                        } else {
+                            window.outputFile.selectFolder("", function(folder_url) {
+                                if (window.exportSettings) {
+                                    window.exportSettings.queueFixedOutputPath = folder_url;
+                                }
+                                add(folder_url, videoUrls);
+                            });
+                            return;
+                        }
+                    }
+                    add(outFolder, videoUrls);
+                }
+            };
+            // Sequences without telemetry fps need a frame-rate prompt. Chain
+            // the prompts (Cancel drops that sequence from the queue), then run
+            // the rest of the pipeline. With no pending prompts this is fully
+            // synchronous and behaves exactly as before.
+            const resolveFpsPromptsThen = (i, done) => {
+                if (i >= pendingFpsPrompts.length) { done(); return; }
+                const item = pendingFpsPrompts[i];
+                const dlg = messageBox(Modal.Info, qsTr("Image sequence has been detected.\nPlease provide frame rate: "), [
+                    { text: qsTr("Ok"), accent: true, clicked: function() {
+                        const fps = dlg.mainColumn.children[1].value;
+                        settings.setValue("imageSequenceFps", fps);
+                        const meta = root.pendingSequenceMeta[item.key];
+                        if (meta) meta.fps = fps;
+                        resolveFpsPromptsThen(i + 1, done);
+                    } },
+                    { text: qsTr("Cancel"), clicked: function() {
+                        // Drop this sequence: forget its meta and remove it from the queue.
+                        delete root.pendingSequenceMeta[item.key];
+                        videoUrls = videoUrls.filter(u => u.toString() !== item.url);
+                        resolveFpsPromptsThen(i + 1, done);
+                    } },
+                ]);
+                const nf = Qt.createComponent("components/NumberField.qml").createObject(dlg.mainColumn, { precision: 3, unit: "fps", value: +settings.value("imageSequenceFps", "30") });
+                nf.anchors.horizontalCenter = dlg.mainColumn.horizontalCenter;
+            };
+            resolveFpsPromptsThen(0, proceed);
         }
     }
 
@@ -2911,6 +2979,23 @@ Item {
         id: loader;
         active: false;
         property var pendingJobs: ({});
+        // Filenames of jobs that opened but produced no usable VideoInfo
+        // (add_skipped). Reported once as an aggregate notice when the current
+        // batch drains, then cleared.
+        property var skippedFiles: [];
         function updateStatus(): void { active = Object.keys(pendingJobs).length > 0; }
+    }
+
+    // When the current batch drains (no more pending jobs), surface a single
+    // aggregate notice if any files were skipped, then reset the list. Called
+    // from onAdded / onError / onAdd_skipped so the last job — whatever its
+    // outcome — triggers the notice exactly once.
+    function checkBatchDrain(): void {
+        if (Object.keys(loader.pendingJobs).length > 0) return;
+        if (loader.skippedFiles.length > 0) {
+            const n = loader.skippedFiles.length;
+            loader.skippedFiles = [];
+            messageBox(Modal.Warning, qsTr("%1 files could not be read and were skipped.").arg(n), [{ text: qsTr("Ok") }]);
+        }
     }
 }

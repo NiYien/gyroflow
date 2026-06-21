@@ -858,6 +858,43 @@ pub fn copy_insta360_metadata(
 // plugin does not parse `tkhd.matrix`, so we bypass via mp4parse to read the
 // real rotation. Real RED2-container R3D files fail `parse_mp4` and we return 0,
 // matching prior behavior.
+// Reconstruct the first-frame url of a `%0Nd` image sequence from its pattern
+// url and start index. Telemetry (camera model, lens params, frame readout
+// time) must be parsed from a real frame, not the `%0Nd` pattern that
+// `open_file` cannot resolve. Returns None when the url carries no `%0Nd` token.
+pub fn image_sequence_first_frame_url(pattern_url: &str, start: i32) -> Option<String> {
+    // Decode to an OS path first so the sequence token is the literal `%0Nd`
+    // (url form may percent-encode the `%` as `%25`).
+    let path = gyroflow_core::filesystem::url_to_path(pattern_url);
+    let bytes = path.as_bytes();
+    let mut i = 0;
+    while i + 3 < bytes.len() {
+        // Match `%0<width>d` (image2 demuxer specifier).
+        if bytes[i] == b'%' && bytes[i + 1] == b'0' {
+            let mut j = i + 2;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 2 && j < bytes.len() && bytes[j] == b'd' {
+                if let Ok(width) = path[i + 2..j].parse::<usize>() {
+                    if width > 0 {
+                        let replaced = format!(
+                            "{}{:0width$}{}",
+                            &path[..i],
+                            start.max(0),
+                            &path[j + 1..],
+                            width = width
+                        );
+                        return Some(gyroflow_core::filesystem::path_to_url(&replaced));
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn peek_container_rotation_from_url(url: &str) -> i32 {
     let filename = gyroflow_core::filesystem::get_filename(url);
     if !filename.to_ascii_lowercase().ends_with(".r3d") {

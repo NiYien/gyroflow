@@ -421,6 +421,11 @@ pub struct Controller {
 
     image_sequence_start: qt_property!(i32),
     image_sequence_fps: qt_property!(f64),
+    // First-frame url for `%0Nd` image sequences. Telemetry (camera model, lens
+    // params, frame readout time) must be parsed from a real frame, not the
+    // pattern url which `open_file` cannot resolve. Set by VideoArea before
+    // loading a sequence; empty for ordinary videos.
+    image_sequence_first_frame_url: qt_property!(QString),
 
     preview_resolution: i32,
     processing_resolution: i32,
@@ -1703,6 +1708,14 @@ impl Controller {
                 self.loading_gyro_in_progress = true;
                 self.loading_gyro_in_progress_changed();
                 let in_flight_count = self.stabilizer.in_flight_count.clone();
+                // For `%0Nd` image sequences, parse telemetry from the first frame
+                // (a real file); the pattern url cannot be opened by open_file.
+                // `image_sequence_first_frame_url` is set on a fresh drag; when a
+                // sequence is loaded from a queue job / .gyroflow project it is not,
+                // so fall back to reconstructing the first frame from the pattern +
+                // start index.
+                let image_seq_first_frame = self.image_sequence_first_frame_url.to_string();
+                let image_seq_start = self.image_sequence_start;
                 core::run_threaded(move || {
                     // §4.2 OpGuard: load_gyro_data mutates stab.gyro,
                     // stab.params (video_display_anchor_us), and triggers
@@ -1712,14 +1725,24 @@ impl Controller {
                     let additional_obj = additional_data.as_object_mut().unwrap();
 
                     {
-                        if let Ok(mut file) = filesystem::open_file(&url, false, false) {
+                        // Image sequences read telemetry from the first frame; all
+                        // other inputs use the url unchanged.
+                        let telemetry_url = if !image_seq_first_frame.is_empty() {
+                            image_seq_first_frame.clone()
+                        } else if image_seq_start > 0 {
+                            crate::util::image_sequence_first_frame_url(&url, image_seq_start)
+                                .unwrap_or_else(|| url.clone())
+                        } else {
+                            url.clone()
+                        };
+                        if let Ok(mut file) = filesystem::open_file(&telemetry_url, false, false) {
                             let filesize = file.size;
                             if is_main_video {
                                 // Ignore the error here, video file may not contain the telemetry and it's ok
                                 let _ = stab.load_gyro_data(
                                     file.get_file(),
                                     filesize,
-                                    &url,
+                                    &telemetry_url,
                                     is_main_video,
                                     &load_options,
                                     progress,
@@ -1765,7 +1788,7 @@ impl Controller {
                                 if let Err(e) = stab.load_gyro_data(
                                     file.get_file(),
                                     filesize,
-                                    &url,
+                                    &telemetry_url,
                                     is_main_video,
                                     &load_options,
                                     progress,

@@ -473,6 +473,9 @@ Item {
         if (!skip_detection) {
             let newUrl;
             if (newUrl = detectImageSequence(folder, filename)) {
+                // Remember the first frame so telemetry (camera/lens) parses a real
+                // file, not the %0Nd pattern url.
+                controller.image_sequence_first_frame_url = filesystem.get_file_url(folder, filename, false);
                 // DNG: try to get frame rate from telemetry, skip dialog if successful
                 if (/\.dng$/i.test(filename)) {
                     const firstFileUrl = filesystem.get_file_url(folder, filename, false);
@@ -791,6 +794,7 @@ Item {
         if (!filename.includes("%0")) {
             controller.image_sequence_start = 0;
             controller.image_sequence_fps = 0;
+            controller.image_sequence_first_frame_url = "";
         }
         if (/\d+\.(png|jpg|exr|dng)$/i.test(filename)) {
             let firstNum = filename.match(/(\d+)\.(png|jpg|exr|dng)$/i);
@@ -1161,9 +1165,9 @@ Item {
                     console.log("[main_drop:dispatch] files=1 target=motion_data");
                     return;
                 }
-                // [queue-pair-ux T6] 分离文件夹和普通文件
+                // [queue-pair-ux T6] separate folders from loose files
                 let fileUrls = [];
-                let hasFolder = false;
+                let folderUrls = [];
                 let hasGyroFile = false;
                 let filteredUrls = drop.urls;
                 try {
@@ -1189,34 +1193,74 @@ Item {
                     } else if (fname.endsWith(".bin")) {
                         continue;
                     } else if (filesystem.is_dir(url)) {
-                        // Native directory check (covers folders with dots in their
-                        // name like `Footage.2024`, as well as RED `.RDC`/`.RDM`
-                        // bundles). Scan gyro _mix.bin files AND recursively scan
-                        // video files (max depth 3, max 600 videos, extension-
-                        // filtered, excluding files whose stem ends with the
-                        // configured output suffix, e.g. _stabilized).
-                        render_queue.add_gyro_folder(url.toString());
-                        try {
-                            const jsonStr = render_queue.list_video_files_in_folder(
-                                url.toString(),
-                                JSON.stringify(fileDialog.extensions)
-                            );
-                            const more = JSON.parse(jsonStr);
-                            for (const v of more) fileUrls.push(v);
-                        } catch (e) {
-                            console.log("list_video_files_in_folder failed:", e);
-                        }
-                        hasFolder = true;
+                        // Defer folder expansion to the render queue's loadFiles
+                        // handler — the single path that collapses image sequences
+                        // (consecutive frames -> one %0Nd job) and resolves their
+                        // frame rate. Passing the folder url (not the scanned
+                        // result objects) avoids the list<url> coercion that would
+                        // turn objects into empty urls, and prevents the folder
+                        // from being expanded twice. add_gyro_folder is also called
+                        // by the queue handler, so it is not invoked here.
+                        folderUrls.push(url);
                     } else {
                         fileUrls.push(url);
                     }
                 }
-                // 有文件夹拖入时自动打开渲染队列面板
-                if ((hasFolder || hasGyroFile) && queue.item) {
+                // Open the render queue panel when a gyro file is dropped (gyro
+                // files always pair into the queue).
+                if (hasGyroFile && queue.item) {
                     queue.item.shown = true;
                 }
-                // 剩余普通文件走原有逻辑
-                if (fileUrls.length > 0) {
+                // A single folder with no loose files = one clip's worth of media.
+                // Load it in the main preview area just like a single video (a DNG
+                // image sequence becomes one clip via detectImageSequence). Only
+                // fan out to the render queue when there is more than one clip.
+                if (folderUrls.length === 1 && fileUrls.length === 0) {
+                    try {
+                        const jsonStr = render_queue.list_video_files_in_folder(
+                            folderUrls[0].toString(),
+                            JSON.stringify(fileDialog.extensions)
+                        );
+                        const items = JSON.parse(jsonStr);
+                        if (items.length === 1) {
+                            // Exactly one clip/sequence → main preview area. For a
+                            // sequence, load via the first frame so detectImageSequence
+                            // collapses it (and resolves its frame rate) exactly like
+                            // dropping a single frame.
+                            // Still register any _mix.bin gyro sources in the folder
+                            // (the multi-clip / queue paths get this via the queue's
+                            // loadFiles handler; this single-clip→main path bypasses
+                            // it, so call it here to preserve the prior behavior).
+                            render_queue.add_gyro_folder(folderUrls[0].toString());
+                            const it = items[0];
+                            const loadUrl = (it.is_sequence && it.first_frame_url) ? it.first_frame_url : it.url;
+                            root.loadFile(loadUrl, false);
+                            console.log("[main_drop:dispatch] folder=1 items=1 target=main");
+                            return;
+                        }
+                        if (items.length > 1 && queue.item) {
+                            queue.item.shown = true;
+                            Qt.callLater(function() { queue.item.dt.loadFiles(folderUrls); });
+                            console.log("[main_drop:dispatch] folder=1 items=" + items.length + " target=queue");
+                            return;
+                        }
+                        console.log("[main_drop:drop] reason=empty_folder");
+                        return;
+                    } catch (e) {
+                        console.log("list_video_files_in_folder failed:", e);
+                        return;
+                    }
+                }
+                if (folderUrls.length > 0 && queue.item) {
+                    // Multiple folders (or a folder dropped alongside loose files)
+                    // go to the render queue, which expands each folder via the same
+                    // fixed path as a direct queue drop (image-sequence collapse +
+                    // fps resolution + per-job image_sequence injection).
+                    queue.item.shown = true;
+                    const items = folderUrls.concat(fileUrls);
+                    Qt.callLater(function() { queue.item.dt.loadFiles(items); });
+                    console.log("[main_drop:dispatch] folders=" + folderUrls.length + " files=" + fileUrls.length + " target=queue");
+                } else if (fileUrls.length > 0) {
                     root.loadMultipleFiles(fileUrls, false);
                     console.log("[main_drop:dispatch] files=" + fileUrls.length + " target=" + (fileUrls.length > 1 ? "queue" : "main"));
                 } else {

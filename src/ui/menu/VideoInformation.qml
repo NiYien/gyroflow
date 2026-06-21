@@ -78,7 +78,9 @@ MenuItem {
     signal entryUpdated(string key, string value);
 
     function loadFromVideoMetadata(md: var, org_w: int, org_h: int): void {
-        const framerate = +md["stream.video[0].codec.frame_rate"] || 0;
+        // Image sequences report no codec frame rate; fall back to the resolved
+        // image_sequence_fps so the panel shows the real rate instead of "---".
+        const framerate = (+md["stream.video[0].codec.frame_rate"] || 0) || (controller.image_sequence_fps > 0 ? controller.image_sequence_fps : 0);
         const w = org_w || md["stream.video[0].codec.width"] || 0;
         const h = org_h || md["stream.video[0].codec.height"] || 0;
         const bitrate = +md["stream.video[0].codec.bit_rate"]? ((+md["stream.video[0].codec.bit_rate"] / 1024 / 1024)) : 200;
@@ -150,14 +152,16 @@ MenuItem {
         root.entryUpdated(key, value);
     }
 
-    function getDuration(md): string {
-        const s = +md["stream.video[0].duration"] / 1000;
+    function formatDurationSeconds(s: real): string {
         if (s > 60) {
             return Math.floor(s / 60) + " m " + Math.floor(s % 60) + " s";
         } else if (s > 0) {
             return s.toFixed(2) + " s";
         }
         return "";
+    }
+    function getDuration(md): string {
+        return formatDurationSeconds(+md["stream.video[0].duration"] / 1000);
     }
     function getCodec(md): string {
         const c = md["stream.video[0].codec.name"] || "";
@@ -212,6 +216,14 @@ MenuItem {
                 // TableList's BOTH columns go through qsTr(context="TableList") — store raw
                 // English values here and let TableList translate at display time.
                 list.model["Image stabilization"] = additional_data.image_stabilizer ? "On" : "Off";
+            }
+            // Image sequences report no container duration in the codec metadata
+            // (MDK gives 0 for an image2 input), so loadFromVideoMetadata left it
+            // as "---". Fill it from the resolved stabilizer duration (frames / fps,
+            // set by init_from_video_data), which is ready once telemetry loaded.
+            if (is_main_video && controller.image_sequence_fps > 0) {
+                const d = formatDurationSeconds(controller.get_scaled_duration_ms() / 1000);
+                if (d) list.model["Duration"] = d;
             }
             list.modelChanged();
         }
