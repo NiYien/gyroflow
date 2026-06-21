@@ -716,6 +716,61 @@ class Pan123Client:
 
         raise RuntimeError(f"123 upload failed for {remote_name}: {last_error}")
 
+    def resolve_direct_link_url(self, file_id: int) -> str | None:
+        # Resolve a 123 direct-link CDN URL for a file id, mirroring the docs
+        # download proxy (_pan123.js): prefer /api/v1/direct-link/url, fall back
+        # to /api/v1/file/download_info. Returns None on any failure.
+        try:
+            data = self.request("GET", "/api/v1/direct-link/url", params={"fileID": int(file_id)})
+            url = str((data or {}).get("url", "")).strip()
+            if url:
+                return url
+        except RuntimeError as err:
+            emit_log(f"123 direct-link resolve failed, trying download_info: file_id={int(file_id)}, detail={err}")
+        try:
+            data = self.request("GET", "/api/v1/file/download_info", params={"fileId": int(file_id)})
+            url = str((data or {}).get("downloadUrl", "")).strip()
+            if url:
+                return url
+        except RuntimeError as err:
+            emit_log(f"123 download_info resolve failed: file_id={int(file_id)}, detail={err}")
+        return None
+
+    def prewarm_cdn(self, file_id: int, *, label: str = "") -> None:
+        # Best-effort: warm the 123 direct-link CDN edge for a freshly uploaded
+        # file so the first real CN user does not hit a cache-cold -> origin 504.
+        # A ranged bytes=0-0 GET is enough to trigger the CDN's origin fetch.
+        # Never raises: pre-warm failures must not fail the publish.
+        #
+        # Note: this warms the CDN edge reachable from the publish host's
+        # network; its benefit is greatest when the publish runs from the same
+        # region as the target (CN) users.
+        tag = label or f"file_id={int(file_id)}"
+        if int(file_id) <= 0:
+            emit_log(f"123 cdn prewarm skipped (no file id): {tag}")
+            return
+        try:
+            direct_url = self.resolve_direct_link_url(file_id)
+            if not direct_url:
+                emit_log(f"123 cdn prewarm skipped (no direct link): {tag}")
+                return
+            # Reuse self.session (trust_env=False, no Authorization header) so the
+            # warm GET goes straight to the CDN and not through a proxy.
+            response = self.session.get(
+                direct_url,
+                headers={"Range": "bytes=0-0"},
+                timeout=60,
+                stream=True,
+            )
+            try:
+                status = response.status_code
+                cache_status = response.headers.get("X-Mf-Cdn-Cache-Status", "")
+            finally:
+                response.close()
+            emit_log(f"123 cdn prewarm ok: {tag}, http={status}, cache={cache_status or 'n/a'}")
+        except Exception as err:  # noqa: BLE001 - best-effort; never fail the publish
+            emit_log(f"123 cdn prewarm failed (ignored): {tag}, detail={err}")
+
     def find_child(self, parent_id: int, name: str, expected_type: int) -> dict[str, Any] | None:
         entries = self.list_directory(parent_id)
         matched = [
@@ -1053,11 +1108,15 @@ def main() -> int:
                     f"(avoid 123 .bak suffix on .exe/.apk)"
                 )
                 try:
-                    pan123.upload_file(app_dir_id, wrapper_path, wrapper_remote)
+                    wrapper_file_id = pan123.upload_file(app_dir_id, wrapper_path, wrapper_remote)
                 finally:
                     wrapper_path.unlink(missing_ok=True)
+                # Pre-warm the 123 CDN for this per-version app artifact so the
+                # first CN user is less likely to hit a cache-cold 504.
+                pan123.prewarm_cdn(wrapper_file_id, label=wrapper_remote)
             else:
-                pan123.upload_file(app_dir_id, asset_path, asset_name)
+                asset_file_id = pan123.upload_file(app_dir_id, asset_path, asset_name)
+                pan123.prewarm_cdn(asset_file_id, label=asset_name)
 
         finalize_event["app_tag"] = args.app_tag
         finalize_event["packages"] = app_packages

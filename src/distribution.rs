@@ -301,9 +301,10 @@ fn sync_package(
 
     let started = Instant::now();
     let result = (|| -> Result<usize, String> {
-        let response = configure_geo_request(crate::network::get(&release.url))
-            .call()
-            .map_err(|err| format!("download {package_name} failed: {err}"))?;
+        let response = crate::network::call_with_retry(package_name, || {
+            configure_geo_request(crate::network::get(&release.url)).call()
+        })
+        .map_err(|err| format!("download {package_name} failed: {err}"))?;
         let mut reader = response.into_body().into_reader();
         let mut bytes = Vec::new();
         reader
@@ -1128,9 +1129,10 @@ where
         );
     }
 
-    let response = configure_geo_request(crate::network::get(url))
-        .call()
-        .map_err(|err| format!("download {label} failed: {err}"))?;
+    let response = crate::network::call_with_retry(label, || {
+        configure_geo_request(crate::network::get(url)).call()
+    })
+    .map_err(|err| format!("download {label} failed: {err}"))?;
     let total = response
         .headers()
         .get("content-length")
@@ -1229,9 +1231,10 @@ fn download_nightly_wrapped_update_file<F>(
 where
     F: FnMut(u64, u64, &str),
 {
-    let response = configure_geo_request(crate::network::get(url))
-        .call()
-        .map_err(|err| format!("download {label} (nightly wrapper) failed: {err}"))?;
+    let response = crate::network::call_with_retry(label, || {
+        configure_geo_request(crate::network::get(url)).call()
+    })
+    .map_err(|err| format!("download {label} (nightly wrapper) failed: {err}"))?;
     let wrapper_total = response
         .headers()
         .get("content-length")
