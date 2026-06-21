@@ -43,6 +43,14 @@ Window {
         property int visibility: 0;
         Component.onCompleted: {
             settings.init(sett);
+            // [first-run-language-init] Install the UI translator deterministically here,
+            // before the window is shown, so the first paint is already in the resolved
+            // language. Historically the translator was only installed as a side-effect of
+            // the language ComboBox in the async-loaded Advanced panel, which left the first
+            // frame (and the onboarding tutorial it captures) in English. Persisted "lang"
+            // wins over the OS-locale default (get_default_language only reads the system
+            // locale and would override a user's manual choice).
+            ui_tools.set_language(settings.value("lang", ui_tools.get_default_language()));
             main_window.visible = true;
             if (!isMobile) Qt.callLater(() => ui_tools.ensure_window_visible(main_window));
         }

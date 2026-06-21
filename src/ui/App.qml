@@ -20,6 +20,11 @@ Rectangle {
     property var appUpdateDialog: null;
     property var appUpdateProgressBar: null;
     property string appUpdateReadyMessage: "";
+    // [update-deferral] While the first-launch onboarding (language picker + tutorial) is
+    // active, the automatic update prompt is held here and shown once onboarding ends, so it
+    // never pops up over the picker or the tutorial. Manual "check for updates" is unaffected.
+    property var pendingAutoUpdate: null;
+    property bool onboardingActive: false;
 
     // Simple mode is session-scoped: always starts true, never persisted to QSettings.
     property bool isSimpleMode: true;
@@ -2201,9 +2206,14 @@ Rectangle {
             }
         }
         function onUpdates_available(version: string, changelog: string, download_url: string): void {
-            window.showAppUpdateOptions([
-                { channel: "auto", version: version, changelog: changelog }
-            ]);
+            const info = { channel: "auto", version: version, changelog: changelog };
+            // [update-deferral] Hold the automatic prompt during first-launch onboarding so it
+            // doesn't appear over the language picker / tutorial; endOnboarding() flushes it.
+            if (window.onboardingActive) {
+                window.pendingAutoUpdate = info;
+            } else {
+                window.showAppUpdateOptions([info]);
+            }
         }
         function onApp_update_progress(downloaded: real, total: real, message: string): void {
             const percent = total > 0 ? Math.round((downloaded / total) * 100) : 0;
@@ -2337,11 +2347,118 @@ Rectangle {
         id: tutorialOverlay;
         scrollPanel: rightPanel;
         queueRowMock: window.tutorialQueueMock;
-        onClosed: (completed) => settings.setValue("niyien_tutorial_seen_v1", "1");
+        onClosed: (completed) => { settings.setValue("niyien_tutorial_seen_v1", "1"); window.endOnboarding(); }
+    }
+    // [first-run-language-init] Layer 3 safety net: the tutorial's title/body/note are plain
+    // strings snapshotted by buildTutorialSteps() (qsTr evaluated eagerly), so retranslate()
+    // alone never refreshes them. If the language changes while the tutorial is open, rebuild
+    // the step strings. Only `steps` is reassigned — `index` is preserved and
+    // prepareStep()/anchor/scroll logic is NOT re-run (currentStep just re-evaluates).
+    Connections {
+        target: ui_tools;
+        function onLanguage_changed() {
+            if (tutorialOverlay.active) tutorialOverlay.steps = window.buildTutorialSteps();
+        }
     }
     function showTutorial() {
         tutorialOverlay.steps = window.buildTutorialSteps();
         tutorialOverlay.start();
+    }
+    // [tutorial] Auto-show the onboarding once, on first desktop simple-mode launch.
+    // Double callLater so the panel layout is settled before we measure anchors.
+    // Extracted so it can be chained after the first-run language picker (no return
+    // annotation: reached via Qt.callLater, where Qt 6.7.3 V4 miscompiles `: void`).
+    function maybeAutoShowTutorial() {
+        if (!isMobileLayout && isSimpleMode && settings.value("niyien_tutorial_seen_v1", "0") === "0") {
+            Qt.callLater(() => Qt.callLater(window.showTutorial));
+        }
+    }
+    // [first-run-language-init] Present the first-run language picker, then run `onDone`.
+    // The picker is intentionally language-neutral: it shows before any translator is
+    // installed, so it relies on native-name labels and literal (non-qsTr) chrome rather
+    // than translatable strings.
+    function showFirstRunLanguageDialog(onDone) {
+        var dlg = languageDialogComponent.createObject(window, { onConfirmed: onDone });
+        if (dlg) { dlg.opened = true; window.isDialogOpened = true; }
+        else if (typeof onDone === "function") onDone(); // fail-safe: never strand startup
+    }
+    // [update-deferral] Onboarding (language picker + tutorial) has ended — release a deferred
+    // automatic update prompt, if one arrived while it was showing. No return annotation:
+    // reached via signal/callLater where Qt 6.7.3 V4 miscompiles `: void`.
+    function endOnboarding() {
+        window.onboardingActive = false;
+        window.flushPendingAutoUpdate();
+    }
+    function flushPendingAutoUpdate() {
+        if (window.pendingAutoUpdate) {
+            const info = window.pendingAutoUpdate;
+            window.pendingAutoUpdate = null;
+            Qt.callLater(() => window.showAppUpdateOptions([info]));
+        }
+    }
+    Component {
+        id: languageDialogComponent;
+        Modal {
+            id: langDialog;
+            iconType: Modal.Question;
+            // Bilingual title + literal "OK": shown before a translator exists, so these are
+            // deliberately NOT qsTr (no new translatable strings — i18n pipeline untouched).
+            text: "选择语言 / Choose language";
+            buttons: ["OK"];
+            accentButton: 0;
+            property var onConfirmed: null;
+            // Mirrors Advanced.qml::langList.langs (source of truth there). Labels carry
+            // native names so the list is self-evident regardless of the current UI language.
+            property var langs: [
+                ["English",                      "en"],
+                ["Chinese - Simplified (简体中文)",  "zh_CN"],
+                ["Chinese - Traditional (繁體中文)", "zh_TW"],
+                ["Czech (Čeština)",              "cs"],
+                ["Danish (dansk)",               "da"],
+                ["Finnish (suomi)",              "fi"],
+                ["French (français)",            "fr"],
+                ["Galician (Galego)",            "gl"],
+                ["German (Deutsch)",             "de"],
+                ["Greek (Ελληνικά)",             "el"],
+                ["Indonesian (Bahasa Indonesia)","id"],
+                ["Italian (italiano)",           "it"],
+                ["Japanese (日本語)",             "ja"],
+                ["Korean (한국어)",              "ko"],
+                ["Norwegian (norsk)",            "no"],
+                ["Polish (polski)",              "pl"],
+                ["Portuguese - Brazilian (português brasileiro)", "pt_BR"],
+                ["Portuguese (português)",       "pt"],
+                ["Russian (русский)",            "ru"],
+                ["Slovak (slovenský)",           "sk"],
+                ["Spanish (español)",            "es"],
+                ["Turkish (Türkçe)",             "tr"],
+                ["Ukrainian (Українська мова)",  "uk"]
+            ];
+            ComboBox {
+                id: langDialogCombo;
+                width: 260 * dpiScale;
+                anchors.horizontalCenter: parent.horizontalCenter;
+                model: langDialog.langs.map(x => x[0]);
+                Component.onCompleted: {
+                    // Pre-select the auto-detected language so most users just confirm.
+                    const def = ui_tools.get_default_language();
+                    for (let i = 0; i < langDialog.langs.length; ++i) {
+                        if (langDialog.langs[i][1] === def) { currentIndex = i; break; }
+                    }
+                }
+            }
+            onClicked: (idx, dontShowAgain) => {
+                const code = langDialog.langs[langDialogCombo.currentIndex][1];
+                settings.setValue("lang", code);
+                window.LayoutMirroring.enabled = code == "ar" || code == "fa" || code == "he";
+                window.LayoutMirroring.childrenInherit = true;
+                ui_tools.set_language(code);
+                const cb = langDialog.onConfirmed;
+                langDialog.close();
+                window.isDialogOpened = false;
+                if (typeof cb === "function") cb();
+            }
+        }
     }
     function buildTutorialSteps() {
         // Eight-step tour. Step fields:
@@ -2437,6 +2554,11 @@ Rectangle {
         // The property default is already true (line 25), but assign explicitly so
         // any future binding that flips it during init can't slip past us.
         window.isSimpleMode = true;
+        // [update-deferral] Mark onboarding active BEFORE kicking the (async) update check so a
+        // fast/cached `updates_available` is held rather than shown over the picker/tutorial.
+        // Mirrors the picker/tutorial conditions used at the end of this handler.
+        window.onboardingActive = (!settings.contains("lang"))
+            || (!isMobileLayout && isSimpleMode && settings.value("niyien_tutorial_seen_v1", "0") === "0");
         controller.check_updates();
         // Defer crash scan one tick so QML overlay z-stack is ready.
         Qt.callLater(controller.scanCrashCheckpoints);
@@ -2463,10 +2585,25 @@ Rectangle {
 
         Qt.callLater(filesystem.restore_allowed_folders);
 
-        // [tutorial] Auto-show the onboarding once, on first desktop simple-mode launch.
-        // Double callLater so the panel layout is settled before we measure anchors.
-        if (!isMobileLayout && isSimpleMode && settings.value("niyien_tutorial_seen_v1", "0") === "0") {
-            Qt.callLater(() => Qt.callLater(window.showTutorial));
+        // [first-run-language-init] On the very first launch (no persisted "lang"), present
+        // the language picker BEFORE the onboarding tutorial so the tutorial is captured in
+        // the chosen language (buildTutorialSteps snapshots qsTr eagerly). On later launches
+        // the language is already resolved at startup (main_window), so go straight to the
+        // tutorial. The picker and the tutorial never both fire blindly — the tutorial is
+        // chained off the picker's confirmation on first run.
+        // [update-deferral] endOnboarding() flushes a held auto-update prompt on every terminal
+        // path where the tutorial will NOT take over (no tutorial after the picker / no
+        // onboarding at all). When the tutorial does show, its onClosed handler ends onboarding.
+        const willShowTutorial = !isMobileLayout && isSimpleMode && settings.value("niyien_tutorial_seen_v1", "0") === "0";
+        if (!settings.contains("lang")) {
+            window.showFirstRunLanguageDialog(() => {
+                if (willShowTutorial) window.maybeAutoShowTutorial();
+                else window.endOnboarding();
+            });
+        } else if (willShowTutorial) {
+            window.maybeAutoShowTutorial();
+        } else {
+            window.endOnboarding();
         }
     }
 
