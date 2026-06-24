@@ -105,6 +105,12 @@ Item {
     }
     // [T19] Match version counter. Incrementing it forces delegate bindings to re-evaluate.
     property int matchVersion: 0
+    // [batch-match-gate-sync-dispatch] Whether the most recent Auto match left
+    // zero videos matched to an external gyro file (the guide-modal / dispatch-
+    // abort condition). Re-evaluated on matchVersion bumps (match completion).
+    // Drives the gyro column back to unmatched-preview mode so the loaded gyro
+    // data stays visible when nothing matched, instead of the column going blank.
+    property bool matchAllNoGyro: { root.matchVersion; return render_queue.match_all_no_gyro(); }
     property int syncStatusVersion: 0
     property string lastBatchSyncPromptKind: "none"
     // ── Batch selection ──
@@ -579,8 +585,17 @@ Item {
             if (root.pendingAction !== "") {
                 const action = root.pendingAction;
                 root.pendingAction = "";
-                if (!render_queue.has_match_results()) {
-                    // Zero matches: keep matchWarning (set by onMatch_results_changed), abort silently.
+                // [batch-match-gate-sync-dispatch] Abort the dispatch when no video
+                // matched an external gyro file. match_all_no_gyro() is the same
+                // determination that pops the "Could not establish time sync" guide
+                // modal, so the abort fires in lockstep with the guide. The previous
+                // has_match_results() gate only meant "a match ran" (always true after
+                // Auto match), so the dispatch leaked through and sync/export ran while
+                // the guide was showing. A built-in-gyro clip that did not match an
+                // external file counts as no-match here (it lacks a lens-group number).
+                // The guide is already shown by Rust and the jobs remain Queued, so the
+                // user can right-click -> Deep match.
+                if (render_queue.match_all_no_gyro()) {
                     return;
                 }
                 // A fresh match invalidates any prior sync.
@@ -1265,8 +1280,14 @@ Item {
             // Deep gyro match: -1 when the job has no accepted deep match.
             property int deepMatchGyroIndex: { root.matchVersion; return root.hasGyroFiles ? render_queue.get_deep_match_gyro_index(job_id) : -1; }
             // [queue-gyro-column T8, T14] Dual display mode: matched vs. unmatched.
-            // isMatched now follows the global matchExecuted flag.
-            property bool isMatched: root.matchExecuted
+            // isMatched follows the global matchExecuted flag, EXCEPT when the last
+            // match produced zero external-file matches (matchAllNoGyro): then stay
+            // in unmatched-preview mode so the gyro column keeps showing each loaded
+            // gyro file (color + time) and right-click pairing still works. Without
+            // this, matchExecuted=true (a match ran) flips every row to matched mode
+            // where matchGyroIndex=-1 ⇒ the whole column renders blank.
+            // [batch-match-gate-sync-dispatch]
+            property bool isMatched: root.matchExecuted && !root.matchAllNoGyro
             property int unmatchedGyroIndex: index < root.gyroFilesInfo.length ? index : -1
             property int displayGyroIndex: isMatched ? matchGyroIndex : unmatchedGyroIndex
             property color statusAccentColor: isSkipped ? root.skippedStatusColor

@@ -1012,6 +1012,14 @@ pub struct RenderQueue {
     batch_sync_repair_prompt_pending: bool,
     batch_sync_prompt_kind: BatchSyncPromptKind,
     batch_sync_user_confirmed_repair: bool,
+    // [batch-match-gate-sync-dispatch] True when the most recent Auto match left
+    // zero videos matched to an external gyro file (the same `all_no_gyro`
+    // determination that pops the "Could not establish time sync" guide modal).
+    // Read by QML's match-then-sync dispatch via `match_all_no_gyro()` so the
+    // abort fires in lockstep with the guide, instead of the stale
+    // `has_match_results()` (= "a match ran") gate. Set on every match
+    // completion; only read immediately after, in `onMatch_apply_finished`.
+    last_match_all_no_gyro: bool,
     // Deep gyro match registries: pending = in-flight run (diverts batch-sync
     // completion), results = accepted matches (drives the DeepMatched status).
     deep_match_pending: HashMap<u32, DeepMatchState>,
@@ -1107,6 +1115,10 @@ pub struct RenderQueue {
     sort_jobs_by_filename: qt_method!(fn(&mut self)),
     restore_original_order: qt_method!(fn(&mut self)),
     has_match_results: qt_method!(fn(&self) -> bool),
+    // [batch-match-gate-sync-dispatch] "Did the most recent Auto match leave zero
+    // external-file matches" — the guide-modal condition. Distinct from
+    // has_match_results() ("a match ran"). Gates the match-then-sync dispatch.
+    match_all_no_gyro: qt_method!(fn(&self) -> bool),
     is_same_gyro_as_prev: qt_method!(fn(&self, job_id: u32) -> bool),
     is_same_gyro_as_next: qt_method!(fn(&self, job_id: u32) -> bool),
     // [T22] 缓存版：从 same_gyro_cache 读取，不实时查询
@@ -8141,9 +8153,20 @@ impl RenderQueue {
                     }
                 }
 
-                let all_no_gyro = !no_gyro_jobs.is_empty()
-                    && calibration_jobs.is_empty()
-                    && no_gyro_jobs.len() == total_results;
+                let all_no_gyro = is_all_no_gyro(
+                    no_gyro_jobs.len(),
+                    calibration_jobs.len(),
+                    total_results,
+                );
+
+                // [batch-match-gate-sync-dispatch] Record the guide-modal condition
+                // before `match_apply_finished()` is emitted below, so QML's
+                // match-then-sync dispatch (`onMatch_apply_finished`) reads the
+                // fresh value and aborts in lockstep with the guide. Calibration
+                // -bearing batches keep `all_no_gyro == false` (calibration_jobs is
+                // non-empty), so they are intentionally NOT gated and proceed as
+                // before.
+                this.last_match_all_no_gyro = all_no_gyro;
 
                 if all_no_gyro {
                     ::log::info!(
@@ -10352,6 +10375,18 @@ impl RenderQueue {
         self.match_results.is_some()
     }
 
+    // [batch-match-gate-sync-dispatch] Whether the most recent Auto match left
+    // zero videos matched to an external gyro file. This is the exact condition
+    // under which the apply-match completion pops the "Could not establish time
+    // sync — Deep match" guide modal (`all_no_gyro`). QML's match-then-sync
+    // dispatch gates on this so the abort and the guide can never disagree.
+    // NOTE: a video carrying its own (built-in) gyro that did NOT match an
+    // external file still counts as "no external match" here — the external
+    // match is what assigns the lens-group number, so such a clip is not ready.
+    fn match_all_no_gyro(&self) -> bool {
+        self.last_match_all_no_gyro
+    }
+
     // [T15] 内部辅助：获取指定 job 的 gyro_index（复用 get_match_status_json 的查找逻辑）
     fn get_gyro_index_for_job(&self, job_id: u32) -> i32 {
         if let Some(ref results) = self.match_results {
@@ -10694,6 +10729,19 @@ fn time_range_span_ms(range: Option<(f64, f64)>) -> f64 {
     range
         .map(|(start, end)| (end - start).max(0.0))
         .unwrap_or(f64::INFINITY)
+}
+
+// [batch-match-gate-sync-dispatch] The guide-modal / dispatch-abort condition,
+// extracted as a pure rule so it is unit-testable. A batch is "all no gyro"
+// (none of its videos matched an external gyro file, and there is nothing else
+// to render) when every result is Unmatched/NoCreationTime (`no_gyro_count`),
+// there are no calibration pairs (`calibration_count == 0`), and the batch is
+// non-empty. Calibration-bearing batches are intentionally NOT gated (they keep
+// `false` here and proceed). An Unmatched video that carries its own built-in
+// gyro still counts toward `no_gyro_count`: it has no external match and thus no
+// lens-group number, so it is not ready on its own.
+fn is_all_no_gyro(no_gyro_count: usize, calibration_count: usize, total_results: usize) -> bool {
+    no_gyro_count > 0 && calibration_count == 0 && no_gyro_count == total_results
 }
 
 fn metadata_cache_covers(
@@ -12355,6 +12403,43 @@ mod tests {
         assert_eq!(batch_status(&queue, 2)["color"], "yellow");
         assert_eq!(batch_status(&queue, 3)["color"], "yellow");
         assert_eq!(queue.batch_sync_prompt_kind.to_string(), "all_yellow");
+    }
+
+    #[test]
+    fn is_all_no_gyro_gates_only_when_nothing_matched_an_external_file() {
+        // [batch-match-gate-sync-dispatch] The dispatch-abort / guide-modal
+        // condition. Counts are (no_gyro = Unmatched|NoCreationTime,
+        // calibration = CalibrationPair, total = all results).
+
+        // All Unmatched (incl. built-in-gyro clips that did not match an external
+        // file) → true: abort dispatch, show the guide.
+        assert!(is_all_no_gyro(3, 0, 3));
+        assert!(is_all_no_gyro(1, 0, 1));
+
+        // At least one matched (Matched/MatchedFallback): no_gyro < total → false:
+        // dispatch proceeds for the matched videos.
+        assert!(!is_all_no_gyro(2, 0, 3)); // mixed: 1 matched, 2 unmatched
+        assert!(!is_all_no_gyro(0, 0, 3)); // all matched
+
+        // Any calibration pair present → false (calibration is intentionally not
+        // gated and proceeds as before), even if the rest are unmatched.
+        assert!(!is_all_no_gyro(2, 1, 3));
+        assert!(!is_all_no_gyro(0, 3, 3));
+
+        // Empty batch → false (nothing to abort).
+        assert!(!is_all_no_gyro(0, 0, 0));
+    }
+
+    #[test]
+    fn match_all_no_gyro_accessor_reflects_recorded_flag() {
+        // [batch-match-gate-sync-dispatch] The QML dispatch gate reads this
+        // accessor; it must mirror the flag recorded at apply-match completion.
+        let mut queue = RenderQueue::default();
+        assert!(!queue.match_all_no_gyro()); // default: not gated
+        queue.last_match_all_no_gyro = true;
+        assert!(queue.match_all_no_gyro());
+        queue.last_match_all_no_gyro = false;
+        assert!(!queue.match_all_no_gyro());
     }
 
     #[test]
