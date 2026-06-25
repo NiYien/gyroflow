@@ -402,6 +402,39 @@ impl<'a> VideoTranscoder<'a> {
                             }
                         }
 
+                        // Lossless-equivalent pixel format fallback, symmetric to the
+                        // GPU-decode download path above. When no encoder pixel format was
+                        // preset, we're not going through a hardware upload, and the source
+                        // frame format isn't directly accepted by the encoder, map it to an
+                        // encoder-supported equivalent so the sws conversion below repacks the
+                        // frame and the later support check passes (instead of raising
+                        // PixelFormatNotSupported and prompting the user).
+                        // NOTE: this relies on `find_best_matching_codec`'s pair table being
+                        // made up entirely of LOSSLESS equivalents (planar<->semi-planar, same
+                        // chroma subsampling and bit depth, e.g. YUV420P10LE<->P010LE). If a
+                        // lossy mapping is ever added there, this auto-conversion must be gated
+                        // behind an explicit lossless allow-list instead.
+                        if self.encoder_params.pixel_format.is_none()
+                            && hw_upload_format.is_none()
+                            && !self.codec_supported_formats.contains(&in_format)
+                        {
+                            if let Some(equiv) = super::ffmpeg_hw::find_best_matching_codec(
+                                in_format,
+                                &self.codec_supported_formats,
+                            ) {
+                                if !super::ffmpeg_hw::is_hardware_format(equiv.into()) {
+                                    log::debug!(
+                                        target: "video.render",
+                                        "Auto-converting {:?} -> {:?} (lossless equivalent), supported: {:?}",
+                                        in_format,
+                                        equiv,
+                                        self.codec_supported_formats
+                                    );
+                                    self.encoder_params.pixel_format = Some(equiv);
+                                }
+                            }
+                        }
+
                         let mut target_format =
                             self.encoder_params.pixel_format.unwrap_or(in_format);
                         if super::ffmpeg_hw::is_hardware_format(target_format.into()) {
