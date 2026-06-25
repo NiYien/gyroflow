@@ -410,6 +410,13 @@ MenuItem {
         function onLens_group_config_changed(): void {
             if (!root.batchScope) root.loadConfigs()
         }
+        // A NiYien lens hot-update package was downloaded+activated at runtime;
+        // re-read the preset list (load_from_lens_package reads fresh from disk)
+        // so newly published presets appear without an app restart.
+        function onLens_presets_updated(): void {
+            root.loadPresets()
+            root.refreshUiFromSelection()
+        }
     }
     Connections {
         target: render_queue

@@ -172,6 +172,11 @@ pub struct Controller {
     ),
     fetch_profiles_from_github: qt_method!(fn(&self)),
     lens_profiles_updated: qt_signal!(reload_from_disk: bool),
+    // Emitted (queued, from the worker thread) after a NiYien `lens` hot-update
+    // package is downloaded+activated, so the lens-group / anamorphic preset UI
+    // re-reads fresh data without an app restart. Independent of the upstream
+    // GitHub `lens_profiles_updated` path above.
+    lens_presets_updated: qt_signal!(),
 
     set_sync_lpf: qt_method!(fn(&self, lpf: f64)),
     set_imu_lpf: qt_method!(fn(&self, lpf: f64)),
@@ -3312,14 +3317,32 @@ impl Controller {
                 )
             },
         );
+        // Queued bridge back to the UI thread: the sync below runs on a worker
+        // thread and must not emit Qt signals directly. Fired once when a `lens`
+        // package was actually updated, so the lens-group preset UI re-reads.
+        let lens_updated_cb = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            |this, _: ()| {
+                this.lens_presets_updated();
+            },
+        );
         core::run_threaded(move || match crate::distribution::fetch_manifest(false) {
             Ok(manifest) => {
                 match crate::distribution::sync_data_packages(&manifest) {
                     Ok(results) => {
+                        let mut lens_updated = false;
                         for result in results {
                             if result.updated {
                                 ::log::info!("Updated distribution package {}", result.package);
+                                if result.package == "lens" {
+                                    lens_updated = true;
+                                }
                             }
+                        }
+                        // Notify the UI to refresh lens presets after a lens
+                        // hot-update, without requiring an app restart.
+                        if lens_updated {
+                            lens_updated_cb(());
                         }
                     }
                     Err(err) => {

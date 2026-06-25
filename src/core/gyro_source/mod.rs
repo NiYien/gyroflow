@@ -601,7 +601,14 @@ impl GyroSource {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let key = format!("{}|{}|{}|{options:?}|{size:?}|{fps}", native_path, mtime, filesize);
+        // Include the active `lens` package version so a runtime lens hot-update
+        // (which can change camera_db model recognition) invalidates stale
+        // telemetry cache entries for the same file on the next parse.
+        let lens_pkg_version = crate::distribution::installed_package_version("lens");
+        let key = format!(
+            "{}|{}|{}|{options:?}|{size:?}|{fps}|{lens_pkg_version}",
+            native_path, mtime, filesize
+        );
         log::info!(
             "[parse_telemetry] begin path='{}' filesize={} mtime={} header_only={} time_range_ms={:?} size={:?} fps={:.6}",
             native_path,
