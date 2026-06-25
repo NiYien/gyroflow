@@ -334,10 +334,25 @@ pub fn install(typ: &str, plugins_base: String) -> io::Result<String> {
         "[nle install] start typ={typ:?} plugins_base={plugins_base:?} effective_base={base:?} download_url={download_url:?} extract_path={extract_path:?}"
     );
 
+    // Best-effort cold-edge prewarm before the (retried) full download. Mirrors
+    // a manual `curl -r 0-0` to trigger the 123 direct-link CDN's cold origin
+    // fetch so the full GET is more likely to hit a warm edge. No-op when
+    // disabled via env; never affects the install result (all errors swallowed).
+    crate::network::prewarm_url(&download_url);
+
     // Surface network / HTTP errors instead of swallowing them. The previous
     // `if let Ok(...)` skipped the entire download block on any ureq failure,
     // leaving detect() to return Ok("") and the UI showing no feedback.
-    let mut reader = match crate::network::get(&download_url).call() {
+    //
+    // Transient failures (5xx / timeouts / connection hiccups) are retried with
+    // the dedicated plugin retry profile: CN plugin zips stream from the 123
+    // direct-link CDN, whose cold origin fetch sporadically returns a transient
+    // 504. A single attempt turned that blip into a hard, user-visible install
+    // failure (app/lens/sdk downloads already retry via call_with_retry).
+    let retry_label = format!("plugin:{typ}");
+    let mut reader = match crate::network::call_with_plugin_retry(&retry_label, || {
+        crate::network::get(&download_url).call()
+    }) {
         Ok(resp) => {
             ::log::info!(
                 "[nle install] HTTP ok status={} content_len_hdr={:?}",

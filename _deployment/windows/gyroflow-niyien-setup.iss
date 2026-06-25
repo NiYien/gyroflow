@@ -154,6 +154,7 @@ const
   FILE_SHARE_READ = $00000001;
   OPEN_EXISTING = 3;
   INVALID_HANDLE_VALUE = $FFFFFFFF;
+  PACKAGE_DOWNLOAD_ATTEMPTS = 3;
 
 var
   DownloadPage: TDownloadWizardPage;
@@ -492,6 +493,8 @@ end;
 function DownloadAndVerifyPackage: Boolean;
 var
   ZipPath: String;
+  Attempt: Integer;
+  LastError: String;
 begin
   Result := False;
 
@@ -516,18 +519,35 @@ begin
   ZipPath := ExpandConstant('{tmp}\{#PackageFilename}');
   Log('Downloading Gyroflow package from ' + ActivePackageUrl);
   DownloadPage.Show;
+  LastError := '';
   try
-    try
-      // Download without Inno's built-in verify (empty hash), then verify ourselves
-      // with a progress bar so the integrity check is not a silent stall.
-      DownloadTemporaryFile(ActivePackageUrl, '{#PackageFilename}', '', @OnDownloadProgress);
-      if not VerifyFileSha256WithProgress(ZipPath, ActivePackageSha256) then
-        RaiseException('Downloaded package SHA256 mismatch.');
-      PackageWasFetched := True;
-      Result := True;
-    except
-      SuppressibleMsgBox(ExpandConstant('{cm:SetupDownloadVerifyFailed}') + #13#10 + GetExceptionMessage, mbCriticalError, MB_OK, IDOK);
+    // Bounded retry: the package streams from the 123 direct-link CDN, whose
+    // cold origin fetch sporadically returns a transient 504. A single attempt
+    // turned that blip into a hard install failure. Inno cannot reliably tell
+    // 5xx/timeout from 4xx, so retry a few times on any failure (incl. SHA256
+    // mismatch for half-downloads); the first failed attempt also warms the CDN
+    // edge so the retry is likely to hit it warm.
+    for Attempt := 1 to PACKAGE_DOWNLOAD_ATTEMPTS do
+    begin
+      try
+        Log('Package download attempt ' + IntToStr(Attempt) + '/' + IntToStr(PACKAGE_DOWNLOAD_ATTEMPTS));
+        // Download without Inno's built-in verify (empty hash), then verify ourselves
+        // with a progress bar so the integrity check is not a silent stall.
+        DownloadTemporaryFile(ActivePackageUrl, '{#PackageFilename}', '', @OnDownloadProgress);
+        if not VerifyFileSha256WithProgress(ZipPath, ActivePackageSha256) then
+          RaiseException('Downloaded package SHA256 mismatch.');
+        PackageWasFetched := True;
+        Result := True;
+        Break;
+      except
+        LastError := GetExceptionMessage;
+        Log('Package download attempt ' + IntToStr(Attempt) + ' failed: ' + LastError);
+        if Attempt < PACKAGE_DOWNLOAD_ATTEMPTS then
+          Sleep(Attempt * 2000); // incremental backoff: 2s, 4s
+      end;
     end;
+    if not Result then
+      SuppressibleMsgBox(ExpandConstant('{cm:SetupDownloadVerifyFailed}') + #13#10 + LastError, mbCriticalError, MB_OK, IDOK);
   finally
     DownloadPage.Hide;
   end;

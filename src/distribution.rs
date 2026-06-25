@@ -301,6 +301,10 @@ fn sync_package(
 
     let started = Instant::now();
     let result = (|| -> Result<usize, String> {
+        // Cold-edge prewarm before the (retried) download: lens/sdk content also
+        // streams from the 123 direct-link CDN, same cold-origin 504 risk as the
+        // plugin path. Best-effort, gated by NIYIEN_DOWNLOAD_PREWARM.
+        crate::network::prewarm_url(&release.url);
         let response = crate::network::call_with_retry(package_name, || {
             configure_geo_request(crate::network::get(&release.url)).call()
         })
@@ -1129,6 +1133,9 @@ where
         );
     }
 
+    // Cold-edge prewarm before the (retried) app-update download — same 123 CDN
+    // cold-origin 504 as the plugin path. Best-effort, gated by env.
+    crate::network::prewarm_url(url);
     let response = crate::network::call_with_retry(label, || {
         configure_geo_request(crate::network::get(url)).call()
     })
@@ -1231,6 +1238,8 @@ fn download_nightly_wrapped_update_file<F>(
 where
     F: FnMut(u64, u64, &str),
 {
+    // Cold-edge prewarm before the (retried) nightly-wrapper download.
+    crate::network::prewarm_url(url);
     let response = crate::network::call_with_retry(label, || {
         configure_geo_request(crate::network::get(url)).call()
     })

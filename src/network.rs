@@ -2,7 +2,7 @@
 // Copyright © 2024 Adrian <adrian.eddy at gmail>
 
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub fn configure<T>(request: ureq::RequestBuilder<T>) -> ureq::RequestBuilder<T> {
     request
@@ -89,12 +89,30 @@ pub fn is_transient_error(err: &ureq::Error) -> bool {
 /// Run `attempt` (an idempotent GET `.call()`) up to `retries + 1` times,
 /// retrying only on `is_transient_error` with exponential backoff. Non-transient
 /// errors and the final attempt's error are returned immediately. `label` is
-/// only used for logging (target `update`).
-pub fn call_with_retry<T, F>(label: &str, mut attempt: F) -> Result<T, ureq::Error>
+/// only used for logging (target `update`). Uses the shared app/update retry
+/// profile (`retry_config`); delegates to `call_with_retry_config`.
+pub fn call_with_retry<T, F>(label: &str, attempt: F) -> Result<T, ureq::Error>
 where
     F: FnMut() -> Result<T, ureq::Error>,
 {
     let (retries, base) = retry_config();
+    call_with_retry_config(label, retries, base, attempt)
+}
+
+/// Core retry loop parameterized by an explicit `(retries, base)` budget so
+/// different download paths can use independent retry profiles (e.g. the more
+/// aggressive plugin profile) while sharing the transient-error classification
+/// and exponential backoff. Behavior is identical to the previous inline loop
+/// in `call_with_retry`.
+pub fn call_with_retry_config<T, F>(
+    label: &str,
+    retries: u32,
+    base: Duration,
+    mut attempt: F,
+) -> Result<T, ureq::Error>
+where
+    F: FnMut() -> Result<T, ureq::Error>,
+{
     let mut tries = 0u32;
     loop {
         match attempt() {
@@ -126,6 +144,135 @@ where
     }
 }
 
+// ---------------------------------------------------------------------------
+// Plugin-download resilience.
+//
+// CN NLE plugin zips stream from the same 123 cloud direct-link CDN as app
+// updates, whose cold origin fetch sporadically returns a transient 504 (each
+// cold attempt blocks ~11s on the CDN gateway timeout before failing). Plugin
+// install is a user-initiated, low-frequency action, so it can afford a more
+// aggressive retry budget than the background app-update path, plus a cold-edge
+// prewarm to nudge the CDN before the full download. Both are env-tunable; set
+// retries=0 + prewarm off to fall back to the pre-change single-shot behavior.
+// ---------------------------------------------------------------------------
+
+/// Pure parser for the plugin retry profile (extracted so it can be unit-tested
+/// without the `OnceLock`/env-global side effects). retries default 3, clamped
+/// to 10; base default 1000ms, with 0/invalid falling back to the default.
+fn parse_plugin_retry_config(retries: Option<&str>, base_ms: Option<&str>) -> (u32, Duration) {
+    let retries = retries
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(3)
+        .min(10);
+    let base_ms = base_ms
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(1000);
+    (retries, Duration::from_millis(base_ms))
+}
+
+/// Resolve the plugin-download retry profile once: `(retries, base)`. Kept
+/// independent from `retry_config` (the app/update profile) so plugin installs
+/// can use a wider window. `NIYIEN_PLUGIN_DOWNLOAD_RETRIES=0` => single-shot,
+/// identical to the pre-change behavior. Logged once on first use.
+fn plugin_retry_config() -> (u32, Duration) {
+    static CONFIG: OnceLock<(u32, Duration)> = OnceLock::new();
+    *CONFIG.get_or_init(|| {
+        let retries_env = std::env::var("NIYIEN_PLUGIN_DOWNLOAD_RETRIES").ok();
+        let base_env = std::env::var("NIYIEN_PLUGIN_DOWNLOAD_RETRY_BASE_MS").ok();
+        let (retries, base) =
+            parse_plugin_retry_config(retries_env.as_deref(), base_env.as_deref());
+        log::info!(
+            target: "update",
+            "plugin download retry resolved: retries={retries} base_delay_ms={}",
+            base.as_millis()
+        );
+        (retries, base)
+    })
+}
+
+/// Resolve whether cold-edge prewarm is enabled once. Shared by all 123-CDN
+/// download paths (plugin / app update / lens·sdk).
+/// `NIYIEN_DOWNLOAD_PREWARM=0|off|false|no` disables it; default on.
+fn download_prewarm_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let enabled = match std::env::var("NIYIEN_DOWNLOAD_PREWARM") {
+            Ok(v) => !matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "0" | "off" | "false" | "no"
+            ),
+            Err(_) => true,
+        };
+        log::info!(
+            target: "update",
+            "download prewarm resolved: enabled={enabled}"
+        );
+        enabled
+    })
+}
+
+/// Plugin-download variant of `call_with_retry` using the dedicated, more
+/// aggressive plugin retry profile (`plugin_retry_config`).
+pub fn call_with_plugin_retry<T, F>(label: &str, attempt: F) -> Result<T, ureq::Error>
+where
+    F: FnMut() -> Result<T, ureq::Error>,
+{
+    let (retries, base) = plugin_retry_config();
+    call_with_retry_config(label, retries, base, attempt)
+}
+
+/// Best-effort cold-edge prewarm for a download URL. Sends a tiny ranged
+/// `bytes=0-0` GET to trigger the 123 direct-link CDN's cold origin fetch so a
+/// subsequent full download is more likely to hit a warm edge. Never affects
+/// the caller: all failures are swallowed (logged at debug/warn). A short
+/// receive timeout keeps it quick, and only a few bytes are read even if the
+/// server ignores the Range header and streams the whole object. No-op when
+/// disabled via `NIYIEN_DOWNLOAD_PREWARM`. Shared by all 123-CDN download paths.
+pub fn prewarm_url(url: &str) {
+    if !download_prewarm_enabled() {
+        return;
+    }
+    let started = Instant::now();
+    // `get` already applies proxy(None) + connect timeout; re-config only the
+    // receive timeout to keep the prewarm short.
+    let request = get(url)
+        .header("Range", "bytes=0-0")
+        .config()
+        .timeout_recv_response(Some(Duration::from_secs(10)))
+        .build();
+    match request.call() {
+        Ok(resp) => {
+            let status = resp.status();
+            let cache = resp
+                .headers()
+                .get("x-mf-cdn-cache-status")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_owned())
+                .unwrap_or_default();
+            // Read only a few bytes then drop, in case the server ignored Range
+            // and started streaming the whole file.
+            use std::io::Read;
+            let mut reader = resp.into_body().into_reader();
+            let mut buf = [0u8; 64];
+            let _ = reader.read(&mut buf);
+            log::debug!(
+                target: "update",
+                "plugin prewarm url={url} http={status} cache={} elapsed_ms={}",
+                if cache.is_empty() { "n/a" } else { cache.as_str() },
+                started.elapsed().as_millis()
+            );
+        }
+        Err(err) => {
+            log::warn!(
+                target: "update",
+                "plugin prewarm failed (ignored) url={url}: {err} elapsed_ms={}",
+                started.elapsed().as_millis()
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{Read, Write};
@@ -151,6 +298,93 @@ mod tests {
         assert!(!is_transient_error(&ureq::Error::StatusCode(403)));
         assert!(!is_transient_error(&ureq::Error::StatusCode(404)));
         assert!(!is_transient_error(&ureq::Error::StatusCode(501)));
+    }
+
+    #[test]
+    fn retry_config_recovers_after_transient() {
+        use std::time::Duration;
+        // 504 (transient) on the first two attempts, success on the third.
+        let mut attempts = 0u32;
+        let result = super::call_with_retry_config::<u32, _>(
+            "test",
+            3,
+            Duration::from_millis(1),
+            || {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(ureq::Error::StatusCode(504))
+                } else {
+                    Ok(attempts)
+                }
+            },
+        );
+        assert_eq!(result.unwrap(), 3);
+        assert_eq!(attempts, 3);
+    }
+
+    #[test]
+    fn retry_config_does_not_retry_definitive() {
+        use std::time::Duration;
+        // 404 is definitive: must fail on the first attempt, no retries.
+        let mut attempts = 0u32;
+        let result = super::call_with_retry_config::<(), _>(
+            "test",
+            5,
+            Duration::from_millis(1),
+            || {
+                attempts += 1;
+                Err(ureq::Error::StatusCode(404))
+            },
+        );
+        assert!(matches!(result, Err(ureq::Error::StatusCode(404))));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn retry_config_zero_is_single_shot() {
+        use std::time::Duration;
+        // retries=0 => single attempt even for a transient 504 (pre-change parity).
+        let mut attempts = 0u32;
+        let result = super::call_with_retry_config::<(), _>(
+            "test",
+            0,
+            Duration::from_millis(1),
+            || {
+                attempts += 1;
+                Err(ureq::Error::StatusCode(504))
+            },
+        );
+        assert!(matches!(result, Err(ureq::Error::StatusCode(504))));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn plugin_retry_config_defaults_and_overrides() {
+        use super::parse_plugin_retry_config;
+        use std::time::Duration;
+        // Defaults: retries=3, base=1000ms.
+        assert_eq!(
+            parse_plugin_retry_config(None, None),
+            (3, Duration::from_millis(1000))
+        );
+        // Explicit overrides.
+        assert_eq!(
+            parse_plugin_retry_config(Some("5"), Some("250")),
+            (5, Duration::from_millis(250))
+        );
+        // retries clamped to 10.
+        assert_eq!(parse_plugin_retry_config(Some("99"), None).0, 10);
+        // retries=0 is allowed (single-shot).
+        assert_eq!(parse_plugin_retry_config(Some("0"), None).0, 0);
+        // base 0 / invalid falls back to default 1000ms.
+        assert_eq!(
+            parse_plugin_retry_config(None, Some("0")).1,
+            Duration::from_millis(1000)
+        );
+        assert_eq!(
+            parse_plugin_retry_config(Some("x"), Some("y")),
+            (3, Duration::from_millis(1000))
+        );
     }
 
     #[test]
