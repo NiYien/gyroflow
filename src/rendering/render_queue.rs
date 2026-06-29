@@ -197,6 +197,32 @@ pub enum JobStatus {
     Error,
     Skipped,
 }
+
+/// Returns true when the pixel format stores more than 8 bits per color
+/// component (10-bit, 12-bit, etc.). Derived from ffmpeg's pixel-format
+/// descriptor so any high-bit-depth format is covered generically, instead of
+/// matching a hardcoded list. Returns false for `Pixel::None` or any format
+/// without a resolvable descriptor (bit depth undetermined) — a safe default
+/// that leaves the job's codec untouched.
+fn pix_fmt_is_high_bit_depth(fmt: ffmpeg_next::format::Pixel) -> bool {
+    if fmt == ffmpeg_next::format::Pixel::None {
+        return false;
+    }
+    unsafe {
+        let desc = ffmpeg_next::ffi::av_pix_fmt_desc_get(fmt.into());
+        if desc.is_null() {
+            return false;
+        }
+        let nb = (*desc).nb_components as usize;
+        if nb == 0 {
+            return false;
+        }
+        // comp[0] is the primary (luma) component; its `depth` is the
+        // bits-per-component that gates encoder bit-depth capability.
+        (*desc).comp[0].depth > 8
+    }
+}
+
 struct Job {
     queue_index: usize,
     render_options: RenderOptions,
@@ -5102,6 +5128,29 @@ impl RenderQueue {
                                             info.frame_count,
                                             info.duration_ms
                                         );
+                                    }
+
+                                    // Batch-side mirror of Export.qml::videoInfoLoaded's 10-bit
+                                    // guard: NVENC H.264 is 8-bit only on every NVIDIA GPU, so a
+                                    // 10-bit source configured as H.264/AVC + GPU would fail at
+                                    // `h264_nvenc` session creation ("10 bit encode not
+                                    // supported"). Switch such a job to HEVC with GPU retained
+                                    // (→ hevc_nvenc, which encodes 10-bit via P010). CPU H.264
+                                    // (libx264 High 10) and non-H.264 codecs are left untouched.
+                                    // Applied before output_filename derivation so the stored
+                                    // settings reflect the final codec.
+                                    if pix_fmt_is_high_bit_depth(info.pix_fmt)
+                                        && render_options.codec == "H.264/AVC"
+                                        && render_options.use_gpu
+                                    {
+                                        ::log::info!(
+                                            target: "video.codec",
+                                            "codec auto-switched H.264->HEVC reason=10bit_nvenc_unsupported job_id={} pix_fmt={:?}",
+                                            job_id,
+                                            info.pix_fmt
+                                        );
+                                        render_options.codec = "H.265/HEVC".to_string();
+                                        render_options.codec_options.clear();
                                     }
 
                                     render_options.bitrate =
@@ -12027,6 +12076,23 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pix_fmt_high_bit_depth_detection() {
+        use ffmpeg_next::format::Pixel;
+        // 8-bit formats: not high bit depth.
+        assert!(!pix_fmt_is_high_bit_depth(Pixel::YUV420P));
+        assert!(!pix_fmt_is_high_bit_depth(Pixel::NV12));
+        // 10-bit formats: high bit depth.
+        assert!(pix_fmt_is_high_bit_depth(Pixel::YUV420P10LE));
+        assert!(pix_fmt_is_high_bit_depth(Pixel::P010LE));
+        assert!(pix_fmt_is_high_bit_depth(Pixel::YUV422P10LE));
+        assert!(pix_fmt_is_high_bit_depth(Pixel::YUV444P10LE));
+        // 12-bit format: high bit depth.
+        assert!(pix_fmt_is_high_bit_depth(Pixel::YUV420P12LE));
+        // Undetermined (Pixel::None): safe default false → codec left untouched.
+        assert!(!pix_fmt_is_high_bit_depth(Pixel::None));
+    }
 
     fn queue_with_lens_display_job(
         manual_edit: bool,
