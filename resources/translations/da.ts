@@ -551,6 +551,11 @@ Tjek venligst filens bitrate efter eksport. Hvis du er påvirket af denne fejl, 
         <translation>Eksportér stabiliseret video</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Indlæs venligst gyrodata først.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

@@ -551,6 +551,11 @@ Controlla il bitrate del file dopo il rendering e se riscontri questo bug, puoi:
         <translation>Esporta video stabilizzato</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Carica prima i dati del giroscopio.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

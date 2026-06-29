@@ -550,6 +550,11 @@ Comprobe a taxa de bits do ficheiro despois da renderización e se &apos;está a
         <translation>Exportar vídeo estabilizado</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Primeiro carga os datos do xiroscopio.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

@@ -551,6 +551,11 @@ Verifique a taxa de bits do arquivo após a renderização e, se for afetado por
         <translation>Exportar vídeo estabilizado</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Carregue primeiro os dados do giroscópio.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

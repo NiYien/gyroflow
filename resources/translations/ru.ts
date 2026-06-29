@@ -551,6 +551,11 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>Экспорт стабилизированного видео</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Сначала загрузите данные гироскопа.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

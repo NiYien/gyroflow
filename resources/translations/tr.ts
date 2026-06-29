@@ -550,6 +550,11 @@ Lütfen render işlemi sonrası dosyanızın bitrate&apos;ini kontrol edin ve bu
         <translation>Sabitlenmiş videoyu dışa aktar</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Lütfen önce jiroskop verilerini yükleyin.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

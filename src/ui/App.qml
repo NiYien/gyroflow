@@ -800,6 +800,8 @@ Rectangle {
                     Button {
                         id: simpleAutoSyncBtn;
                         text: qsTr("Export for plugins");
+                        // Peer-level accent style: both export buttons share the same blue accent.
+                        accent: true;
                         iconName: "spinner";
                         height: 36 * dpiScale;
                         leftPadding: 16 * dpiScale;
@@ -816,15 +818,23 @@ Rectangle {
                         // matching simpleExportStabilizedBtn's batch-path predicate below.
                         readonly property bool _queueMode: videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
                         readonly property bool _hasGyroFiles: videoArea.queue ? videoArea.queue.hasGyroFiles : false;
-                        readonly property bool _allGyroParsed: videoArea.queue ? videoArea.queue.allGyroParsed : false;
-                        // Relaxed enable (D5): in queue mode a click may need to *trigger* the match,
-                        // so do not require batch_motion_ready() when separate gyro files exist; just
-                        // require them parsed. Without separate gyro files keep the original gate.
+                        // Gate on video presence only: enabled whenever the queue has video jobs
+                        // (or a single video is loaded), regardless of gyro readiness. Empty queue /
+                        // no video disables; runtime-busy guards (render active / sync running) kept.
                         enabled: _queueMode
-                            ? (render_queue.status !== "active"
-                                && (_hasGyroFiles ? _allGyroParsed : render_queue.batch_motion_ready()))
+                            ? (render_queue.status !== "active" && simpleExportBtnRow.queueRowCount > 0)
                             : (window.videoArea.vid.loaded && !controller.sync_in_progress);
                         onClicked: {
+                            // No usable gyro/motion data at all: prompt to load gyro instead of a
+                            // silent no-op. Gyro files present but still parsing fall through to the
+                            // normal flow below (no parse-complete gate).
+                            const _noGyro = simpleAutoSyncBtn._queueMode
+                                ? (!simpleAutoSyncBtn._hasGyroFiles && !render_queue.batch_motion_ready())
+                                : !controller.gyro_loaded;
+                            if (_noGyro) {
+                                window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+                                return;
+                            }
                             // Single video / embedded gyro: sync directly, no match step.
                             if (!simpleAutoSyncBtn._queueMode || !simpleAutoSyncBtn._hasGyroFiles) {
                                 if (simpleAutoSyncBtn._queueMode) {
@@ -868,14 +878,12 @@ Rectangle {
                         // Gate on stable layout flags rather than dynamic `parent` reference,
                         // so the binding reliably re-evaluates after theme/mode toggles.
                         width: (window.isMobileLayout && window.isSimpleMode) ? mobileSimpleExportBtnCol.width : implicitWidth;
-                        // Relaxed enable (D5 parity): with separate gyro files a click may need to
-                        // trigger the match first, so require only allGyroParsed (not batch_motion_ready).
+                        // Gate on video presence only: enabled while rendering (acts as Stop), or
+                        // when the queue has video jobs, or a single video is loaded. Gyro readiness
+                        // no longer gates the button; missing gyro is handled at click time below.
                         enabled: render_queue.status === "active"
-                              || ((videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
-                                  ? (videoArea.queue.hasGyroFiles
-                                      ? videoArea.queue.allGyroParsed
-                                      : (videoArea.queue.matchVersion >= 0 && render_queue.batch_motion_ready()))
-                                  : window.videoArea.vid.loaded);
+                              || (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0)
+                              || window.videoArea.vid.loaded;
 
                         // Set when we kicked off autosync and are waiting to resume render.
                         property bool pendingRenderAfterSync: false;
@@ -911,6 +919,20 @@ Rectangle {
                                 render_queue.stop();
                                 if (videoArea.queue) videoArea.queue.pendingConvertFormatChoice = "";
                                 return;
+                            }
+                            // No usable gyro/motion data at all: prompt to load gyro instead of a
+                            // silent no-op. Gyro files present but still parsing fall through to the
+                            // normal batch/single path below.
+                            {
+                                const _queueMode = videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
+                                const _hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
+                                const _noGyro = _queueMode
+                                    ? (!_hasGyroFiles && !render_queue.batch_motion_ready())
+                                    : !controller.gyro_loaded;
+                                if (_noGyro) {
+                                    window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+                                    return;
+                                }
                             }
                             // Batch path — render queue panel is open with pending jobs
                             if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
@@ -1730,8 +1752,8 @@ Rectangle {
                     objectName: "simple-settings";
                     // Collapsed on first run; MenuItem still preserves the user's saved state.
                     opened: false;
-                    opacity: _selectionDrivenBatch ? 0.4 : 1.0;
-                    innerItem.enabled: !_selectionDrivenBatch;
+                    // Settings card never dims/disables for batch selection: it has no batch-edit
+                    // affordance to communicate, so it stays full opacity and interactive always.
                     // Export settings — moved here from the Video information section.
                     SectionDivider { label: qsTranslate("Export", "Export settings"); }
                     Menu.SimpleExport {

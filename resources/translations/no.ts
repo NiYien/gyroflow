@@ -551,6 +551,11 @@ Vennligst sjekk filens bithastighet etter gjengivelse, og hvis du er berørt av 
         <translation>Eksporter stabilisert video</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Last inn gyrodata først.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

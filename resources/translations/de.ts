@@ -550,6 +550,11 @@ Bitte überprüfe die Bitrate nach dem Export - sollte diese zu niedrig sein, he
         <translation>Stabilisiertes Video exportieren</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Bitte laden Sie zuerst die Gyro-Daten.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

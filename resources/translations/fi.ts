@@ -550,6 +550,11 @@ Tarkista tiedoston bittinopeus hahmontamisen jälkeen ja jos tämä virhe vaikut
         <translation>Vie vakautettu video</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Lataa ensin gyroskooppidata.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

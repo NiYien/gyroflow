@@ -551,6 +551,11 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>手ブレ補正動画を書き出し</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>先にジャイロデータを読み込んでください。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

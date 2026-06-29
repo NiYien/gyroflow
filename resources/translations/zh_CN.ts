@@ -633,6 +633,11 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>导出稳定后的视频</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>请加载陀螺仪数据</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

@@ -551,6 +551,11 @@ Prosím skontroluj dátový tok po renderovaní, či sa táto chyba prejavila, p
         <translation>Exportovať stabilizované video</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Najprv načítajte dáta gyroskopu.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

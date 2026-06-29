@@ -551,6 +551,11 @@ Veuillez vérifier le débit de fichier après le rendu, si votre rendu est affe
         <translation>Exporter la vidéo stabilisée</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Veuillez d&apos;abord charger les données gyroscopiques.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

@@ -550,6 +550,11 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>안정화된 영상 내보내기</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>먼저 자이로 데이터를 불러오세요.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>

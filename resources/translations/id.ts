@@ -552,6 +552,11 @@ Harap periksa kecepatan bit file setelah perenderan dan jika Anda terpengaruh ol
         <translation>Ekspor video yang distabilkan</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="839"/>
+        <source>Please load gyro data first.</source>
+        <translation>Harap muat data giroskop terlebih dahulu.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="935"/>
         <location filename="../../src/ui/App.qml" line="1037"/>
         <location filename="../../src/ui/App.qml" line="1041"/>
