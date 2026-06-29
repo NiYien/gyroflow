@@ -10187,31 +10187,18 @@ impl RenderQueue {
     // This logic lives only here, never in `reset_job`, because reset_job is
     // reused by the re-render / batch-sync paths that must preserve pairings (D4).
     fn reset_all_video_pairings(&mut self) {
-        let video_job_ids = self.collect_video_job_ids();
-        let ordered_ids = self.get_ordered_job_ids();
-        for job_id in video_job_ids {
-            self.manual_pairs.retain(|p| p.job_id != job_id);
-            self.deep_match_results.remove(&job_id);
-            if let Some(ref mut results) = self.match_results {
-                let idx = results
-                    .results
-                    .iter()
-                    .position(|r| r.job_id == Some(job_id))
-                    .or_else(|| {
-                        let video_index = ordered_ids.iter().position(|&id| id == job_id)?;
-                        results
-                            .results
-                            .iter()
-                            .position(|r| r.video_index == video_index)
-                    });
-                if let Some(i) = idx {
-                    results.results[i].status = core::gyro_match::MatchStatus::Unmatched;
-                    results.results[i].gyro_index = None;
-                    results.results[i].gyro_start_ms = None;
-                    results.results[i].gyro_end_ms = None;
-                }
-            }
-        }
+        // [reset-pairing-restore-just-loaded-state] Clear all match state to the
+        // just-loaded baseline. Setting match_results = None (rather than marking
+        // individual entries Unmatched while keeping Some(...)) makes
+        // has_match_results() return false, so the existing match_results_changed ->
+        // onMatch_results_changed path recomputes matchExecuted = false and the
+        // render-queue gyro column returns to unmatched-preview mode instead of
+        // collapsing to a blank column. Calibration-pair entries are cleared too,
+        // matching the confirmation prompt's "reset all jobs" intent. Loaded gyro
+        // files and each job's embedded (in-video) gyro are untouched.
+        self.manual_pairs.clear();
+        self.deep_match_results.clear();
+        self.match_results = None;
         self.match_results_changed();
     }
 
@@ -13910,31 +13897,45 @@ mod tests {
                 offset_ms: 12.0,
             },
         );
+        // One matched video entry plus a calibration-pair entry: the reset must
+        // clear both (D2) by wiping match_results entirely.
         queue.match_results = Some(core::gyro_match::BatchMatchResult {
-            results: vec![core::gyro_match::MatchResult {
-                video_index: 0,
-                job_id: Some(1),
-                gyro_index: Some(0),
-                status: core::gyro_match::MatchStatus::Matched,
-                global_offset_ms: None,
-                gyro_start_ms: Some(100.0),
-                gyro_end_ms: Some(200.0),
-                init_offset_ms: None,
-            }],
+            results: vec![
+                core::gyro_match::MatchResult {
+                    video_index: 0,
+                    job_id: Some(1),
+                    gyro_index: Some(0),
+                    status: core::gyro_match::MatchStatus::Matched,
+                    global_offset_ms: None,
+                    gyro_start_ms: Some(100.0),
+                    gyro_end_ms: Some(200.0),
+                    init_offset_ms: None,
+                },
+                core::gyro_match::MatchResult {
+                    video_index: 1,
+                    job_id: Some(2),
+                    gyro_index: None,
+                    status: core::gyro_match::MatchStatus::CalibrationPair,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                },
+            ],
             global_offset_ms: None,
             error: None,
         });
 
         queue.reset_all_video_pairings();
 
-        // All three registries cleared / Unmatched.
+        // [reset-pairing-restore-just-loaded-state] All match state cleared to the
+        // just-loaded baseline: registries empty and match_results == None, so
+        // has_match_results() is false and the gyro column returns to preview mode.
+        // The calibration-pair entry is gone along with the matched entry (D2).
         assert!(queue.manual_pairs.is_empty());
         assert!(queue.deep_match_results.is_empty());
-        let r = &queue.match_results.as_ref().unwrap().results[0];
-        assert_eq!(r.status, core::gyro_match::MatchStatus::Unmatched);
-        assert!(r.gyro_index.is_none());
-        assert!(r.gyro_start_ms.is_none());
-        assert!(r.gyro_end_ms.is_none());
+        assert!(queue.match_results.is_none());
+        assert!(!queue.has_match_results());
 
         // stab.gyro must NOT be cleared — its motion survives the reset (D5).
         let stab = queue.jobs.get(&1).unwrap().stab.as_ref().unwrap().clone();
