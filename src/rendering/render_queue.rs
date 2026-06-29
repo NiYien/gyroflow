@@ -9967,6 +9967,34 @@ impl RenderQueue {
         }
         match verdict {
             deep_match::DeepMatchVerdict::Accepted { offset_ms } => {
+                // deep-match-chunked-scan: each chunk is loaded with its gyro
+                // samples re-based to 0 (telemetry-parser zeroes the requested
+                // range start), so the accepted offset is CHUNK-LOCAL. Convert
+                // it to file-relative (absolute gyro) coordinates by subtracting
+                // the chunk's absolute base — the contract expected by
+                // gyro_match::derive_session_offset_from_deep_match /
+                // compute_clip_window ("video content start sits at gyro
+                // file-relative time -offset_ms"). Chunk 0 / single-chunk plans
+                // have base 0 → no-op (the path that already worked). Without
+                // this, a match found in chunk N>0 landed the per-clip
+                // fine-sync gyro slice ~(chunk base) early, correlating the
+                // video against unrelated motion → all-yellow.
+                let chunk_base_ms = state
+                    .chunk_plan
+                    .get(state.current_chunk)
+                    .map(|(start, _)| *start)
+                    .unwrap_or(0.0);
+                let offset_ms = offset_ms - chunk_base_ms;
+                if chunk_base_ms != 0.0 {
+                    ::log::info!(
+                        target: "sync",
+                        "[deep-match] absolutized offset: chunk {}/{} base={:.1}ms → absolute offset_ms={:.1}ms",
+                        state.current_chunk + 1,
+                        state.chunk_plan.len(),
+                        chunk_base_ms,
+                        offset_ms
+                    );
+                }
                 // Gyro retention depends on the snapshot's metadata: a
                 // keep_video_gyro job gets its built-in gyro back (the .bin
                 // must never remain its motion source — deep match only
