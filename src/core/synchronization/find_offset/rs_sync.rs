@@ -398,6 +398,140 @@ fn cross_window_drift_tol_ms(centers_ms: &[f64], rate_ms_per_min: f64, floor_ms:
     crate::synchronization::deep_match::drift_tolerance_ms(hi - lo, rate_ms_per_min, floor_ms)
 }
 
+/// Whether the multi-window posterior per-segment refinement widens its radius
+/// with time-distance from the window centroid (change
+/// sync-drift-aware-refine-radius). `0|false|no|off` reverts every segment to the
+/// fixed `REFINE_RADIUS_S` (±7.5ms) — byte-identical to the pre-change path,
+/// including single-window runs. OnceLock-cached; first resolve logs to
+/// `target="lifecycle"`.
+pub(crate) fn drift_refine_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_DRIFT_REFINE").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_DRIFT_REFINE={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_drift_refine resolved enabled={} source={}", v, source);
+        v
+    })
+}
+
+/// Minimum per-segment refinement half-width (ms) for the drift-aware radius
+/// (`GYROFLOW_SYNC_REFINE_RADIUS_MIN_MS`, default 5.0). Reached when a window
+/// sits at the centroid (`d_i = 0`, includes single-window runs) — keeps a
+/// sub-grid search half-width so refinement does not degrade to a point eval.
+/// OnceLock-cached; first resolve logs to `target="lifecycle"`.
+pub(crate) fn refine_radius_min_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_REFINE_RADIUS_MIN_MS").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (5.0, "default"),
+            Some(s) => match s.parse::<f64>() {
+                Ok(x) if x.is_finite() && x >= 0.0 => (x, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_REFINE_RADIUS_MIN_MS={} invalid, falling back to default (5)",
+                        s
+                    );
+                    (5.0, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_refine_radius_min_ms resolved value={} source={}", v, source);
+        v
+    })
+}
+
+/// Maximum per-segment refinement half-width (ms) for the drift-aware radius
+/// (`GYROFLOW_SYNC_REFINE_RADIUS_MAX_MS`, default 30.0). Caps how far an extreme
+/// window can widen, kept well below far-basin separation so a widened search
+/// cannot hop to a wrong basin. OnceLock-cached; first resolve logs to
+/// `target="lifecycle"`.
+pub(crate) fn refine_radius_max_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_REFINE_RADIUS_MAX_MS").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (30.0, "default"),
+            Some(s) => match s.parse::<f64>() {
+                Ok(x) if x.is_finite() && x >= 0.0 => (x, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_REFINE_RADIUS_MAX_MS={} invalid, falling back to default (30)",
+                        s
+                    );
+                    (30.0, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_refine_radius_max_ms resolved value={} source={}", v, source);
+        v
+    })
+}
+
+/// Drift slope (ms of refinement half-width added per minute of distance from the
+/// window centroid) for the drift-aware radius
+/// (`GYROFLOW_SYNC_REFINE_RADIUS_K_MS_PER_MIN`, default 1.0 — "25min → +25ms").
+/// OnceLock-cached; first resolve logs to `target="lifecycle"`.
+pub(crate) fn refine_radius_k_ms_per_min() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_REFINE_RADIUS_K_MS_PER_MIN").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (1.0, "default"),
+            Some(s) => match s.parse::<f64>() {
+                Ok(x) if x.is_finite() && x >= 0.0 => (x, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_REFINE_RADIUS_K_MS_PER_MIN={} invalid, falling back to default (1.0)",
+                        s
+                    );
+                    (1.0, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "sync_refine_radius_k_ms_per_min resolved value={} source={}", v, source);
+        v
+    })
+}
+
+/// Drift-aware per-segment refinement half-width (seconds) for the multi-window
+/// posterior. Linear camera/gyro clock drift makes a window's true offset deviate
+/// from the shared joint argmax proportionally to its time distance from the
+/// window centroid, so extreme windows widen while central windows stay tight
+/// (avoiding over-fit to a noisy per-window minimum):
+/// `R_i = clamp(min, min + k·d_i_minutes, max)` with `d_i = |center − centroid|`.
+/// `center_us`/`centroid_us` are µs; returns seconds for direct use as the
+/// `pre_sync` radius.
+fn drift_refine_radius_s(
+    center_us: f64,
+    centroid_us: f64,
+    min_ms: f64,
+    max_ms: f64,
+    k_ms_per_min: f64,
+) -> f64 {
+    let d_min = (center_us - centroid_us).abs() / 60_000_000.0; // µs → minutes
+    let hi = max_ms.max(min_ms); // guard against a misconfigured min > max
+    let r_ms = (min_ms + k_ms_per_min * d_min).clamp(min_ms, hi);
+    r_ms / 1000.0
+}
+
 /// Posterior CI95 width (ms) above which a single-window run requests a lazy
 /// probe window (`GYROFLOW_SYNC_PROBE_CI95_MS`, default 30). A sharp single
 /// window (CI ≈ 0) is trusted; a wide CI signals an ambiguous basin that a
@@ -2019,12 +2153,37 @@ impl FindOffsetsRssync<'_> {
         }
 
         // Per-segment sub-grid refinement at the shared joint argmax (D6:
-        // same pre_sync refinement the fusion output uses).
+        // same pre_sync refinement the fusion output uses). The center stays the
+        // joint argmax (basin selection / false-peak rejection preserved); only
+        // the radius widens with time-distance from the window centroid so an
+        // extreme window can follow linear clock drift while central windows stay
+        // tight (change sync-drift-aware-refine-radius).
+        let refine_drift = drift_refine_enabled();
+        let refine_centroid_us: f64 = if windows.is_empty() {
+            0.0
+        } else {
+            windows
+                .iter()
+                .map(|w| (w.sp.0 as f64 + w.sp.1 as f64) / 2.0)
+                .sum::<f64>()
+                / windows.len() as f64
+        };
+        let (rr_min_ms, rr_max_ms, rr_k) = (
+            refine_radius_min_ms(),
+            refine_radius_max_ms(),
+            refine_radius_k_ms_per_min(),
+        );
         for w in &windows {
+            let radius_s = if refine_drift {
+                let center_us = (w.sp.0 as f64 + w.sp.1 as f64) / 2.0;
+                drift_refine_radius_s(center_us, refine_centroid_us, rr_min_ms, rr_max_ms, rr_k)
+            } else {
+                REFINE_RADIUS_S
+            };
             let center_s = -(post.argmax_ms + frt_offset_ms) / 1000.0;
             let refined = self
                 .sync
-                .pre_sync(center_s, w.sp.0, w.sp.1, FINE_STEP_S, REFINE_RADIUS_S);
+                .pre_sync(center_s, w.sp.0, w.sp.1, FINE_STEP_S, radius_s);
             let (out_ms, out_cost) = match refined {
                 Some((c, d_s)) if c.is_finite() => (ext_of(d_s), c),
                 _ => (post.argmax_ms, offsets[w.seg].2),
@@ -2032,7 +2191,7 @@ impl FindOffsetsRssync<'_> {
             let fusion_ms = offsets[w.seg].1;
             log::info!(
                 target: "sync",
-                "[posterior] seg {}: argmax={:.1}ms refined={:.1}ms ci95=[{:.0},{:.0}] conf={:.3} windows={} win=[{}-{}ms] t_d={:.1}ms g*={:.3} sigma={:.5} n_pairs={} star={:.1}ms prior={} fusion={:.1}ms diff={:+.1}ms",
+                "[posterior] seg {}: argmax={:.1}ms refined={:.1}ms ci95=[{:.0},{:.0}] conf={:.3} windows={} win=[{}-{}ms] t_d={:.1}ms r_i={:.1}ms g*={:.3} sigma={:.5} n_pairs={} star={:.1}ms prior={} fusion={:.1}ms diff={:+.1}ms",
                 w.seg,
                 post.argmax_ms,
                 out_ms,
@@ -2043,6 +2202,7 @@ impl FindOffsetsRssync<'_> {
                 w.sp.0 / 1000,
                 w.sp.1 / 1000,
                 drift_tol_ms,
+                radius_s * 1000.0,
                 w.gain_star,
                 w.sigma,
                 w.n_pairs,
@@ -4117,6 +4277,48 @@ mod rs_shortcut_tests {
         assert!(!should_use_rs_shortcut(true, 1.0, 0.90, 0.91, 0.80, 2.0, 1.8, 3.0));
         // non-finite argmin → no shortcut.
         assert!(!should_use_rs_shortcut(true, 1.0, 0.90, 0.91, 0.3, f64::NAN, 1.8, 3.0));
+    }
+}
+
+#[cfg(test)]
+mod drift_refine_radius_tests {
+    use super::*;
+
+    // Helper: radius (ms) for a window `d_minutes` away from the centroid,
+    // default constants (min 5, max 30, k 1.0 ms/min).
+    fn r_ms(d_minutes: f64) -> f64 {
+        let center = d_minutes * 60_000_000.0; // minutes → µs
+        drift_refine_radius_s(center, 0.0, 5.0, 30.0, 1.0) * 1000.0
+    }
+
+    #[test]
+    fn radius_follows_5_plus_1x_clamped() {
+        assert!((r_ms(0.0) - 5.0).abs() < 1e-9, "d=0 → min 5ms (single window / centroid)");
+        assert!((r_ms(10.0) - 15.0).abs() < 1e-9, "d=10min → 5+10=15ms");
+        assert!((r_ms(25.0) - 30.0).abs() < 1e-9, "d=25min → 5+25=30ms (cap)");
+        assert!((r_ms(40.0) - 30.0).abs() < 1e-9, "d=40min → clamped to 30ms");
+    }
+
+    #[test]
+    fn radius_symmetric_in_distance() {
+        let before = drift_refine_radius_s(-600_000_000.0, 0.0, 5.0, 30.0, 1.0);
+        let after = drift_refine_radius_s(600_000_000.0, 0.0, 5.0, 30.0, 1.0);
+        assert!((before - after).abs() < 1e-12, "sign of (center-centroid) must not matter");
+        assert!((after * 1000.0 - 15.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn radius_guards_misconfigured_min_above_max() {
+        // min=10 > max=5 must not panic; clamp upper bound becomes max(min,max)=10.
+        let r = drift_refine_radius_s(0.0, 0.0, 10.0, 5.0, 1.0) * 1000.0;
+        assert!((r - 10.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn radius_k_zero_pins_to_min() {
+        // k=0 → constant min regardless of distance (a manual flat radius).
+        let r = drift_refine_radius_s(1_500_000_000.0, 0.0, 5.0, 30.0, 0.0) * 1000.0;
+        assert!((r - 5.0).abs() < 1e-9);
     }
 }
 
