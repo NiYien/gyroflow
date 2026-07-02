@@ -3425,8 +3425,8 @@ Chceš ho zmeniť na iný podporovaný typ, alebo ho chceš zachovať a vyrendro
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Upraviť</translation>
+        <source>Play</source>
+        <translation>Prehrať</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>

@@ -3425,8 +3425,8 @@ Chcete převést na jiný podporovaný formát nebo zachovat originální a vykr
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Upravit</translation>
+        <source>Play</source>
+        <translation>Přehrát</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>

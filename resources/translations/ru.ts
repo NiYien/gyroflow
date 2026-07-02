@@ -3425,8 +3425,8 @@ Do you want to convert to a different supported pixel format or keep the origina
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Изменить</translation>
+        <source>Play</source>
+        <translation>Воспроизведение</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>

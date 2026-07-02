@@ -1517,7 +1517,7 @@ Item {
                 id: contextMenu;
                 font.pixelSize: 11.5 * dpiScale;
                 Action {
-                    iconName: "play";
+                    iconName: "video";
                     text: qsTr("Render now");
                     enabled: !isFinished && !isInProgress;
                     onTriggered: {
@@ -1527,8 +1527,8 @@ Item {
                     }
                 }
                 Action {
-                    iconName: "pencil";
-                    text: qsTr("Edit");
+                    iconName: "play";
+                    text: qsTr("Play");
                     enabled: !isInProgress;
                     onTriggered: {
                         // Part B fix E: also mark this job as selected so
@@ -2372,7 +2372,7 @@ Item {
                         // clears the Skipped state back to Queued, then render_job starts it.
                         IconButton {
                             visible: dlg.isSkipped && dlg.skipReason === "user_stopped";
-                            iconName: "play";
+                            iconName: "video";
                             tooltip: qsTr("Render now");
                             onClicked: {
                                 render_queue.reset_job(job_id);

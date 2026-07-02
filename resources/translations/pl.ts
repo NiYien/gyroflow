@@ -3425,8 +3425,8 @@ Czy chcesz przekonwertować do innego obsługiwanego formatu czy chcesz zachowa�
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Edytuj</translation>
+        <source>Play</source>
+        <translation>Odtwórz</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>

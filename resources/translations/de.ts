@@ -3424,8 +3424,8 @@ Soll das Format angepasst oder auf der CPU berechnet werden?</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Bearbeiten</translation>
+        <source>Play</source>
+        <translation>Wiedergabe</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>

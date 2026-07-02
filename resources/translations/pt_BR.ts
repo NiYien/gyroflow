@@ -3424,8 +3424,8 @@ Você deseja converter em um formato de píxel diferente suportado ou manter a v
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Editar</translation>
+        <source>Play</source>
+        <translation>Reproduzir</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>

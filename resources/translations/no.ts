@@ -3425,8 +3425,8 @@ Vil du konvertere til et annet støttet pikselformat eller beholde det opprinnel
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
-        <source>Edit</source>
-        <translation>Rediger</translation>
+        <source>Play</source>
+        <translation>Spill av</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1425"/>
