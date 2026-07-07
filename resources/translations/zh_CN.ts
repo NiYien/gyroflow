@@ -3777,6 +3777,36 @@ Click Ok and select the destination folder.</source>
         <source>Save to: %1</source>
         <translation>保存到: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>搜索全部陀螺仪数据</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>没有可搜索的陀螺仪数据文件。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>正在搜索第 %1 / %2 个候选</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>全段扫描</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>时间戳预测</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>所有陀螺仪文件中均未找到匹配。记录可能未覆盖此视频，或视频运动不可靠。</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

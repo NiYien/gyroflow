@@ -3778,6 +3778,36 @@ OKをクリックして保存先フォルダを選択します。</translation>
         <source>Save to: %1</source>
         <translation>保存済み: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>すべてのジャイロデータを検索</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>検索できるジャイロデータファイルがありません。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>候補 %1/%2 を検索中</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>全域スキャン</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>タイムスタンプ推定</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>どのジャイロファイルにも一致が見つかりませんでした。記録がこの動画をカバーしていないか、動画の動きが不安定な可能性があります。</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

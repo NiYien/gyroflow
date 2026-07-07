@@ -3777,6 +3777,36 @@ Kliknij Ok i wybierz folder docelowy.</translation>
         <source>Save to: %1</source>
         <translation>Zapisz do: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Przeszukaj wszystkie dane żyroskopu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Brak plików danych żyroskopu do przeszukania.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Przeszukiwanie kandydata %1 z %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>pełne skanowanie</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>oszacowanie ze znacznika czasu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Nie znaleziono dopasowania w żadnym pliku żyroskopu. Nagrania mogą nie obejmować tego wideo lub ruch w wideo jest niewiarygodny.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

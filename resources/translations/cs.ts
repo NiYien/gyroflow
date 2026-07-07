@@ -3777,6 +3777,36 @@ Klepněte na tlačítko OK a vyberte cílovou složku.</translation>
         <source>Save to: %1</source>
         <translation>Uložit do: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Prohledat všechna data gyroskopu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Nejsou k dispozici žádné soubory dat gyroskopu k prohledání.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Prohledávání kandidáta %1 z %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>úplné skenování</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>odhad podle časového razítka</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>V žádném souboru gyroskopu nebyla nalezena shoda. Záznamy nemusí pokrývat toto video, nebo je pohyb videa nespolehlivý.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

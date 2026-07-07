@@ -3776,6 +3776,36 @@ Napsauta Ok ja valitse kohdekansio.</translation>
         <source>Save to: %1</source>
         <translation>Tallenna osoitteeseen: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Hae kaikesta gyrodatasta</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Haettavia gyrodatatiedostoja ei ole saatavilla.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Haetaan ehdokasta %1/%2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>täysi skannaus</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>aikaleima-arvio</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Osumaa ei löytynyt yhdestäkään gyrotiedostosta. Tallenteet eivät ehkä kata tätä videota, tai videon liike on epäluotettava.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

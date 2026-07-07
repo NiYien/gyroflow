@@ -3777,6 +3777,36 @@ Klikni na OK pre výber cieľovej zložky.</translation>
         <source>Save to: %1</source>
         <translation>Ulož do: %1.</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Prehľadať všetky údaje gyroskopu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Nie sú k dispozícii žiadne súbory údajov gyroskopu na prehľadanie.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Prehľadávanie kandidáta %1 z %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>úplné skenovanie</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>odhad podľa časovej pečiatky</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>V žiadnom súbore gyroskopu sa nenašla zhoda. Záznamy nemusia pokrývať toto video, alebo je pohyb videa nespoľahlivý.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

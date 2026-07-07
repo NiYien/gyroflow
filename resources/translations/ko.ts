@@ -3776,6 +3776,36 @@ Click Ok and select the destination folder.</source>
         <source>Save to: %1</source>
         <translation>저장 위치: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>모든 자이로 데이터 검색</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>검색할 자이로 데이터 파일이 없습니다.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>후보 %1/%2 검색 중</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>전체 스캔</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>타임스탬프 추정</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>어떤 자이로 파일에서도 일치 항목을 찾지 못했습니다. 기록이 이 영상을 포함하지 않거나 영상의 움직임이 불안정할 수 있습니다.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

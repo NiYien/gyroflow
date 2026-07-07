@@ -603,6 +603,15 @@ struct DeepMatchState {
     // chunk at a time, short-circuiting on acceptance.
     chunk_plan: Vec<(f64, f64)>,
     current_chunk: usize,
+    // Pool-wide search (deep-match-gyro-pool-prelocate): the ordered probe
+    // plan and its cursor. The manual per-file entry runs as a single
+    // full-span probe through the same path. `gyro_index`/`chunk_plan`
+    // always describe the CURRENT probe.
+    probe_plan: Vec<core::synchronization::deep_match::ProbeTask>,
+    current_probe: usize,
+    // Pool runs advance to the next candidate on a broken gyro file instead
+    // of terminating (one bad file must not kill the pool search).
+    pool_run: bool,
 }
 
 #[derive(Clone)]
@@ -1050,6 +1059,10 @@ pub struct RenderQueue {
     // completion), results = accepted matches (drives the DeepMatched status).
     deep_match_pending: HashMap<u32, DeepMatchState>,
     deep_match_results: HashMap<u32, DeepMatchResult>,
+    // Clock shift (gyro clock minus video clock, ms) learned from the last
+    // accepted deep match — the tier-0 hypothesis of pool-wide searches.
+    // In-memory only; cleared by unpair_video / reset_all_video_pairings.
+    learned_clock_shift_ms: Option<i64>,
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
@@ -1115,6 +1128,12 @@ pub struct RenderQueue {
     // "gyro_not_ready" / "job_missing" so QML can show a specific message.
     start_deep_gyro_match:
         qt_method!(fn(&mut self, job_id: u32, gyro_index: usize, probe_lens_index: i32) -> QString),
+    // Pool-wide search (deep-match-gyro-pool-prelocate): builds a tiered
+    // timestamp-prelocated probe plan over every parsed pool file and runs
+    // it hit-stops-first. Same reason codes as start_deep_gyro_match
+    // ("gyro_missing" = no parsed pool files).
+    start_deep_gyro_match_all:
+        qt_method!(fn(&mut self, job_id: u32, probe_lens_index: i32) -> QString),
     cancel_deep_gyro_match: qt_method!(fn(&mut self, job_id: u32)),
     // Pre-flight query for the lens-group confirmation dialog: "ok" /
     // "needs_choice" (bare manual-lens job, configured groups listed) /
@@ -1165,6 +1184,10 @@ pub struct RenderQueue {
     // Chunked scan: fired once per chunk launch so the progress modal can
     // show "Scanning segment i of n".
     pub deep_match_chunk_changed: qt_signal!(job_id: u32, chunk: u32, total: u32),
+    // Pool-wide search: fired alongside each chunk launch with the current
+    // probe's ordinal, tier and candidate filename ("Searching candidate
+    // i of n"). Single-probe (manual) runs emit 1/1 and QML keeps quiet.
+    pub deep_match_probe_changed: qt_signal!(job_id: u32, probe: u32, total: u32, tier: u32, gyro_filename: QString),
     pub deep_match_finished: qt_signal!(job_id: u32, success: bool, error_kind: QString, offset_ms: f64),
 }
 
@@ -3904,14 +3927,17 @@ impl RenderQueue {
                     // Deep match: forward sync progress to the modal dialog.
                     // This queued callback is the per-job landing point of
                     // do_autosync's processing_cb chain. Deep-match progress
-                    // composes across scan chunks: (chunk + p) / chunk_count.
-                    if let Some((chunk, n)) = this
+                    // composes across probes and scan chunks:
+                    // (probe + (chunk + p)/chunk_count) / probe_count.
+                    // Single-probe (manual) runs reduce to the pre-change math.
+                    if let Some((probe, probe_n, chunk, n)) = this
                         .deep_match_pending
                         .get(&job_id)
-                        .map(|s| (s.current_chunk, s.chunk_plan.len()))
+                        .map(|s| (s.current_probe, s.probe_plan.len(), s.current_chunk, s.chunk_plan.len()))
                     {
-                        let composed = (chunk as f64 + progress.clamp(0.0, 1.0))
+                        let within_probe = (chunk as f64 + progress.clamp(0.0, 1.0))
                             / n.max(1) as f64;
+                        let composed = (probe as f64 + within_probe) / probe_n.max(1) as f64;
                         this.deep_match_progress(job_id, composed);
                     }
                     this.progress_changed();
@@ -9409,38 +9435,143 @@ impl RenderQueue {
             ::log::warn!(target: "sync", "[deep-match] refused: reason=job_missing job={job_id}");
             return QString::from("job_missing");
         };
-        let Some(stab) = job.stab.clone() else {
+        if job.stab.is_none() {
             // stab handle missing is functionally "job not usable" — same code.
             ::log::warn!(target: "sync", "[deep-match] refused: reason=job_missing (stab) job={job_id}");
             return QString::from("job_missing");
+        }
+        // The manual per-file entry is a single full-span probe through the
+        // shared plan path (deep-match-gyro-pool-prelocate D7) — external
+        // behavior unchanged.
+        let plan = vec![deep_match::ProbeTask { gyro_index, tier: 3, window_ms: None }];
+        self.start_deep_match_with_plan(job_id, plan, probe_lens_index, false)
+    }
+
+    // Pool-wide search entry (deep-match-gyro-pool-prelocate): builds the
+    // tiered probe plan over every parsed pool file and launches it. Guards
+    // mirror start_deep_gyro_match; "gyro_missing" = no parsed pool files.
+    fn start_deep_gyro_match_all(&mut self, job_id: u32, probe_lens_index: i32) -> QString {
+        use gyroflow_core::synchronization::deep_match;
+        if !self.deep_match_pending.is_empty() {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=deep_match_in_flight job={job_id} (pool)");
+            return QString::from("deep_match_in_flight");
+        }
+        if self.status.to_string() == "active" {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=queue_active job={job_id} (pool)");
+            return QString::from("queue_active");
+        }
+        let pool: Vec<deep_match::GyroPoolEntry> = self
+            .gyro_files
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| g.parsed)
+            .map(|(i, g)| deep_match::GyroPoolEntry {
+                gyro_index: i,
+                created_at_ms: g.created_at_ms,
+                duration_ms: g.duration_ms,
+            })
+            .collect();
+        if pool.is_empty() {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=gyro_missing job={job_id} (pool: no parsed files)");
+            return QString::from("gyro_missing");
+        }
+        let Some(job) = self.jobs.get(&job_id) else {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=job_missing job={job_id} (pool)");
+            return QString::from("job_missing");
         };
+        let Some(stab) = job.stab.clone() else {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=job_missing (stab) job={job_id} (pool)");
+            return QString::from("job_missing");
+        };
+        let (video_created, video_duration_ms) = {
+            let params = stab.params.read();
+            (params.video_created_at, params.duration_ms)
+        };
+        let video_created = video_created.or(job.video_created_at);
+        // Whole-queue video pool feeds the tier-2 pool alignment (released
+        // stabs contribute their cached start with a zero duration).
+        let mut video_pool: Vec<(i64, f64)> = Vec::new();
+        for j in self.jobs.values() {
+            let (ca, dur) = match &j.stab {
+                Some(s) => {
+                    let p = s.params.read();
+                    (p.video_created_at.or(j.video_created_at), p.duration_ms)
+                }
+                None => (j.video_created_at, 0.0),
+            };
+            if let Some(ca) = ca {
+                video_pool.push((ca, dur.max(0.0)));
+            }
+        }
+        let prelocate = deep_match::prelocate_enabled();
+        let tol = deep_match::prelocate_tol_ms();
+        if video_created.is_none() {
+            ::log::info!(
+                target: "sync",
+                "[deep-match] video has no creation time — skipping prelocation tiers, exhaustive plan only: job={job_id}"
+            );
+        }
+        let plan = deep_match::build_probe_plan(
+            video_created,
+            video_duration_ms,
+            &pool,
+            &video_pool,
+            self.learned_clock_shift_ms,
+            tol,
+            prelocate,
+        );
+        if plan.is_empty() {
+            ::log::warn!(target: "sync", "[deep-match] refused: reason=gyro_missing job={job_id} (pool: empty plan)");
+            return QString::from("gyro_missing");
+        }
+        let mut tier_counts = [0usize; 4];
+        for t in &plan {
+            tier_counts[t.tier.min(3) as usize] += 1;
+        }
+        ::log::info!(
+            target: "sync",
+            "[deep-match] probe plan: job={} candidates={} probes={} tiers={{0:{},1:{},2:{},3:{}}} learned_shift={:?}ms tol={:.0}ms prelocate={}",
+            job_id, pool.len(), plan.len(),
+            tier_counts[0], tier_counts[1], tier_counts[2], tier_counts[3],
+            self.learned_clock_shift_ms, tol, prelocate
+        );
+        self.start_deep_match_with_plan(job_id, plan, probe_lens_index, true)
+    }
+
+    // Shared launch path for manual (single full-span probe) and pool runs:
+    // snapshots the pre-probe stores once for the WHOLE plan, fills the first
+    // probe's chunk plan and spawns its background load.
+    fn start_deep_match_with_plan(
+        &mut self,
+        job_id: u32,
+        plan: Vec<gyroflow_core::synchronization::deep_match::ProbeTask>,
+        probe_lens_index: i32,
+        pool_run: bool,
+    ) -> QString {
+        let Some(job) = self.jobs.get(&job_id) else {
+            return QString::from("job_missing");
+        };
+        let Some(stab) = job.stab.clone() else {
+            return QString::from("job_missing");
+        };
+        let first = plan[0];
         // Snapshot every pre-probe store before the background load can touch
         // anything; the restore matrix in finish_deep_match puts them back.
         let mut state = Self::snapshot_deep_match_state(
             job,
             &stab,
-            gyro_index,
+            first.gyro_index,
             usize::try_from(probe_lens_index).ok(),
         );
-        // Chunked scan plan over the pool file's known duration. Missing /
-        // zero duration falls back to a single chunk-length range — the
-        // load clamps to the actual file contents anyway.
-        let chunk_ms = deep_match::max_scan_ms();
+        state.probe_plan = plan;
+        state.pool_run = pool_run;
         let video_duration_ms = stab.params.read().duration_ms;
-        let total_ms = gyro_info.duration_ms.unwrap_or(0.0);
-        state.chunk_plan = if total_ms > 0.0 {
-            deep_match::chunk_plan(
-                total_ms,
-                chunk_ms,
-                deep_match::chunk_overlap_ms(video_duration_ms),
-                deep_match::max_chunks(),
-            )
-        } else {
-            Vec::new()
-        };
-        if state.chunk_plan.is_empty() {
-            state.chunk_plan = vec![(0.0, chunk_ms)];
-        }
+        let total_ms = self
+            .gyro_files
+            .get(first.gyro_index)
+            .and_then(|g| g.duration_ms)
+            .unwrap_or(0.0);
+        Self::fill_probe_chunks(&mut state, first, total_ms, video_duration_ms);
         let first_chunk = state.chunk_plan[0];
         let cancel_flag = job.cancel_flag.clone();
         cancel_flag.store(false, SeqCst);
@@ -9451,6 +9582,81 @@ impl RenderQueue {
 
         self.spawn_deep_match_gyro_load(job_id, first_chunk);
         QString::from("ok")
+    }
+
+    // Rebuilds the current probe's chunk plan on `state`: a focused probe is
+    // chunked within its window (chunk starts stay file-relative — the
+    // accepted-offset absolutization contract is unchanged), a full-span
+    // probe chunks [0, total] exactly as the pre-change single-file path.
+    // Missing / zero duration falls back to a single chunk-length range —
+    // the load clamps to the actual file contents anyway.
+    fn fill_probe_chunks(
+        state: &mut DeepMatchState,
+        task: gyroflow_core::synchronization::deep_match::ProbeTask,
+        total_ms: f64,
+        video_duration_ms: f64,
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let chunk_ms = deep_match::max_scan_ms();
+        state.gyro_index = task.gyro_index;
+        state.current_chunk = 0;
+        state.chunk_plan = deep_match::probe_chunk_plan(
+            task.window_ms,
+            total_ms,
+            chunk_ms,
+            deep_match::chunk_overlap_ms(video_duration_ms),
+            deep_match::max_chunks(),
+        );
+        if state.chunk_plan.is_empty() {
+            state.chunk_plan = vec![task.window_ms.unwrap_or((0.0, chunk_ms))];
+        }
+    }
+
+    // Advances a pool run to the next ProbeTask (possibly a different gyro
+    // file — the next chunk load overwrites the live gyro; the run-level
+    // snapshot is restored only once at final termination). Returns false
+    // when the plan is exhausted or the state is gone.
+    fn advance_deep_match_probe(&mut self, job_id: u32) -> bool {
+        let video_duration_ms = self
+            .jobs
+            .get(&job_id)
+            .and_then(|j| j.stab.as_ref())
+            .map(|s| s.params.read().duration_ms)
+            .unwrap_or(0.0);
+        // Peek the next task before the mutable borrow so the gyro pool can
+        // be consulted for its duration.
+        let Some(task) = self
+            .deep_match_pending
+            .get(&job_id)
+            .and_then(|s| s.probe_plan.get(s.current_probe + 1).copied())
+        else {
+            return false;
+        };
+        let total_ms = self
+            .gyro_files
+            .get(task.gyro_index)
+            .and_then(|g| g.duration_ms)
+            .unwrap_or(0.0);
+        let gyro_filename = self
+            .gyro_files
+            .get(task.gyro_index)
+            .map(|g| g.filename.clone())
+            .unwrap_or_default();
+        let (first_chunk, probe_ord, probe_total) = {
+            let Some(state) = self.deep_match_pending.get_mut(&job_id) else {
+                return false;
+            };
+            state.current_probe += 1;
+            Self::fill_probe_chunks(state, task, total_ms, video_duration_ms);
+            (state.chunk_plan[0], state.current_probe + 1, state.probe_plan.len())
+        };
+        ::log::info!(
+            target: "sync",
+            "[deep-match] probe {}/{}: tier={} gyro='{}' window={:?}",
+            probe_ord, probe_total, task.tier, gyro_filename, task.window_ms
+        );
+        self.spawn_deep_match_gyro_load(job_id, first_chunk);
+        true
     }
 
     // Background (off-UI-thread) load of one scan chunk of the probe gyro
@@ -9526,10 +9732,18 @@ impl RenderQueue {
     // launches the sync-only run. Re-entrant per chunk.
     fn continue_deep_gyro_match(&mut self, job_id: u32, loaded: bool) {
         use gyroflow_core::synchronization::deep_match;
-        let Some((gyro_index, current_chunk, chunk_count)) = self
+        let Some((gyro_index, current_chunk, chunk_count, current_probe, probe_count, probe_tier, pool_run)) = self
             .deep_match_pending
             .get(&job_id)
-            .map(|s| (s.gyro_index, s.current_chunk, s.chunk_plan.len()))
+            .map(|s| (
+                s.gyro_index,
+                s.current_chunk,
+                s.chunk_plan.len(),
+                s.current_probe,
+                s.probe_plan.len().max(1),
+                s.probe_plan.get(s.current_probe).map(|t| t.tier).unwrap_or(3),
+                s.pool_run,
+            ))
         else {
             return;
         };
@@ -9553,6 +9767,20 @@ impl RenderQueue {
             return;
         }
         if !loaded {
+            // Pool run: one broken gyro file must not kill the pool search —
+            // advance to the next candidate (the restore happens once at
+            // final termination). Manual runs keep the pre-change behavior.
+            if pool_run && current_probe + 1 < probe_count {
+                ::log::warn!(
+                    target: "sync",
+                    "[deep-match] probe {}/{}: gyro load failed, advancing to next candidate",
+                    current_probe + 1,
+                    probe_count
+                );
+                if self.advance_deep_match_probe(job_id) {
+                    return;
+                }
+            }
             // A failed load already cleared the gyro inside load_gyro_data —
             // put the pre-probe contents (built-in gyro / prior pairing) back.
             if let Some(state) = self.deep_match_pending.remove(&job_id) {
@@ -9584,6 +9812,19 @@ impl RenderQueue {
                 );
                 self.advance_deep_match_chunk(job_id);
                 return;
+            }
+            // Probe exhausted with no usable samples anywhere — a pool run
+            // moves on to the next candidate.
+            if pool_run && current_probe + 1 < probe_count {
+                ::log::info!(
+                    target: "sync",
+                    "[deep-match] probe {}/{}: no usable IMU span in any chunk, advancing to next candidate",
+                    current_probe + 1,
+                    probe_count
+                );
+                if self.advance_deep_match_probe(job_id) {
+                    return;
+                }
             }
             if let Some(state) = self.deep_match_pending.remove(&job_id) {
                 Self::restore_deep_match_gyro(&stab, &state);
@@ -9720,7 +9961,8 @@ impl RenderQueue {
             .unwrap_or_default();
         ::log::info!(
             target: "sync",
-            "[deep-match] start chunk {}/{}: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
+            "[deep-match] start probe {}/{} tier={} chunk {}/{}: job={} gyro='{}' span=[{:.0},{:.0}]ms init={:.0}ms search={:.0}ms windows={:?}",
+            current_probe + 1, probe_count, probe_tier,
             current_chunk + 1, chunk_count, job_id, gyro_filename, g_start, g_end, init_ms, search_ms, pattern
         );
         deep_match::arm(scan_k);
@@ -9736,9 +9978,20 @@ impl RenderQueue {
         // Launch this job only — start() would pick up every Queued job in
         // the queue, but deep match must act on the clicked job alone.
         self.render_job(job_id);
+        self.deep_match_probe_changed(
+            job_id,
+            (current_probe + 1) as u32,
+            probe_count as u32,
+            probe_tier as u32,
+            QString::from(gyro_filename.as_str()),
+        );
         self.deep_match_chunk_changed(job_id, (current_chunk + 1) as u32, chunk_count as u32);
-        // Progress composes across chunks; the first chunk starts at 0.
-        self.deep_match_progress(job_id, current_chunk as f64 / chunk_count.max(1) as f64);
+        // Progress composes across probes and chunks; probe 0 chunk 0 starts at 0.
+        let within_probe = current_chunk as f64 / chunk_count.max(1) as f64;
+        self.deep_match_progress(
+            job_id,
+            (current_probe as f64 + within_probe) / probe_count.max(1) as f64,
+        );
     }
 
     // Advances the chunked scan to the next planned chunk and spawns its
@@ -9805,10 +10058,13 @@ impl RenderQueue {
             original_gyro,
             original_lens: Box::new(stab.lens.read().clone()),
             probe_lens_index,
-            // Filled in by start_deep_gyro_match once the pool duration is
-            // known; a single full-range chunk is the safe default.
+            // Filled in by start_deep_match_with_plan once the pool duration
+            // is known; a single full-range chunk is the safe default.
             chunk_plan: Vec::new(),
             current_chunk: 0,
+            probe_plan: Vec::new(),
+            current_probe: 0,
+            pool_run: false,
         }
     }
 
@@ -9841,10 +10097,15 @@ impl RenderQueue {
         use gyroflow_core::synchronization::deep_match;
         let curves = deep_match::take_curves();
         let stats = deep_match::take();
-        let Some((current_chunk, chunk_count)) = self
+        let Some((current_chunk, chunk_count, current_probe, probe_count)) = self
             .deep_match_pending
             .get(&job_id)
-            .map(|s| (s.current_chunk, s.chunk_plan.len()))
+            .map(|s| (
+                s.current_chunk,
+                s.chunk_plan.len(),
+                s.current_probe,
+                s.probe_plan.len().max(1),
+            ))
         else {
             return;
         };
@@ -9898,26 +10159,43 @@ impl RenderQueue {
             };
             ::log::info!(
                 target: "sync",
-                "[deep-match] chunk {}/{} finish: job={} windows={} offsets={:?} verdict={:?}",
+                "[deep-match] probe {}/{} chunk {}/{} finish: job={} windows={} offsets={:?} verdict={:?}",
+                current_probe + 1, probe_count,
                 current_chunk + 1, chunk_count, job_id, offsets_ms.len(), offsets_ms, verdict
             );
-            // "No hit in this chunk" verdicts advance the scan; Accepted,
-            // TooFewWindows (video-side motion gate, chunk-independent) and
-            // ProbeNotRun (assembly failure, reproducible on every chunk)
-            // terminate immediately.
+            // "No hit in this chunk" verdicts advance the scan — next chunk
+            // within the probe, then next ProbeTask in the plan; Accepted,
+            // TooFewWindows (video-side motion gate, independent of the gyro
+            // chunk AND of the gyro candidate) and ProbeNotRun (assembly
+            // failure, reproducible on every chunk) terminate the whole plan
+            // immediately.
             let advanceable = matches!(
                 verdict,
                 deep_match::DeepMatchVerdict::Inconsistent { .. }
                     | deep_match::DeepMatchVerdict::WeakValley { .. }
             );
-            if advanceable && current_chunk + 1 < chunk_count {
-                // Freeze the bar at the next chunk's base while it loads.
-                self.deep_match_progress(
-                    job_id,
-                    (current_chunk + 1) as f64 / chunk_count.max(1) as f64,
-                );
-                self.advance_deep_match_chunk(job_id);
-                return;
+            if advanceable {
+                if current_chunk + 1 < chunk_count {
+                    // Freeze the bar at the next chunk's base while it loads.
+                    let within_probe = (current_chunk + 1) as f64 / chunk_count.max(1) as f64;
+                    self.deep_match_progress(
+                        job_id,
+                        (current_probe as f64 + within_probe) / probe_count as f64,
+                    );
+                    self.advance_deep_match_chunk(job_id);
+                    return;
+                }
+                if current_probe + 1 < probe_count {
+                    // Probe exhausted — freeze at the next probe's base and
+                    // move on to the next candidate.
+                    self.deep_match_progress(
+                        job_id,
+                        (current_probe + 1) as f64 / probe_count as f64,
+                    );
+                    if self.advance_deep_match_probe(job_id) {
+                        return;
+                    }
+                }
             }
             self.terminate_deep_match(job_id, stab, verdict);
             return;
@@ -10064,6 +10342,30 @@ impl RenderQueue {
                         }
                     }
                 }
+                // Learn the pool-wide clock shift (gyro clock minus video
+                // clock) from this hit — the tier-0 hypothesis of subsequent
+                // pool searches. Missing timestamps just skip the learning.
+                let gyro_created = self
+                    .gyro_files
+                    .get(state.gyro_index)
+                    .and_then(|g| g.created_at_ms);
+                let video_created = stab
+                    .as_ref()
+                    .and_then(|s| s.params.read().video_created_at)
+                    .or_else(|| self.jobs.get(&job_id).and_then(|j| j.video_created_at));
+                if let (Some(gc), Some(vc)) = (gyro_created, video_created) {
+                    let shift =
+                        core::gyro_match::derive_session_offset_from_deep_match(gc, vc, offset_ms);
+                    self.learned_clock_shift_ms = Some(shift);
+                    ::log::info!(
+                        target: "sync",
+                        "[deep-match] hit at probe {}/{} tier={} → learned_clock_shift={}ms (gyro_created={} video_created={} offset={:.1}ms)",
+                        state.current_probe + 1,
+                        state.probe_plan.len().max(1),
+                        state.probe_plan.get(state.current_probe).map(|t| t.tier).unwrap_or(3),
+                        shift, gc, vc, offset_ms
+                    );
+                }
                 // Deep match supersedes any manual calibration pair.
                 self.manual_pairs.retain(|p| p.job_id != job_id);
                 self.deep_match_results.insert(
@@ -10166,8 +10468,20 @@ impl RenderQueue {
         )
     }
 
+    // The learned clock shift derives from an accepted deep match — when the
+    // user rejects a pairing (unpair / reset-all), what it taught goes too.
+    // A cancelled IN-PROGRESS search does NOT clear it (nothing was learned,
+    // nothing was rejected). Rust-side single point so QML callers cannot
+    // forget it.
+    fn clear_learned_clock_shift(&mut self, source: &str) {
+        if self.learned_clock_shift_ms.take().is_some() {
+            ::log::info!(target: "sync", "[deep-match] learned clock shift cleared ({source})");
+        }
+    }
+
     // T7: Unpair a video job, clearing its external gyro data.
     fn unpair_video(&mut self, job_id: u32) {
+        self.clear_learned_clock_shift("unpair");
         // Clear gyro data from the job
         if let Some(job) = self.jobs.get(&job_id) {
             if let Some(stab) = &job.stab {
@@ -10215,6 +10529,7 @@ impl RenderQueue {
     // This logic lives only here, never in `reset_job`, because reset_job is
     // reused by the re-render / batch-sync paths that must preserve pairings (D4).
     fn reset_all_video_pairings(&mut self) {
+        self.clear_learned_clock_shift("reset_all");
         // [reset-pairing-restore-just-loaded-state] Clear all match state to the
         // just-loaded baseline. Setting match_results = None (rather than marking
         // individual entries Unmatched while keeping Some(...)) makes
@@ -13135,6 +13450,194 @@ mod tests {
         assert!(!fm.keep_video_gyro);
         assert_eq!(fm.raw_imu.len(), 3, "the .bin must stay loaded on regular material");
         assert_eq!(gyro.file_url, "file:///pool.bin");
+    }
+
+    // ---- pool-wide search + prelocation (deep-match-gyro-pool-prelocate) ----
+
+    // Turns the simulated single-file run into a 2-probe pool plan over two
+    // pool files (the second focused), so the advance path can be exercised.
+    fn make_pool_plan(queue: &mut RenderQueue) {
+        use gyroflow_core::synchronization::deep_match::ProbeTask;
+        queue.gyro_files.push(GyroFileInfo {
+            path: "file:///pool2.bin".to_string(),
+            filename: "pool2.bin".to_string(),
+            parsed: true,
+            duration_ms: Some(14_400_000.0),
+            ..Default::default()
+        });
+        let state = queue.deep_match_pending.get_mut(&1).unwrap();
+        state.probe_plan = vec![
+            ProbeTask { gyro_index: 0, tier: 1, window_ms: None },
+            ProbeTask { gyro_index: 1, tier: 3, window_ms: Some((3_600_000.0, 10_800_000.0)) },
+        ];
+        state.current_probe = 0;
+        state.pool_run = true;
+    }
+
+    #[test]
+    fn deep_match_pool_rejection_advances_to_next_probe() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        make_pool_plan(&mut queue);
+
+        // Widely-spread offsets -> Inconsistent -> probe 0 (single chunk)
+        // exhausts -> the plan advances to probe 1 instead of terminating.
+        deep_match::arm(2);
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.1));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, 5000.0, 0.9),
+            ],
+            vec![],
+        );
+
+        let state = queue.deep_match_pending.get(&1).expect("pool run must stay pending");
+        assert_eq!(state.current_probe, 1);
+        assert_eq!(state.gyro_index, 1, "gyro_index must track the current probe");
+        assert_eq!(state.current_chunk, 0);
+        assert!(
+            (state.chunk_plan[0].0 - 3_600_000.0).abs() < 1e-9,
+            "focused probe chunks must stay file-relative: {:?}",
+            state.chunk_plan
+        );
+        assert!(queue.deep_match_results.is_empty());
+        // Cleanup: drop the pending state so later tests are unaffected.
+        queue.deep_match_pending.remove(&1);
+    }
+
+    #[test]
+    fn deep_match_video_side_failure_terminates_whole_pool_plan() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        make_pool_plan(&mut queue);
+
+        // A single window -> TooFewWindows (video-side motion gate) must
+        // terminate the WHOLE plan: the video cannot match any gyro.
+        deep_match::arm(2);
+        deep_match::record(deep_match_stats(0.1));
+        queue.record_batch_sync_result(1, vec![sync_candidate(1, 1000.0, -5000.0, 0.9)], vec![]);
+
+        assert!(queue.deep_match_pending.is_empty(), "plan must terminate, not advance");
+        assert!(queue.deep_match_results.is_empty());
+        assert_eq!(queue.learned_clock_shift_ms, None);
+    }
+
+    #[test]
+    fn deep_match_accept_learns_clock_shift_and_pairing_resets_clear_it() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        queue.gyro_files[0].created_at_ms = Some(1_000_000);
+        stab.params.write().video_created_at = Some(2_000_000);
+
+        deep_match::arm(2);
+        deep_match::record(deep_match_stats(0.1));
+        deep_match::record(deep_match_stats(0.2));
+        queue.record_batch_sync_result(
+            1,
+            vec![
+                sync_candidate(1, 1000.0, -5000.0, 0.9),
+                sync_candidate(1, 2000.0, -5001.0, 0.9),
+            ],
+            vec![],
+        );
+        assert!(queue.deep_match_results.contains_key(&1), "expected Accepted");
+        // offset = median(-5000, -5001) = -5000.5; learned shift =
+        // gyro_created + round(5000.5) - video_created (the derive contract).
+        let expected = 1_000_000 + 5001 - 2_000_000;
+        assert_eq!(queue.learned_clock_shift_ms, Some(expected));
+
+        // Right-click "Unpair gyro" rejects the pairing -> what it taught
+        // goes too.
+        queue.unpair_video(1);
+        assert_eq!(queue.learned_clock_shift_ms, None);
+
+        // Same for the global reset.
+        queue.learned_clock_shift_ms = Some(42);
+        queue.reset_all_video_pairings();
+        assert_eq!(queue.learned_clock_shift_ms, None);
+    }
+
+    #[test]
+    fn deep_match_cancel_in_progress_keeps_learned_shift() {
+        use gyroflow_core::synchronization::deep_match;
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = setup_deep_match_job(&mut queue, false);
+        simulate_deep_match_probe(&mut queue, &stab);
+        queue.learned_clock_shift_ms = Some(42);
+
+        // Cancelling a run that has not accepted anything learned nothing and
+        // rejected nothing — the previously learned shift stays.
+        queue.jobs.get(&1).unwrap().cancel_flag.store(true, SeqCst);
+        deep_match::arm(2);
+        queue.record_batch_sync_result(1, vec![], vec![]);
+
+        assert!(queue.deep_match_pending.is_empty());
+        assert_eq!(queue.learned_clock_shift_ms, Some(42));
+    }
+
+    #[test]
+    fn start_deep_gyro_match_all_refusals_and_plan_shape() {
+        // No parsed pool files -> gyro_missing.
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            assert_eq!(
+                queue.start_deep_gyro_match_all(1, -1).to_string(),
+                "gyro_missing"
+            );
+            queue.gyro_files = vec![GyroFileInfo {
+                path: "file:///pool.bin".to_string(),
+                filename: "pool.bin".to_string(),
+                parsed: false,
+                ..Default::default()
+            }];
+            assert_eq!(
+                queue.start_deep_gyro_match_all(1, -1).to_string(),
+                "gyro_missing"
+            );
+        }
+        // Parsed pool without timestamps -> pure tier-3 exhaustive plan in
+        // pool order, pool_run set; the run is registered as pending.
+        {
+            let mut queue = queue_with_eta_job(JobStatus::Queued);
+            add_motion_to_job(&mut queue, 1, false);
+            queue.gyro_files = vec![
+                GyroFileInfo {
+                    path: "file:///a.bin".to_string(),
+                    filename: "a.bin".to_string(),
+                    parsed: true,
+                    duration_ms: Some(7_200_000.0),
+                    ..Default::default()
+                },
+                GyroFileInfo {
+                    path: "file:///b.bin".to_string(),
+                    filename: "b.bin".to_string(),
+                    parsed: true,
+                    ..Default::default()
+                },
+            ];
+            assert_eq!(queue.start_deep_gyro_match_all(1, -1).to_string(), "ok");
+            let state = queue.deep_match_pending.get(&1).expect("pending");
+            assert!(state.pool_run);
+            assert_eq!(state.probe_plan.len(), 2);
+            assert!(state.probe_plan.iter().all(|t| t.tier == 3 && t.window_ms.is_none()));
+            assert_eq!(state.current_probe, 0);
+            // Cleanup the pending state (the background load's queued
+            // callback is never delivered in tests).
+            queue.deep_match_pending.remove(&1);
+        }
     }
 
     #[test]

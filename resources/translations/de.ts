@@ -3776,6 +3776,36 @@ Klicke auf Ok, um den Zielordner auszuwählen.</translation>
         <source>Save to: %1</source>
         <translation>Speichern: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Alle Gyro-Daten durchsuchen</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Keine Gyro-Datendateien zum Durchsuchen verfügbar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Durchsuche Kandidat %1 von %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>vollständiger Scan</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>Zeitstempel-Schätzung</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>In keiner Gyro-Datei wurde eine Übereinstimmung gefunden. Die Aufzeichnungen decken dieses Video möglicherweise nicht ab, oder die Bewegung des Videos ist unzuverlässig.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

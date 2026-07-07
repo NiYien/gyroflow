@@ -288,14 +288,18 @@ Item {
     function startDeepMatch(jobId: int, gyroIdx: int, videoName: string, lensIdx: int): void {
         // start_deep_gyro_match returns "ok" on success, otherwise a reason
         // code for the synchronous refusal; gyro load failures still arrive
-        // asynchronously via deep_match_finished.
-        const res = render_queue.start_deep_gyro_match(jobId, gyroIdx, lensIdx);
+        // asynchronously via deep_match_finished. gyroIdx -1 = pool-wide
+        // search over every parsed gyro file (deep-match-gyro-pool-prelocate).
+        const poolMode = gyroIdx < 0;
+        const res = poolMode ? render_queue.start_deep_gyro_match_all(jobId, lensIdx)
+                             : render_queue.start_deep_gyro_match(jobId, gyroIdx, lensIdx);
         if (res !== "ok") {
             let msg = qsTr("Cannot start deep match while the queue is busy.");
             if (res === "deep_match_in_flight")
                 msg = qsTr("Another deep match is already running. Please wait for it to finish.");
             else if (res === "gyro_missing")
-                msg = qsTr("This gyro file is no longer available.");
+                msg = poolMode ? qsTr("No gyro data files are available to search.")
+                               : qsTr("This gyro file is no longer available.");
             else if (res === "gyro_not_ready")
                 msg = qsTr("The gyro data is still being parsed. Please try again shortly.");
             else if (res === "job_missing")
@@ -303,11 +307,12 @@ Item {
             messageBox(Modal.Warning, msg, [{ text: qsTr("Ok") }]);
             return;
         }
-        const gyroName = gyroIdx < gyroFilesInfo.length ? gyroFilesInfo[gyroIdx].filename : "";
+        const gyroName = (!poolMode && gyroIdx < gyroFilesInfo.length) ? gyroFilesInfo[gyroIdx].filename : "";
         const dlg = deepMatchDialogComponent.createObject(window, {
             "jobId": jobId,
             "videoName": videoName,
-            "gyroName": gyroName
+            "gyroName": gyroName,
+            "poolMode": poolMode
         });
         if (dlg) dlg.opened = true;
     }
@@ -419,8 +424,28 @@ Item {
             // and overestimates the remaining time by up to chunk_count times.
             property int dmChunk: 1;
             property int dmTotal: 1;
+            // Pool-wide search: current probe (1-based), plan size and tier,
+            // mirrored from deep_match_probe_changed. Single-probe (manual)
+            // runs stay at 1/1 and show no candidate line.
+            property bool poolMode: false;
+            property int dmProbe: 1;
+            property int dmProbeTotal: 1;
+            property int dmTier: 3;
+            function updateProgressText(): void {
+                if (deepMatchDialog.succeeded) return;
+                let t = qsTr("Deep matching gyro data...") + "\n" + deepMatchDialog.videoName;
+                if (deepMatchDialog.gyroName !== "")
+                    t += "\n⟷ " + deepMatchDialog.gyroName;
+                if (deepMatchDialog.dmProbeTotal > 1) {
+                    const tierLabel = deepMatchDialog.dmTier === 3 ? qsTr("full scan") : qsTr("timestamp guess");
+                    t += "\n" + qsTr("Searching candidate %1 of %2").arg(deepMatchDialog.dmProbe).arg(deepMatchDialog.dmProbeTotal) + " · " + tierLabel;
+                }
+                if (deepMatchDialog.dmTotal > 1)
+                    t += "\n" + qsTr("Scanning segment %1 of %2").arg(deepMatchDialog.dmChunk).arg(deepMatchDialog.dmTotal);
+                deepMatchDialog.text = t;
+            }
             iconType: Modal.Info;
-            text: qsTr("Deep matching gyro data...") + "\n" + videoName + "\n⟷ " + gyroName;
+            text: qsTr("Deep matching gyro data...") + "\n" + videoName + (gyroName !== "" ? "\n⟷ " + gyroName : "");
             buttons: [qsTr("Cancel")];
             onClicked: (index, dontShowAgain) => {
                 if (deepMatchDialog.succeeded) {
@@ -453,8 +478,29 @@ Item {
                     // modal shows the current segment's sweep instead (one
                     // 0→100% per segment, paired with the ordinal text), so
                     // both the bar and the ETA reflect this segment only.
-                    const segP = progress * deepMatchDialog.dmTotal - (deepMatchDialog.dmChunk - 1);
+                    // Composition is probe-major: peel the probe layer first,
+                    // then the chunk layer (single-probe runs reduce to the
+                    // pre-change math).
+                    const perProbe = progress * deepMatchDialog.dmProbeTotal - (deepMatchDialog.dmProbe - 1);
+                    const segP = perProbe * deepMatchDialog.dmTotal - (deepMatchDialog.dmChunk - 1);
                     deepMatchDialog.loader.progress = Math.max(0, Math.min(1, segP));
+                }
+                // Pool-wide search: candidate ordinal + tier + filename, fired
+                // alongside every chunk launch (idempotent between probes).
+                function onDeep_match_probe_changed(job_id: int, probe: int, total: int, tier: int, gyro_filename: string): void {
+                    if (job_id !== deepMatchDialog.jobId) return;
+                    const probeChanged = Math.max(1, probe) !== deepMatchDialog.dmProbe;
+                    deepMatchDialog.dmProbe = Math.max(1, probe);
+                    deepMatchDialog.dmProbeTotal = Math.max(1, total);
+                    deepMatchDialog.dmTier = tier;
+                    if (gyro_filename !== "")
+                        deepMatchDialog.gyroName = gyro_filename;
+                    if (probeChanged && deepMatchDialog.loader) {
+                        // New candidate: restart the ETA clock (chunk changes
+                        // do that too, but a probe switch may keep chunk=1).
+                        deepMatchDialog.loader.etaStartTime = Date.now();
+                    }
+                    deepMatchDialog.updateProgressText();
                 }
                 // Chunked scan: long gyro files are searched in segments —
                 // surface the segment ordinal so a multi-segment run doesn't
@@ -469,10 +515,7 @@ Item {
                         // early, so cross-segment extrapolation is meaningless).
                         deepMatchDialog.loader.etaStartTime = Date.now();
                     }
-                    if (deepMatchDialog.succeeded || total <= 1) return;
-                    deepMatchDialog.text = qsTr("Deep matching gyro data...") + "\n"
-                                         + deepMatchDialog.videoName + "\n⟷ " + deepMatchDialog.gyroName + "\n"
-                                         + qsTr("Scanning segment %1 of %2").arg(chunk).arg(total);
+                    deepMatchDialog.updateProgressText();
                 }
                 function onDeep_match_finished(job_id: int, success: bool, error_kind: string, offset_ms: real): void {
                     if (job_id !== deepMatchDialog.jobId) return;
@@ -502,7 +545,10 @@ Item {
                         // Both failure directions are plausible: wrong gyro
                         // file, or this video's OF-estimated motion is too
                         // unreliable to lock onto (e.g. short long-lens clip).
-                        messageBox(Modal.Warning, qsTr("No match found. The gyro file may not cover this video, or the video's motion may be unreliable. Try another gyro file or another video."), [{ text: qsTr("Ok") }]);
+                        const msg = deepMatchDialog.poolMode
+                            ? qsTr("No match found in any gyro file. The recordings may not cover this video, or the video's motion may be unreliable.")
+                            : qsTr("No match found. The gyro file may not cover this video, or the video's motion may be unreliable. Try another gyro file or another video.");
+                        messageBox(Modal.Warning, msg, [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "probe_not_run") {
                         messageBox(Modal.Warning, qsTr("Deep match could not run. Check the logs for details."), [{ text: qsTr("Ok") }]);
                     } else {
@@ -1593,6 +1639,14 @@ Item {
                     title: qsTr("Deep match with gyro");
                     enabled: root.hasGyroFiles && root.allGyroParsed && !isInProgress && dlg.matchState !== "CalibrationPair";
                     width: 300 * dpiScale;
+                    // Pool-wide search (deep-match-gyro-pool-prelocate):
+                    // timestamp-prelocated probe plan over every pool file,
+                    // stopping on the first accepted hit. gyroIdx -1 routes
+                    // maybeStartDeepMatch/startDeepMatch into the pool entry.
+                    Action {
+                        text: qsTr("Search all gyro data");
+                        onTriggered: root.maybeStartDeepMatch(job_id, -1, input_filename);
+                    }
                     property var dynamicGyroActions: []
                     function clearDynamicGyroActions(): void {
                         for (let i = 0; i < dynamicGyroActions.length; ++i) {

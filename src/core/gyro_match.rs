@@ -1103,7 +1103,13 @@ fn compute_clip_window(
 /// `session_offset = g.created_at + (-deep_offset_ms) - v_created`.
 /// Validated against `compute_clip_window` by
 /// `deep_anchor_session_offset_places_content_at_minus_deep_offset`.
-pub(crate) fn derive_session_offset_from_deep_match(
+///
+/// `pub` (not `pub(crate)`): the render queue also uses this to learn the
+/// pool-wide clock shift from an accepted deep match (the returned session
+/// offset equals the gyro-clock-minus-video-clock error E), keeping the sign
+/// convention in one place. `deep_match::predicted_gyro_position_ms` is the
+/// algebraic inverse (round-trip tested there).
+pub fn derive_session_offset_from_deep_match(
     gyro_created_at_ms: i64,
     video_created_at_ms: i64,
     deep_offset_ms: f64,

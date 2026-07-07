@@ -3773,6 +3773,36 @@ Klik Ok dan pilih folder tujuan.</translation>
         <source>Save to: %1</source>
         <translation>Simpan di: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Cari di semua data giroskop</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Tidak ada file data giroskop yang tersedia untuk dicari.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Mencari kandidat %1 dari %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>pemindaian penuh</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>perkiraan stempel waktu</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Tidak ditemukan kecocokan di file giroskop mana pun. Rekaman mungkin tidak mencakup video ini, atau gerakan video tidak dapat diandalkan.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

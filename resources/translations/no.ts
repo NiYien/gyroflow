@@ -3777,6 +3777,36 @@ Klikk OK og velg målmappen.</translation>
         <source>Save to: %1</source>
         <translation>Lagre til: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Søk i alle gyrodata</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Ingen gyrodatafiler tilgjengelige for søk.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Søker kandidat %1 av %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>full skanning</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>tidsstempel-anslag</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Ingen match funnet i noen gyrofil. Opptakene dekker kanskje ikke denne videoen, eller videoens bevegelse er upålitelig.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

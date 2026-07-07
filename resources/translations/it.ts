@@ -3774,6 +3774,36 @@ Fare clic su Ok e selezionare la cartella di destinazione.</translation>
         <source>Save to: %1</source>
         <translation>Salva in: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Cerca in tutti i dati del giroscopio</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Nessun file di dati del giroscopio disponibile per la ricerca.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Ricerca del candidato %1 di %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>scansione completa</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>stima dal timestamp</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Nessuna corrispondenza trovata in alcun file del giroscopio. Le registrazioni potrebbero non coprire questo video, oppure il movimento del video potrebbe essere inaffidabile.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

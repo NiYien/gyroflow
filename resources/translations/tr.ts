@@ -3770,6 +3770,36 @@ Click Ok and select the destination folder.</source>
         <source>Save to: %1</source>
         <translation>Şuraya kaydet: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Tüm jiroskop verilerinde ara</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Aranacak jiroskop veri dosyası yok.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Aday %1/%2 aranıyor</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>tam tarama</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>zaman damgası tahmini</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Hiçbir jiroskop dosyasında eşleşme bulunamadı. Kayıtlar bu videoyu kapsamıyor olabilir veya videonun hareketi güvenilir değil.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

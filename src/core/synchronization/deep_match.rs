@@ -161,6 +161,325 @@ pub fn chunk_plan(
     chunks
 }
 
+// ---------------------------------------------------------------------------
+// Pool-wide search + timestamp prelocation (deep-match-gyro-pool-prelocate)
+// ---------------------------------------------------------------------------
+
+/// One planned probe of a pool-wide deep-match run: which gyro file to load
+/// and (for the focused tiers) which slice of its timeline to search.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProbeTask {
+    /// Index into the render queue's gyro pool (`gyro_files`).
+    pub gyro_index: usize,
+    /// 0 = learned clock shift, 1 = zero clock shift, 2 = pool alignment,
+    /// 3 = exhaustive full-span fallback.
+    pub tier: u8,
+    /// Focused window [start, end] on the gyro file's own timeline (ms);
+    /// None = full span (tier 3).
+    pub window_ms: Option<(f64, f64)>,
+}
+
+/// The planner's view of one gyro pool entry. Entries missing either field
+/// only participate in the tier-3 exhaustive fallback.
+#[derive(Debug, Clone, Copy)]
+pub struct GyroPoolEntry {
+    pub gyro_index: usize,
+    pub created_at_ms: Option<i64>,
+    pub duration_ms: Option<f64>,
+}
+
+/// Recordings separated by more than this gap belong to different sessions
+/// ("days") for the ordinal pool-alignment candidates. Gap clustering instead
+/// of calendar days keeps the split independent of the unknown timezones.
+const SESSION_GAP_MS: i64 = 6 * 3_600_000;
+
+/// Predicted position of the video's content start on the gyro file's own
+/// timeline, under a hypothesised clock shift (gyro clock minus video clock,
+/// = the session offset `derive_session_offset_from_deep_match` returns).
+/// Algebraic inverse of that function: `deep_offset = -position`.
+pub fn predicted_gyro_position_ms(
+    video_created_at_ms: i64,
+    gyro_created_at_ms: i64,
+    clock_shift_ms: i64,
+) -> f64 {
+    (video_created_at_ms - gyro_created_at_ms + clock_shift_ms) as f64
+}
+
+/// Wall-clock overlap (ms) between the video's [created, created+duration]
+/// window and a gyro file's, at zero clock shift. 0 = disjoint.
+fn wall_overlap_ms(
+    video_created_at_ms: i64,
+    video_duration_ms: f64,
+    gyro_created_at_ms: i64,
+    gyro_duration_ms: f64,
+) -> f64 {
+    let v0 = video_created_at_ms as f64;
+    let v1 = v0 + video_duration_ms.max(0.0);
+    let g0 = gyro_created_at_ms as f64;
+    let g1 = g0 + gyro_duration_ms.max(0.0);
+    (v1.min(g1) - v0.max(g0)).max(0.0)
+}
+
+/// Order the pool candidates best-first for the probe plan: overlap/containment
+/// first (largest wall-clock overlap with the video), then nearest start
+/// (`|Δcreated|`), then pool order for determinism. Entries missing
+/// created_at/duration sort last (in pool order) — they can only be probed by
+/// the tier-3 exhaustive fallback. Returns `gyro_index` values.
+pub fn rank_gyro_candidates(
+    video_created_at_ms: Option<i64>,
+    video_duration_ms: f64,
+    pool: &[GyroPoolEntry],
+) -> Vec<usize> {
+    let mut with_meta: Vec<(&GyroPoolEntry, f64, i64)> = Vec::new();
+    let mut without_meta: Vec<usize> = Vec::new();
+    for e in pool {
+        match (video_created_at_ms, e.created_at_ms, e.duration_ms) {
+            (Some(vc), Some(gc), Some(gd)) => {
+                let overlap = wall_overlap_ms(vc, video_duration_ms, gc, gd);
+                with_meta.push((e, overlap, (gc - vc).abs()));
+            }
+            _ => without_meta.push(e.gyro_index),
+        }
+    }
+    with_meta.sort_by(|a, b| {
+        b.1.partial_cmp(&a.1)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(a.2.cmp(&b.2))
+            .then(a.0.gyro_index.cmp(&b.0.gyro_index))
+    });
+    with_meta
+        .into_iter()
+        .map(|(e, _, _)| e.gyro_index)
+        .chain(without_meta)
+        .collect()
+}
+
+/// Split sorted start timestamps into session clusters at gaps larger than
+/// `SESSION_GAP_MS`; returns each cluster's first start.
+fn session_cluster_starts(starts: &mut Vec<i64>) -> Vec<i64> {
+    starts.sort_unstable();
+    let mut out: Vec<i64> = Vec::new();
+    let mut prev: Option<i64> = None;
+    for &s in starts.iter() {
+        match prev {
+            None => out.push(s),
+            Some(p) if s - p > SESSION_GAP_MS => out.push(s),
+            _ => {}
+        }
+        prev = Some(s);
+    }
+    out
+}
+
+/// Pool-alignment clock-shift candidates (tier 2): the shifts (gyro clock
+/// minus video clock) suggested by aligning the two pools' overall structure —
+/// start-to-start, end-to-end, and per-session ordinal starts when both pools
+/// cluster into the same number of sessions. Candidates within `tol_ms` of an
+/// earlier one (or of zero — tier 1 already covers that) are dropped.
+/// Each pool entry is `(created_at_ms, duration_ms)`.
+pub fn pool_shift_candidates(
+    video_pool: &[(i64, f64)],
+    gyro_pool: &[(i64, f64)],
+    tol_ms: f64,
+) -> Vec<i64> {
+    if video_pool.is_empty() || gyro_pool.is_empty() {
+        return Vec::new();
+    }
+    let vs = video_pool.iter().map(|(c, _)| *c).min().unwrap();
+    let gs = gyro_pool.iter().map(|(c, _)| *c).min().unwrap();
+    let ve = video_pool
+        .iter()
+        .map(|(c, d)| *c + d.max(0.0).round() as i64)
+        .max()
+        .unwrap();
+    let ge = gyro_pool
+        .iter()
+        .map(|(c, d)| *c + d.max(0.0).round() as i64)
+        .max()
+        .unwrap();
+    let mut raw: Vec<i64> = vec![gs - vs, ge - ve];
+    // Ordinal session alignment ("day 2 of video pool ↔ day 2 of gyro pool").
+    let mut v_starts: Vec<i64> = video_pool.iter().map(|(c, _)| *c).collect();
+    let mut g_starts: Vec<i64> = gyro_pool.iter().map(|(c, _)| *c).collect();
+    let v_sessions = session_cluster_starts(&mut v_starts);
+    let g_sessions = session_cluster_starts(&mut g_starts);
+    if v_sessions.len() == g_sessions.len() && v_sessions.len() >= 2 {
+        for (v, g) in v_sessions.iter().zip(g_sessions.iter()) {
+            raw.push(g - v);
+        }
+    }
+    let mut out: Vec<i64> = Vec::new();
+    for c in raw {
+        let near_zero = (c as f64).abs() < tol_ms;
+        let near_prev = out.iter().any(|&p| ((c - p) as f64).abs() < tol_ms);
+        if !near_zero && !near_prev {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Focused search window on the gyro file's timeline for one candidate under
+/// one clock-shift hypothesis: the predicted content span padded by `tol_ms`
+/// on both sides, clamped to `[0, gyro_duration]`. None = no intersection
+/// (this hypothesis says the video cannot be in this file — no probe).
+pub fn focused_window(
+    video_created_at_ms: i64,
+    video_duration_ms: f64,
+    gyro_created_at_ms: i64,
+    gyro_duration_ms: f64,
+    clock_shift_ms: i64,
+    tol_ms: f64,
+) -> Option<(f64, f64)> {
+    if !gyro_duration_ms.is_finite() || gyro_duration_ms <= 0.0 || !tol_ms.is_finite() || tol_ms <= 0.0 {
+        return None;
+    }
+    let p = predicted_gyro_position_ms(video_created_at_ms, gyro_created_at_ms, clock_shift_ms);
+    let start = (p - tol_ms).max(0.0);
+    let end = (p + video_duration_ms.max(0.0) + tol_ms).min(gyro_duration_ms);
+    if end > start {
+        Some((start, end))
+    } else {
+        None
+    }
+}
+
+/// Chunk plan for one probe: a focused window is chunked within itself (chunk
+/// starts stay file-relative — the accepted-offset absolutization contract is
+/// unchanged); a full-span probe (window None) chunks `[0, total]` exactly as
+/// the pre-change single-file path did.
+pub fn probe_chunk_plan(
+    window_ms: Option<(f64, f64)>,
+    total_ms: f64,
+    chunk_ms: f64,
+    overlap_ms: f64,
+    max_chunks: usize,
+) -> Vec<(f64, f64)> {
+    match window_ms {
+        Some((s, e)) => {
+            let s = s.max(0.0);
+            let e = if total_ms > 0.0 { e.min(total_ms) } else { e };
+            chunk_plan(e - s, chunk_ms, overlap_ms, max_chunks)
+                .into_iter()
+                .map(|(a, b)| (a + s, b + s))
+                .collect()
+        }
+        None => chunk_plan(total_ms, chunk_ms, overlap_ms, max_chunks),
+    }
+}
+
+/// Build the ordered probe plan for a pool-wide deep-match run (spec: tiered
+/// timestamp prelocation). Tiers 0-2 place focused probes at predicted
+/// positions under successively weaker clock assumptions; tier 3 is the
+/// exhaustive full-span fallback over every candidate. Probes on the same file
+/// whose predicted positions agree within `tol_ms` are deduplicated across
+/// tiers (first tier wins). Correctness is untouched: the plan only orders
+/// where to search — every hit still passes the posterior/double gate.
+///
+/// `video_pool` (all queue videos, `(created_at, duration)`) feeds the tier-2
+/// pool alignment. `prelocate = false` (env kill-switch) or a video without
+/// created_at degrades to a pure tier-3 plan.
+pub fn build_probe_plan(
+    video_created_at_ms: Option<i64>,
+    video_duration_ms: f64,
+    pool: &[GyroPoolEntry],
+    video_pool: &[(i64, f64)],
+    learned_shift_ms: Option<i64>,
+    tol_ms: f64,
+    prelocate: bool,
+) -> Vec<ProbeTask> {
+    let ranked = rank_gyro_candidates(video_created_at_ms, video_duration_ms, pool);
+    let by_index: std::collections::HashMap<usize, &GyroPoolEntry> =
+        pool.iter().map(|e| (e.gyro_index, e)).collect();
+    let mut plan: Vec<ProbeTask> = Vec::new();
+
+    if prelocate && tol_ms > 0.0 {
+        if let Some(vc) = video_created_at_ms {
+            // (gyro_index, predicted position) of accepted focused probes, for
+            // the cross-tier dedup.
+            let mut centers: Vec<(usize, f64)> = Vec::new();
+            let mut shifts: Vec<(u8, i64)> = Vec::new();
+            if let Some(l) = learned_shift_ms {
+                shifts.push((0, l));
+            }
+            shifts.push((1, 0));
+            let gyro_meta_pool: Vec<(i64, f64)> = pool
+                .iter()
+                .filter_map(|e| Some((e.created_at_ms?, e.duration_ms?)))
+                .collect();
+            for s in pool_shift_candidates(video_pool, &gyro_meta_pool, tol_ms) {
+                shifts.push((2, s));
+            }
+            for (tier, shift) in shifts {
+                for &gi in &ranked {
+                    let Some(e) = by_index.get(&gi) else { continue };
+                    let (Some(gc), Some(gd)) = (e.created_at_ms, e.duration_ms) else {
+                        continue;
+                    };
+                    let Some(w) = focused_window(vc, video_duration_ms, gc, gd, shift, tol_ms)
+                    else {
+                        continue;
+                    };
+                    let p = predicted_gyro_position_ms(vc, gc, shift);
+                    if centers
+                        .iter()
+                        .any(|&(g, c)| g == gi && (c - p).abs() < tol_ms)
+                    {
+                        continue;
+                    }
+                    centers.push((gi, p));
+                    plan.push(ProbeTask { gyro_index: gi, tier, window_ms: Some(w) });
+                }
+            }
+        }
+    }
+    // Tier 3: exhaustive fallback over every candidate, ranked order (entries
+    // without timestamps already sort last).
+    for &gi in &ranked {
+        plan.push(ProbeTask { gyro_index: gi, tier: 3, window_ms: None });
+    }
+    plan
+}
+
+/// Master switch for the timestamp prelocation tiers of the pool-wide search.
+/// `GYROFLOW_DEEP_PRELOCATE=0|off|false` degrades "search all" to the pure
+/// tier-3 exhaustive plan. The manual per-file entry never consults this.
+pub fn prelocate_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_DEEP_PRELOCATE").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_DEEP_PRELOCATE={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "deep_prelocate resolved={} source={}", v, source);
+        v
+    })
+}
+
+/// Half-width (ms) of the focused search window around a predicted position
+/// (default ±2h — covers "roughly set" clocks; anything larger falls through
+/// to the pool-alignment tier or the exhaustive fallback).
+pub fn prelocate_tol_ms() -> f64 {
+    static RESOLVED: std::sync::OnceLock<f64> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let v = env_f64("GYROFLOW_DEEP_PRELOCATE_TOL_MS", 7_200_000.0);
+        log::info!(target: "lifecycle", "deep_prelocate_tol_ms resolved={}", v);
+        v
+    })
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeepMatchVerdict {
     /// median of per-window offsets
@@ -864,6 +1183,190 @@ mod tests {
             !matches!(v, DeepMatchVerdict::Accepted { .. }),
             "flat noise curves must not be accepted, got {v:?}"
         );
+    }
+
+    // ---- pool-wide prelocation (deep-match-gyro-pool-prelocate) ----
+
+    const HOUR: i64 = 3_600_000;
+    const TOL: f64 = 7_200_000.0;
+
+    fn entry(gyro_index: usize, created_h: i64, dur_h: f64) -> GyroPoolEntry {
+        GyroPoolEntry {
+            gyro_index,
+            created_at_ms: Some(created_h * HOUR),
+            duration_ms: Some(dur_h * HOUR as f64),
+        }
+    }
+
+    fn bare_entry(gyro_index: usize) -> GyroPoolEntry {
+        GyroPoolEntry { gyro_index, created_at_ms: None, duration_ms: None }
+    }
+
+    #[test]
+    fn predicted_position_roundtrips_with_derive_session_offset() {
+        // The prediction is the algebraic inverse of
+        // gyro_match::derive_session_offset_from_deep_match: learning the
+        // session offset back from a hit at the predicted position must
+        // return the hypothesised clock shift exactly.
+        use crate::gyro_match::derive_session_offset_from_deep_match;
+        for (vc, gc, shift) in [
+            (10 * HOUR, 8 * HOUR, 0i64),
+            (10 * HOUR, 8 * HOUR, 8 * HOUR),
+            (5 * HOUR, 20 * HOUR, -3 * HOUR - 17 * 60_000),
+        ] {
+            let p = predicted_gyro_position_ms(vc, gc, shift);
+            assert_eq!(derive_session_offset_from_deep_match(gc, vc, -p), shift);
+        }
+    }
+
+    #[test]
+    fn rank_prefers_overlap_then_proximity_and_parks_bare_entries_last() {
+        // Video at hour 10, 30min long. File 1 contains it, file 0 is near
+        // but disjoint, file 2 is far, file 3 has no metadata.
+        let pool = vec![
+            entry(0, 8, 1.5), // ends 9.5h — near, no overlap
+            entry(1, 9, 2.0), // 9..11h — contains the video
+            entry(2, 20, 2.0),
+            bare_entry(3),
+        ];
+        let ranked = rank_gyro_candidates(Some(10 * HOUR), 1_800_000.0, &pool);
+        assert_eq!(ranked, vec![1, 0, 2, 3]);
+        // No video timestamp -> nothing to rank by, pool order preserved.
+        let ranked = rank_gyro_candidates(None, 1_800_000.0, &pool);
+        assert_eq!(ranked, vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn pool_shift_candidates_start_end_and_sessions() {
+        // Gyro clocks run 8h ahead of video clocks (timezone misconfig):
+        // three sessions on both sides, gyro = video + 8h everywhere.
+        let videos: Vec<(i64, f64)> = vec![
+            (10 * HOUR, 3_600_000.0),
+            (34 * HOUR, 3_600_000.0),
+            (58 * HOUR, 3_600_000.0),
+        ];
+        let gyros: Vec<(i64, f64)> = videos.iter().map(|(c, d)| (c + 8 * HOUR, *d)).collect();
+        let cands = pool_shift_candidates(&videos, &gyros, TOL);
+        // start/end/session diffs all equal 8h -> a single deduped candidate.
+        assert_eq!(cands, vec![8 * HOUR]);
+        // Aligned pools (shift ~0) produce no candidates (tier 1 covers zero).
+        assert!(pool_shift_candidates(&videos, &videos, TOL).is_empty());
+        // Empty side -> empty.
+        assert!(pool_shift_candidates(&[], &gyros, TOL).is_empty());
+    }
+
+    #[test]
+    fn pool_shift_candidates_distinct_start_end() {
+        // Gyro pool starts 10h before the video pool but ends 10h after it:
+        // start and end diffs disagree beyond tol -> both survive.
+        let videos: Vec<(i64, f64)> = vec![(20 * HOUR, 3_600_000.0)];
+        let gyros: Vec<(i64, f64)> = vec![(10 * HOUR, 21.0 * HOUR as f64)];
+        let cands = pool_shift_candidates(&videos, &gyros, TOL);
+        assert_eq!(cands, vec![-10 * HOUR, 10 * HOUR]);
+    }
+
+    #[test]
+    fn focused_window_clamps_and_rejects_disjoint() {
+        // Video at hour 10 (30min), gyro file covers 9..11h, zero shift:
+        // predicted position = 1h into the file.
+        let w = focused_window(10 * HOUR, 1_800_000.0, 9 * HOUR, 2.0 * HOUR as f64, 0, TOL)
+            .expect("window");
+        assert_eq!(w.0, 0.0); // 1h - 2h tol clamps to file start
+        assert_eq!(w.1, 2.0 * HOUR as f64); // clamps to file end
+        // Prediction far outside the file (video 20h after the file ends).
+        assert!(
+            focused_window(31 * HOUR, 1_800_000.0, 9 * HOUR, 2.0 * HOUR as f64, 0, TOL).is_none()
+        );
+        // The right shift brings it back inside.
+        assert!(focused_window(
+            31 * HOUR,
+            1_800_000.0,
+            9 * HOUR,
+            2.0 * HOUR as f64,
+            -21 * HOUR,
+            TOL
+        )
+        .is_some());
+        // Guards.
+        assert!(focused_window(0, 1000.0, 0, 0.0, 0, TOL).is_none());
+        assert!(focused_window(0, 1000.0, 0, 1000.0, 0, 0.0).is_none());
+    }
+
+    #[test]
+    fn probe_chunk_plan_focused_stays_file_relative() {
+        // 24h file, focused window [4h, 8h], 2h chunks: chunk starts must be
+        // file-relative (the accepted-offset absolutization subtracts them).
+        let total = 24.0 * HOUR as f64;
+        let window = (4.0 * HOUR as f64, 8.0 * HOUR as f64);
+        let plan = probe_chunk_plan(Some(window), total, 7_200_000.0, 100_000.0, 0);
+        assert!(plan.len() >= 2);
+        assert_eq!(plan[0].0, window.0);
+        assert_eq!(plan.last().unwrap().1, window.1);
+        // Full-span probe = the pre-change plan.
+        assert_eq!(
+            probe_chunk_plan(None, total, 7_200_000.0, 100_000.0, 0),
+            chunk_plan(total, 7_200_000.0, 100_000.0, 0)
+        );
+        // Window clamped to the file; degenerate window -> empty plan.
+        assert!(probe_chunk_plan(Some((30.0 * HOUR as f64, 31.0 * HOUR as f64)), total, 7_200_000.0, 100_000.0, 0).is_empty());
+    }
+
+    #[test]
+    fn build_probe_plan_tier_order_dedup_and_fallback() {
+        // Two-file pool; the target video sits inside file 0 at zero shift and
+        // a second queue video sits inside file 1, so the pools are aligned
+        // (all pool-shift candidates collapse to ~0 -> no tier-2 probes).
+        // Learned shift ~0 -> tier 0 takes the slot, tier 1's identical
+        // prediction dedups away. Tier 3 covers every file.
+        let pool = vec![entry(0, 9, 2.0), entry(1, 20, 2.0)];
+        let videos: Vec<(i64, f64)> =
+            vec![(10 * HOUR, 1_800_000.0), (20 * HOUR + HOUR / 2, 1_800_000.0)];
+        let plan = build_probe_plan(
+            Some(10 * HOUR),
+            1_800_000.0,
+            &pool,
+            &videos,
+            Some(60_000), // learned shift 1min — within tol of tier 1's zero
+            TOL,
+            true,
+        );
+        let tiers: Vec<(usize, u8, bool)> = plan
+            .iter()
+            .map(|t| (t.gyro_index, t.tier, t.window_ms.is_some()))
+            .collect();
+        // Tier 0 focused probe on file 0 only (file 1 disjoint under ~0 shift),
+        // tier 1 deduped, then the two tier-3 full spans in ranked order.
+        assert_eq!(tiers, vec![(0, 0, true), (0, 3, false), (1, 3, false)]);
+
+        // Without a learned shift the same probe arrives as tier 1.
+        let plan = build_probe_plan(Some(10 * HOUR), 1_800_000.0, &pool, &videos, None, TOL, true);
+        assert_eq!(plan[0].tier, 1);
+
+        // prelocate=false -> pure tier-3 plan.
+        let plan = build_probe_plan(Some(10 * HOUR), 1_800_000.0, &pool, &videos, None, TOL, false);
+        assert!(plan.iter().all(|t| t.tier == 3 && t.window_ms.is_none()));
+        assert_eq!(plan.len(), 2);
+
+        // Video without created_at -> pure tier-3 plan too.
+        let plan = build_probe_plan(None, 1_800_000.0, &pool, &videos, None, TOL, true);
+        assert!(plan.iter().all(|t| t.tier == 3));
+    }
+
+    #[test]
+    fn build_probe_plan_timezone_case_hits_tier_2() {
+        // Gyro clocks 8h ahead: tier 1 finds no intersection anywhere, the
+        // pool-alignment shift (8h) predicts file 0 -> tier 2 focused probe.
+        let pool = vec![entry(0, 17, 2.0), entry(1, 40, 2.0)];
+        let videos: Vec<(i64, f64)> = vec![(10 * HOUR, 1_800_000.0), (33 * HOUR, 1_800_000.0)];
+        let gyro_pool_wall: Vec<(i64, f64)> = Vec::new();
+        let _ = gyro_pool_wall;
+        let plan = build_probe_plan(Some(10 * HOUR), 1_800_000.0, &pool, &videos, None, TOL, true);
+        let focused: Vec<&ProbeTask> = plan.iter().filter(|t| t.window_ms.is_some()).collect();
+        assert!(!focused.is_empty(), "tier-2 probes expected, plan={plan:?}");
+        assert!(focused.iter().all(|t| t.tier == 2), "plan={plan:?}");
+        assert_eq!(focused[0].gyro_index, 0);
+        // Fallback still covers both files.
+        assert_eq!(plan.iter().filter(|t| t.tier == 3).count(), 2);
     }
 
     #[test]

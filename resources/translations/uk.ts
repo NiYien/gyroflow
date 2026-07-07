@@ -3777,6 +3777,36 @@ Click Ok and select the destination folder.</source>
         <source>Save to: %1</source>
         <translation>Зберегти до: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Шукати в усіх даних гіроскопа</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Немає файлів даних гіроскопа для пошуку.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Пошук кандидата %1 з %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>повне сканування</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>оцінка за міткою часу</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Збігів не знайдено в жодному файлі гіроскопа. Записи можуть не охоплювати це відео, або рух у відео ненадійний.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

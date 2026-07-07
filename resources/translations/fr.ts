@@ -3776,6 +3776,36 @@ Cliquez sur Ok et sélectionnez le fichier de destination.</translation>
         <source>Save to: %1</source>
         <translation>Enregistrer vers: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Rechercher dans toutes les données gyro</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Aucun fichier de données gyro disponible pour la recherche.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Recherche du candidat %1 sur %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>analyse complète</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>estimation par horodatage</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Aucune correspondance trouvée dans les fichiers gyro. Les enregistrements ne couvrent peut-être pas cette vidéo, ou le mouvement de la vidéo est peu fiable.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

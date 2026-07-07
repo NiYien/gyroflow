@@ -3775,6 +3775,36 @@ Faga clic en Aceptar e seleccione o cartafol de destino.</translation>
         <source>Save to: %1</source>
         <translation>Gardado: %1</translation>
     </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <source>Search all gyro data</source>
+        <translation>Buscar en todos os datos do xiroscopio</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <source>No gyro data files are available to search.</source>
+        <translation>Non hai ficheiros de datos do xiroscopio dispoñibles para buscar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
+        <source>Searching candidate %1 of %2</source>
+        <translation>Buscando candidato %1 de %2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>full scan</source>
+        <translation>escaneo completo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <source>timestamp guess</source>
+        <translation>estimación por marca de tempo</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
+        <translation>Non se atopou ningunha coincidencia en ningún ficheiro do xiroscopio. É posible que as gravacións non cubran este vídeo, ou que o movemento do vídeo non sexa fiable.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
