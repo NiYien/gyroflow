@@ -323,8 +323,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>注意: 動画はジャイロの記録時間範囲内に収まっている必要があります。</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>そのまま完成させるには「手ブレ補正動画を書き出し」を、エディタープラグインを使うには「プラグイン用に書き出し」を選びます。エクスポートするとスタビライズ処理が始まります。</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>深度検索は撮影日ごとに1回で十分です。同じ日の他のクリップは自動的にマッチングされます。</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>スタビライズと書き出し</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>深度検索の後、この2つのボタンのどちらかを押すとスタビライズ処理が始まります。エディタプラグインで使う場合は「スタビライズ（またはプラグインで使用）」、完成クリップには「スタビライズされた動画を書き出す」を選択してください。</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>プラグイン用に書き出し</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>スタビライズ（またはプラグインで使用）</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3184,8 +3192,52 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>保存しました。他のクリップをディープマッチするか、書き出しをクリックして一致と同期を行ってください。</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>この日のクリップにこれ以上の深度検索は不要です。</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>スタビライズ（またはプラグインで使用）</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>手ブレ補正動画を書き出し</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>この日の素材はすでに深度検索済みです。同じ日のクリップは「%1」を押すと自動的にマッチングされるため、1つずつ検索する必要はありません。</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>今すぐスタビライズ</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>それでも検索する</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>後で</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 本の動画（R3D / N-RAW）は直接書き出せないためスキップされました。</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>代わりに「%1」を押し、Gyroflowプラグインを使って動画エディタでこれらのクリップを仕上げてください。</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>プラグイン専用 - 動画書き出しをスキップ</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>プラグイン専用</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>この形式は直接書き出せません。「スタビライズ」と動画エディタのプラグインをご利用ください。%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

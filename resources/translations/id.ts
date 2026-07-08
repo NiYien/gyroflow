@@ -324,8 +324,16 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
         <translation>Catatan: video harus berada dalam rentang waktu yang direkam giroskop.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Untuk klip yang sudah selesai pilih "Ekspor video yang distabilkan"; untuk memakai plugin editor pilih "Ekspor untuk plugin". Setelah ekspor, stabilisasi dimulai.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Satu pencarian mendalam per hari pengambilan sudah cukup, klip lain dari hari itu dicocokkan secara otomatis.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Stabilkan dan ekspor</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Setelah pencarian mendalam Anda harus menekan salah satu dari dua tombol ini, barulah stabilisasi dimulai. Pilih "Stabilkan (atau gunakan dengan plugin)" untuk plugin editor, atau "Ekspor video yang distabilkan" untuk klip jadi.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -353,8 +361,8 @@ Sebagai catatan, ini hanya indikator visual, tidak akan berpengaruh pada renderi
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Ekspor untuk plugin</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabilkan (atau gunakan dengan plugin)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3180,8 +3188,52 @@ Untuk video yang belum dipasangkan, Anda dapat memasangkannya secara manual: kli
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Tersimpan. Cocokkan mendalam klip lainnya, atau klik Ekspor untuk mencocokkan dan menyinkronkan.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Tidak perlu pencarian mendalam lagi untuk klip hari ini.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabilkan (atau gunakan dengan plugin)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Ekspor video yang distabilkan</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Rekaman hari ini sudah dicari secara mendalam. Klip dari hari yang sama dicocokkan otomatis saat Anda menekan "%1", tidak perlu mencari satu per satu.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Stabilkan sekarang</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Tetap cari</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Nanti</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 video (R3D / N-RAW) tidak dapat diekspor langsung dan dilewati.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Tekan "%1" sebagai gantinya, lalu selesaikan klip ini di editor video Anda dengan plugin Gyroflow.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Hanya plugin - ekspor video dilewati</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Hanya plugin</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Format ini tidak dapat diekspor langsung. Gunakan "Stabilkan" dan plugin editor video.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

@@ -799,7 +799,7 @@ Rectangle {
                     Component.onCompleted: refreshQueueRowCount();
                     Button {
                         id: simpleAutoSyncBtn;
-                        text: qsTr("Export for plugins");
+                        text: qsTr("Stabilize (or use with plugins)");
                         // Peer-level accent style: both export buttons share the same blue accent.
                         accent: true;
                         iconName: "spinner";
@@ -824,42 +824,10 @@ Rectangle {
                         enabled: _queueMode
                             ? (render_queue.status !== "active" && simpleExportBtnRow.queueRowCount > 0)
                             : (window.videoArea.vid.loaded && !controller.sync_in_progress);
-                        onClicked: {
-                            // No usable gyro/motion data at all: prompt to load gyro instead of a
-                            // silent no-op. Gyro files present but still parsing fall through to the
-                            // normal flow below (no parse-complete gate).
-                            const _noGyro = simpleAutoSyncBtn._queueMode
-                                ? (!simpleAutoSyncBtn._hasGyroFiles && !render_queue.batch_motion_ready())
-                                : !controller.gyro_loaded;
-                            if (_noGyro) {
-                                window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
-                                return;
-                            }
-                            // Single video / embedded gyro: sync directly, no match step.
-                            if (!simpleAutoSyncBtn._queueMode || !simpleAutoSyncBtn._hasGyroFiles) {
-                                if (simpleAutoSyncBtn._queueMode) {
-                                    // Queue jobs with embedded gyro (no separate files): direct batch sync.
-                                    if (!render_queue.batch_motion_ready()) return;
-                                    window.runSimpleBatchSync();
-                                } else if (window.sync) {
-                                    window.sync.runAutosync();
-                                }
-                                return;
-                            }
-                            // Queue mode with separate gyro files (D3 decision tree).
-                            const queue = videoArea.queue;
-                            if (queue.matchDirty) {
-                                // Gyro set changed / never matched: match first, then sync.
-                                queue.beginMatchThenSync("sync");
-                            } else if (window.syncDirty) {
-                                // AI toggle changed / never synced: re-sync without re-match.
-                                window.runSimpleBatchSync();
-                            } else {
-                                // Everything current: offer a re-export (re-sync) instead of a
-                                // passive notice.
-                                window.confirmReExport("plugins");
-                            }
-                        }
+                        // Full decision tree lives in window.runPluginStabilizeFlow() —
+                        // shared with the deep-match success dialog and the same-day
+                        // deep-search soft-intercept dialog.
+                        onClicked: window.runPluginStabilizeFlow();
                     }
                     Button {
                         id: simpleExportStabilizedBtn;
@@ -920,41 +888,10 @@ Rectangle {
                                 if (videoArea.queue) videoArea.queue.pendingConvertFormatChoice = "";
                                 return;
                             }
-                            // No usable gyro/motion data at all: prompt to load gyro instead of a
-                            // silent no-op. Gyro files present but still parsing fall through to the
-                            // normal batch/single path below.
-                            {
-                                const _queueMode = videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0;
-                                const _hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
-                                const _noGyro = _queueMode
-                                    ? (!_hasGyroFiles && !render_queue.batch_motion_ready())
-                                    : !controller.gyro_loaded;
-                                if (_noGyro) {
-                                    window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
-                                    return;
-                                }
-                            }
-                            // Batch path — render queue panel is open with pending jobs
-                            if (videoArea.queue && videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0) {
-                                // Match-first (D4): with separate gyro files that have changed / never
-                                // matched, run Auto match first; export dispatches on match success
-                                // (zero-match reuses matchWarning and does not start rendering).
-                                if (videoArea.queue.hasGyroFiles && videoArea.queue.matchDirty) {
-                                    videoArea.queue.beginMatchThenSync("export");
-                                    return;
-                                }
-                                if (!render_queue.batch_motion_ready()) {
-                                    // No renderable job: if every renderable job is already a
-                                    // finished video export, offer a re-export instead of a
-                                    // silent no-op; otherwise stay a genuine no-op.
-                                    if (render_queue.has_finished_video_exports())
-                                        window.confirmReExport("video");
-                                    return;
-                                }
-                                // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.
-                                window.runSimpleBatchExport();
-                                return;
-                            }
+                            // No-gyro prompt + batch branch live in
+                            // window.runStabilizedBatchExport() — shared with the
+                            // deep-match success dialog. Returns true when consumed.
+                            if (window.runStabilizedBatchExport()) return;
                             // Single-video path — auto-sync first if needed, then render
                             if (!window.videoArea.vid.loaded) return;
                             const md = motionData.item;
@@ -1058,7 +995,10 @@ Rectangle {
                                 return;
                             }
                             const fname = vidInfo.item.filename.toLowerCase();
-                            if (fname.endsWith('.braw') || ((fname.endsWith('.r3d') || fname.endsWith('.nev')) && !controller.find_redline()) || fname.endsWith('.dng')) {
+                            // plugin-only-export-gate: .r3d/.nev are render-blocked whenever no
+                            // sibling same-name .mov exists (REDline conversion is gone); a
+                            // sibling .mov keeps the legacy redirect-and-render path.
+                            if (fname.endsWith('.braw') || render_queue.is_plugin_only_video(window.videoArea.loadedFileUrl.toString()) || fname.endsWith('.dng')) {
                                 messageBox(Modal.Info, qsTr("This format is not available for rendering.\nThe recommended workflow is to export project file and use one of [video editor plugins] (%1).").replace(/\[(.*?)\]/, '<a href="https://gyroflow.xyz/download#plugins"><font color="' + styleTextColor + '">$1</font></a>').arg("DaVinci Resolve, Adobe Premiere/Ae, Final Cut Pro"), [
                                     { text: qsTr("Ok"), accent: true }
                                 ]);
@@ -1964,6 +1904,88 @@ Rectangle {
             { text: qsTr("No"), accent: true },
         ]);
     }
+    // [simple-mode] Shared plugin-stabilize flow (match + sync, writes .gyroflow
+    // projects). Extracted verbatim from simpleAutoSyncBtn.onClicked so the bottom
+    // bar button, the deep-match success dialog and the same-day deep-search
+    // soft-intercept dialog all run the exact same decision tree.
+    function runPluginStabilizeFlow(): void {
+        const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
+        const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
+        // No usable gyro/motion data at all: prompt to load gyro instead of a
+        // silent no-op. Gyro files present but still parsing fall through to the
+        // normal flow below (no parse-complete gate).
+        const noGyro = queueMode
+            ? (!hasGyroFiles && !render_queue.batch_motion_ready())
+            : !controller.gyro_loaded;
+        if (noGyro) {
+            window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+            return;
+        }
+        // Single video / embedded gyro: sync directly, no match step.
+        if (!queueMode || !hasGyroFiles) {
+            if (queueMode) {
+                // Queue jobs with embedded gyro (no separate files): direct batch sync.
+                if (!render_queue.batch_motion_ready()) return;
+                window.runSimpleBatchSync();
+            } else if (window.sync) {
+                window.sync.runAutosync();
+            }
+            return;
+        }
+        // Queue mode with separate gyro files (D3 decision tree).
+        const queue = videoArea.queue;
+        if (queue.matchDirty) {
+            // Gyro set changed / never matched: match first, then sync.
+            queue.beginMatchThenSync("sync");
+        } else if (window.syncDirty) {
+            // AI toggle changed / never synced: re-sync without re-match.
+            window.runSimpleBatchSync();
+        } else {
+            // Everything current: offer a re-export (re-sync) instead of a
+            // passive notice.
+            window.confirmReExport("plugins");
+        }
+    }
+    // [simple-mode] Shared stabilized-video export flow (no-gyro prompt + batch
+    // branch). Extracted verbatim from simpleExportStabilizedBtn.onClicked so the
+    // bottom bar button and the deep-match success dialog run the exact same
+    // decision tree. Returns true when the click was consumed (prompt shown or
+    // batch dispatched); false means the caller should continue with its
+    // single-video path.
+    function runStabilizedBatchExport(): bool {
+        const queueMode = videoArea.queue && videoArea.queue.shown && render_queue.queue.rowCount() > 0;
+        const hasGyroFiles = videoArea.queue ? videoArea.queue.hasGyroFiles : false;
+        // No usable gyro/motion data at all: prompt to load gyro instead of a
+        // silent no-op. Gyro files present but still parsing fall through to the
+        // normal batch/single path below.
+        const noGyro = queueMode
+            ? (!hasGyroFiles && !render_queue.batch_motion_ready())
+            : !controller.gyro_loaded;
+        if (noGyro) {
+            window.messageBox(Modal.Info, qsTr("Please load gyro data first."), [ { text: qsTr("Ok") } ]);
+            return true;
+        }
+        if (!queueMode) return false;
+        // Batch path — render queue panel is open with pending jobs.
+        // Match-first (D4): with separate gyro files that have changed / never
+        // matched, run Auto match first; export dispatches on match success
+        // (zero-match reuses matchWarning and does not start rendering).
+        if (hasGyroFiles && videoArea.queue.matchDirty) {
+            videoArea.queue.beginMatchThenSync("export");
+            return true;
+        }
+        if (!render_queue.batch_motion_ready()) {
+            // No renderable job: if every renderable job is already a
+            // finished video export, offer a re-export instead of a
+            // silent no-op; otherwise stay a genuine no-op.
+            if (render_queue.has_finished_video_exports())
+                window.confirmReExport("video");
+            return true;
+        }
+        // Batch render auto-syncs not-yet-synced jobs (D4), so no explicit sync first.
+        window.runSimpleBatchExport();
+        return true;
+    }
 
     function showNotification(type: int, text: string, textFormat: var): void {
         if (typeof textFormat === "undefined" || !textFormat) textFormat = text.includes("<b>")? Text.StyledText : Text.AutoText; // default
@@ -2525,11 +2547,11 @@ Rectangle {
             { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue", menuHighlight: "deep", rowMatched: false, rowSynced: false,
               title: qsTr("Deep search"),
               body:  qsTr("Pick a clip with clear motion, then right-click and choose \"Deep match with gyro\" to align the video with the gyro data."),
-              note:  qsTr("Note: the video must fall within the gyro's recorded time range.") },
-            // 5. Export — row matched (after deep search), not yet synced.
+              note:  qsTr("Note: the video must fall within the gyro's recorded time range.") + " " + qsTr("One deep search per shooting day is enough, the other clips from that day are matched automatically.") },
+            // 5. Stabilize / export — row matched (after deep search), not yet synced.
             { target: simpleExportBtnRow,      section: null,                    image: "", imageAnchor: "", rowMatched: true, rowSynced: false,
-              title: qsTr("Export"),
-              body:  qsTr("For a finished clip choose \"Export stabilized video\"; to use the editor plugins choose \"Export for plugins\". After you export, stabilization begins.") },
+              title: qsTr("Stabilize and export"),
+              body:  qsTr("After deep search you must press one of these two buttons, only then does stabilization begin. Choose \"Stabilize (or use with plugins)\" for the editor plugins, or \"Export stabilized video\" for a finished clip.") },
             // 6. Preview — row matched + synced (after export); menu highlights edit.
             { target: null,                    section: null, openQueue: true,    image: "", imageAnchor: "queue", menuHighlight: "edit", rowMatched: true, rowSynced: true,
               title: qsTr("Preview"),

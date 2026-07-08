@@ -323,8 +323,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Σημείωση: το βίντεο πρέπει να βρίσκεται μέσα στο καταγεγραμμένο χρονικό εύρος του γυροσκοπίου.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Για ένα έτοιμο κλιπ επίλεξε "Εξαγωγή σταθεροποιημένου βίντεο". Για χρήση με τα πρόσθετα του προγράμματος επεξεργασίας επίλεξε "Εξαγωγή για πρόσθετα". Μετά την εξαγωγή ξεκινά η σταθεροποίηση.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Μία βαθιά αναζήτηση ανά ημέρα λήψης αρκεί, τα υπόλοιπα κλιπ της ημέρας αντιστοιχίζονται αυτόματα.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Σταθεροποίηση και εξαγωγή</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Μετά τη βαθιά αναζήτηση πρέπει να πατήσετε ένα από αυτά τα δύο κουμπιά, μόνο τότε ξεκινά η σταθεροποίηση. Επιλέξτε "Σταθεροποίηση (ή χρήση με πρόσθετα)" για τα πρόσθετα του επεξεργαστή ή "Εξαγωγή σταθεροποιημένου βίντεο" για έτοιμο κλιπ.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Εξαγωγή για πρόσθετα</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Σταθεροποίηση (ή χρήση με πρόσθετα)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3183,8 +3191,52 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Αποθηκεύτηκε. Κάντε βαθιά αντιστοίχιση σε περισσότερα κλιπ ή κάντε κλικ στην Εξαγωγή για αντιστοίχιση και συγχρονισμό.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Δεν χρειάζεται άλλη βαθιά αναζήτηση για τα κλιπ αυτής της ημέρας.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Σταθεροποίηση (ή χρήση με πρόσθετα)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Εξαγωγή σταθεροποιημένου βίντεο</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Το υλικό αυτής της ημέρας έχει ήδη αναζητηθεί σε βάθος. Τα κλιπ της ίδιας ημέρας αντιστοιχίζονται αυτόματα όταν πατήσετε "%1", δεν χρειάζεται αναζήτηση για το καθένα.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Σταθεροποίηση τώρα</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Αναζήτηση ούτως ή άλλως</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Αργότερα</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 βίντεο (R3D / N-RAW) δεν μπορούν να εξαχθούν απευθείας και παραλείφθηκαν.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Πατήστε "%1" αντί αυτού και ολοκληρώστε αυτά τα κλιπ στον επεξεργαστή βίντεο με το πρόσθετο Gyroflow.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Μόνο πρόσθετο - η εξαγωγή βίντεο παραλείφθηκε</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Μόνο πρόσθετο</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Αυτή η μορφή δεν μπορεί να εξαχθεί απευθείας. Χρησιμοποιήστε "Σταθεροποίηση" και τα πρόσθετα επεξεργαστή βίντεο.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

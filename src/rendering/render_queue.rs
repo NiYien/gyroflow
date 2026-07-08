@@ -252,6 +252,11 @@ struct Job {
     lens_index_override: Option<usize>,
     // [T20] 保存 video_created_at，stab 释放后排序仍可用
     video_created_at: Option<i64>,
+    // plugin-only-export-gate: source ffmpeg cannot decode (.r3d/.nev with no
+    // sibling same-name .mov). Derived from the filename at add time, never
+    // persisted; recomputed whenever a project is loaded back into the queue.
+    // Video encodes skip these jobs; project exports and sync are unaffected.
+    plugin_only: bool,
     original_video_rotation: f64,
     original_output_size: (usize, usize),
 }
@@ -1063,6 +1068,11 @@ pub struct RenderQueue {
     // accepted deep match — the tier-0 hypothesis of pool-wide searches.
     // In-memory only; cleared by unpair_video / reset_all_video_pairings.
     learned_clock_shift_ms: Option<i64>,
+    // Local calendar day of the video whose accepted deep match taught the
+    // clock shift. Drives the same-day "deep search again is redundant" UI
+    // hint. Lives and dies with learned_clock_shift_ms (same write point,
+    // same clearing points).
+    learned_clock_shift_day: Option<chrono::NaiveDate>,
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
@@ -1092,6 +1102,10 @@ pub struct RenderQueue {
     has_gyro_files: qt_method!(fn(&self) -> bool),
     batch_motion_ready: qt_method!(fn(&self) -> bool),
     has_crm_proxy_jobs: qt_method!(fn(&self) -> bool),
+    // plugin-only-export-gate: sources ffmpeg cannot decode (.r3d/.nev, no
+    // sibling .mov). Video encodes skip such jobs with one aggregated notice.
+    is_plugin_only_video: qt_method!(fn(&self, url: String) -> bool),
+    is_job_plugin_only: qt_method!(fn(&self, job_id: u32) -> bool),
     batch_match_gyro: qt_method!(fn(&mut self)),
     apply_match_results: qt_method!(fn(&mut self)),
     start_batch_autosync: qt_method!(fn(&mut self)),
@@ -1140,6 +1154,11 @@ pub struct RenderQueue {
     // "no_groups" (bare job, nothing configured yet).
     deep_match_needs_lens_choice: qt_method!(fn(&self, job_id: u32) -> QString),
     get_deep_match_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
+    // Same-day redundancy hint: true when this job's video creation date
+    // falls on the same local day as the accepted deep match that taught
+    // the current clock shift. Missing timestamps on either side => false
+    // (fail open — a missed hint is fine, a wrong block is not).
+    deep_match_redundant_for_job: qt_method!(fn(&self, job_id: u32) -> bool),
     unpair_video: qt_method!(fn(&mut self, job_id: u32)),
     // simple-mode-reexport: clear all video jobs' pairing registries (deep
     // match, regular match, manual pairs) without touching stab.gyro, so the
@@ -1189,6 +1208,10 @@ pub struct RenderQueue {
     // i of n"). Single-probe (manual) runs emit 1/1 and QML keeps quiet.
     pub deep_match_probe_changed: qt_signal!(job_id: u32, probe: u32, total: u32, tier: u32, gyro_filename: QString),
     pub deep_match_finished: qt_signal!(job_id: u32, success: bool, error_kind: QString, offset_ms: f64),
+    // plugin-only-export-gate: fired once per video-export start (and once per
+    // direct "Render now" refusal) with the number of jobs skipped because
+    // their source cannot be encoded. QML shows one aggregated notice.
+    pub plugin_only_skipped: qt_signal!(count: u32),
 }
 
 macro_rules! update_model {
@@ -2425,6 +2448,7 @@ impl RenderQueue {
                 lens_index_override: lens_index_override_at_load,
                 lens_group_index,
                 video_created_at,
+                plugin_only: Self::is_plugin_only_source(&video_url),
                 original_video_rotation,
                 original_output_size,
             },
@@ -2542,6 +2566,36 @@ impl RenderQueue {
             self.start_frame = self.get_current_frame();
             self.start_queue_work_units = self.queue_progress_snapshot().done_units;
             self.progress_changed();
+        }
+
+        // plugin-only-export-gate: video encodes (export_project 0/4) skip
+        // sources ffmpeg cannot decode. Sweep every queued plugin-only job up
+        // front so the whole batch produces a single aggregated notice instead
+        // of one cryptic ffmpeg unknown-codec error per job. Project-only
+        // exports (1/2/3) leave them alone — those jobs are exactly the ones
+        // that need a .gyroflow written.
+        if matches!(self.export_project, 0 | 4) {
+            let skip_ids: Vec<u32> = self
+                .queue
+                .borrow()
+                .iter()
+                .filter(|v| v.status == JobStatus::Queued)
+                .map(|v| v.job_id)
+                .filter(|id| self.jobs.get(id).map_or(false, |j| j.plugin_only))
+                .collect();
+            if !skip_ids.is_empty() {
+                for &job_id in &skip_ids {
+                    update_model!(self, job_id, itm {
+                        itm.skip_reason = QString::from("plugin_only");
+                        itm.status = JobStatus::Skipped;
+                    });
+                    ::log::info!(
+                        "[queue-render-skip] job {} marked Skipped (plugin_only)",
+                        job_id
+                    );
+                }
+                self.plugin_only_skipped(skip_ids.len() as u32);
+            }
         }
 
         loop {
@@ -2929,6 +2983,34 @@ impl RenderQueue {
     // Used by the Simple-mode video export button to distinguish "already
     // video-exported, offer re-export" from an unrelated no-op (export == 2,
     // or a non-renderable job): the dialog must only appear for the former.
+    // plugin-only-export-gate: `.r3d` (Nikon NR3D) / `.nev` (N-RAW) cannot be
+    // decoded by ffmpeg. Without a sibling same-name `.mov` (the legacy
+    // converted-file redirect), such sources are stabilize/plugin-workflow
+    // only: video encodes skip them, project exports and sync run normally.
+    fn plugin_only_extension(filename: &str) -> bool {
+        let lower = filename.to_ascii_lowercase();
+        lower.ends_with(".r3d") || lower.ends_with(".nev")
+    }
+    fn sibling_mov_url(url: &str) -> String {
+        filesystem::get_file_url(
+            &filesystem::get_folder(url),
+            &filesystem::filename_with_extension(&filesystem::get_filename(url), "mov"),
+            false,
+        )
+    }
+    pub fn is_plugin_only_source(url: &str) -> bool {
+        Self::plugin_only_extension(&filesystem::get_filename(url))
+            && !filesystem::exists(&Self::sibling_mov_url(url))
+    }
+    // QML entry for the single-video render path (main canvas).
+    fn is_plugin_only_video(&self, url: String) -> bool {
+        Self::is_plugin_only_source(&url)
+    }
+    // QML entry for the per-row "Plugin only" queue badge.
+    fn is_job_plugin_only(&self, job_id: u32) -> bool {
+        self.jobs.get(&job_id).map_or(false, |j| j.plugin_only)
+    }
+
     fn has_finished_video_exports(&self) -> bool {
         let Ok(queue) = self.queue.try_borrow() else {
             return false;
@@ -3732,6 +3814,29 @@ impl RenderQueue {
             crate::log_context::LogContextUpdate::default()
                 .op(format!("render@item{job_id}")),
         );
+        // plugin-only-export-gate: refuse to enter a video encode for sources
+        // ffmpeg cannot decode. Batch starts are swept in start(); this guard
+        // catches direct "Render now" calls. Project-only exports pass through.
+        if matches!(self.export_project, 0 | 4)
+            && self.jobs.get(&job_id).map_or(false, |j| j.plugin_only)
+        {
+            let mut skipped = false;
+            update_model!(self, job_id, itm {
+                if itm.status == JobStatus::Queued || itm.status == JobStatus::Error {
+                    itm.skip_reason = QString::from("plugin_only");
+                    itm.status = JobStatus::Skipped;
+                    itm.error_string = QString::default();
+                    skipped = true;
+                }
+            });
+            if skipped {
+                ::log::info!(
+                    "[queue-render-skip] job {job_id} marked Skipped (plugin_only, direct render)"
+                );
+                self.plugin_only_skipped(1);
+            }
+            return;
+        }
         if let Some(job) = self.jobs.get(&job_id) {
             {
                 let mut q = self.queue.borrow_mut();
@@ -4407,57 +4512,22 @@ impl RenderQueue {
                     if filesystem::exists(&mov_url) {
                         input_file.url = mov_url.clone();
                     } else {
-                        let in_file = input_file.url.clone();
-
-                        let mut frame = 0;
-                        let r3d_progress =
-                            |(percent, error_str, out_url): (f64, String, String)| {
-                                if !error_str.is_empty() {
-                                    err(("An error occured: %1".to_string(), error_str));
-                                } else {
-                                    progress((
-                                        percent * 0.98,
-                                        frame,
-                                        total_frame_count + 1,
-                                        false,
-                                        true,
-                                    ));
-                                    input_file.url = out_url;
-                                    frame += 1;
-                                }
-                            };
-                        let format = gyroflow_core::settings::get_u64("r3dConvertFormat", 0) as i32;
-                        let force_primary =
-                            gyroflow_core::settings::get_u64("r3dColorMode", 0) as i32;
-
-                        let gamma_curves = [
-                            -1, 1, 2, 3, 4, 5, 6, 14, 15, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36,
-                            37,
-                        ];
-                        let color_spaces =
-                            [2, 0, 1, 14, 15, 5, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
-                        let gamma = gamma_curves
-                            [gyroflow_core::settings::get_u64("r3dGammaCurve", 7) as usize];
-                        let space = color_spaces
-                            [gyroflow_core::settings::get_u64("r3dColorSpace", 0) as usize];
-                        let additional_params =
-                            gyroflow_core::settings::get_str("r3dRedlineParams", "");
-                        crate::external_sdk::r3d::REDSdk::convert_r3d(
-                            &in_file,
-                            format,
-                            force_primary > 0,
-                            gamma,
-                            space,
-                            &additional_params,
-                            r3d_progress,
-                            cancel_flag.clone(),
+                        // plugin-only-export-gate: the REDline conversion path
+                        // is gone (it silently fell through to ffmpeg when the
+                        // tool was missing, cascading unknown-codec errors).
+                        // Plugin-only jobs are skipped at dispatch, so a job
+                        // only gets here when its sibling .mov disappeared
+                        // after it was added. Fail with a clear message.
+                        ::log::warn!(
+                            "[queue-render-skip] '{}' reached render without a sibling .mov — failing explicitly (plugin-only source)",
+                            filename
                         );
-                        if cancel_flag.load(SeqCst) {
-                            std::thread::sleep(std::time::Duration::from_secs(2));
-                            let _ = filesystem::remove_file(&mov_url);
-                            err(("Conversion cancelled%1".to_string(), "".to_string()));
-                            return;
-                        }
+                        err((
+                            "This format cannot be exported directly. Use \"Stabilize\" and the video editor plugins instead.%1"
+                                .to_string(),
+                            String::new(),
+                        ));
+                        return;
                     }
                 }
 
@@ -10357,6 +10427,7 @@ impl RenderQueue {
                     let shift =
                         core::gyro_match::derive_session_offset_from_deep_match(gc, vc, offset_ms);
                     self.learned_clock_shift_ms = Some(shift);
+                    self.learned_clock_shift_day = Self::local_day_from_ms(vc);
                     ::log::info!(
                         target: "sync",
                         "[deep-match] hit at probe {}/{} tier={} → learned_clock_shift={}ms (gyro_created={} video_created={} offset={:.1}ms)",
@@ -10474,9 +10545,36 @@ impl RenderQueue {
     // nothing was rejected). Rust-side single point so QML callers cannot
     // forget it.
     fn clear_learned_clock_shift(&mut self, source: &str) {
+        self.learned_clock_shift_day = None;
         if self.learned_clock_shift_ms.take().is_some() {
             ::log::info!(target: "sync", "[deep-match] learned clock shift cleared ({source})");
         }
+    }
+
+    // Local calendar day for an epoch-ms wall-clock timestamp. `single()`
+    // resolves DST-ambiguous instants; a None (out-of-range timestamp) simply
+    // disables the same-day hint for that side.
+    fn local_day_from_ms(ms: i64) -> Option<chrono::NaiveDate> {
+        use chrono::TimeZone;
+        chrono::Local
+            .timestamp_millis_opt(ms)
+            .single()
+            .map(|dt| dt.date_naive())
+    }
+
+    // Same-day redundancy hint for the QML soft-intercept dialog. Fail open:
+    // no learned day or no job creation time => false (never block a search
+    // we cannot prove redundant).
+    fn deep_match_redundant_for_job(&self, job_id: u32) -> bool {
+        let Some(learned_day) = self.learned_clock_shift_day else {
+            return false;
+        };
+        let job_day = self
+            .jobs
+            .get(&job_id)
+            .and_then(|j| j.video_created_at)
+            .and_then(Self::local_day_from_ms);
+        job_day == Some(learned_day)
     }
 
     // T7: Unpair a video job, clearing its external gyro data.
@@ -12424,6 +12522,49 @@ mod tests {
         assert!(!pix_fmt_is_high_bit_depth(Pixel::None));
     }
 
+    // ---- plugin-only-export-gate ----
+
+    #[test]
+    fn plugin_only_extension_matches_r3d_and_nev_case_insensitive() {
+        assert!(RenderQueue::plugin_only_extension("AAA_2399.R3D"));
+        assert!(RenderQueue::plugin_only_extension("aaa_2399.r3d"));
+        assert!(RenderQueue::plugin_only_extension("clip.NEV"));
+        assert!(RenderQueue::plugin_only_extension("clip.nev"));
+        // Ordinary and other raw formats pass through untouched.
+        assert!(!RenderQueue::plugin_only_extension("clip.mp4"));
+        assert!(!RenderQueue::plugin_only_extension("clip.mov"));
+        assert!(!RenderQueue::plugin_only_extension("clip.braw"));
+        assert!(!RenderQueue::plugin_only_extension("clip.crm"));
+        assert!(!RenderQueue::plugin_only_extension("r3d"));
+    }
+
+    #[test]
+    fn is_plugin_only_source_respects_sibling_mov() {
+        let dir =
+            std::env::temp_dir().join(format!("gf_plugin_only_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let r3d = dir.join("AAA_0001.R3D");
+        std::fs::write(&r3d, b"x").unwrap();
+        let url = filesystem::path_to_url(r3d.to_str().unwrap());
+
+        // No sibling .mov -> plugin only.
+        assert!(RenderQueue::is_plugin_only_source(&url));
+
+        // Sibling same-name .mov -> legacy redirect path, not plugin only.
+        let mov = dir.join("AAA_0001.mov");
+        std::fs::write(&mov, b"x").unwrap();
+        assert!(!RenderQueue::is_plugin_only_source(&url));
+
+        // Ordinary formats never match regardless of siblings.
+        let mp4 = dir.join("clip.mp4");
+        std::fs::write(&mp4, b"x").unwrap();
+        assert!(!RenderQueue::is_plugin_only_source(&filesystem::path_to_url(
+            mp4.to_str().unwrap()
+        )));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn queue_with_lens_display_job(
         manual_edit: bool,
         config: niyien_lens_presets::LensGroupConfig,
@@ -12466,6 +12607,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: Some(0),
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -12528,6 +12670,7 @@ mod tests {
             lens_index_override: None,
             lens_group_index,
             video_created_at: None,
+            plugin_only: false,
             original_video_rotation: 0.0,
         }
     }
@@ -12637,6 +12780,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -12690,6 +12834,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -13557,16 +13702,25 @@ mod tests {
         // gyro_created + round(5000.5) - video_created (the derive contract).
         let expected = 1_000_000 + 5001 - 2_000_000;
         assert_eq!(queue.learned_clock_shift_ms, Some(expected));
+        // The day the shift was learned from is recorded alongside it.
+        assert_eq!(
+            queue.learned_clock_shift_day,
+            RenderQueue::local_day_from_ms(2_000_000)
+        );
+        assert!(queue.learned_clock_shift_day.is_some());
 
         // Right-click "Unpair gyro" rejects the pairing -> what it taught
         // goes too.
         queue.unpair_video(1);
         assert_eq!(queue.learned_clock_shift_ms, None);
+        assert_eq!(queue.learned_clock_shift_day, None);
 
         // Same for the global reset.
         queue.learned_clock_shift_ms = Some(42);
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(2_000_000);
         queue.reset_all_video_pairings();
         assert_eq!(queue.learned_clock_shift_ms, None);
+        assert_eq!(queue.learned_clock_shift_day, None);
     }
 
     #[test]
@@ -13577,6 +13731,7 @@ mod tests {
         let stab = setup_deep_match_job(&mut queue, false);
         simulate_deep_match_probe(&mut queue, &stab);
         queue.learned_clock_shift_ms = Some(42);
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(2_000_000);
 
         // Cancelling a run that has not accepted anything learned nothing and
         // rejected nothing — the previously learned shift stays.
@@ -13586,6 +13741,41 @@ mod tests {
 
         assert!(queue.deep_match_pending.is_empty());
         assert_eq!(queue.learned_clock_shift_ms, Some(42));
+        assert_eq!(
+            queue.learned_clock_shift_day,
+            RenderQueue::local_day_from_ms(2_000_000)
+        );
+    }
+
+    #[test]
+    fn deep_match_redundant_for_job_same_day_semantics() {
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        // Timezone-robust anchors: identical instants are trivially the same
+        // local day; instants two full days apart can never share one.
+        const DAY_MS: i64 = 86_400_000;
+        let t = 10 * DAY_MS + 3_600_000;
+
+        // No learned day yet -> false regardless of the job timestamp.
+        queue.jobs.get_mut(&1).unwrap().video_created_at = Some(t);
+        assert!(!queue.deep_match_redundant_for_job(1));
+
+        // Learned day equals the job's local day -> true.
+        queue.learned_clock_shift_ms = Some(42);
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(t);
+        assert!(queue.deep_match_redundant_for_job(1));
+
+        // Cross-day (two full days apart) -> false.
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(t + 2 * DAY_MS);
+        assert!(!queue.deep_match_redundant_for_job(1));
+
+        // Job without a creation time -> false (fail open).
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(t);
+        queue.jobs.get_mut(&1).unwrap().video_created_at = None;
+        assert!(!queue.deep_match_redundant_for_job(1));
+
+        // Unknown job id -> false.
+        assert!(!queue.deep_match_redundant_for_job(999));
     }
 
     #[test]
@@ -14632,6 +14822,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -14678,6 +14869,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -14940,6 +15132,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -15457,6 +15650,7 @@ mod tests {
             lens_index_override: None,
             lens_group_index: None,
             video_created_at: None,
+            plugin_only: false,
             original_video_rotation: 0.0,
         };
 
@@ -15560,6 +15754,7 @@ mod tests {
             }),
             lens_group_index: Some(0),
             video_created_at: None,
+            plugin_only: false,
             original_video_rotation: 0.0,
             lens_index_override: None,
         }
@@ -15752,6 +15947,7 @@ mod tests {
             }),
             lens_group_index: Some(0),
             video_created_at: None,
+            plugin_only: false,
             original_video_rotation: 0.0,
             lens_index_override: None,
         };
@@ -15805,6 +16001,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
             },
         );
@@ -16026,6 +16223,7 @@ mod tests {
                 lens_index_override: None,
                 lens_group_index: None,
                 video_created_at: None,
+                plugin_only: false,
                 original_video_rotation: 0.0,
                 original_output_size: (0, 0),
             },
@@ -17601,39 +17799,60 @@ mod tests {
     #[test]
     fn simple_mode_batch_stabilized_export_writes_project_with_gyro_data() {
         let qml = include_str!("../ui/App.qml");
-        let marker_idx = qml
-            .find("Batch path")
-            .expect("simple batch path marker exists");
-        let remaining = &qml[marker_idx..];
-        let branch_end = remaining
+        // The bottom-bar button delegates its batch branch to the shared
+        // window-level flow (simple-mode-workflow-guidance extraction).
+        let btn_idx = qml
+            .find("id: simpleExportStabilizedBtn")
+            .expect("stabilized export button exists");
+        let btn_rest = &qml[btn_idx..];
+        let btn_branch = &btn_rest[..btn_rest
             .find("Single-video path")
-            .expect("single-video path marker exists after batch branch");
-        let branch = &remaining[..branch_end];
+            .expect("single-video path marker exists after the batch delegation")];
+        assert!(btn_branch.contains("window.runStabilizedBatchExport()"));
 
-        assert!(branch.contains("videoArea.queue && videoArea.queue.shown"));
-        assert!(branch.contains("simpleExportBtnRow.queueRowCount > 0"));
+        // Shared flow: full-queue predicate + match-first, no direct video export.
+        let flow_idx = qml
+            .find("function runStabilizedBatchExport()")
+            .expect("shared batch export flow exists");
+        let flow_rest = &qml[flow_idx..];
+        let flow = &flow_rest[..flow_rest
+            .find("function showNotification")
+            .expect("export flow is followed by showNotification")];
+        assert!(flow.contains("videoArea.queue && videoArea.queue.shown"));
+        assert!(flow.contains("render_queue.queue.rowCount() > 0"));
         assert!(
-            branch.contains("render_queue.batch_motion_ready()"),
+            flow.contains("render_queue.batch_motion_ready()"),
             "simple-mode batch stabilized export must require batch motion data"
         );
+        assert!(flow.contains("beginMatchThenSync(\"export\")"));
+        assert!(flow.contains("window.runSimpleBatchExport()"));
         assert!(
-            branch.contains("render_queue.export_project = 4;"),
+            !flow.contains("render_queue.export_project = 0;"),
+            "simple-mode batch stabilized export must not use export_project=0"
+        );
+
+        // The dispatch helper keeps export_project=4 and prepares finished
+        // sync-only jobs before starting the queue.
+        let dispatch_idx = qml
+            .find("function runSimpleBatchExport()")
+            .expect("batch export dispatch exists");
+        let dispatch_rest = &qml[dispatch_idx..];
+        let dispatch = &dispatch_rest[..dispatch_rest
+            .find("function confirmReExport")
+            .expect("dispatch is followed by confirmReExport")];
+        assert!(
+            dispatch.contains("render_queue.export_project = 4;"),
             "simple-mode batch stabilized export must use export_project=4"
         );
-        assert!(branch.contains("render_queue.start();"));
-        let prepare_idx = branch
+        let prepare_idx = dispatch
             .find("render_queue.prepare_finished_jobs_for_video_export();")
             .expect("batch export prepares finished sync-only jobs before starting");
-        let start_idx = branch
+        let start_idx = dispatch
             .find("render_queue.start();")
             .expect("batch export starts the queue");
         assert!(
             prepare_idx < start_idx,
             "simple-mode batch stabilized export must prepare finished jobs before starting"
-        );
-        assert!(
-            !branch.contains("render_queue.export_project = 0;"),
-            "simple-mode batch stabilized export must not use export_project=0"
         );
     }
 
@@ -17655,38 +17874,40 @@ mod tests {
         assert!(branch.contains("function onMatch_apply_finished(): void"));
         assert!(branch.contains("simpleExportBtnRow.refreshQueueRowCount();"));
 
-        // Button is relabeled "Export for plugins" and exposes the queue-mode predicate.
-        assert!(branch.contains("text: qsTr(\"Export for plugins\")"));
+        // Button is relabeled "Stabilize (or use with plugins)" and exposes the
+        // queue-mode predicate.
+        assert!(branch.contains("text: qsTr(\"Stabilize (or use with plugins)\")"));
         assert!(branch.contains("readonly property bool _queueMode:"));
 
-        // Relaxed enable gate: queue mode with separate gyro files only requires the gyro
-        // files to be parsed (allGyroParsed), no longer a pre-match batch_motion_ready() check.
-        assert!(branch.contains("allGyroParsed"));
+        // The click handler delegates to the shared window-level flow; the
+        // decision tree must not be inlined in the button anymore.
+        assert!(branch.contains("onClicked: window.runPluginStabilizeFlow();"));
+        assert!(!branch.contains("render_queue.start_batch_autosync();"));
+        assert!(!branch.contains("render_queue.export_project = 2;"));
+        assert!(!branch.contains("render_queue.start();"));
 
-        // The click handler matches first when the gyro set is dirty, then syncs; it must not
-        // drive the batch autosync state machine directly anymore (that moved to runSimpleBatchSync()).
-        let click_idx = branch
-            .find("onClicked:")
-            .expect("auto sync button has click handler");
-        let click_branch = &branch[click_idx..];
-        let match_idx = click_branch
+        // Shared flow: a dirty gyro set matches first, then syncs; the
+        // current-and-synced state offers a re-export confirmation, not a no-op.
+        let flow_idx = qml
+            .find("function runPluginStabilizeFlow()")
+            .expect("shared stabilize flow exists");
+        let flow_rest = &qml[flow_idx..];
+        let flow = &flow_rest[..flow_rest
+            .find("function runStabilizedBatchExport()")
+            .expect("stabilize flow is followed by the export flow")];
+        let match_idx = flow
             .find("matchDirty")
-            .expect("auto sync click branch checks whether the gyro set needs matching first");
-        let match_then_sync_idx = click_branch
+            .expect("stabilize flow checks whether the gyro set needs matching first");
+        let match_then_sync_idx = flow
             .find("beginMatchThenSync(\"sync\")")
             .expect("dirty gyro set triggers match-then-sync orchestration");
         assert!(
             match_idx < match_then_sync_idx,
-            "simple-mode batch auto sync must detect a dirty match before kicking off match-then-sync"
+            "simple-mode stabilize flow must detect a dirty match before kicking off match-then-sync"
         );
-        // Current-and-synced state is a lightweight notice, not a no-op.
-        assert!(branch.contains("Already synced"));
-
-        // The branch must not directly start/export the queue nor invoke the batch autosync
-        // state machine inline — those now live in the runSimpleBatchSync() helper.
-        assert!(!branch.contains("render_queue.start_batch_autosync();"));
-        assert!(!branch.contains("render_queue.export_project = 2;"));
-        assert!(!branch.contains("render_queue.start();"));
+        assert!(flow.contains("confirmReExport(\"plugins\")"));
+        assert!(!flow.contains("render_queue.start_batch_autosync();"));
+        assert!(!flow.contains("render_queue.export_project = 2;"));
     }
 
     #[test]

@@ -215,12 +215,20 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>注意：视频时间需落在陀螺仪记录范围内。</translation>
     </message>
     <message>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>每个拍摄日只需对一个运动明显的片段深搜一次，当天其余片段会自动匹配。</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>稳定与导出</translation>
+    </message>
+    <message>
         <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
         <translation>调整平滑度、地平线锁定、缩放模式，在渲染队列中可以多选修改，也可以批量修改。</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>直接出成片选"导出稳定后的视频"，用插件选"导出（搭配插件使用）"。导出后，视频开始稳定处理。</translation>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>深搜之后必须点这两个按钮之一，稳定处理才会开始。搭配剪辑软件插件用选"稳定（或搭配插件使用）"；直接出成片选"导出稳定后的视频"。</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>导出（搭配插件使用）</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>稳定（或搭配插件使用）</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3183,8 +3191,52 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>已保存。可继续深度匹配更多片段，或点导出进行匹配并同步。</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>当天其余片段无需再深搜。</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>稍后处理</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>稳定（或搭配插件使用）</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>导出稳定后的视频</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>这一天的素材已经深搜过了。同一天的其余片段点"%1"即可自动匹配，无需逐个深搜。</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>去稳定</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>仍要深搜</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 个视频（R3D / N-RAW）不支持直接导出，已跳过。</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>请改点"%1"，然后在剪辑软件里通过 Gyroflow 插件完成这些片段。</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>仅插件 - 已跳过视频导出</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>仅插件</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>此格式不支持直接导出。请改用"稳定"按钮并搭配剪辑软件插件。%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

@@ -323,8 +323,16 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
         <translation>Not: video, jiroskobun kaydettiği zaman aralığı içinde olmalıdır.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Bitmiş bir klip için "Sabitlenmiş videoyu dışa aktar" seçeneğini seç; düzenleyici eklentilerini kullanmak için "Eklentiler için dışa aktar" seçeneğini seç. Dışa aktardıktan sonra stabilizasyon başlar.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Her çekim günü için bir derin arama yeterlidir, o günün diğer klipleri otomatik olarak eşleştirilir.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Sabitle ve dışa aktar</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Derin aramadan sonra bu iki düğmeden birine basmalısınız, sabitleme ancak o zaman başlar. Editör eklentileri için "Sabitle (veya eklentilerle kullan)", bitmiş klip için "Sabitlenmiş videoyu dışa aktar" seçin.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Not: Bu yalnızca görsel bir işarettir, render işlemini etkilemez.</translati
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Eklentiler için dışa aktar</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Sabitle (veya eklentilerle kullan)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3178,8 +3186,52 @@ Eşleşmeyen videoları manuel olarak eşleştirebilirsiniz: videoya sağ tıkla
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Kaydedildi. Daha fazla klibi derin eşleştirin veya eşleştirip senkronize etmek için Dışa aktar&apos;a tıklayın.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Bu günün klipleri için başka derin arama gerekmez.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Sabitle (veya eklentilerle kullan)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Sabitlenmiş videoyu dışa aktar</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Bu günün çekimleri zaten derin arandı. Aynı günün klipleri "%1" düğmesine bastığınızda otomatik eşleştirilir, tek tek aramaya gerek yok.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Şimdi sabitle</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Yine de ara</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Daha sonra</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 video (R3D / N-RAW) doğrudan dışa aktarılamaz ve atlandı.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Bunun yerine "%1" düğmesine basın ve bu klipleri video editörünüzde Gyroflow eklentisiyle tamamlayın.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Yalnızca eklenti - video dışa aktarma atlandı</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Yalnızca eklenti</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Bu biçim doğrudan dışa aktarılamaz. Bunun yerine "Sabitle" ve video editörü eklentilerini kullanın.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

@@ -47,6 +47,14 @@ Item {
     Connections {
         target: render_queue;
         function onQueue_finished(): void { root.pendingConvertFormatChoice = ""; }
+        // plugin-only-export-gate: one aggregated notice per video-export
+        // start instead of a cascade of per-job ffmpeg codec errors.
+        function onPlugin_only_skipped(count: int): void {
+            window.messageBox(Modal.Info,
+                qsTr("%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.").arg(count)
+                + "\n" + qsTr("Press \"%1\" instead, then finish these clips in your video editor with the Gyroflow plugin.").arg(qsTr("Stabilize (or use with plugins)")),
+                [{ text: qsTr("Ok"), accent: true }]);
+        }
     }
 
     // --- Batch gyro match state ---
@@ -60,6 +68,8 @@ Item {
     readonly property color calibrationStatusColor: lightTheme ? "#1f6fa8" : "#76baed"
     readonly property color deepMatchStatusColor: lightTheme ? "#6a3fa8" : "#b88ef0"
     readonly property color skippedStatusColor: lightTheme ? "#5b6470" : "#888888"
+    // plugin-only-export-gate: "Plugin only" filename tag.
+    readonly property color pluginOnlyBadgeColor: lightTheme ? "#9a5f00" : "#e0a860"
     readonly property color finishedStatusColor: lightTheme ? "#2a8a4c" : "#70e574"
     readonly property color errorStatusColor: lightTheme ? "#d16b6b" : "#ed7676"
     readonly property color pendingSyncStatusColor: lightTheme ? "#5b6470" : "#9aa3ad"
@@ -321,6 +331,22 @@ Item {
     // confirm a lens group before the probe so it runs with a real camera
     // matrix instead of the 0.8*width default.
     function maybeStartDeepMatch(jobId: int, gyroIdx: int, videoName: string): void {
+        // Same-day soft intercept (simple-mode-workflow-guidance): one deep
+        // search per shooting day is enough — the learned clock shift lets the
+        // main stabilize action auto-match the rest. Soft by design: the user
+        // can always proceed (re-searching a mis-matched clip is legitimate).
+        if (render_queue.deep_match_redundant_for_job(jobId)) {
+            messageBox(Modal.Info, qsTr("This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press \"%1\", no need to deep search each one.").arg(qsTr("Stabilize (or use with plugins)")), [
+                { text: qsTr("Stabilize now"), accent: true, clicked: function() { window.runPluginStabilizeFlow(); } },
+                { text: qsTr("Deep search anyway"), clicked: function() { root.proceedDeepMatch(jobId, gyroIdx, videoName); } },
+            ]);
+            return;
+        }
+        proceedDeepMatch(jobId, gyroIdx, videoName);
+    }
+    // Original pre-flight body of maybeStartDeepMatch — reached directly when
+    // no same-day hint applies, or via [Deep search anyway] bypassing it.
+    function proceedDeepMatch(jobId: int, gyroIdx: int, videoName: string): void {
         let res = { state: "ok" };
         try { res = JSON.parse(render_queue.deep_match_needs_lens_choice(jobId)); } catch (e) { }
         if (res.state === "needs_choice") {
@@ -449,13 +475,16 @@ Item {
             buttons: [qsTr("Cancel")];
             onClicked: (index, dontShowAgain) => {
                 if (deepMatchDialog.succeeded) {
-                    // Acquire and distribute are decoupled: acceptance only
-                    // records the anchor and marks the batch dirty. [Done]
-                    // just closes so the user can keep deep-matching more
-                    // clips; distribution is handed to the next main Export
-                    // action, which matches first (re-running the match picks
-                    // up the recorded anchors) and then syncs/renders.
+                    // Acquire and distribute stay decoupled: acceptance only
+                    // records the anchor and marks the batch dirty. The two
+                    // continuation buttons close the dialog and hand off to
+                    // the shared window-level flows — distribution happens
+                    // inside the triggered main action (match first, then
+                    // sync/render), exactly as if the bottom-bar button was
+                    // pressed. [Done] just closes.
                     deepMatchDialog.close();
+                    if (index === 0)      window.runPluginStabilizeFlow();
+                    else if (index === 1) window.runStabilizedBatchExport();
                     return;
                 }
                 // Request cancellation; the dialog closes when
@@ -527,8 +556,8 @@ Item {
                             deepMatchDialog.loader.visible = false;
                         }
                         deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3))
-                                             + "\n" + qsTr("Saved. Deep match more clips, or Export to match and sync.");
-                        deepMatchDialog.buttons = [qsTr("Done")];
+                                             + "\n" + qsTr("No further deep search needed for this day's clips.");
+                        deepMatchDialog.buttons = [qsTr("Stabilize (or use with plugins)"), qsTr("Export stabilized video"), qsTr("Later")];
                         deepMatchDialog.succeeded = true;
                         // Deep match does not go through onGyro_files_changed, so
                         // mark the batch dirty here. The next main Export action
@@ -1296,6 +1325,9 @@ Item {
             property bool isProcessing: processing_progress > 0.0 && processing_progress < 1.0;
             property bool isSkipped: skip_reason.length > 0;
             property string skipReason: skip_reason;
+            // plugin-only-export-gate: static per-job flag (derived from the
+            // filename at add time), drives the "Plugin only" badge.
+            property bool pluginOnly: render_queue.is_job_plugin_only(job_id);
             property string errorString: error_string;
             property real basicTextSize: (window.isMobileLayout? 10 : (window.isSimpleMode ? 14 : 12)) * dpiScale;
             property var syncStatus: { try { return sync_status ? JSON.parse(sync_status) : { color: "none" }; } catch(e) { return { color: "none" }; } }
@@ -2170,7 +2202,10 @@ Item {
                     BasicText {
                         // Append the source video full duration (e.g. "5.3s") after the
                         // filename. duration_ms is 0 until the video info is known.
-                        text: input_filename + (duration_ms > 0 ? " <small>(" + (duration_ms / 1000).toFixed(1) + "s)</small>" : "");
+                        // plugin-only-export-gate: sources that cannot be video-exported
+                        // carry a "Plugin only" tag from the moment they are added.
+                        text: input_filename + (duration_ms > 0 ? " <small>(" + (duration_ms / 1000).toFixed(1) + "s)</small>" : "")
+                            + (dlg.pluginOnly ? " <small><font color=\"" + root.pluginOnlyBadgeColor + "\">" + qsTr("Plugin only") + "</font></small>" : "");
                         font.bold: true;
                         font.pixelSize: 14 * dpiScale;
                         width: parent.width;
@@ -2325,6 +2360,7 @@ Item {
                         visible: dlg.isSkipped;
                         text: dlg.skipReason === "no_gyro" ? qsTr("Skipped - no gyro data")
                             : dlg.skipReason === "calibration" ? qsTr("Skipped - calibration pair")
+                            : dlg.skipReason === "plugin_only" ? qsTr("Plugin only - video export skipped")
                             : "";
                         color: root.skippedStatusColor;
                         font.pixelSize: basicTextSize;

@@ -322,8 +322,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Huom: videon on oltava gyron tallentaman aikavälin sisällä.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Valmiille leikkeelle valitse "Vie vakautettu video"; editorin liitännäisiä varten valitse "Vie liitännäisiä varten". Viennin jälkeen vakautus alkaa.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Yksi syvähaku kuvauspäivää kohden riittää, saman päivän muut klipit sovitetaan automaattisesti.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Vakauta ja vie</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Syvähaun jälkeen sinun on painettava jompaakumpaa näistä painikkeista, vasta sitten vakautus alkaa. Valitse "Vakauta (tai käytä liitännäisten kanssa)" editorin liitännäisille tai "Vie vakautettu video" valmiille klipille.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -351,8 +359,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Vie liitännäisiä varten</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Vakauta (tai käytä liitännäisten kanssa)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3182,8 +3190,52 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Tallennettu. Tee syväsovitus useammille leikkeille tai napsauta Vie, niin sovitus ja synkronointi tehdään.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Tämän päivän klipeille ei tarvita enää syvähakua.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Vakauta (tai käytä liitännäisten kanssa)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Vie vakautettu video</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Tämän päivän materiaali on jo syvähaettu. Saman päivän klipit sovitetaan automaattisesti, kun painat "%1", jokaista ei tarvitse hakea erikseen.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Vakauta nyt</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Hae silti</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Myöhemmin</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 videota (R3D / N-RAW) ei voi viedä suoraan ja ne ohitettiin.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Paina sen sijaan "%1" ja viimeistele nämä klipit videoeditorissa Gyroflow-liitännäisellä.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Vain liitännäinen - videon vienti ohitettu</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Vain liitännäinen</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Tätä muotoa ei voi viedä suoraan. Käytä "Vakauta"-painiketta ja videoeditorin liitännäisiä.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

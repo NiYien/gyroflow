@@ -323,8 +323,16 @@ Merk at dette bare en en visuel indikator, den påvirker ikke resultatet.</trans
         <translation>Merk: Videoen må ligge innenfor gyroens registrerte tidsintervall.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>For et ferdig klipp velg "Eksporter stabilisert video"; for å bruke editor-pluginene velg "Eksporter for plugins". Etter at du eksporterer, starter stabiliseringen.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Ett dypsøk per opptaksdag er nok, de andre klippene fra den dagen matches automatisk.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Stabiliser og eksporter</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Etter dypsøket må du trykke på en av disse to knappene, først da starter stabiliseringen. Velg "Stabiliser (eller bruk med programtillegg)" for editor-programtillegg, eller "Eksporter stabilisert video" for et ferdig klipp.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Merk at dette bare en en visuel indikator, den påvirker ikke resultatet.</trans
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Eksporter for plugins</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabiliser (eller bruk med programtillegg)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3183,8 +3191,52 @@ Du kan pare manuelt: høyreklikk på videoen → **&quot;Par med gyro&quot;** og
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Lagret. Dybmatch flere klipp, eller klikk Eksporter for å matche og synkronisere.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Ikke behov for flere dypsøk for denne dagens klipp.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabiliser (eller bruk med programtillegg)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Eksporter stabilisert video</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Denne dagens opptak er allerede dypsøkt. Klipp fra samme dag matches automatisk når du trykker "%1", du trenger ikke søke hvert enkelt.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Stabiliser nå</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Søk likevel</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Senere</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 video(er) (R3D / N-RAW) kan ikke eksporteres direkte og ble hoppet over.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Trykk heller "%1", og fullfør disse klippene i videoredigereren med Gyroflow-programtillegget.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Kun programtillegg - videoeksport hoppet over</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Kun programtillegg</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Dette formatet kan ikke eksporteres direkte. Bruk "Stabiliser" og videoredigerer-programtillegg i stedet.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

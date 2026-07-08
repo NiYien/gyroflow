@@ -323,8 +323,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Nota: il video deve rientrare nell'intervallo di tempo registrato dal giroscopio.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Per una clip finita scegli "Esporta video stabilizzato"; per usare i plugin dell'editor scegli "Esporta per i plugin". Dopo l'esportazione, inizia la stabilizzazione.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Basta una ricerca profonda per ogni giorno di ripresa, gli altri clip di quel giorno vengono abbinati automaticamente.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Stabilizza ed esporta</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Dopo la ricerca profonda devi premere uno di questi due pulsanti, solo allora inizia la stabilizzazione. Scegli "Stabilizza (o usa con i plugin)" per i plugin dell'editor, oppure "Esporta video stabilizzato" per un clip finito.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Esporta per i plugin</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabilizza (o usa con i plugin)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3181,8 +3189,52 @@ Per i video non accoppiati puoi farlo manualmente: clic destro sul video → **&
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Salvato. Esegui l&apos;abbinamento profondo di altri clip, oppure fai clic su Esporta per abbinare e sincronizzare.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Nessun'altra ricerca profonda necessaria per i clip di questo giorno.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabilizza (o usa con i plugin)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Esporta video stabilizzato</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Il materiale di questo giorno è già stato cercato in profondità. I clip dello stesso giorno vengono abbinati automaticamente premendo "%1", non serve cercarli uno a uno.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Stabilizza ora</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Cerca comunque</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Più tardi</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 video (R3D / N-RAW) non possono essere esportati direttamente e sono stati saltati.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Premi invece "%1" e completa questi clip nel tuo editor video con il plugin Gyroflow.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Solo plugin - esportazione video saltata</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Solo plugin</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Questo formato non può essere esportato direttamente. Usa "Stabilizza" e i plugin per editor video.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

@@ -322,8 +322,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>참고: 동영상은 자이로의 기록 시간 범위 안에 있어야 합니다.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>완성된 클립은 "안정화된 영상 내보내기"를, 편집기 플러그인을 사용하려면 "플러그인용으로 내보내기"를 선택하세요. 내보내면 안정화가 시작됩니다.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>촬영일마다 심층 검색은 한 번이면 충분합니다. 같은 날의 다른 클립은 자동으로 매칭됩니다.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>안정화 및 내보내기</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>심층 검색 후 이 두 버튼 중 하나를 눌러야 안정화가 시작됩니다. 편집기 플러그인용은 "안정화 (또는 플러그인과 함께 사용)", 완성 클립은 "안정화된 영상 내보내기"를 선택하세요.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -351,8 +359,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>플러그인용으로 내보내기</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>안정화 (또는 플러그인과 함께 사용)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3182,8 +3190,52 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>저장되었습니다. 다른 클립을 딥 매칭하거나, 내보내기를 클릭하여 매칭하고 동기화하세요.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>이 날짜의 클립은 더 이상 심층 검색이 필요 없습니다.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>안정화 (또는 플러그인과 함께 사용)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>안정화된 영상 내보내기</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>이 날짜의 영상은 이미 심층 검색되었습니다. 같은 날의 클립은 "%1"을 누르면 자동으로 매칭되므로 하나씩 검색할 필요가 없습니다.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>지금 안정화</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>그래도 검색</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>나중에</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1개의 영상(R3D / N-RAW)은 직접 내보낼 수 없어 건너뛰었습니다.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>대신 "%1"을 누른 다음 Gyroflow 플러그인으로 영상 편집기에서 이 클립들을 완성하세요.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>플러그인 전용 - 영상 내보내기 건너뜀</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>플러그인 전용</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>이 형식은 직접 내보낼 수 없습니다. "안정화"와 영상 편집기 플러그인을 사용하세요.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

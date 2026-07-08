@@ -323,8 +323,16 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
         <translation>Poznámka: video musí spadať do zaznamenaného časového rozsahu gyroskopu.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Pre hotový klip zvoľte "Exportovať stabilizované video"; na použitie pluginov editora zvoľte "Exportovať pre pluginy". Po exporte sa spustí stabilizácia.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Stačí jedno hĺbkové hľadanie na každý deň nakrúcania, ostatné klipy z toho dňa sa spárujú automaticky.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Stabilizácia a export</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Po hĺbkovom hľadaní musíte stlačiť jedno z týchto dvoch tlačidiel, až potom sa začne stabilizácia. Pre pluginy editora zvoľte "Stabilizovať (alebo použiť s pluginmi)", pre hotový klip "Exportovať stabilizované video".</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Je to len vizuálny indikátor - neovplyvňuje výsledný render.</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Exportovať pre pluginy</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabilizovať (alebo použiť s pluginmi)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3183,8 +3191,52 @@ Nespárované video môžete spárovať ručne: pravým tlačidlom na video → 
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Uložené. Hlboko spárujte ďalšie klipy alebo kliknite na Exportovať na spárovanie a synchronizáciu.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Klipy z tohto dňa už nepotrebujú ďalšie hĺbkové hľadanie.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Stabilizovať (alebo použiť s pluginmi)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Exportovať stabilizované video</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Zábery z tohto dňa už boli hĺbkovo prehľadané. Klipy z rovnakého dňa sa spárujú automaticky po stlačení "%1", netreba prehľadávať každý zvlášť.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Stabilizovať teraz</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Napriek tomu hľadať</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Neskôr</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 video(á) (R3D / N-RAW) nemožno exportovať priamo a boli preskočené.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Namiesto toho stlačte "%1" a dokončite tieto klipy vo videoeditore pomocou pluginu Gyroflow.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Iba plugin - export videa preskočený</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Iba plugin</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Tento formát nemožno exportovať priamo. Použite "Stabilizovať" a pluginy pre videoeditory.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

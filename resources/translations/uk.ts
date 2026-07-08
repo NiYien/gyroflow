@@ -323,8 +323,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Примітка: відео має потрапляти в діапазон часу запису гіроскопа.</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>Для готового кліпа виберіть "Експортувати стабілізоване відео"; для роботи з плагінами редактора виберіть "Експорт для плагінів". Після експорту почнеться стабілізація.</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>Одного глибокого пошуку на знімальний день достатньо, решта кліпів цього дня зіставляються автоматично.</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>Стабілізація та експорт</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>Після глибокого пошуку потрібно натиснути одну з цих двох кнопок, лише тоді почнеться стабілізація. Виберіть "Стабілізувати (або використати з плагінами)" для плагінів редактора або "Експортувати стабілізоване відео" для готового кліпу.</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>Експорт для плагінів</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Стабілізувати (або використати з плагінами)</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3183,8 +3191,52 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>Збережено. Виконайте глибоке зіставлення інших кліпів або натисніть «Експорт», щоб зіставити та синхронізувати.</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>Кліпам цього дня глибокий пошук більше не потрібен.</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>Стабілізувати (або використати з плагінами)</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>Експортувати стабілізоване відео</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>Матеріал цього дня вже пройшов глибокий пошук. Кліпи того ж дня зіставляються автоматично після натискання "%1", шукати кожен окремо не потрібно.</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>Стабілізувати зараз</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>Все одно шукати</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>Пізніше</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 відео (R3D / N-RAW) не можна експортувати напряму, їх пропущено.</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Натомість натисніть "%1" і завершіть ці кліпи у відеоредакторі з плагіном Gyroflow.</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>Лише плагін - експорт відео пропущено</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>Лише плагін</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>Цей формат не можна експортувати напряму. Використовуйте "Стабілізувати" та плагіни відеоредакторів.%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>

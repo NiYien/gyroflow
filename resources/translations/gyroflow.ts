@@ -283,7 +283,7 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
+        <source>Stabilize (or use with plugins)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -3007,7 +3007,51 @@ Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -311,8 +311,16 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>注意：影片時間需落在陀螺儀記錄範圍內。</translation>
     </message>
     <message>
-        <source>For a finished clip choose "Export stabilized video"; to use the editor plugins choose "Export for plugins". After you export, stabilization begins.</source>
-        <translation>要直接完成片段請選「匯出穩定後的影片」；要搭配編輯器外掛請選「匯出（搭配外掛使用）」。匯出後即開始增穩處理。</translation>
+        <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
+        <translation>每個拍攝日只需對一個運動明顯的片段深搜一次，當天其餘片段會自動匹配。</translation>
+    </message>
+    <message>
+        <source>Stabilize and export</source>
+        <translation>穩定與匯出</translation>
+    </message>
+    <message>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
+        <translation>深搜之後必須點這兩個按鈕之一，增穩處理才會開始。搭配剪輯軟體外掛用選"穩定（或搭配外掛使用）"；直接出成片選"匯出穩定後的影片"。</translation>
     </message>
     <message>
         <source>Preview</source>
@@ -352,8 +360,8 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="791"/>
-        <source>Export for plugins</source>
-        <translation>匯出（搭配外掛使用）</translation>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>穩定（或搭配外掛使用）</translation>
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="838"/>
@@ -3183,8 +3191,52 @@ For any unpaired video, you can pair manually: right-click the video → **&quot
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>Saved. Deep match more clips, or Export to match and sync.</source>
-        <translation>已儲存。可繼續深度匹配更多片段，或點匯出進行匹配並同步。</translation>
+        <source>No further deep search needed for this day's clips.</source>
+        <translation>當天其餘片段無需再深搜。</translation>
+    </message>
+    <message>
+        <source>Later</source>
+        <translation>稍後處理</translation>
+    </message>
+    <message>
+        <source>Stabilize (or use with plugins)</source>
+        <translation>穩定（或搭配外掛使用）</translation>
+    </message>
+    <message>
+        <source>Export stabilized video</source>
+        <translation>匯出穩定後的影片</translation>
+    </message>
+    <message>
+        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
+        <translation>這一天的素材已經深搜過了。同一天的其餘片段點"%1"即可自動匹配，無需逐個深搜。</translation>
+    </message>
+    <message>
+        <source>Stabilize now</source>
+        <translation>去穩定</translation>
+    </message>
+    <message>
+        <source>Deep search anyway</source>
+        <translation>仍要深搜</translation>
+    </message>
+    <message>
+        <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
+        <translation>%1 個影片（R3D / N-RAW）不支援直接匯出，已跳過。</translation>
+    </message>
+    <message>
+        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>請改點"%1"，然後在剪輯軟體裡透過 Gyroflow 外掛完成這些片段。</translation>
+    </message>
+    <message>
+        <source>Plugin only - video export skipped</source>
+        <translation>僅外掛 - 已跳過影片匯出</translation>
+    </message>
+    <message>
+        <source>Plugin only</source>
+        <translation>僅外掛</translation>
+    </message>
+    <message>
+        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
+        <translation>此格式不支援直接匯出。請改用"穩定"按鈕並搭配剪輯軟體外掛。%1</translation>
     </message>
     <message>
         <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
