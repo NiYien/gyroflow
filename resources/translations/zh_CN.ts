@@ -3799,6 +3799,16 @@ Click Ok and select the destination folder.</source>
         <translation>您确定要清除渲染队列里的所有项目吗？</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>有渲染任务正在进行。清空队列会停止整个队列并中断正在渲染的任务。是否停止并清空？</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>停止并清空</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

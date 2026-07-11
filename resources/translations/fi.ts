@@ -3798,6 +3798,16 @@ Napsauta Ok ja valitse kohdekansio.</translation>
         <translation>Haluatko varmasti poistaa kaikki kohteet renderöintijonosta?</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>Renderöinti on käynnissä. Jonon tyhjentäminen pysäyttää koko jonon ja keskeyttää käynnissä olevan työn. Pysäytä ja tyhjennä?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>Pysäytä ja tyhjennä</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

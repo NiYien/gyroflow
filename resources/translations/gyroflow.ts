@@ -3562,6 +3562,16 @@ Click Ok and select the destination folder.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

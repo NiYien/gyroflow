@@ -3792,6 +3792,16 @@ Click Ok and select the destination folder.</source>
         <translation>Render sırasındaki her öğeyi kaldırmak istediğinize emin misiniz?</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>Bir render devam ediyor. Sırayı temizlemek tüm sırayı durdurur ve çalışan işi keser. Durdurulup temizlensin mi?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>Durdur ve temizle</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

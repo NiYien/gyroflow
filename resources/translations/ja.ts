@@ -3800,6 +3800,16 @@ OKをクリックして保存先フォルダを選択します。</translation>
         <translation>レンダーキューからすべてのアイテムを削除してよろしいですか？</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>レンダリング中です。キューをクリアするとキュー全体が停止し、実行中のジョブが中断されます。停止してクリアしますか？</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>停止してクリア</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

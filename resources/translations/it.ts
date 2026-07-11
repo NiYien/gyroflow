@@ -3796,6 +3796,16 @@ Fare clic su Ok e selezionare la cartella di destinazione.</translation>
         <translation>Sei sicuro di voler rimuovere tutti gli elementi dalla coda di rendering?</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>È in corso un rendering. Cancellare la coda fermerà l&apos;intera coda e interromperà l&apos;operazione in corso. Fermare e cancellare?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>Ferma e cancella</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

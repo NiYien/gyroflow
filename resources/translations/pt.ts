@@ -3799,6 +3799,16 @@ Clique em Ok e selecione a pasta de destino.</translation>
         <translation>Tem certeza de que deseja remover todos os itens da fila de renderização?</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>Há uma renderização em curso. Limpar a fila irá parar toda a fila e interromper a tarefa em execução. Parar e limpar?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>Parar e limpar</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

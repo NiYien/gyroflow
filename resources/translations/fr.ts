@@ -3798,6 +3798,16 @@ Cliquez sur Ok et sélectionnez le fichier de destination.</translation>
         <translation>Êtes-vous sûr de vouloir supprimer tous les éléments de la file d&apos;attente de rendu ?</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>Un rendu est en cours. Vider la file d&apos;attente arrêtera toute la file et interrompra la tâche en cours. Arrêter et vider ?</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>Arrêter et vider</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>

@@ -3799,6 +3799,16 @@ Click Ok and select the destination folder.</source>
         <translation>Είστε βέβαιοι ότι θέλετε να αφαιρέσετε όλα τα στοιχεία από την ουρά απόδοσης;</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
+        <translation>Μια απόδοση βρίσκεται σε εξέλιξη. Η εκκαθάριση της ουράς θα σταματήσει ολόκληρη την ουρά και θα διακόψει την τρέχουσα εργασία. Διακοπή και εκκαθάριση;</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <source>Stop and clear</source>
+        <translation>Διακοπή και εκκαθάριση</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
         <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
         <source>Output file already exists.</source>
