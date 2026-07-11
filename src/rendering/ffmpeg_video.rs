@@ -38,6 +38,29 @@ pub enum ProcessingOrder {
     PostConversion,
 }
 
+// `avcodec_open2` reports `ENOSYS` when the physical device cannot do what the encoder claims to
+// support. The value is not portable, so it has to be spelled out per platform.
+#[cfg(target_os = "windows")]
+const DEVICE_CAPABILITY_ERRNO: i32 = 40;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+const DEVICE_CAPABILITY_ERRNO: i32 = 78;
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "ios")))]
+const DEVICE_CAPABILITY_ERRNO: i32 = 38;
+
+/// Whether an encoder initialization error means "this device cannot encode that".
+///
+/// Hardware encoders advertise a static pixel format table that is the union of the capabilities of
+/// every GPU generation the encoder family ever supported: NVENC lists the 4:2:2 formats even on
+/// pre-Blackwell cards, and `h264_nvenc` lists `p010le` even though no generation can encode 10-bit
+/// H.264. A pixel format can therefore pass the static support check and still be rejected once the
+/// encoding session is actually created, at which point NVENC returns `ENOSYS`.
+///
+/// Only `ENOSYS` qualifies: `avcodec_open2` also fails for unrelated reasons (bitrate, resolution,
+/// level), and reporting those as a pixel format problem would send the user after the wrong fix.
+fn is_device_capability_error(err: &FFmpegError) -> bool {
+    matches!(err, FFmpegError::InternalError(Error::Other { errno }) if *errno == DEVICE_CAPABILITY_ERRNO)
+}
+
 #[derive(Default)]
 pub struct EncoderParams<'a> {
     pub codec: Option<codec::codec::Codec>,
@@ -593,7 +616,40 @@ impl<'a> VideoTranscoder<'a> {
                             // drop(stderr_buf);
                             // println!("output: {:?}", output);
 
-                            self.encoder = Some(result?);
+                            let encoder = match result {
+                                Ok(encoder) => encoder,
+                                Err(e)
+                                    if hw_upload_format.is_none()
+                                        && is_device_capability_error(&e) =>
+                                {
+                                    // The check above only consulted the encoder's advertised format
+                                    // table; the device itself first speaks up here, when the
+                                    // encoding session is created. Report it the same way an
+                                    // unsupported format is reported before opening, so the caller
+                                    // offers the format/CPU dialog rather than a bare ffmpeg error.
+                                    // The rejected format is dropped from the offered list, and no
+                                    // candidate is suggested: the remaining hardware formats are
+                                    // either lossy downgrades or equally unsupported, so CPU
+                                    // encoding is the choice worth highlighting.
+                                    log::warn!(
+                                        target: "video.render",
+                                        "Encoder {} rejected pixel format {:?} when opening (device lacks the capability), falling back to the pixel format dialog",
+                                        self.encoder_name,
+                                        pixel_format
+                                    );
+                                    return Err(FFmpegError::PixelFormatNotSupported((
+                                        pixel_format,
+                                        self.codec_supported_formats
+                                            .iter()
+                                            .copied()
+                                            .filter(|f| *f != pixel_format)
+                                            .collect(),
+                                        None,
+                                    )));
+                                }
+                                Err(e) => return Err(e),
+                            };
+                            self.encoder = Some(encoder);
 
                             octx.write_header()?;
                             // format::context::output::dump(&octx, 0, Some(&output_path));
@@ -787,5 +843,54 @@ impl<'a> VideoTranscoder<'a> {
             (*dst).color_range = (*src).color_range;
             (*dst).chroma_location = (*src).chroma_location;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Pins the per-platform constant to the C runtime's own notion of ENOSYS, so a wrong value
+    // cannot silently disable the fallback. ffmpeg renders the errno through strerror.
+    #[test]
+    fn device_capability_errno_is_enosys_on_this_platform() {
+        let rendered = format!(
+            "{:?}",
+            Error::Other {
+                errno: DEVICE_CAPABILITY_ERRNO
+            }
+        );
+        assert!(
+            rendered.contains("Function not implemented"),
+            "DEVICE_CAPABILITY_ERRNO ({DEVICE_CAPABILITY_ERRNO}) is not ENOSYS on this platform, ffmpeg rendered it as {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn device_capability_error_matches_enosys() {
+        let err = FFmpegError::InternalError(Error::Other {
+            errno: DEVICE_CAPABILITY_ERRNO,
+        });
+        assert!(is_device_capability_error(&err));
+    }
+
+    #[test]
+    fn device_capability_error_rejects_unrelated_errno() {
+        // EINVAL: what avcodec_open2 returns for a bad bitrate/resolution, not a capability problem.
+        let err = FFmpegError::InternalError(Error::Other { errno: 22 });
+        assert!(!is_device_capability_error(&err));
+    }
+
+    #[test]
+    fn device_capability_error_rejects_other_variants() {
+        assert!(!is_device_capability_error(&FFmpegError::GPUDecodingFailed));
+        assert!(!is_device_capability_error(&FFmpegError::EncoderNotFound));
+        assert!(!is_device_capability_error(
+            &FFmpegError::PixelFormatNotSupported((
+                format::Pixel::P210LE,
+                vec![format::Pixel::YUV420P],
+                None,
+            ))
+        ));
     }
 }

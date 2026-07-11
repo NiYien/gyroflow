@@ -920,6 +920,7 @@ pub struct RenderQueue {
     add: qt_method!(fn(&mut self, additional_data: String, thumbnail_url: QString) -> u32),
     remove: qt_method!(fn(&mut self, job_id: u32)),
     clear: qt_method!(fn(&mut self)),
+    stop_and_clear: qt_method!(fn(&mut self)),
 
     start: qt_method!(fn(&mut self)),
     pause: qt_method!(fn(&mut self)),
@@ -1475,6 +1476,18 @@ impl RenderQueue {
                 job.render_options.use_gpu = false;
             } else {
                 job.render_options.pixel_format = format;
+            }
+            // The offsets were already baked by the first render attempt (sync runs before
+            // encoding), so requeueing only to fix the pixel format must not re-run autosync.
+            // Strip do_autosync the same way the re-render paths do (see
+            // prepare_video_exports_for_rerender): force_autosync then stays false and the baked
+            // sync points are reused instead of being cleared as "stale" and recomputed.
+            remove_do_autosync_from_project_json(&mut job.additional_data);
+            if let Some(ref mut project_data) = job.project_data {
+                remove_do_autosync_from_project_json(project_data);
+            }
+            if let Some(ref stab) = job.stab {
+                remove_do_autosync_from_stab(stab);
             }
         }
         update_model!(self, job_id, itm {
@@ -2523,7 +2536,22 @@ impl RenderQueue {
         }
         if self.queue.borrow().row_count() == 0 {
             self.clear_all_batch_sync_state();
+            // Clearing the whole queue is an explicit "fresh start": the session
+            // learned clock shift (and its same-day deep-match soft-intercept)
+            // belongs to the batch we just wiped, so drop it too. Individual job
+            // removal does NOT reach here — only the clear action empties the
+            // queue in one shot, so the removal asymmetry is preserved.
+            self.clear_learned_clock_shift("clear_queue");
         }
+    }
+    // Stop the whole queue, then clear it. QML's "Clear render queue" calls this
+    // when a render is in progress: stop() flips the Rendering job back to Queued
+    // (and drops pause_flag to a clean stopped state), so the subsequent clear()
+    // can actually empty the queue — which in turn clears the learned clock shift.
+    // Rust-owned ordering so a QML caller cannot clear without stopping first.
+    pub fn stop_and_clear(&mut self) {
+        self.stop();
+        self.clear();
     }
     fn update_queue_indices(&mut self) {
         for (i, v) in self.queue.borrow().iter().enumerate() {
@@ -10540,10 +10568,11 @@ impl RenderQueue {
     }
 
     // The learned clock shift derives from an accepted deep match — when the
-    // user rejects a pairing (unpair / reset-all), what it taught goes too.
-    // A cancelled IN-PROGRESS search does NOT clear it (nothing was learned,
-    // nothing was rejected). Rust-side single point so QML callers cannot
-    // forget it.
+    // user rejects a pairing (unpair / reset-all) or clears the whole render
+    // queue (clear_queue), what it taught goes too. A cancelled IN-PROGRESS
+    // search does NOT clear it (nothing was learned, nothing was rejected), and
+    // neither does removing an individual job. Rust-side single point so QML
+    // callers cannot forget it.
     fn clear_learned_clock_shift(&mut self, source: &str) {
         self.learned_clock_shift_day = None;
         if self.learned_clock_shift_ms.take().is_some() {
@@ -13776,6 +13805,57 @@ mod tests {
 
         // Unknown job id -> false.
         assert!(!queue.deep_match_redundant_for_job(999));
+    }
+
+    #[test]
+    fn clear_queue_clears_learned_clock_shift() {
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.learned_clock_shift_ms = Some(42);
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(2_000_000);
+
+        // "Clear render queue" empties the queue -> the session learned shift
+        // (and its same-day soft-intercept) is wiped with the batch.
+        queue.clear();
+        assert_eq!(queue.queue.borrow().row_count(), 0);
+        assert_eq!(queue.learned_clock_shift_ms, None);
+        assert_eq!(queue.learned_clock_shift_day, None);
+    }
+
+    #[test]
+    fn individual_job_removal_keeps_learned_clock_shift() {
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_eta_job(&mut queue, 2, 1);
+        queue.learned_clock_shift_ms = Some(42);
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(2_000_000);
+
+        // Removing jobs one by one is NOT the clear action -> learned shift stays,
+        // even once the last removal leaves the queue empty (the removal asymmetry).
+        queue.remove(1);
+        queue.remove(2);
+        assert_eq!(queue.queue.borrow().row_count(), 0);
+        assert_eq!(queue.learned_clock_shift_ms, Some(42));
+        assert!(queue.learned_clock_shift_day.is_some());
+    }
+
+    #[test]
+    fn stop_and_clear_clears_learned_shift_and_leaves_clean_state() {
+        let _guard = DEEP_MATCH_TEST_LOCK.lock().unwrap();
+        let mut queue = queue_with_eta_job(JobStatus::Rendering);
+        queue.learned_clock_shift_ms = Some(42);
+        queue.learned_clock_shift_day = RenderQueue::local_day_from_ms(2_000_000);
+        // Prove stop() drops any paused state on the way to a clean stopped queue.
+        queue.pause_flag.store(true, SeqCst);
+
+        // With a job Rendering, a bare clear() cannot empty the queue; stop_and_clear
+        // stops first (Rendering -> Queued), so clear() empties it and the learned
+        // shift is cleared. pause_flag ends up false (clean stopped state).
+        queue.stop_and_clear();
+        assert_eq!(queue.queue.borrow().row_count(), 0);
+        assert_eq!(queue.learned_clock_shift_ms, None);
+        assert_eq!(queue.learned_clock_shift_day, None);
+        assert!(!queue.pause_flag.load(SeqCst));
     }
 
     #[test]

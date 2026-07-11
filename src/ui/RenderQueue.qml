@@ -17,8 +17,45 @@ Item {
     readonly property bool lightTheme: style === "light"
 
     // Session-scoped choice applied to all remaining convert_format errors in the current batch
-    // (simple-mode only). Cleared on queue_finished / clear / stop so the next batch re-asks.
+    // (simple-mode only). Cleared on queue_finished / clear so the next batch re-asks.
     property string pendingConvertFormatChoice: ""
+    // A convert_format modal is currently open for this batch (simple-mode only). Parallel renders
+    // make several jobs raise convert_format within a few ms, before the user can pick — this latch
+    // keeps only the first one showing a dialog. Cleared when the choice is applied (applyConvert-
+    // FormatChoice) or the queue is cleared; deliberately NOT cleared on queue_finished, because the
+    // modal outlives the batch (a batch of all-unsupported clips finishes before the user answers).
+    property bool convertFormatModalActive: false
+    // Job ids that hit convert_format while the modal was already open (choice still empty). The
+    // single choice is applied to every one of them, since their error_string won't change again to
+    // re-trigger the auto-apply branch. Reset alongside the latch.
+    property var pendingConvertFormatJobs: []
+
+    // Apply the user's single convert_format choice to the whole batch: remember it for jobs that
+    // fail later (auto-apply branch) and requeue every job that already failed while the modal was up.
+    // set_pixel_format restarts the queue if it already finished, so late answers still take effect.
+    // Each requeue goes through its OWN arrow closure: Qt.callLater() collapses repeated calls that
+    // share the same function reference into a single call with the last arguments, so passing
+    // `render_queue.set_pixel_format` directly here would requeue only the last job and leave the
+    // rest stuck. Distinct closures are distinct functions and are not merged.
+    function applyConvertFormatChoice(choice: string): void {
+        root.pendingConvertFormatChoice = choice;
+        const jobs = root.pendingConvertFormatJobs;
+        root.pendingConvertFormatJobs = [];
+        root.convertFormatModalActive = false;
+        for (let i = 0; i < jobs.length; ++i) {
+            const jid = jobs[i];
+            Qt.callLater(() => render_queue.set_pixel_format(jid, choice));
+        }
+    }
+
+    // Clear ALL per-batch convert_format state. Only the explicit "Clear render queue" action calls
+    // this: a normal batch end (queue_finished) keeps the latch and collected jobs alive so a modal
+    // answered after the queue finished can still requeue them.
+    function resetConvertFormatBatchState(): void {
+        root.pendingConvertFormatChoice = "";
+        root.convertFormatModalActive = false;
+        root.pendingConvertFormatJobs = [];
+    }
 
     // Per-url image-sequence metadata pending injection into add_file's
     // additional_data, keyed by a normalized form of the %0Nd pattern url.
@@ -46,6 +83,11 @@ Item {
 
     Connections {
         target: render_queue;
+        // Only the session-scoped choice is cleared when the batch finishes, so the next batch
+        // re-asks. The latch and collected job ids are deliberately NOT cleared here: when a whole
+        // batch of unsupported clips fails, active renders reach zero and the queue "finishes"
+        // before the user answers the still-open modal — its jobs must survive until
+        // applyConvertFormatChoice requeues them (set_pixel_format restarts the stopped queue).
         function onQueue_finished(): void { root.pendingConvertFormatChoice = ""; }
         // plugin-only-export-gate: one aggregated notice per video-export
         // start instead of a cascade of per-job ffmpeg codec errors.
@@ -2069,27 +2111,46 @@ Item {
 
                                     // Simple-mode path: single modal per batch, then auto-apply to the rest
                                     if (window.isSimpleMode) {
+                                        // Choice already made earlier in this batch: apply it here too.
                                         if (root.pendingConvertFormatChoice !== "") {
-                                            Qt.callLater(render_queue.set_pixel_format, job_id, root.pendingConvertFormatChoice);
+                                            // If that chosen format was itself rejected by the device, the retry
+                                            // that produced this very error dropped it from `supported`. Don't
+                                            // re-apply a doomed format forever — promote the batch choice to CPU,
+                                            // which always works.
+                                            if (root.pendingConvertFormatChoice !== "cpu" && supported.indexOf(root.pendingConvertFormatChoice) < 0)
+                                                root.pendingConvertFormatChoice = "cpu";
+                                            // Own closure per job so Qt.callLater doesn't merge several jobs that
+                                            // auto-apply in the same event loop into a single (last-only) call.
+                                            const jid = job_id;
+                                            const ch = root.pendingConvertFormatChoice;
+                                            Qt.callLater(() => render_queue.set_pixel_format(jid, ch));
                                             btns.model = [];
-                                            messageAreaText.text = qsTr("Applying pixel format: %1").arg(root.pendingConvertFormatChoice);
+                                            messageAreaText.text = qsTr("Applying pixel format: %1").arg(ch);
                                             return;
                                         }
+                                        // A modal for an earlier job is still open and unanswered: don't stack
+                                        // another dialog. Remember this job so the single choice reaches it,
+                                        // since its error_string won't change again to re-run this handler.
+                                        if (root.convertFormatModalActive) {
+                                            if (root.pendingConvertFormatJobs.indexOf(job_id) < 0)
+                                                root.pendingConvertFormatJobs = root.pendingConvertFormatJobs.concat([job_id]);
+                                            btns.model = [];
+                                            messageAreaText.text = qsTr("Waiting for pixel format selection…");
+                                            return;
+                                        }
+                                        // First job to hit convert_format in this batch: open the one modal
+                                        // and start collecting jobs that fail while it's up.
+                                        root.convertFormatModalActive = true;
+                                        root.pendingConvertFormatJobs = [job_id];
                                         let modalBtns = supported.map(f => ({
                                             text: f,
                                             accent: f.toLowerCase() == candidate,
-                                            clicked: () => {
-                                                root.pendingConvertFormatChoice = f;
-                                                render_queue.set_pixel_format(job_id, f);
-                                            }
+                                            clicked: () => { root.applyConvertFormatChoice(f); }
                                         }));
                                         modalBtns.push({
                                             text: qsTr("Render using CPU"),
                                             accent: candidate == '',
-                                            clicked: () => {
-                                                root.pendingConvertFormatChoice = "cpu";
-                                                render_queue.set_pixel_format(job_id, "cpu");
-                                            }
+                                            clicked: () => { root.applyConvertFormatChoice("cpu"); }
                                         });
                                         messageBox(Modal.Question,
                                             qsTr("Selected encoder does not support the source pixel format.\nChoose a target pixel format or render on CPU.\nThis choice applies to all remaining jobs in this batch."),
@@ -3035,16 +3096,32 @@ Item {
             QQC.MenuSeparator { verticalPadding: 5 * dpiScale; }
             Action { checked: settings.value("showQueueWhenAdding", true); text: qsTr("Show queue when adding an item"); onTriggered: { checked = !checked; settings.setValue("showQueueWhenAdding", checked); } }
             Action { text: qsTr("Clear render queue"); onTriggered: {
-                messageBox(Modal.Warning, qsTr("Are you sure you want to remove all items from the render queue?"), [
-                    { text: qsTr("Yes"), clicked: function() {
+                // Shared post-clear cleanup so the two branches cannot drift. When a
+                // render is in progress the queue can only be emptied by stopping it
+                // first (stop_and_clear), which interrupts the running job; otherwise
+                // a plain clear() empties it. Either path also clears loaded gyro
+                // files and the session deep-match learned clock shift (Rust side).
+                var finishClear = function(stopFirst) {
+                    if (stopFirst)
+                        render_queue.stop_and_clear();
+                    else
                         render_queue.clear();
-                        // [queue-lifecycle T5] 清空队列时同时清空陀螺仪和 match 警告
-                        render_queue.clear_gyro_files();
-                        root.matchWarning = "";
-                        root.pendingConvertFormatChoice = "";
-                    }},
-                    { text: qsTr("No"), accent: true },
-                ]);
+                    // [queue-lifecycle T5] 清空队列时同时清空陀螺仪和 match 警告
+                    render_queue.clear_gyro_files();
+                    root.matchWarning = "";
+                    root.resetConvertFormatBatchState();
+                };
+                if (render_queue.status === "active") {
+                    messageBox(Modal.Warning, qsTr("A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?"), [
+                        { text: qsTr("Stop and clear"), clicked: function() { finishClear(true); } },
+                        { text: qsTr("Cancel"), accent: true },
+                    ]);
+                } else {
+                    messageBox(Modal.Warning, qsTr("Are you sure you want to remove all items from the render queue?"), [
+                        { text: qsTr("Yes"), clicked: function() { finishClear(false); } },
+                        { text: qsTr("No"), accent: true },
+                    ]);
+                }
             } }
         }
     }
