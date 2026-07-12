@@ -4,12 +4,26 @@
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+// `timeout_recv_body` bounds how long receiving the *entire* response body may
+// take. It is a total budget, NOT an idle/stall detector: do not size it like a
+// per-chunk latency budget. The Windows app-update package zip alone is ~102 MB,
+// which needs 100-170s on a ~1 MB/s link, so a "reasonable-looking" 30s would
+// make every large download fail on a healthy connection. See
+// `body_timeout_config` for how the default is calibrated.
+//
+// Without this timeout a stalled transfer — peer stops sending bytes but never
+// closes the connection (half-open TCP, no RST) — blocks the `reader.read()`
+// download loops in `distribution.rs` / `nle_plugins.rs` forever: frozen
+// progress bar, no error, no log line, no self-recovery. `call_with_retry`
+// cannot save it either, since it only wraps `.call()` (request + response
+// headers) and the body phase runs entirely outside that cover.
 pub fn configure<T>(request: ureq::RequestBuilder<T>) -> ureq::RequestBuilder<T> {
     request
         .config()
         .proxy(None)
         .timeout_connect(Some(Duration::from_secs(15)))
         .timeout_recv_response(Some(Duration::from_secs(30)))
+        .timeout_recv_body(body_timeout_config())
         .build()
 }
 
@@ -23,6 +37,65 @@ pub fn post(uri: impl AsRef<str>) -> ureq::RequestBuilder<ureq::typestate::WithB
 
 pub fn put(uri: impl AsRef<str>) -> ureq::RequestBuilder<ureq::typestate::WithBody> {
     configure(ureq::put(uri.as_ref()))
+}
+
+const BODY_TIMEOUT_DEFAULT_SECS: u64 = 600;
+const BODY_TIMEOUT_MAX_SECS: u64 = 3600;
+
+/// Pure parser for the body-timeout profile (extracted so it can be unit-tested
+/// without the `OnceLock`/env-global side effects). Returns the resolved seconds
+/// plus the source label used for logging; `0` seconds means "no timeout".
+///
+/// Default 600s; `0` disables; values above the 3600s cap are clamped; invalid
+/// (non-numeric) values fall back to the default.
+fn parse_body_timeout(raw: Option<&str>) -> (u64, &'static str) {
+    match raw.map(str::trim) {
+        None | Some("") => (BODY_TIMEOUT_DEFAULT_SECS, "default"),
+        Some(value) => match value.parse::<u64>() {
+            Ok(secs) if secs > BODY_TIMEOUT_MAX_SECS => (BODY_TIMEOUT_MAX_SECS, "env_clamped"),
+            Ok(secs) => (secs, "env"),
+            Err(_) => (BODY_TIMEOUT_DEFAULT_SECS, "default_invalid"),
+        },
+    }
+}
+
+/// Resolve the response-body receive timeout once. Shared by every request built
+/// through `configure` (manifest fetch, NLE plugin download, app/lens/sdk update
+/// download) — all of them stream their body through the same unguarded read
+/// loop, so the bound belongs at this single choke point.
+///
+/// The default tolerates ~180 KB/s for the largest expected body (~102 MB), i.e.
+/// a 3-6x margin over the ~1 MB/s measured in practice.
+/// `NIYIEN_UPDATE_BODY_TIMEOUT_S=0` disables the timeout entirely, reproducing
+/// the pre-change behavior byte-for-byte (emergency rollback path). Logged once
+/// on first use.
+fn body_timeout_config() -> Option<Duration> {
+    static CONFIG: OnceLock<Option<Duration>> = OnceLock::new();
+    *CONFIG.get_or_init(|| {
+        let raw = std::env::var("NIYIEN_UPDATE_BODY_TIMEOUT_S").ok();
+        let (secs, source) = parse_body_timeout(raw.as_deref());
+        match source {
+            "env_clamped" => log::warn!(
+                target: "update",
+                "NIYIEN_UPDATE_BODY_TIMEOUT_S={} exceeds the {BODY_TIMEOUT_MAX_SECS}s cap, clamping",
+                raw.as_deref().unwrap_or_default().trim()
+            ),
+            "default_invalid" => log::warn!(
+                target: "update",
+                "NIYIEN_UPDATE_BODY_TIMEOUT_S={:?} is not a valid number, falling back to {BODY_TIMEOUT_DEFAULT_SECS}s",
+                raw.as_deref().unwrap_or_default().trim()
+            ),
+            _ => {}
+        }
+        // secs == 0 means "no body timeout"; it is logged as such so the disabled
+        // state is greppable rather than silent.
+        log::info!(
+            target: "update",
+            "body timeout resolved: timeout_s={secs} source={source}{}",
+            if secs == 0 { " (disabled)" } else { "" }
+        );
+        (secs > 0).then(|| Duration::from_secs(secs))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +457,41 @@ mod tests {
         assert_eq!(
             parse_plugin_retry_config(Some("x"), Some("y")),
             (3, Duration::from_millis(1000))
+        );
+    }
+
+    #[test]
+    fn body_timeout_defaults_disables_and_clamps() {
+        use super::{parse_body_timeout, BODY_TIMEOUT_DEFAULT_SECS, BODY_TIMEOUT_MAX_SECS};
+        // Unset / empty => default.
+        assert_eq!(parse_body_timeout(None), (BODY_TIMEOUT_DEFAULT_SECS, "default"));
+        assert_eq!(
+            parse_body_timeout(Some("   ")),
+            (BODY_TIMEOUT_DEFAULT_SECS, "default")
+        );
+        // 0 => disabled (the emergency rollback path); it is NOT an instant timeout.
+        assert_eq!(parse_body_timeout(Some("0")), (0, "env"));
+        // Explicit in-range override, whitespace tolerated.
+        assert_eq!(parse_body_timeout(Some("120")), (120, "env"));
+        assert_eq!(parse_body_timeout(Some(" 120 ")), (120, "env"));
+        // Boundary: exactly the cap is accepted as-is, not clamped.
+        assert_eq!(
+            parse_body_timeout(Some("3600")),
+            (BODY_TIMEOUT_MAX_SECS, "env")
+        );
+        // Above the cap => clamped.
+        assert_eq!(
+            parse_body_timeout(Some("99999")),
+            (BODY_TIMEOUT_MAX_SECS, "env_clamped")
+        );
+        // Invalid => default (never disabled, never zero).
+        assert_eq!(
+            parse_body_timeout(Some("abc")),
+            (BODY_TIMEOUT_DEFAULT_SECS, "default_invalid")
+        );
+        assert_eq!(
+            parse_body_timeout(Some("-5")),
+            (BODY_TIMEOUT_DEFAULT_SECS, "default_invalid")
         );
     }
 
