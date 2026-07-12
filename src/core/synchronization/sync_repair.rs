@@ -13,6 +13,44 @@ const CROSS_VIDEO_SUPPORT_MS: f64 = 3000.0;
 pub const MIN_BATCH_SYNC_POINT_RANK: f32 = 12.0;
 pub const MIN_BATCH_SYNC_POINT_CONFIDENCE: f64 = 0.15;
 
+/// Ride-along floor for the yellow-only rescue pass (change
+/// batch-sync-consensus-rescue).
+///
+/// A point below `MIN_BATCH_SYNC_POINT_CONFIDENCE` never votes: it is excluded
+/// from the within-video subset search, from the coarse consistency bands, and
+/// from the eligible-job count. Every green/yellow verdict is therefore decided
+/// on exactly the same inputs as before this pass existed. Only afterwards, and
+/// only for videos that came out yellow (i.e. would otherwise be exported with
+/// their offsets cleared and the gyro applied at 0 ms), do we look again at the
+/// discarded points and accept one that the *already-chosen* consensus band
+/// vouches for. Because the band and the green set are fixed before the rescue
+/// runs, the pass can only turn yellow → green, never the reverse.
+///
+/// The floor sits between the arbiter's agree-rescue conf (0.12, emitted when
+/// posterior and fusion land within a frame of each other) and its flat drop
+/// conf (0.0, emitted when they genuinely disagree), so a point the arbiter had
+/// no corroboration for stays unrescuable.
+pub const RIDE_ALONG_CONFIDENCE_FLOOR: f64 = 0.10;
+
+/// `GYROFLOW_BATCH_SYNC_YELLOW_RESCUE=0|false|no|off` disables the yellow-only
+/// consensus rescue pass; confirmation then reverts byte-for-byte to the
+/// pre-change behaviour. Default on.
+fn yellow_rescue_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        match std::env::var("GYROFLOW_BATCH_SYNC_YELLOW_RESCUE")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("0") | Some("false") | Some("no") | Some("off") => false,
+            _ => true,
+        }
+    })
+}
+
 #[derive(Default, Debug, Clone, PartialEq)]
 pub struct BatchSyncPointDiagnostic {
     pub invalid_numeric: bool,
@@ -20,6 +58,10 @@ pub struct BatchSyncPointDiagnostic {
     pub low_confidence: bool,
     pub outside_video_subset: bool,
     pub insufficient_cross_video_support: bool,
+    /// Set on a point that failed one of the gates above but was reinstated by
+    /// the yellow-only consensus rescue pass. The original rejection flags are
+    /// deliberately left set so the log still shows why it was discarded first.
+    pub rescued_by_consensus: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +139,8 @@ pub struct CoarseConsistencyBand {
     pub point_ids: Vec<usize>,
     pub job_ids: BTreeSet<u32>,
     pub offset_span_ms: f64,
+    pub offset_min_ms: f64,
+    pub offset_max_ms: f64,
     pub confidence_sum: f64,
     pub confidence_average: f64,
 }
@@ -117,9 +161,30 @@ impl CoarseConsistencyBand {
             point_ids: points.iter().map(|p| p.id).collect(),
             job_ids,
             offset_span_ms: max_offset - min_offset,
+            offset_min_ms: min_offset,
+            offset_max_ms: max_offset,
             confidence_sum,
             confidence_average: confidence_sum / points.len() as f64,
         }
+    }
+
+    /// Whether `offset_ms` would have belonged to this band, had it been allowed
+    /// to vote — i.e. admitting it keeps the band within `CROSS_VIDEO_SUPPORT_MS`,
+    /// which is the band's own membership rule in `coarse_consistency_bands`.
+    ///
+    /// This cannot contradict the main path. Suppose a *voting* point p of a
+    /// yellow video passed this test. Then the window spanning the band plus p is
+    /// itself a legal band, it holds every point the winning band held, and it
+    /// covers one job more (p's — which, being yellow, is absent from the
+    /// winner). `rank_cmp` orders on job count first, so that window would have
+    /// outranked the winner and p would already have been confirmed. So nothing
+    /// rejected for `insufficient_cross_video_support` can come back in here —
+    /// only points that never got to vote at all: conf-suppressed by the arbiter,
+    /// or dropped by the within-video subset search.
+    fn accepts_offset(&self, offset_ms: f64) -> bool {
+        let lo = self.offset_min_ms.min(offset_ms);
+        let hi = self.offset_max_ms.max(offset_ms);
+        hi - lo <= CROSS_VIDEO_SUPPORT_MS
     }
 
     fn rank_cmp(&self, other: &Self) -> Ordering {
@@ -289,6 +354,9 @@ fn confirm_batch_sync_points_internal(
         eligible_job_count
     };
     let required_band_job_count = required_batch_support_jobs(confirmation_job_count);
+    let band_supported = best_band
+        .as_ref()
+        .is_some_and(|band| band.job_ids.len() >= required_band_job_count);
     let best_band_points = best_band
         .as_ref()
         .filter(|band| band.job_ids.len() >= required_band_job_count)
@@ -337,6 +405,8 @@ fn confirm_batch_sync_points_internal(
         });
     }
 
+    rescue_yellow_videos(&mut videos, best_band.as_ref(), band_supported);
+
     let green_count = videos
         .iter()
         .filter(|video| video.color == BatchSyncVideoColor::Green)
@@ -354,6 +424,113 @@ fn confirm_batch_sync_points_internal(
         result.include_missing_jobs(expected_job_ids);
     }
     result
+}
+
+/// Yellow-only consensus rescue (change batch-sync-consensus-rescue).
+///
+/// A yellow video is not a neutral outcome: `render_queue` clears the offsets in
+/// its `.gyroflow` (`batch-sync-write T2 yellow`) and `GyroSource` then applies
+/// 0 ms, so a clip whose true offset is ~-1.5 s is stabilised against gyro that
+/// is a second and a half out. That is strictly worse than accepting an offset
+/// the rest of the batch already agrees with.
+///
+/// So once the batch has settled — band chosen, every green/yellow verdict made
+/// on exactly the pre-change inputs — take one more look at the videos that came
+/// out yellow. A point they discarded is reinstated only if the arbiter had
+/// corroborated it (conf-suppressed into the ride-along window, not flat-dropped),
+/// it clears the rank gate, and the offset band the batch already agreed on would
+/// have accepted it (`CoarseConsistencyBand::accepts_offset`). A false peak lands
+/// seconds away from that band and stays discarded.
+///
+/// This is the whole reason the pass is safe: it reads only `Yellow` videos and
+/// never touches `best_band`, the green set, or the eligible-job count. A green
+/// video cannot be demoted, and the band cannot be re-chosen around a rescued
+/// point. Yellow → Green is the only transition it can produce.
+fn rescue_yellow_videos(
+    videos: &mut [BatchSyncVideoState],
+    best_band: Option<&CoarseConsistencyBand>,
+    band_supported: bool,
+) {
+    if !band_supported || !yellow_rescue_enabled() {
+        return;
+    }
+    let Some(band) = best_band else {
+        return;
+    };
+
+    for video in videos.iter_mut() {
+        // Only videos the batch failed to confirm. Never re-open a green one.
+        if video.color != BatchSyncVideoColor::Yellow {
+            continue;
+        }
+
+        let eligible = video
+            .discarded_points
+            .iter()
+            .filter(|point| {
+                // Only points the arbiter itself corroborated. `low_confidence`
+                // plus a confidence at or above the ride-along floor is exactly
+                // the window the both-weak agree-rescue emits into, and that
+                // corroboration — posterior and fusion landing within a frame of
+                // each other — is the signal doing the real work here.
+                //
+                // Deliberately NOT extended to points that cleared the voting
+                // floor and were then dropped by the within-video subset search.
+                // Those are the ones a false-peak fusion offset produces, and the
+                // band is not a safe enough oracle to readmit them: its own edges
+                // can BE false peaks (a fusion-win offset carries a confidence
+                // well above the floor, so a wrong one gets confirmed and widens
+                // the band it would later be judged against). Rescuing them needs
+                // the false-peak problem fixed first; until then they stay yellow,
+                // which is at least honest.
+                point.diagnostic.low_confidence
+                    && is_point_numeric_valid(point)
+                    && point.rank >= MIN_BATCH_SYNC_POINT_RANK
+                    && point.confidence >= RIDE_ALONG_CONFIDENCE_FLOOR
+                    && band.accepts_offset(point.offset_ms)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        if eligible.is_empty() {
+            continue;
+        }
+
+        // Keep the rescued points mutually consistent, same rule the main path
+        // uses within a video — two offsets that disagree would make
+        // `offset_at_timestamp` interpolate across the clip.
+        let keep = largest_video_consistent_subset_ids(&eligible)
+            .into_iter()
+            .collect::<HashSet<_>>();
+        if keep.is_empty() {
+            continue;
+        }
+
+        let mut still_discarded = Vec::with_capacity(video.discarded_points.len());
+        for mut point in std::mem::take(&mut video.discarded_points) {
+            if keep.contains(&point.id) {
+                point.diagnostic.rescued_by_consensus = true;
+                ::log::debug!(
+                    target: "sync",
+                    "[batch_sync] rescued job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} band=[{:.1},{:.1}]",
+                    point.job_id,
+                    point.timestamp_ms,
+                    point.offset_ms,
+                    point.confidence,
+                    point.rank,
+                    band.offset_min_ms,
+                    band.offset_max_ms
+                );
+                video.confirmed_points.push(point);
+            } else {
+                still_discarded.push(point);
+            }
+        }
+        video.discarded_points = still_discarded;
+
+        if !video.confirmed_points.is_empty() {
+            video.color = BatchSyncVideoColor::Green;
+        }
+    }
 }
 
 fn batch_status_for_counts(green_count: usize, total: usize) -> BatchSyncBatchStatus {
@@ -792,5 +969,211 @@ mod tests {
         assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
         assert_eq!(result.videos.len(), 3);
         assert!(result.videos.iter().all(|video| video.color == BatchSyncVideoColor::Yellow));
+    }
+
+    // ── yellow-only consensus rescue (change batch-sync-consensus-rescue) ──
+    //
+    // Shape of the regression these lock in: a batch of clips sharing one
+    // external gyro file all sync to about the same offset, but on a few of them
+    // the arbiter's both-weak branch fires and the point is emitted at the
+    // agree-rescue confidence instead of being confirmed. Those clips used to go
+    // yellow, get their offsets cleared, and stabilise against gyro 1.5 s out.
+
+    fn ride_along(job_id: u32, timestamp_ms: f64, offset_ms: f64) -> BatchSyncPointCandidate {
+        // What the arbiter emits from both-weak when posterior and fusion agree
+        // to within a frame: below MIN_BATCH_SYNC_POINT_CONFIDENCE (never votes)
+        // but at or above RIDE_ALONG_CONFIDENCE_FLOOR (rescuable).
+        point(job_id, timestamp_ms, offset_ms, 0.12)
+    }
+
+    #[test]
+    fn ride_along_conf_sits_between_the_drop_conf_and_the_voting_floor() {
+        // The whole safety argument rests on this ordering. If someone moves one
+        // of these constants, the rescue either stops working (floor above the
+        // arbiter's 0.12) or starts letting flat-dropped points in (floor at 0).
+        assert!(RIDE_ALONG_CONFIDENCE_FLOOR > 0.0);
+        assert!(RIDE_ALONG_CONFIDENCE_FLOOR <= 0.12);
+        assert!(0.12 < MIN_BATCH_SYNC_POINT_CONFIDENCE);
+    }
+
+    #[test]
+    fn ride_along_point_inside_the_consensus_band_rescues_a_yellow_video() {
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, -1510.0, 0.9),
+                point(3, 1000.0, -1505.0, 0.9),
+                // Job 4's only point was conf-suppressed by the arbiter, but it
+                // agrees with what the other three found.
+                ride_along(4, 1000.0, -1495.0),
+            ],
+            [1, 2, 3, 4],
+        );
+
+        let video = result.video_state(4).unwrap();
+        assert_eq!(video.color, BatchSyncVideoColor::Green);
+        assert_eq!(video.confirmed_points.len(), 1);
+        assert!(video.confirmed_points[0].diagnostic.rescued_by_consensus);
+        // The original rejection reason is preserved for the log.
+        assert!(video.confirmed_points[0].diagnostic.low_confidence);
+    }
+
+    #[test]
+    fn ride_along_point_outside_the_consensus_band_stays_discarded() {
+        // A false peak: the point is self-consistent but nowhere near what the
+        // rest of the batch agreed on. It must not be laundered into green.
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, -1510.0, 0.9),
+                point(3, 1000.0, -1505.0, 0.9),
+                ride_along(4, 1000.0, 3200.0),
+            ],
+            [1, 2, 3, 4],
+        );
+
+        let video = result.video_state(4).unwrap();
+        assert_eq!(video.color, BatchSyncVideoColor::Yellow);
+        assert!(video.confirmed_points.is_empty());
+        assert!(!video.discarded_points[0].diagnostic.rescued_by_consensus);
+    }
+
+    #[test]
+    fn flat_dropped_point_is_never_rescued_even_inside_the_band() {
+        // conf 0.0 is what the arbiter emits when posterior and fusion genuinely
+        // disagree — no corroboration, so landing in the band is not enough.
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, -1510.0, 0.9),
+                point(3, 1000.0, -1505.0, 0.9),
+                point(4, 1000.0, -1495.0, 0.0),
+            ],
+            [1, 2, 3, 4],
+        );
+
+        assert_eq!(result.video_state(4).unwrap().color, BatchSyncVideoColor::Yellow);
+    }
+
+    #[test]
+    fn low_rank_point_is_never_rescued_even_inside_the_band() {
+        let mut low_rank = ride_along(4, 1000.0, -1495.0);
+        low_rank.rank = MIN_BATCH_SYNC_POINT_RANK - 1.0;
+
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, -1510.0, 0.9),
+                point(3, 1000.0, -1505.0, 0.9),
+                low_rank,
+            ],
+            [1, 2, 3, 4],
+        );
+
+        assert_eq!(result.video_state(4).unwrap().color, BatchSyncVideoColor::Yellow);
+    }
+
+    #[test]
+    fn rescue_never_demotes_a_green_video_or_moves_the_band() {
+        // The Pareto property, stated directly: adding rescuable points to a
+        // batch may only add greens. Every video green without them stays green
+        // with them, keeping the same confirmed points.
+        let baseline_points = vec![
+            point(1, 1000.0, -1500.0, 0.9),
+            point(2, 1000.0, -1510.0, 0.9),
+            point(3, 1000.0, -1505.0, 0.9),
+        ];
+        let baseline = confirm_batch_sync_points_for_jobs(baseline_points.clone(), [1, 2, 3, 4]);
+
+        let mut augmented_points = baseline_points;
+        augmented_points.push(ride_along(4, 1000.0, -1495.0));
+        let augmented = confirm_batch_sync_points_for_jobs(augmented_points, [1, 2, 3, 4]);
+
+        for job_id in [1, 2, 3] {
+            let before = baseline.video_state(job_id).unwrap();
+            let after = augmented.video_state(job_id).unwrap();
+            assert_eq!(before.color, BatchSyncVideoColor::Green);
+            assert_eq!(after.color, BatchSyncVideoColor::Green, "job {job_id} was demoted");
+            assert_eq!(
+                before.confirmed_points, after.confirmed_points,
+                "job {job_id} lost or changed a confirmed point"
+            );
+        }
+        // The band itself must be chosen from the voting points alone.
+        assert_eq!(
+            baseline.best_band.as_ref().map(|b| b.point_ids.len()),
+            augmented.best_band.as_ref().map(|b| b.point_ids.len())
+        );
+        assert_eq!(baseline.video_state(4).unwrap().color, BatchSyncVideoColor::Yellow);
+        assert_eq!(augmented.video_state(4).unwrap().color, BatchSyncVideoColor::Green);
+    }
+
+    #[test]
+    fn rescue_does_not_run_when_the_band_lacks_support() {
+        // Two jobs, each on its own offset: no band reaches the required job
+        // count, so the batch is AllYellow. A ride-along point must not conjure
+        // a consensus that does not exist.
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, 8000.0, 0.9),
+                ride_along(3, 1000.0, -1495.0),
+            ],
+            [1, 2, 3],
+        );
+
+        assert_eq!(result.video_state(3).unwrap().color, BatchSyncVideoColor::Yellow);
+    }
+
+    #[test]
+    fn point_dropped_by_the_within_video_subset_is_not_rescued() {
+        // Job 4 has a false-peak offset that beat its good offset in the subset
+        // search (equal confidence, lower id wins), so the good one was discarded
+        // as `outside_video_subset` and the false peak then failed cross-video
+        // support. Tempting to reinstate the good one — but a point that cleared
+        // the voting floor did so on a confidence a false peak also earns, and
+        // the band we would judge it against can itself be widened by one. Left
+        // yellow on purpose; see the note in `rescue_yellow_videos`.
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -1500.0, 0.9),
+                point(2, 1000.0, -1510.0, 0.9),
+                point(3, 1000.0, -1505.0, 0.9),
+                point(4, 500.0, -9000.0, 0.5),
+                point(4, 4000.0, -1495.0, 0.5),
+            ],
+            [1, 2, 3, 4],
+        );
+
+        let video = result.video_state(4).unwrap();
+        assert_eq!(video.color, BatchSyncVideoColor::Yellow);
+        assert!(video.confirmed_points.is_empty());
+        assert!(
+            video
+                .discarded_points
+                .iter()
+                .all(|point| !point.diagnostic.rescued_by_consensus)
+        );
+    }
+
+    #[test]
+    fn rescued_points_within_a_video_stay_mutually_consistent() {
+        // Both land in the band but disagree with each other by far more than the
+        // dynamic tolerance; confirming both would make offset_at_timestamp
+        // interpolate garbage across the clip. Only the consistent subset is kept.
+        let result = confirm_batch_sync_points_for_jobs(
+            vec![
+                point(1, 1000.0, -2000.0, 0.9),
+                point(2, 1000.0, -1000.0, 0.9),
+                point(3, 1000.0, -1500.0, 0.9),
+                ride_along(4, 1000.0, -1900.0),
+                ride_along(4, 2000.0, -1100.0),
+            ],
+            [1, 2, 3, 4],
+        );
+
+        let video = result.video_state(4).unwrap();
+        assert_eq!(video.color, BatchSyncVideoColor::Green);
+        assert_eq!(video.confirmed_points.len(), 1);
     }
 }

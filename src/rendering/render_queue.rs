@@ -1830,13 +1830,14 @@ impl RenderQueue {
 
             for point in &video.confirmed_points {
                 ::log::debug!(
-                    "[batch_sync] confirmed job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} repair_round={}",
+                    "[batch_sync] confirmed job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} repair_round={} rescued_by_consensus={}",
                     job_id,
                     point.timestamp_ms,
                     point.offset_ms,
                     point.confidence,
                     point.rank,
-                    point.repair_round
+                    point.repair_round,
+                    point.diagnostic.rescued_by_consensus
                 );
             }
             for point in &video.discarded_points {

@@ -709,6 +709,39 @@ pub(crate) fn arb_delta_ms() -> f64 {
     })
 }
 
+/// Arbiter both-weak agree-rescue on/off (`GYROFLOW_SYNC_ARB_AGREE_RESCUE`,
+/// default on). When the both-weak branch fires but posterior and fusion landed
+/// within the Δ trigger of each other, the segment is emitted at
+/// `ARB_AGREE_CONF` instead of `ARB_DROP_CONF`. That value sits below every
+/// downstream *acceptance* filter, so no current decision changes; it only lets
+/// the batch cross-video consensus reconsider a point that would otherwise be
+/// gone for good (see `sync_repair::rescue_yellow_videos`). `0|false|no|off`
+/// restores the flat `ARB_DROP_CONF = 0.0`, byte-identical to pre-change.
+/// OnceLock-cached.
+pub(crate) fn arb_agree_rescue_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_SYNC_ARB_AGREE_RESCUE").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_SYNC_ARB_AGREE_RESCUE={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "arb_agree_rescue resolved enabled={} source={}", v, source);
+        v
+    })
+}
+
 /// M1 axis-quality weighting on/off (`GYROFLOW_SYNC_AXIS_WEIGHT`, default on).
 /// `0` reverts every aggregation point (pearson_at, Pearson scan, NCC) to the
 /// legacy equal-weight mean. OnceLock-cached; first resolve logs to
@@ -2223,12 +2256,12 @@ impl FindOffsetsRssync<'_> {
                 // clip 9 Δ8ms) is exactly the half-frame precision error we must
                 // fix, so the choice is purely ci95-tiered. (Offline sim
                 // 2026-06-13: Δ-gate fixed 13/16, ci95-only 15/16; design D2 rev.)
-                let _one_frame_ms = if self.scaled_fps.is_finite() && self.scaled_fps > 0.0 {
+                let one_frame_ms = if self.scaled_fps.is_finite() && self.scaled_fps > 0.0 {
                     1000.0 / self.scaled_fps
                 } else {
                     0.0
                 };
-                let _delta_trigger = arb_delta_ms().max(_one_frame_ms);
+                let delta_trigger = arb_delta_ms().max(one_frame_ms);
                 let delta = (out_ms - fusion_ms).abs();
                 let ci95_width = (post.ci95.1 - post.ci95.0).abs();
                 let basin = self.fusion_basin.get(w.seg).copied().flatten();
@@ -2302,14 +2335,43 @@ impl FindOffsetsRssync<'_> {
                         // conf-suppress below the downstream 0.4 filter so the
                         // point is dropped (don't bake a wrong value; clip 16).
                         const ARB_DROP_CONF: f64 = 0.0;
+                        // Agree-rescue exception. When either estimator is on a
+                        // false peak the two disagree by seconds, so landing
+                        // within one frame of each other is not a coincidence —
+                        // it is the one piece of corroboration a both-weak
+                        // segment has. Emitting a flat 0.0 there throws away a
+                        // usable offset AND, in batch mode, cascades: the clip
+                        // is confirmed yellow, its .gyroflow offsets are cleared
+                        // (`batch-sync-write T2 yellow`) and `offset_at_timestamp`
+                        // then applies 0 ms — a far larger error than the offset
+                        // we declined to trust.
+                        //
+                        // So emit ARB_AGREE_CONF instead: BELOW every downstream
+                        // acceptance filter (single-video 0.4 in controller.rs,
+                        // batch band-selection floor 0.15 in sync_repair) so no
+                        // current decision moves, but ABOVE the batch ride-along
+                        // floor (0.10) so cross-video consensus may still rescue
+                        // a clip that would otherwise carry no offset at all.
+                        //
+                        // NOT the Δ-gate design D2 removed: that one short-
+                        // circuited BEFORE the tiering and stole clip 1/9 from
+                        // fusion-win. This fires only after fusion-strong has
+                        // been ruled out, so fusion-win stays unreachable.
+                        const ARB_AGREE_CONF: f64 = 0.12;
+                        let agree = arb_agree_rescue_enabled() && delta <= delta_trigger;
+                        let (conf_out, chose) = if agree {
+                            (ARB_AGREE_CONF, "agree-rescue")
+                        } else {
+                            (ARB_DROP_CONF, "drop")
+                        };
                         log::info!(
                             target: "sync",
-                            "[arbiter] seg {}: delta={:.1}ms ci95={:.1}ms chose=drop fusion={:.1}ms r={} sharp={} (branch=both-weak)",
-                            w.seg, delta, ci95_width, fusion_ms,
+                            "[arbiter] seg {}: delta={:.1}ms ci95={:.1}ms chose={} fusion={:.1}ms r={} sharp={} (branch=both-weak)",
+                            w.seg, delta, ci95_width, chose, fusion_ms,
                             basin.map(|b| format!("{:.3}", b.pearson_r)).unwrap_or_else(|| "n/a".into()),
                             basin.map(|b| format!("{:.3}", b.cost_sharpness_ratio)).unwrap_or_else(|| "n/a".into())
                         );
-                        offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, ARB_DROP_CONF);
+                        offsets[w.seg] = (offsets[w.seg].0, out_ms, out_cost, conf_out);
                     } else {
                         // mid-keep: posterior mid-ci95 AND fusion weak → keep the
                         // posterior (conservative; preserves good escalated
