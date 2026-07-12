@@ -1156,6 +1156,262 @@ mod tests {
         );
     }
 
+    // ── field corpus: user report 20260712-226ab84d ────────────────────────────
+    //
+    // The batch that motivated this change: 90 Canon clips at 60fps sharing one
+    // external SenseFlow gyro file, of which 8 came out yellow ("10% of the
+    // videos are unconfirmed and have no stabilisation"). Every candidate point
+    // the app produced, with the arbiter branch and Δ it was decided under, is
+    // replayed here through the real confirmation path.
+    //
+    // Ground truth is each clip's own `init_offset_ms` from batch_match — a
+    // wall-clock match on file timestamps, computed without touching optical
+    // flow, so it is independent of everything the sync pipeline does. Across
+    // all 90 clips it spans -1734..-1500 ms.
+    //
+    // Columns: job ts offset cost conf rank arb_branch arb_delta wall_clock
+
+    const FIELD_CORPUS: &str = include_str!("testdata/batch_sync_20260712_226ab84d.txt");
+
+    /// What `rs_sync`'s both-weak agree-rescue exit emits. Kept in sync with
+    /// `ARB_AGREE_CONF` there; the replay applies the same rule the arbiter does.
+    const CORPUS_ARB_AGREE_CONF: f64 = 0.12;
+    const CORPUS_ARB_DELTA_GATE: f64 = 30.0;
+
+    struct CorpusRow {
+        candidate: BatchSyncPointCandidate,
+        branch: String,
+        delta: f64,
+        wall_clock_ms: f64,
+    }
+
+    fn field_corpus() -> Vec<CorpusRow> {
+        FIELD_CORPUS
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| {
+                let f = line.split_whitespace().collect::<Vec<_>>();
+                assert_eq!(f.len(), 9, "malformed corpus row: {line}");
+                CorpusRow {
+                    candidate: BatchSyncPointCandidate {
+                        job_id: f[0].parse().unwrap(),
+                        timestamp_ms: f[1].parse().unwrap(),
+                        offset_ms: f[2].parse().unwrap(),
+                        cost: f[3].parse().unwrap(),
+                        confidence: f[4].parse().unwrap(),
+                        rank: f[5].parse().unwrap(),
+                        repair_round: 0,
+                        diagnostic: BatchSyncPointDiagnostic::default(),
+                    },
+                    branch: f[6].to_string(),
+                    delta: f[7].parse().unwrap(),
+                    wall_clock_ms: f[8].parse().unwrap(),
+                }
+            })
+            .collect()
+    }
+
+    /// The batch as the app confirmed it before this change: every point at the
+    /// confidence the arbiter actually emitted, flat 0.0 included.
+    fn corpus_before() -> Vec<BatchSyncPointCandidate> {
+        field_corpus().into_iter().map(|row| row.candidate).collect()
+    }
+
+    /// The same batch with the both-weak agree-rescue exit applied — the only
+    /// thing this change alters upstream of confirmation.
+    fn corpus_after() -> Vec<BatchSyncPointCandidate> {
+        field_corpus()
+            .into_iter()
+            .map(|row| {
+                let mut candidate = row.candidate;
+                if row.branch == "both-weak" && row.delta <= CORPUS_ARB_DELTA_GATE {
+                    candidate.confidence = CORPUS_ARB_AGREE_CONF;
+                }
+                candidate
+            })
+            .collect()
+    }
+
+    fn corpus_job_ids() -> Vec<u32> {
+        let mut ids = field_corpus()
+            .iter()
+            .map(|row| row.candidate.job_id)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    #[test]
+    fn field_corpus_reproduces_the_reported_yellow_clips() {
+        // Sanity: the replay must land on the batch the user actually saw, or the
+        // conclusions drawn from it are about a different batch.
+        let result = confirm_batch_sync_points_for_jobs(corpus_before(), corpus_job_ids());
+
+        let yellow = result
+            .videos
+            .iter()
+            .filter(|video| video.color == BatchSyncVideoColor::Yellow)
+            .map(|video| video.job_id)
+            .collect::<BTreeSet<_>>();
+
+        // The eight clips named in the report's status writes.
+        for job_id in [
+            1170677632, 1269400795, 1338297863, 1340252728, 1803039359, 1908103841, 2067806936,
+            2075791166,
+        ] {
+            assert!(yellow.contains(&job_id), "job {job_id} was yellow in the field log");
+        }
+    }
+
+    #[test]
+    fn field_corpus_rescue_adds_greens_and_demotes_none() {
+        let job_ids = corpus_job_ids();
+        let before = confirm_batch_sync_points_for_jobs(corpus_before(), job_ids.clone());
+        let after = confirm_batch_sync_points_for_jobs(corpus_after(), job_ids.clone());
+
+        let green_of = |result: &BatchSyncConfirmationResult| {
+            result
+                .videos
+                .iter()
+                .filter(|video| video.color == BatchSyncVideoColor::Green)
+                .map(|video| video.job_id)
+                .collect::<BTreeSet<_>>()
+        };
+        let green_before = green_of(&before);
+        let green_after = green_of(&after);
+
+        // The Pareto property, on real data rather than a hand-built fixture.
+        assert!(
+            green_before.is_subset(&green_after),
+            "clips demoted: {:?}",
+            green_before.difference(&green_after).collect::<Vec<_>>()
+        );
+        for job_id in &green_before {
+            assert_eq!(
+                before.video_state(*job_id).unwrap().confirmed_points,
+                after.video_state(*job_id).unwrap().confirmed_points,
+                "job {job_id} kept green but its confirmed points changed"
+            );
+        }
+        // The consensus band is chosen from the voting points alone, so the
+        // ride-along points must not have moved it.
+        assert_eq!(
+            before.best_band.as_ref().map(|b| b.point_ids.clone()),
+            after.best_band.as_ref().map(|b| b.point_ids.clone())
+        );
+
+        // Exact field outcome, so a future change to the arbiter or to confirmation
+        // that regresses this batch fails here rather than in a user's export.
+        assert_eq!(green_before.len(), 75);
+        assert_eq!(green_after.len(), 80);
+
+        let rescued = green_after
+            .difference(&green_before)
+            .copied()
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            rescued,
+            BTreeSet::from([382131327, 845898114, 1269400795, 1803039359, 2075791166])
+        );
+        // Three of the eight clips the user actually saw as yellow. Of the other
+        // five, 1340252728 / 1908103841 / 1338297863 are genuinely mis-synced and
+        // must stay yellow; 1170677632 and 2067806936 do hold a good offset, but
+        // one the arbiter never corroborated, so we decline to rescue them
+        // (design D5 — the consensus band is not a safe enough oracle for those).
+        for job_id in [1269400795, 1803039359, 2075791166] {
+            assert!(rescued.contains(&job_id));
+        }
+    }
+
+    #[test]
+    fn field_corpus_rescued_points_agree_with_the_wall_clock() {
+        // The one thing that would make this change harmful: turning an honest
+        // yellow into a confidently wrong green. Every point the rescue reinstates
+        // is checked against that clip's own optical-flow-independent wall-clock
+        // match. A false peak on this batch sits 1.5-4.7 s away from it.
+        const GROSS_ERROR_MS: f64 = 500.0;
+
+        let wall_clock = field_corpus()
+            .into_iter()
+            .map(|row| (row.candidate.job_id, row.wall_clock_ms))
+            .collect::<BTreeMap<_, _>>();
+
+        let after = confirm_batch_sync_points_for_jobs(corpus_after(), corpus_job_ids());
+
+        let mut rescued = 0;
+        for video in &after.videos {
+            for point in &video.confirmed_points {
+                if !point.diagnostic.rescued_by_consensus {
+                    continue;
+                }
+                rescued += 1;
+                let truth = wall_clock[&video.job_id];
+                let error = (point.offset_ms - truth).abs();
+                assert!(
+                    error < GROSS_ERROR_MS,
+                    "job {} rescued to {:.1}ms but wall clock says {:.1}ms ({:.1}ms off)",
+                    video.job_id,
+                    point.offset_ms,
+                    truth,
+                    error
+                );
+            }
+        }
+        assert!(rescued > 0, "nothing was rescued, so nothing was verified");
+    }
+
+    #[test]
+    fn field_corpus_false_peaks_stay_yellow() {
+        // The clips whose sync genuinely failed: their best point is 1.0-4.7 s
+        // from the wall clock. They must keep saying so.
+        let after = confirm_batch_sync_points_for_jobs(corpus_after(), corpus_job_ids());
+
+        for job_id in [1340252728, 1908103841, 1338297863] {
+            assert_eq!(
+                after.video_state(job_id).unwrap().color,
+                BatchSyncVideoColor::Yellow,
+                "job {job_id} is a false peak and must not be laundered into green"
+            );
+        }
+    }
+
+    #[test]
+    fn field_corpus_documents_the_fusion_win_false_peak_still_confirming_wrong_clips() {
+        // KNOWN BAD, and not what this change fixes — recorded so it is not
+        // mistaken for a regression and so whoever fixes it sees this test go red.
+        //
+        // The arbiter's fusion-win tier hands a strong-basin fusion offset
+        // ARB_FUSION_WIN_CONF = 0.5, which clears both the batch voting floor and
+        // the single-video 0.4 filter. On this batch 13% of fusion-win offsets are
+        // false peaks, and a false peak's Pearson r is indistinguishable from a
+        // true one (median 0.620 vs 0.664), so the r gate cannot separate them.
+        //
+        // Clip 357456670 is one: it syncs to -60.8 ms when its wall clock says
+        // -1541 ms, and it is confirmed GREEN — before this change and after it.
+        // Worse, being confirmed it stretches the consensus band all the way out
+        // to -61 ms, which is precisely why the rescue pass refuses to treat that
+        // band as an oracle on its own (design D5).
+        let job_ids = corpus_job_ids();
+        let before = confirm_batch_sync_points_for_jobs(corpus_before(), job_ids.clone());
+        let after = confirm_batch_sync_points_for_jobs(corpus_after(), job_ids);
+
+        for result in [&before, &after] {
+            let video = result.video_state(357456670).unwrap();
+            assert_eq!(
+                video.color,
+                BatchSyncVideoColor::Green,
+                "fusion-win false peak is (still) confirmed — if this now fails, \
+                 the false-peak bug was fixed and this test should be updated"
+            );
+            let band = result.best_band.as_ref().unwrap();
+            assert!(
+                band.offset_max_ms > -100.0,
+                "the false peak is (still) stretching the consensus band"
+            );
+        }
+    }
+
     #[test]
     fn rescued_points_within_a_video_stay_mutually_consistent() {
         // Both land in the band but disagree with each other by far more than the
