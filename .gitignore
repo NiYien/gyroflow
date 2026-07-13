@@ -25,6 +25,7 @@ distribution/data/lens/
 .qmlls.ini
 /.claude
 CLAUDE.md
+CLAUDE-sync.md
 /openspec
 /.github/skills
 /.github/prompts
