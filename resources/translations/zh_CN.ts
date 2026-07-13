@@ -2747,6 +2747,13 @@ Do you want to submit your profile?</source>
         <translation>视频编辑器插件</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>无法安装插件，插件文件正在被占用。
+如果 %1 正在运行，请先将其关闭，然后再点击安装。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>（每日构建）</translation>

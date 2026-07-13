@@ -2747,6 +2747,13 @@ Vil du indsende din profil?</translation>
         <translation>Video editor plugins</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Kan ikke installere plugin&apos;et, fordi plugin-filen er i brug.
+Hvis %1 kører i øjeblikket, skal du lukke det og derefter klikke på installer igen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

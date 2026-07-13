@@ -2747,6 +2747,13 @@ Do you want to submit your profile?</source>
         <translation>Видео редактор плагинов</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Не удаётся установить плагин, так как файл плагина используется.
+Если %1 сейчас запущен, закройте его и затем снова нажмите установить.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

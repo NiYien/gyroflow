@@ -2622,6 +2622,12 @@ Do you want to submit your profile?</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation type="unfinished"></translation>

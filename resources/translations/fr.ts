@@ -2746,6 +2746,13 @@ Voulez-vous soumettre votre profil ?</translation>
         <translation>Plugins d&apos;édition vidéo</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Impossible d&apos;installer le plugin car le fichier du plugin est en cours d&apos;utilisation.
+Si %1 est en cours d&apos;exécution, fermez-le puis cliquez à nouveau sur installer.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

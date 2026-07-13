@@ -2743,6 +2743,13 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <translation>Video editörü eklentileri</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Eklenti dosyası kullanımda olduğu için eklenti yüklenemiyor.
+%1 şu anda çalışıyorsa, kapatın ve ardından yükle&apos;ye tekrar tıklayın.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

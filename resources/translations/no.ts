@@ -2747,6 +2747,13 @@ Vil du sende inn profilen din?</translation>
         <translation>Programtillegg for videoredigering</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Kan ikke installere programtillegget fordi programtilleggsfilen er i bruk.
+Hvis %1 kjører, lukk det og klikk deretter på installer igjen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

@@ -2748,6 +2748,13 @@ Do you want to submit your profile?</source>
         <translation>ビデオエディタのプラグイン</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>プラグインファイルが使用中のため、プラグインをインストールできません。
+%1 が実行中の場合は、終了してからもう一度インストールをクリックしてください。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

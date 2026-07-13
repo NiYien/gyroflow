@@ -2746,6 +2746,13 @@ Você deseja enviar seu perfil?</translation>
         <translation>Plug-ins de edição de vídeo</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Não é possível instalar o plugin porque o arquivo do plugin está em uso.
+Se o %1 estiver em execução, feche-o e depois clique em instalar novamente.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

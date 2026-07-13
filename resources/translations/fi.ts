@@ -2746,6 +2746,13 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Videonmuokkauslaajennukset</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Liitännäistä ei voi asentaa, koska liitännäistiedosto on käytössä.
+Jos %1 on parhaillaan käynnissä, sulje se ja napsauta sitten asennusta uudelleen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

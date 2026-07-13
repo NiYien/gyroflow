@@ -2747,6 +2747,13 @@ Do you want to submit your profile?</source>
         <translation>Προσθήκες επεξεργασίας βίντεο</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Δεν είναι δυνατή η εγκατάσταση του πρόσθετου επειδή το αρχείο του πρόσθετου χρησιμοποιείται.
+Εάν το %1 εκτελείται αυτήν τη στιγμή, κλείστε το και μετά κάντε ξανά κλικ στην εγκατάσταση.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

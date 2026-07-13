@@ -2747,6 +2747,13 @@ Chceš nahrať tvoj profil?</translation>
         <translation>Pluginy pre video editor</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>Zásuvný modul nie je možné nainštalovať, pretože súbor zásuvného modulu sa práve používa.
+Ak je %1 práve spustený, zatvorte ho a potom znova kliknite na inštaláciu.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

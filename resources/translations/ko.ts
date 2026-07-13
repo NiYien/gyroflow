@@ -2746,6 +2746,13 @@ Do you want to submit your profile?</source>
         <translation>영상 편집 소프트웨어 플러그인</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>플러그인 파일이 사용 중이어서 플러그인을 설치할 수 없습니다.
+%1이(가) 실행 중이라면 종료한 후 다시 설치를 클릭하세요.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>(nightly)</translation>

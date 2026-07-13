@@ -2747,6 +2747,13 @@ Do you want to submit your profile?</source>
         <translation>影片編輯器外掛</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <source>Unable to install the plugin because the plugin file is in use.
+If %1 is currently running, please close it and then click install again.</source>
+        <translation>無法安裝外掛，外掛檔案正在被佔用。
+如果 %1 正在執行，請先將其關閉，然後再點擊安裝。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="58"/>
         <source>(nightly)</source>
         <translation>（每日建置）</translation>
