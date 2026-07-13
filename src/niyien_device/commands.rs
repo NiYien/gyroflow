@@ -106,9 +106,14 @@ fn parse_version_payload(data: &[u8], require_serial: bool) -> Option<VersionInf
     let hard_end = data[hard_start..].iter().position(|byte| *byte == 0)? + hard_start;
     let serial_start = hard_end + 1;
 
+    // Some firmware builds emit a fixed-length payload, so a longer hard
+    // version string (e.g. "V1.2.3B") truncates the serial field below 12
+    // bytes. Accept whatever is present and zero-pad instead of dropping
+    // the whole frame.
     let mut serial_number = [0u8; 12];
-    if data.len() >= serial_start + 12 {
-        serial_number.copy_from_slice(&data[serial_start..serial_start + 12]);
+    let available = data.len().saturating_sub(serial_start).min(12);
+    if available > 0 {
+        serial_number[..available].copy_from_slice(&data[serial_start..serial_start + available]);
     } else if require_serial {
         return None;
     }
@@ -206,6 +211,44 @@ mod tests {
                 serial_number: *b"SN0000000001",
             }))
         );
+    }
+
+    #[test]
+    fn parses_version_with_truncated_serial() {
+        // Exact frame captured from a real "V1.2.3B" unit on 2026-07-13: the
+        // fixed 27-byte payload leaves only 11 serial bytes after the longer
+        // hard version string. The parser must zero-pad instead of rejecting.
+        let frame = Frame {
+            cmd: MSG_CMD_VERSION,
+            data: vec![
+                0x01, b'V', b'1', b'.', b'2', b'.', b'8', 0x00, b'V', b'1', b'.', b'2', b'.',
+                b'3', b'B', 0x00, 0x39, 0xE3, 0x39, 0xE3, 0x0C, 0xBC, 0x3B, 0x9A, 0xCD, 0xAB,
+                0x62,
+            ],
+        };
+
+        let mut serial = [0u8; 12];
+        serial[..11].copy_from_slice(&[
+            0x39, 0xE3, 0x39, 0xE3, 0x0C, 0xBC, 0x3B, 0x9A, 0xCD, 0xAB, 0x62,
+        ]);
+        assert_eq!(
+            parse_response(&frame),
+            Some(Response::Version(VersionInfo {
+                product_id: 0x01,
+                soft_version: "V1.2.8".into(),
+                hard_version: "V1.2.3B".into(),
+                serial_number: serial,
+            }))
+        );
+    }
+
+    #[test]
+    fn rejects_version_with_no_serial_bytes() {
+        let frame = Frame {
+            cmd: MSG_CMD_VERSION,
+            data: vec![0xA1, b'V', b'1', 0x00, b'H', b'W', 0x00],
+        };
+        assert_eq!(parse_response(&frame), None);
     }
 
     #[test]

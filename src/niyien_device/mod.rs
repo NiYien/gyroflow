@@ -38,6 +38,16 @@ use update_checker::FirmwareUpdateInfo;
 const SERIAL_LOOP_TICK: Duration = Duration::from_millis(50);
 const NETWORK_LOOP_TICK: Duration = Duration::from_millis(100);
 const A1_DEVICE_PRODUCT_ID: u8 = 0xA1;
+// The device firmware may leave its CDC TX dead for the first serial session
+// opened after a powered USB re-enumeration; closing and reopening the port
+// recovers it. Probe the version periodically and abandon the session after
+// HANDSHAKE_MAX_PROBES unanswered probes so the scan loop opens a fresh one.
+const HANDSHAKE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
+const HANDSHAKE_MAX_PROBES: u32 = 3;
+// Measured 2026-07-13: a ~160ms close->reopen gap never recovers a wedged
+// device (its firmware misses the short DTR-low pulse), while a dwell of
+// seconds does. Keep the port closed this long after giving up a handshake.
+const HANDSHAKE_REOPEN_COOLDOWN: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 pub enum DeviceCommand {
@@ -112,6 +122,8 @@ struct DeviceSession<P: DeviceTransportStream> {
     version_info: Option<VersionInfo>,
     connected_emitted: bool,
     last_time_poll: Instant,
+    last_version_probe: Instant,
+    version_probes_sent: u32,
 }
 
 pub struct DeviceManager {
@@ -266,6 +278,7 @@ fn run_transport_thread<B: DeviceTransportBackend>(
     let mut scan_tracker = ScanTracker::default();
     let mut backoff = RetryBackoff::new(config.initial_retry_delay, config.max_retry_delay);
     let mut session: Option<DeviceSession<B::Stream>> = None;
+    let mut reopen_not_before: Option<Instant> = None;
 
     while running.load(SeqCst) {
         while let Some(event) = backend.poll_event() {
@@ -295,10 +308,42 @@ fn run_transport_thread<B: DeviceTransportBackend>(
 
                 if let Some(active) = session.as_mut() {
                     let mut should_disconnect = false;
+                    let mut handshake_given_up = false;
                     if !poll_device_session(active, &event_tx, &shared_state, now) {
                         should_disconnect = true;
-                    } else if active.version_info.is_some()
-                        && !ota_active(&shared_state)
+                    } else if active.version_info.is_none() {
+                        if now.saturating_duration_since(active.last_version_probe)
+                            >= HANDSHAKE_RETRY_INTERVAL
+                        {
+                            if active.version_probes_sent >= HANDSHAKE_MAX_PROBES {
+                                log::info!(
+                                    "NiYien handshake: giving up session on {} after {} probes, will reopen",
+                                    active.port_name,
+                                    active.version_probes_sent
+                                );
+                                handshake_given_up = true;
+                                should_disconnect = true;
+                            } else if let Err(err) =
+                                write_packet(&mut active.stream, &commands::ask_version())
+                            {
+                                log::warn!(
+                                    "Failed to resend version probe to {}: {}",
+                                    active.port_name,
+                                    err
+                                );
+                                should_disconnect = true;
+                            } else {
+                                active.version_probes_sent += 1;
+                                active.last_version_probe = now;
+                                log::info!(
+                                    "NiYien handshake: no version reply on {}, resending probe {}/{}",
+                                    active.port_name,
+                                    active.version_probes_sent,
+                                    HANDSHAKE_MAX_PROBES
+                                );
+                            }
+                        }
+                    } else if !ota_active(&shared_state)
                         && now.saturating_duration_since(active.last_time_poll)
                             >= Duration::from_secs(1)
                     {
@@ -316,8 +361,21 @@ fn run_transport_thread<B: DeviceTransportBackend>(
                     }
                     if should_disconnect {
                         disconnect_session(&mut session, &event_tx, &shared_state);
+                        if handshake_given_up {
+                            // Throttle the reopen cycle so a genuinely dead
+                            // device does not cause a tight open/probe loop.
+                            backoff.record_failure(now);
+                            reopen_not_before = Some(now + HANDSHAKE_REOPEN_COOLDOWN);
+                        }
                     }
                     continue;
+                }
+
+                if let Some(deadline) = reopen_not_before {
+                    if now < deadline {
+                        continue;
+                    }
+                    reopen_not_before = None;
                 }
 
                 if !backoff.can_attempt(now) {
@@ -498,6 +556,8 @@ fn try_open_candidate<B: DeviceTransportBackend>(
         version_info: None,
         connected_emitted: false,
         last_time_poll: now,
+        last_version_probe: now,
+        version_probes_sent: 1,
     })
 }
 
@@ -527,7 +587,11 @@ fn poll_device_session<P: DeviceTransportStream>(
             true
         }
         Err(err) => {
-            log::warn!("Serial read failed on {}: {}", session.port_name, err);
+            if is_detach_error(&err) {
+                log::info!("NiYien device detached from {}: {}", session.port_name, err);
+            } else {
+                log::warn!("Serial read failed on {}: {}", session.port_name, err);
+            }
             false
         }
     }
@@ -618,6 +682,24 @@ fn is_timeout_error(err: &io::Error) -> bool {
     matches!(
         err.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+    )
+}
+
+// Errors that usbser-style drivers return once the underlying USB device left
+// the bus (unplug or link bounce). These are the normal detach detection path
+// on the serial backend, not a protocol failure, so they log as INFO.
+fn is_detach_error(err: &io::Error) -> bool {
+    #[cfg(windows)]
+    {
+        // ERROR_BAD_COMMAND (22), ERROR_OPERATION_ABORTED (995),
+        // ERROR_DEVICE_NOT_CONNECTED (1167), ERROR_NO_SUCH_DEVICE (433)
+        if matches!(err.raw_os_error(), Some(22 | 995 | 1167 | 433)) {
+            return true;
+        }
+    }
+    matches!(
+        err.kind(),
+        io::ErrorKind::BrokenPipe | io::ErrorKind::NotConnected
     )
 }
 
@@ -935,14 +1017,14 @@ mod tests {
     }
 
     struct ScriptedBackend {
-        stream: Option<ScriptedStream>,
+        streams: VecDeque<ScriptedStream>,
     }
 
     impl DeviceTransportBackend for ScriptedBackend {
         type Stream = ScriptedStream;
 
         fn list_ports(&mut self) -> Result<Vec<DevicePortCandidate>, DeviceTransportError> {
-            if self.stream.is_none() {
+            if self.streams.is_empty() {
                 return Ok(Vec::new());
             }
             Ok(vec![DevicePortCandidate {
@@ -958,8 +1040,8 @@ mod tests {
             _port_name: &str,
             _config: &DeviceConnectionConfig,
         ) -> Result<Self::Stream, DeviceTransportError> {
-            self.stream
-                .take()
+            self.streams
+                .pop_front()
                 .ok_or(DeviceTransportError::Unsupported("stream already opened"))
         }
     }
@@ -982,14 +1064,14 @@ mod tests {
     fn transport_thread_emits_version_time_and_disconnect_events() {
         let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let backend = ScriptedBackend {
-            stream: Some(ScriptedStream::new(
+            streams: VecDeque::from([ScriptedStream::new(
                 vec![
                     ReadStep::Data(version_frame()),
                     ReadStep::Data(time_frame()),
                     ReadStep::Error(io::ErrorKind::BrokenPipe),
                 ],
                 Arc::clone(&writes),
-            )),
+            )]),
         };
         let running = Arc::new(AtomicBool::new(true));
         let (command_tx, command_rx) = mpsc::channel();
@@ -1037,7 +1119,7 @@ mod tests {
     #[test]
     fn transport_thread_reports_sync_failure_without_active_session() {
         let backend = ScriptedBackend {
-            stream: None,
+            streams: VecDeque::new(),
         };
         let running = Arc::new(AtomicBool::new(true));
         let (command_tx, command_rx) = mpsc::channel();
@@ -1060,6 +1142,158 @@ mod tests {
         running.store(false, SeqCst);
         command_tx.send(TransportCommand::Stop).unwrap();
         handle.join().unwrap();
+    }
+
+    fn expected_version_info() -> VersionInfo {
+        VersionInfo {
+            product_id: 0xA1,
+            soft_version: "V1.2.3".into(),
+            hard_version: "HW1".into(),
+            serial_number: *b"SN0000000001",
+        }
+    }
+
+    fn count_version_probes(writes: &parking_lot::Mutex<Vec<Vec<u8>>>) -> usize {
+        let probe = commands::ask_version();
+        writes.lock().iter().filter(|w| **w == probe).count()
+    }
+
+    #[test]
+    fn handshake_resends_version_probe_until_reply() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        // ~25 read ticks (>= 1.25s) of silence before the version reply, so at
+        // least one probe resend must have fired by then.
+        let mut reads: Vec<ReadStep> = (0..25)
+            .map(|_| ReadStep::Error(io::ErrorKind::TimedOut))
+            .collect();
+        reads.push(ReadStep::Data(version_frame()));
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(reads, Arc::clone(&writes))]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+            })
+        };
+
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(10)).unwrap(),
+            DeviceEvent::Connected(expected_version_info())
+        );
+        let probes = count_version_probes(&writes);
+        assert!(
+            probes >= 2,
+            "expected at least one version probe resend, got {probes}"
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn handshake_gives_up_after_max_probes_and_reopens() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        // First session never answers (reads return 0 bytes forever); the
+        // session must be abandoned after HANDSHAKE_MAX_PROBES and the scan
+        // loop must open the second, healthy stream.
+        let mute = ScriptedStream::new(Vec::new(), Arc::clone(&writes));
+        let healthy = ScriptedStream::new(
+            vec![ReadStep::Data(version_frame())],
+            Arc::clone(&writes),
+        );
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([mute, healthy]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+            })
+        };
+
+        // The abandoned session never reported Connected, so no Disconnected
+        // event may precede the second session's Connected.
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(15)).unwrap(),
+            DeviceEvent::Connected(expected_version_info())
+        );
+        let probes = count_version_probes(&writes);
+        assert!(
+            probes >= HANDSHAKE_MAX_PROBES as usize + 1,
+            "expected {} probes from the abandoned session plus one from the new session, got {probes}",
+            HANDSHAKE_MAX_PROBES
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn handshake_fast_path_sends_single_version_probe() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(
+                vec![ReadStep::Data(version_frame())],
+                Arc::clone(&writes),
+            )]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+            })
+        };
+
+        assert_eq!(
+            event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            DeviceEvent::Connected(expected_version_info())
+        );
+        // Let the post-connect polling cadence run past the retry interval to
+        // prove no extra version probe is emitted once connected.
+        thread::sleep(Duration::from_millis(1500));
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+
+        assert_eq!(count_version_probes(&writes), 1);
+        assert_eq!(writes.lock().first(), Some(&commands::ask_version()));
+    }
+
+    #[test]
+    fn classifies_detach_errors() {
+        #[cfg(windows)]
+        {
+            assert!(is_detach_error(&io::Error::from_raw_os_error(22)));
+            assert!(is_detach_error(&io::Error::from_raw_os_error(995)));
+            assert!(is_detach_error(&io::Error::from_raw_os_error(1167)));
+            assert!(is_detach_error(&io::Error::from_raw_os_error(433)));
+        }
+        assert!(is_detach_error(&io::Error::from(io::ErrorKind::BrokenPipe)));
+        assert!(is_detach_error(&io::Error::from(
+            io::ErrorKind::NotConnected
+        )));
+        assert!(!is_detach_error(&io::Error::from(io::ErrorKind::InvalidData)));
+        assert!(!is_detach_error(&io::Error::from(io::ErrorKind::TimedOut)));
+        assert!(!is_timeout_error(&io::Error::from(io::ErrorKind::BrokenPipe)));
     }
 
     struct EventBackend {
