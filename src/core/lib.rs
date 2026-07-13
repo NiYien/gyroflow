@@ -2491,6 +2491,16 @@ impl StabilizationManager {
         self.gyro.write().imu_transforms.imu_mf = size;
     }
     pub fn set_imu_rotation(&self, pitch_deg: f64, roll_deg: f64, yaw_deg: f64) {
+        // Diagnostic for the mounting-rotation chain: records who sets what and
+        // when, so a missing mounting rotation can be traced to either "never
+        // set" or "set then overwritten".
+        ::log::info!(
+            target: "video.load",
+            "set_imu_rotation pitch={} roll={} yaw={}",
+            pitch_deg,
+            roll_deg,
+            yaw_deg
+        );
         self.gyro
             .write()
             .imu_transforms
@@ -3649,13 +3659,19 @@ impl StabilizationManager {
                 if let Some(v) = obj.get("imu_orientation").and_then(|x| x.as_str()) {
                     gyro.imu_transforms.imu_orientation = Some(v.to_string());
                 }
+                // `rotation`/`acc_rotation` are exported as `null` when unset. Only
+                // apply values that parse as [f64; 3]: defaulting null to (0,0,0)
+                // would explicitly clear a mounting rotation that was already
+                // applied to this stab (e.g. by the mounting preset selector).
                 if let Some(v) = obj.get("rotation") {
-                    let v: [f64; 3] = serde_json::from_value(v.clone()).unwrap_or_default();
-                    gyro.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
+                    if let Ok(v) = serde_json::from_value::<[f64; 3]>(v.clone()) {
+                        gyro.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
+                    }
                 }
                 if let Some(v) = obj.get("acc_rotation") {
-                    let v: [f64; 3] = serde_json::from_value(v.clone()).unwrap_or_default();
-                    gyro.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
+                    if let Ok(v) = serde_json::from_value::<[f64; 3]>(v.clone()) {
+                        gyro.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
+                    }
                 }
                 if let Some(v) = obj.get("gyro_bias") {
                     gyro.imu_transforms.gyro_bias = serde_json::from_value(v.clone()).ok();
@@ -6068,5 +6084,116 @@ mod tests {
         emit_max_zoom_load_snapshot(&params, (1920, 1080), (1920, 1080), 180.0, 1.0, 5);
         let after = MAX_ZOOM_INVOKE_SEQ.load(SeqCst);
         assert_eq!(after, before + 2);
+    }
+
+    // mounting-rotation-propagation: importing a project whose gyro_source
+    // rotation is null must not clear a rotation already applied to the stab.
+    fn import_minimal_project(manager: &StabilizationManager, gyro_source: &str) {
+        let data = format!(
+            r#"{{ "version": 3, "videofile": "", "gyro_source": {} }}"#,
+            gyro_source
+        );
+        let mut is_preset = false;
+        let res = manager.import_gyroflow_data(
+            data.as_bytes(),
+            true,
+            None,
+            |_| (),
+            Arc::new(AtomicBool::new(false)),
+            &mut is_preset,
+            false,
+        );
+        assert!(res.is_ok(), "{:?}", res.err());
+    }
+
+    #[test]
+    fn import_null_rotation_preserves_existing_mounting_rotation() {
+        let manager = StabilizationManager::default();
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+            gyro.imu_transforms.set_acc_rotation(0.0, 45.0, 0.0);
+        }
+        import_minimal_project(&manager, r#"{ "rotation": null, "acc_rotation": null }"#);
+        let gyro = manager.gyro.read();
+        assert_eq!(
+            gyro.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+        assert_eq!(
+            gyro.imu_transforms.acc_rotation_angles,
+            Some([0.0, 45.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn import_valid_rotation_still_applies() {
+        let manager = StabilizationManager::default();
+        import_minimal_project(&manager, r#"{ "rotation": [0.0, -90.0, 0.0] }"#);
+        let gyro = manager.gyro.read();
+        assert_eq!(
+            gyro.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+    }
+
+    #[test]
+    fn import_all_zero_rotation_still_clears() {
+        let manager = StabilizationManager::default();
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+        }
+        import_minimal_project(&manager, r#"{ "rotation": [0.0, 0.0, 0.0] }"#);
+        let gyro = manager.gyro.read();
+        assert_eq!(gyro.imu_transforms.imu_rotation_angles, None);
+    }
+
+    // mounting-rotation-propagation: reloading gyro data must keep the user's
+    // mounting rotation, while a direct clear() still resets everything.
+    #[test]
+    fn load_from_telemetry_preserves_mounting_rotation() {
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.duration_ms = 1000.0;
+            params.fps = 30.0;
+            params.frame_count = 30;
+            params.size = (1920, 1080);
+        }
+        let mut gyro = manager.gyro.write();
+        gyro.init_from_params(&manager.params.read());
+        gyro.imu_transforms.set_imu_rotation(0.0, -90.0, 0.0);
+        gyro.imu_transforms.set_acc_rotation(0.0, 45.0, 0.0);
+
+        let md = gyro_source::FileMetadata {
+            duration_ms: 1000.0,
+            raw_imu: vec![gyro_source::TimeIMU {
+                timestamp_ms: 0.0,
+                gyro: Some([0.0, 0.0, 0.0]),
+                accl: None,
+                magn: None,
+            }],
+            ..Default::default()
+        };
+        gyro.load_from_telemetry(md);
+        // Both the exported angles and the actual transforms must survive the
+        // reload; pre-change, clear() kept the angles but dropped the
+        // transforms, so stabilization silently lost the mounting rotation.
+        assert_eq!(
+            gyro.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+        assert_eq!(
+            gyro.imu_transforms.acc_rotation_angles,
+            Some([0.0, 45.0, 0.0])
+        );
+        assert!(gyro.imu_transforms.imu_rotation.is_some());
+        assert!(gyro.imu_transforms.acc_rotation.is_some());
+
+        // Direct clear() keeps its reset semantics for the transforms.
+        gyro.clear();
+        assert!(gyro.imu_transforms.imu_rotation.is_none());
+        assert!(gyro.imu_transforms.acc_rotation.is_none());
     }
 }

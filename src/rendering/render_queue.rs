@@ -667,6 +667,64 @@ fn set_additional_data_lens_index_override(additional_data: &mut String, value: 
     }
 }
 
+// mounting-rotation-propagation: apply the mounting rotation snapshot taken
+// from the main stabilizer at enqueue time to a batch-queued job stab. Must
+// run after load_gyro_data (load_from_telemetry clears imu_transforms). No-op
+// when both are None so jobs without a mounting rotation stay byte-identical.
+// Returns whether anything was applied.
+fn apply_inherited_mounting_rotation(
+    stab: &StabilizationManager,
+    imu_rotation: Option<[f64; 3]>,
+    acc_rotation: Option<[f64; 3]>,
+) -> bool {
+    if imu_rotation.is_none() && acc_rotation.is_none() {
+        return false;
+    }
+    let mut gyro = stab.gyro.write();
+    if let Some(v) = imu_rotation {
+        gyro.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
+    }
+    if let Some(v) = acc_rotation {
+        gyro.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
+    }
+    true
+}
+
+// Synchronous body of RenderQueue::apply_mounting_rotation_to_all: overwrite
+// the mounting rotation on each stab, skipping stabs already at the target
+// value (avoids redundant per-clip re-integration on the telemetry_loaded
+// re-apply). Returns how many stabs were updated.
+fn apply_mounting_rotation_to_stabs(
+    stabs: &[(u32, Arc<StabilizationManager>)],
+    pitch_deg: f64,
+    roll_deg: f64,
+    yaw_deg: f64,
+) -> usize {
+    let target = if pitch_deg.abs() > 0.0 || roll_deg.abs() > 0.0 || yaw_deg.abs() > 0.0 {
+        Some([pitch_deg, roll_deg, yaw_deg])
+    } else {
+        None
+    };
+    let mut updated = 0;
+    for (job_id, stab) in stabs {
+        if stab.gyro.read().imu_transforms.imu_rotation_angles == target {
+            continue;
+        }
+        stab.set_imu_rotation(pitch_deg, roll_deg, yaw_deg);
+        stab.recompute_gyro();
+        updated += 1;
+        ::log::info!(
+            target: "video.load",
+            "[queue] mounting rotation applied job_id={} rotation=[{}, {}, {}]",
+            job_id,
+            pitch_deg,
+            roll_deg,
+            yaw_deg
+        );
+    }
+    updated
+}
+
 // Inverse of set_additional_data_lens_index_override — used at .gyroflow load time
 // to restore Job.lens_index_override. Returns None for both "absent" and "explicit null".
 fn read_additional_data_lens_index_override(additional_data: &str) -> Option<usize> {
@@ -1003,6 +1061,11 @@ pub struct RenderQueue {
     get_active_render_count: qt_method!(fn(&self) -> usize),
 
     apply_to_all: qt_method!(fn(&mut self, data: String, additional_data: String, to_job_id: u32)),
+    // mounting-rotation-propagation: called by MountingPresetSelector on every
+    // mounting change so already-queued jobs follow the new device orientation
+    // (the add_file snapshot only covers jobs enqueued after the change).
+    apply_mounting_rotation_to_all:
+        qt_method!(fn(&mut self, pitch_deg: f64, roll_deg: f64, yaw_deg: f64)),
 
     pause_flag: Arc<AtomicBool>,
 
@@ -4937,6 +5000,27 @@ impl RenderQueue {
                 {
                     render_options.update_from_json(out);
                     let smoothing = stabilizer.smoothing.read().clone();
+                    // Snapshot the user's mounting rotation at enqueue time: the job
+                    // stab below is built fresh and never inherits imu_transforms,
+                    // while set_imu_rotation (mounting preset selector / motion data)
+                    // only ever writes the main stab. Applied after load_gyro_data
+                    // (load_from_telemetry clears imu_transforms).
+                    let (main_imu_rotation, main_acc_rotation) = {
+                        let gyro = stabilizer.gyro.read();
+                        (
+                            gyro.imu_transforms.imu_rotation_angles,
+                            gyro.imu_transforms.acc_rotation_angles,
+                        )
+                    };
+                    // Logged unconditionally: a None snapshot is exactly the
+                    // diagnostic case (mounting set in UI but absent here).
+                    ::log::info!(
+                        target: "video.load",
+                        "[queue_add] mounting snapshot job_id={} imu_rotation={:?} acc_rotation={:?}",
+                        job_id,
+                        main_imu_rotation,
+                        main_acc_rotation
+                    );
                     let params = stabilizer.params.read();
 
                     let stab = StabilizationManager {
@@ -5426,6 +5510,23 @@ impl RenderQueue {
                                             );
                                         }
                                     }
+                                }
+                                // Inherit the user's mounting rotation (set on the main
+                                // stab only) into this freshly-built job stab. .gyroflow
+                                // inputs never reach this branch, so a project's own
+                                // rotation stays authoritative there.
+                                if apply_inherited_mounting_rotation(
+                                    &stab,
+                                    main_imu_rotation,
+                                    main_acc_rotation,
+                                ) {
+                                    ::log::info!(
+                                        target: "video.load",
+                                        "[queue_add] inherited mounting rotation job_id={} imu_rotation={:?} acc_rotation={:?}",
+                                        job_id,
+                                        main_imu_rotation,
+                                        main_acc_rotation
+                                    );
                                 }
                                 // Prefer telemetry-parser's creation_date_utc over ffmpeg's
                                 // creation_time.
@@ -6360,6 +6461,37 @@ impl RenderQueue {
             };
         }
         QueueAutosyncStats::default()
+    }
+
+    // Overwrite the mounting rotation on every queued job's stab. Called from
+    // MountingPresetSelector.applyMode: the mounting position is a global
+    // device property, so a change must reach jobs that were enqueued before
+    // it (the add_file snapshot only covers later ones). Values equal to the
+    // job's current rotation are skipped, so the telemetry_loaded re-apply
+    // doesn't trigger redundant per-job re-integration. Runs threaded because
+    // recompute_gyro re-integrates the whole clip.
+    pub fn apply_mounting_rotation_to_all(&mut self, pitch_deg: f64, roll_deg: f64, yaw_deg: f64) {
+        let stabs: Vec<(u32, Arc<StabilizationManager>)> = self
+            .jobs
+            .iter()
+            .filter_map(|(id, job)| job.stab.clone().map(|s| (*id, s)))
+            .collect();
+        // Logged unconditionally (even with an empty queue) to confirm the QML
+        // call reaches Rust when diagnosing the mounting-rotation chain.
+        ::log::info!(
+            target: "video.load",
+            "apply_mounting_rotation_to_all jobs={} rotation=[{}, {}, {}]",
+            stabs.len(),
+            pitch_deg,
+            roll_deg,
+            yaw_deg
+        );
+        if stabs.is_empty() {
+            return;
+        }
+        core::run_threaded(move || {
+            apply_mounting_rotation_to_stabs(&stabs, pitch_deg, roll_deg, yaw_deg);
+        });
     }
 
     pub fn apply_to_all(&mut self, data: String, additional_data: String, to_job_id: u32) {
@@ -8918,6 +9050,14 @@ impl RenderQueue {
                             {
                                 let params = item.stab.params.read();
                                 let mut gyro = item.stab.gyro.write();
+                                // The explicit clear() below wipes imu_transforms, so
+                                // load_from_telemetry's own preservation sees nothing:
+                                // snapshot the mounting rotation here and restore it
+                                // after the assignment (mounting-rotation-propagation).
+                                let preserved_imu_rotation =
+                                    gyro.imu_transforms.imu_rotation_angles;
+                                let preserved_acc_rotation =
+                                    gyro.imu_transforms.acc_rotation_angles;
                                 gyro.init_from_params(&params);
                                 gyro.clear();
                                 gyro.file_url = String::new();
@@ -8929,6 +9069,12 @@ impl RenderQueue {
                                 drop(params);
                                 gyro.load_from_telemetry(md.clone());
                                 gyro.file_load_options = Default::default();
+                                if let Some(v) = preserved_imu_rotation {
+                                    gyro.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
+                                }
+                                if let Some(v) = preserved_acc_rotation {
+                                    gyro.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
+                                }
                             }
                             *item.stab.camera_id.write() = camera_id;
                         }
@@ -12534,6 +12680,56 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // mounting-rotation-propagation: batch-queued job stabs inherit the main
+    // stab's mounting rotation via this helper.
+    #[test]
+    fn apply_inherited_mounting_rotation_sets_and_skips() {
+        let stab = StabilizationManager::default();
+        assert!(!apply_inherited_mounting_rotation(&stab, None, None));
+        assert_eq!(stab.gyro.read().imu_transforms.imu_rotation_angles, None);
+        assert_eq!(stab.gyro.read().imu_transforms.acc_rotation_angles, None);
+
+        assert!(apply_inherited_mounting_rotation(
+            &stab,
+            Some([0.0, -90.0, 0.0]),
+            Some([0.0, 45.0, 0.0])
+        ));
+        let gyro = stab.gyro.read();
+        assert_eq!(
+            gyro.imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+        assert_eq!(
+            gyro.imu_transforms.acc_rotation_angles,
+            Some([0.0, 45.0, 0.0])
+        );
+    }
+
+    // mounting-rotation-propagation: a mounting change overwrites every queued
+    // stab, skipping ones already at the target value.
+    #[test]
+    fn apply_mounting_rotation_to_stabs_overwrites_and_skips_unchanged() {
+        let stab_a = Arc::new(StabilizationManager::default());
+        let stab_b = Arc::new(StabilizationManager::default());
+        stab_b.set_imu_rotation(0.0, -90.0, 0.0);
+        let stabs = vec![(1u32, stab_a.clone()), (2u32, stab_b.clone())];
+
+        // stab_b already at target -> only stab_a updated.
+        assert_eq!(apply_mounting_rotation_to_stabs(&stabs, 0.0, -90.0, 0.0), 1);
+        assert_eq!(
+            stab_a.gyro.read().imu_transforms.imu_rotation_angles,
+            Some([0.0, -90.0, 0.0])
+        );
+
+        // Same value again -> full no-op.
+        assert_eq!(apply_mounting_rotation_to_stabs(&stabs, 0.0, -90.0, 0.0), 0);
+
+        // Back to top (all zero) -> clears both.
+        assert_eq!(apply_mounting_rotation_to_stabs(&stabs, 0.0, 0.0, 0.0), 2);
+        assert_eq!(stab_a.gyro.read().imu_transforms.imu_rotation_angles, None);
+        assert_eq!(stab_b.gyro.read().imu_transforms.imu_rotation_angles, None);
+    }
 
     #[test]
     fn pix_fmt_high_bit_depth_detection() {

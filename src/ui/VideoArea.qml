@@ -160,6 +160,15 @@ Item {
                     timeline.setTrimRanges(obj.trim_ranges);
                 }
                 window.motionData.loadGyroflow(obj);
+                // Simple-mode mounting selector adopts the project's rotation.
+                // Its async loader may not be ready yet when a project is
+                // opened via command line (e.g. NLE "Open in Gyroflow") —
+                // park the rotation for its Component.onCompleted then.
+                if (window.simpleMounting) {
+                    window.simpleMounting.loadGyroflow(obj);
+                } else {
+                    window.pendingMountingRotation = (obj.gyro_source || {}).rotation || null;
+                }
                 window.stab.loadGyroflow(obj);
                 window.advanced.loadGyroflow(obj);
                 window.sync.loadGyroflow(obj);

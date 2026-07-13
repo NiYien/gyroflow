@@ -14,6 +14,12 @@ MenuItem {
     objectName: "motiondata";
 
     property alias hasQuaternions: integrator.hasQuaternions;
+    // Guards the rotation setters against the change signals fired while this
+    // component constructs asynchronously: the initial (0,0,0) writes raced
+    // with (and cleared) the mounting rotation MountingPresetSelector had just
+    // applied to the main stab at startup.
+    property bool initialized: false;
+    Component.onCompleted: root.initialized = true;
     property bool hasAccurateTimestamps: false;
     property alias hasRawGyro: integrator.hasRawGyro;
     property alias integrationMethod: integrator.currentIndex;
@@ -312,6 +318,7 @@ MenuItem {
             text: qsTr("Rotation");
             onCheckedChanged: update_rotation();
             function update_rotation(): void {
+                if (!root.initialized) return;
                 controller.set_imu_rotation(rot.checked? p.value : 0, rot.checked? r.value : 0, rot.checked? y.value : 0);
                 Qt.callLater(controller.recompute_gyro);
             }
@@ -367,6 +374,7 @@ MenuItem {
         text: qsTr("Accelerometer rotation");
         onCheckedChanged: update_rotation();
         function update_rotation(): void {
+            if (!root.initialized) return;
             controller.set_acc_rotation(arot.checked? ap.value : 0, arot.checked? ar.value : 0, arot.checked? ay.value : 0);
             Qt.callLater(controller.recompute_gyro);
         }

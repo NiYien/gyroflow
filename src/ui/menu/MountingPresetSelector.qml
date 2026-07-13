@@ -32,13 +32,16 @@ MenuItem {
 
     function applyMode(): void {
         if (!root.initialized) return;
-        if (root.currentMode === "custom") {
-            controller.set_imu_rotation(root.customPitch, root.customRoll, root.customYaw);
-        } else {
-            const angles = root.presetAngles[root.currentMode];
-            if (angles) {
-                controller.set_imu_rotation(angles[0], angles[1], angles[2]);
-            }
+        const angles = root.currentMode === "custom"
+            ? [root.customPitch, root.customRoll, root.customYaw]
+            : root.presetAngles[root.currentMode];
+        if (angles) {
+            controller.set_imu_rotation(angles[0], angles[1], angles[2]);
+            // Mounting is a global device property: propagate to every queued
+            // job too, so jobs enqueued before this change follow it (the
+            // enqueue-time snapshot only covers later ones). No-op per job
+            // when the value is unchanged.
+            render_queue.apply_mounting_rotation_to_all(angles[0], angles[1], angles[2]);
         }
         Qt.callLater(controller.recompute_gyro);
         root.saveSettings();
@@ -49,6 +52,31 @@ MenuItem {
         settings.setValue("mountingCustomPitch", root.customPitch.toString());
         settings.setValue("mountingCustomRoll", root.customRoll.toString());
         settings.setValue("mountingCustomYaw", root.customYaw.toString());
+    }
+
+    // Adopt the mounting rotation stored in a loaded .gyroflow project: the
+    // project reflects the device orientation of that shooting session, so the
+    // UI and the global setting both follow it. A null/absent rotation is "no
+    // statement" (same semantics as the import guard) and leaves the current
+    // state untouched.
+    function loadGyroflow(obj: var): void {
+        const gyro = obj.gyro_source || {};
+        const rot = gyro.rotation;
+        if (!rot || rot.length !== 3) return;
+        let mode = "custom";
+        for (const key in root.presetAngles) {
+            const a = root.presetAngles[key];
+            if (a[0] === rot[0] && a[1] === rot[1] && a[2] === rot[2]) { mode = key; break; }
+        }
+        if (mode === "custom") {
+            root.customPitch = rot[0];
+            root.customRoll  = rot[1];
+            root.customYaw   = rot[2];
+        }
+        root.currentMode = mode;
+        const idx = root.modeKeys.indexOf(mode);
+        modeCombo.currentIndex = idx >= 0 ? idx : 0;
+        root.saveSettings();
     }
 
     function restoreSettings(): void {
@@ -74,6 +102,12 @@ MenuItem {
         root.restoreSettings();
         root.initialized = true;
         root.applyMode();
+        // A project loaded before this selector finished its async load left
+        // its rotation parked — adopt it now (overrides restored settings).
+        if (window.pendingMountingRotation) {
+            root.loadGyroflow({ gyro_source: { rotation: window.pendingMountingRotation } });
+            window.pendingMountingRotation = null;
+        }
     }
 
     Connections {

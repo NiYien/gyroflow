@@ -320,6 +320,10 @@ Rectangle {
     property alias vidInfo: vidInfo.item;
     property alias videoArea: videoArea;
     property alias motionData: motionData.item;
+    property alias simpleMounting: simpleMounting.item;
+    // Project rotation parked by VideoArea when a .gyroflow loads before the
+    // mounting selector's async loader is ready; consumed in its onCompleted.
+    property var pendingMountingRotation: null;
     property alias lensProfile: lensProfile.item;
     property alias outputFile: outputFile;
     property alias sync: sync.item;

@@ -1495,7 +1495,19 @@ impl GyroSource {
             return;
         }
 
+        // The mounting rotation is a user setting, not a property of the gyro
+        // file: preserve it across (re)loads so batch-queue gyro assignment,
+        // deep-match probes and sync-repair reloads don't silently drop it.
+        // A direct clear() keeps its full-reset semantics.
+        let preserved_imu_rotation = self.imu_transforms.imu_rotation_angles;
+        let preserved_acc_rotation = self.imu_transforms.acc_rotation_angles;
         self.clear();
+        if let Some(v) = preserved_imu_rotation {
+            self.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
+        }
+        if let Some(v) = preserved_acc_rotation {
+            self.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
+        }
 
         self.imu_transforms.imu_orientation = telemetry.imu_orientation.clone();
 
