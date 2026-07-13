@@ -250,9 +250,13 @@ fn copy_files(tempdir: &str, extract_path: &str, typ: &str) -> io::Result<()> {
         if status.success() {
             Ok(())
         } else {
+            // Sentinel consumed by NlePlugins.qml to show a "close your video
+            // editor and try again" message instead of the raw Debug error.
+            // Keep ErrorKind::PermissionDenied — install() relies on it to
+            // preserve the tempdir on failure.
             Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
-                "Failed to copy directory with elevated privileges",
+                format!("PLUGIN_COPY_BLOCKED:{typ}"),
             ))
         }
     }

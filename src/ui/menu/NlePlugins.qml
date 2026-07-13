@@ -91,8 +91,18 @@ MenuItem {
                 }
             }
             if (command == "install") {
-                if (result.startsWith("An error occured")) {
-                    if (result.includes("Failed to copy files from ") && result.includes("PermissionDenied")) {
+                // NlePlugins is instantiated twice (full-mode menu + simple-mode card)
+                // and both instances receive this signal. Only the instance that
+                // initiated the install (loader=true) shows dialogs; the other one
+                // just refreshes its status below.
+                if (root.loader && result.startsWith("An error occured")) {
+                    if (result.includes("PLUGIN_COPY_BLOCKED:")) {
+                        // Sentinel from nle_plugins.rs copy_files: the elevated copy failed,
+                        // most likely because the host editor has the plugin file loaded.
+                        // Host app names are static per plugin type by design (no process detection).
+                        const names = result.includes("PLUGIN_COPY_BLOCKED:adobe")? "Premiere Pro / After Effects / Media Encoder" : "DaVinci Resolve / VEGAS";
+                        messageBox(Modal.Error, qsTr("Unable to install the plugin because the plugin file is in use.\nIf %1 is currently running, please close it and then click install again.").arg(names), [ { text: qsTr("Ok"), accent: true } ]);
+                    } else if (result.includes("Failed to copy files from ") && result.includes("PermissionDenied")) {
                         const parts = result.split("Failed to copy files from \\\"").pop().split("\\\" to \\\"");
                         const from = parts[0];
                         const to = parts[1].split("\\\": Error").shift();
