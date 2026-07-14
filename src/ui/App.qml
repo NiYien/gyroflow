@@ -661,9 +661,25 @@ Rectangle {
             const urlList = urls.map(u => Qt.url(u));
             if (urlList.length === 0) return;
             if (cb) { cb(urlList); return; }
-            // No active picker callback: default to main-viewer batch load,
-            // matching desktop "Open" multi-select UX.
-            videoArea.loadMultipleFiles(urlList, false);
+            // No active picker callback (unexpected timing, e.g. the callback
+            // was cleared by a spurious dialog reject). SAF folder tree URIs
+            // must never reach the main-preview player - MDK cannot open them
+            // - so route them to the render queue's folder pipeline instead,
+            // same as dropping a folder onto the queue.
+            const isTree = u => { const s = u.toString(); return s.startsWith("content://") && s.includes("/tree/") && !s.includes("/document/"); };
+            const treeUrls = urlList.filter(isTree);
+            const fileUrls = urlList.filter(u => !isTree(u));
+            if (treeUrls.length > 0) {
+                console.warn("onUrls_opened: no picker callback, routing " + treeUrls.length + " tree URI(s) to the render queue");
+                if (videoArea.queue) {
+                    Qt.callLater(function() { videoArea.queue.dt.loadFiles(treeUrls); });
+                }
+            }
+            if (fileUrls.length > 0) {
+                // Default to main-viewer batch load, matching desktop "Open"
+                // multi-select UX.
+                videoArea.loadMultipleFiles(fileUrls, false);
+            }
         }
     }
     function onItemLoaded(): void {

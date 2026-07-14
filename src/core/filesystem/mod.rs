@@ -402,6 +402,13 @@ pub fn is_dir(url: &str) -> bool {
     }
     result!(inner(url), url)
 }
+// True iff the URL is a bare SAF tree URI (as returned by ACTION_OPEN_DOCUMENT_TREE
+// pickers), i.e. it has a /tree/ segment but no /document/ segment. Such URIs
+// cannot be queried via ContentResolver directly - they must be converted to a
+// document URI first (DocumentsContract.buildDocumentUriUsingTree).
+pub fn is_bare_content_tree_url(url: &str) -> bool {
+    url.starts_with("content://") && url.contains("/tree/") && !url.contains("/document/")
+}
 pub fn exists_in_folder(folder_url: &str, filename: &str) -> bool {
     fn inner(folder_url: &str, filename: &str) -> bool {
         if folder_url.is_empty() || filename.is_empty() {
@@ -805,7 +812,33 @@ pub fn folder_access_granted(folder_url: &str) {
 
 #[cfg(test)]
 mod tests {
-    use super::{filename_from_url_string, get_filename};
+    use super::{filename_from_url_string, get_filename, is_bare_content_tree_url};
+
+    #[test]
+    fn bare_tree_url_detected() {
+        assert!(is_bare_content_tree_url(
+            "content://com.android.externalstorage.documents/tree/primary%3ADCIM%2FCamera"
+        ));
+    }
+
+    #[test]
+    fn document_uri_from_tree_is_not_bare() {
+        assert!(!is_bare_content_tree_url(
+            "content://com.android.externalstorage.documents/tree/primary%3ADCIM/document/primary%3ADCIM%2Fclip.mp4"
+        ));
+    }
+
+    #[test]
+    fn plain_content_uri_is_not_tree() {
+        assert!(!is_bare_content_tree_url(
+            "content://com.android.providers.media.documents/document/video%3A1234"
+        ));
+    }
+
+    #[test]
+    fn file_url_is_not_tree() {
+        assert!(!is_bare_content_tree_url("file:///storage/emulated/0/tree/x"));
+    }
 
     #[test]
     fn helper_mac_url() {

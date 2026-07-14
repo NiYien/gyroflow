@@ -1139,7 +1139,7 @@ pub struct RenderQueue {
     learned_clock_shift_day: Option<chrono::NaiveDate>,
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
-    add_gyro_folder: qt_method!(fn(&mut self, folder_url: String)),
+    add_gyro_folder: qt_method!(fn(&mut self, folder_url: String) -> i32),
     list_video_files_in_folder:
         qt_method!(fn(&self, folder_url: String, extensions_json: String) -> QString),
     list_crm_proxy_files_in_folder:
@@ -2412,22 +2412,45 @@ impl RenderQueue {
         let editing = self.jobs.contains_key(&job_id);
         if !editing && !stab_uses_crm_proxy(&stab) {
             if !reconcile_raw_proxy_queue_input(self, &video_url, "") {
+                // Skipped in favor of an already-queued RAW sibling. Emit
+                // add_skipped so the QML loader balances its pending count
+                // instead of spinning forever on this job_id.
+                self.add_skipped(
+                    job_id,
+                    QString::from(filesystem::get_filename(&video_url)),
+                    QString::from("duplicate"),
+                );
                 return;
             }
         }
 
         // [queue-batch-streamline T5] 输入视频去重：非编辑模式下跳过重复视频
         if !editing {
-            let new_url_normalized = filesystem::url_to_path(&video_url);
-            let q = self.queue.borrow();
-            for itm in q.iter() {
-                let existing_normalized = filesystem::url_to_path(&itm.input_file.to_string());
-                if existing_normalized == new_url_normalized {
-                    ::log::info!("[queue-batch-streamline T5] 跳过重复视频: {}", video_url);
-                    return;
+            let mut duplicate = false;
+            {
+                let new_url_normalized = filesystem::url_to_path(&video_url);
+                let q = self.queue.borrow();
+                for itm in q.iter() {
+                    let existing_normalized =
+                        filesystem::url_to_path(&itm.input_file.to_string());
+                    if existing_normalized == new_url_normalized {
+                        ::log::info!("[queue-batch-streamline T5] 跳过重复视频: {}", video_url);
+                        duplicate = true;
+                        break;
+                    }
                 }
             }
-            drop(q);
+            if duplicate {
+                // Same as above: a silent return here leaks the QML loader's
+                // pending entry and the spinner never stops (re-adding the
+                // same folder was the original repro).
+                self.add_skipped(
+                    job_id,
+                    QString::from(filesystem::get_filename(&video_url)),
+                    QString::from("duplicate"),
+                );
+                return;
+            }
         }
 
         if editing {
@@ -6840,12 +6863,40 @@ impl RenderQueue {
     }
 
     // [queue-pair-ux T3] 文件夹递归遍历，添加所有 *_mix.bin 陀螺仪文件
-    fn add_gyro_folder(&mut self, folder_url: String) {
+    // Returns how many gyro files were added, so QML can tell "nothing usable
+    // in this folder" apart from "gyro-only folder" when deciding to prompt.
+    fn add_gyro_folder(&mut self, folder_url: String) -> i32 {
+        // Android SAF trees: same `_mix.bin` collection as `scan_gyro_folder`
+        // (depth cap 3, no result cap), walked via ContentResolver.
+        #[cfg(target_os = "android")]
+        if folder_url.starts_with("content://") {
+            let mut found: Vec<(String, String)> = Vec::new();
+            scan_saf_folder(
+                &folder_url,
+                0,
+                3,
+                usize::MAX,
+                &|u: &str| Self::saf_list_entries(u),
+                &|f| f.ends_with("_mix.bin"),
+                &mut found,
+            );
+            ::log::info!(
+                "[add_gyro_folder] SAF scan found {} _mix.bin files under {}",
+                found.len(),
+                folder_url
+            );
+            let count = found.len() as i32;
+            for (_, url) in found {
+                self.add_gyro_file(url);
+            }
+            return count;
+        }
+
         let path = filesystem::url_to_path(&folder_url);
         let dir = std::path::Path::new(&path);
         if !dir.is_dir() {
             ::log::warn!("[add_gyro_folder] 路径不是目录，忽略: {}", path);
-            return;
+            return 0;
         }
         ::log::info!("[add_gyro_folder] 开始扫描文件夹: {}", path);
         let files = self.scan_gyro_folder(dir, 0);
@@ -6853,10 +6904,12 @@ impl RenderQueue {
             "[add_gyro_folder] 扫描完成，共找到 {} 个 _mix.bin 文件",
             files.len()
         );
+        let count = files.len() as i32;
         for f in files {
             let url = filesystem::path_to_url(&f.to_string_lossy());
             self.add_gyro_file(url);
         }
+        count
     }
 
     fn scan_gyro_folder(&self, dir: &std::path::Path, depth: usize) -> Vec<std::path::PathBuf> {
@@ -6916,6 +6969,18 @@ impl RenderQueue {
     fn list_video_files_in_folder(&self, folder_url: String, extensions_json: String) -> QString {
         const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
         const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
+
+        // Android SAF trees have no filesystem path - walk them via
+        // ContentResolver instead of std::fs. Desktop path is untouched.
+        #[cfg(target_os = "android")]
+        if folder_url.starts_with("content://") {
+            return self.list_video_files_in_folder_saf(
+                &folder_url,
+                &extensions_json,
+                MAX_VIDEO_FOLDER_DEPTH,
+                MAX_VIDEO_FOLDER_RESULTS,
+            );
+        }
 
         let path = filesystem::url_to_path(&folder_url);
         let dir = std::path::Path::new(&path);
@@ -7143,6 +7208,16 @@ impl RenderQueue {
         const MAX_VIDEO_FOLDER_DEPTH: usize = 3;
         const MAX_VIDEO_FOLDER_RESULTS: usize = 600;
 
+        #[cfg(target_os = "android")]
+        if folder_url.starts_with("content://") {
+            return Self::list_crm_proxy_files_in_folder_saf(
+                &folder_url,
+                &extensions_json,
+                MAX_VIDEO_FOLDER_DEPTH,
+                MAX_VIDEO_FOLDER_RESULTS,
+            );
+        }
+
         let path = filesystem::url_to_path(&folder_url);
         let dir = std::path::Path::new(&path);
         if !dir.is_dir() {
@@ -7178,6 +7253,156 @@ impl RenderQueue {
             urls.len(),
             MAX_VIDEO_FOLDER_DEPTH,
             MAX_VIDEO_FOLDER_RESULTS
+        );
+        QString::from(serde_json::to_string(&urls).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    // JNI-backed enumeration adapter feeding `scan_saf_folder`. Errors degrade
+    // to an empty listing (subtree skipped, scan continues), matching how the
+    // std::fs scanners treat unreadable directories.
+    #[cfg(target_os = "android")]
+    fn saf_list_entries(folder_url: &str) -> Vec<SafFolderEntry> {
+        match filesystem::android::list_files(folder_url) {
+            Ok(files) => files
+                .into_iter()
+                .filter_map(|x| {
+                    Some(SafFolderEntry {
+                        filename: x.filename?,
+                        url: x.url?,
+                        is_dir: x.is_dir,
+                    })
+                })
+                .collect(),
+            Err(e) => {
+                ::log::warn!("[saf_scan] cannot list folder {folder_url}: {e:?}");
+                Vec::new()
+            }
+        }
+    }
+
+    // SAF twin of the std::fs body of `list_video_files_in_folder`. Emits no
+    // image-sequence entries (see `saf_video_filename_keep`); same JSON object
+    // shape so the QML consumer is agnostic of the branch taken.
+    #[cfg(target_os = "android")]
+    fn list_video_files_in_folder_saf(
+        &self,
+        folder_url: &str,
+        extensions_json: &str,
+        max_depth: usize,
+        max_results: usize,
+    ) -> QString {
+        let exts_lower: Vec<String> = serde_json::from_str::<Vec<String>>(extensions_json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| e != "gyroflow" && e != "crm")
+            .collect();
+        let suffix_lower = self.default_suffix.to_string().to_ascii_lowercase();
+
+        let list = |u: &str| Self::saf_list_entries(u);
+
+        let mut videos: Vec<(String, String)> = Vec::new();
+        scan_saf_folder(
+            folder_url,
+            0,
+            max_depth,
+            max_results,
+            &list,
+            &|f| saf_video_filename_keep(f, &exts_lower, &suffix_lower),
+            &mut videos,
+        );
+
+        let mut crm_candidates: Vec<(String, String)> = Vec::new();
+        scan_saf_folder(
+            folder_url,
+            0,
+            max_depth,
+            max_results,
+            &list,
+            &|f| saf_crm_candidate_keep(f, &exts_lower),
+            &mut crm_candidates,
+        );
+        let crm_urls: Vec<String> = crm_candidates.into_iter().map(|(_, u)| u).collect();
+        let paired: HashSet<String> = crm_proxy_pairs_impl(&crm_urls)
+            .into_iter()
+            .flat_map(|p| [p.crm_url, p.proxy_url])
+            .collect();
+
+        // Videos plus paired crm/proxy files, sorted + deduped (desktop parity
+        // with `found.sort(); found.dedup();`).
+        let mut urls: Vec<String> = videos.into_iter().map(|(_, u)| u).collect();
+        urls.extend(crm_urls.into_iter().filter(|u| paired.contains(u)));
+        urls.sort();
+        urls.dedup();
+        let urls = filter_raw_proxy_siblings_impl(&urls, &exts_lower);
+
+        let items: Vec<serde_json::Value> = urls
+            .iter()
+            .map(|u| {
+                serde_json::json!({
+                    "url": u,
+                    "is_sequence": false,
+                    "image_sequence_start": 0,
+                    "frame_count": 0,
+                    "first_frame_url": ""
+                })
+            })
+            .collect();
+
+        ::log::info!(
+            "[list_video_files_in_folder] SAF root={}, returned {} files (max_depth={}, cap={})",
+            folder_url,
+            items.len(),
+            max_depth,
+            max_results
+        );
+        QString::from(serde_json::to_string(&items).unwrap_or_else(|_| "[]".to_string()))
+    }
+
+    // SAF twin of `list_crm_proxy_files_in_folder`: flat URL list of every
+    // file participating in a crm+proxy pair.
+    #[cfg(target_os = "android")]
+    fn list_crm_proxy_files_in_folder_saf(
+        folder_url: &str,
+        extensions_json: &str,
+        max_depth: usize,
+        max_results: usize,
+    ) -> QString {
+        let exts_lower: Vec<String> = serde_json::from_str::<Vec<String>>(extensions_json)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|e| e.to_ascii_lowercase())
+            .filter(|e| e != "gyroflow")
+            .collect();
+
+        let list = |u: &str| Self::saf_list_entries(u);
+        let mut candidates: Vec<(String, String)> = Vec::new();
+        scan_saf_folder(
+            folder_url,
+            0,
+            max_depth,
+            max_results,
+            &list,
+            &|f| saf_crm_candidate_keep(f, &exts_lower),
+            &mut candidates,
+        );
+        let candidate_urls: Vec<String> = candidates.into_iter().map(|(_, u)| u).collect();
+        let paired: HashSet<String> = crm_proxy_pairs_impl(&candidate_urls)
+            .into_iter()
+            .flat_map(|p| [p.crm_url, p.proxy_url])
+            .collect();
+        let mut urls: Vec<String> = candidate_urls
+            .into_iter()
+            .filter(|u| paired.contains(u))
+            .collect();
+        urls.sort();
+
+        ::log::info!(
+            "[list_crm_proxy_files_in_folder] SAF root={}, returned {} files (max_depth={}, cap={})",
+            folder_url,
+            urls.len(),
+            max_depth,
+            max_results
         );
         QString::from(serde_json::to_string(&urls).unwrap_or_else(|_| "[]".to_string()))
     }
@@ -12329,9 +12554,17 @@ fn first_renderable_video_file_impl(urls: &[String], extensions: &[String]) -> O
 }
 
 fn is_gyro_mix_file_url_impl(url: &str) -> bool {
-    filesystem::get_filename(url)
+    if filesystem::get_filename(url)
         .to_ascii_lowercase()
         .ends_with("_mix.bin")
+    {
+        return true;
+    }
+    // Content URIs from private providers (e.g. MIUI's file explorer answers
+    // pickers with content://com.android.fileexplorer.documents/...) may not
+    // resolve a display name via ContentResolver query. The encoded URL still
+    // ends with the plain-ASCII filename, so match the URL tail directly.
+    url.starts_with("content://") && url.to_ascii_lowercase().ends_with("_mix.bin")
 }
 
 fn is_supported_drop_item_impl(url: &str, accepted_exts: &HashSet<String>) -> bool {
@@ -12677,9 +12910,266 @@ where
     })
 }
 
+// ── SAF (content://) folder scanning ─────────────────────────────────────────
+// The std::fs scanners above cannot walk Android SAF trees (content:// URIs
+// have no filesystem path). These helpers mirror their semantics on top of an
+// injected enumeration callback so the traversal logic stays unit-testable
+// off-device; the JNI-backed adapter lives in the cfg(target_os = "android")
+// entry points below.
+
+// A single entry from a SAF folder listing. For directories `url` is a
+// children URI (directly listable), for files a document URI (openable).
+// The SAF helpers below are only called from cfg(android) entry points but
+// stay un-gated so the traversal logic remains unit-testable on desktop.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+#[derive(Clone, Debug, PartialEq)]
+struct SafFolderEntry {
+    filename: String,
+    url: String,
+    is_dir: bool,
+}
+
+// Recursively collect (filename, url) file pairs under a SAF folder: files
+// first then subdirectories, both in per-directory filename order, honoring
+// the depth cap, the result cap and the `._` system-file skip - matching
+// `scan_video_folder` / `scan_gyro_folder` traversal semantics. `keep`
+// receives the lowercased filename.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn scan_saf_folder(
+    folder_url: &str,
+    depth: usize,
+    max_depth: usize,
+    max_results: usize,
+    list: &dyn Fn(&str) -> Vec<SafFolderEntry>,
+    keep: &dyn Fn(&str) -> bool,
+    out: &mut Vec<(String, String)>,
+) {
+    if depth > max_depth || out.len() >= max_results {
+        return;
+    }
+    let mut files: Vec<SafFolderEntry> = Vec::new();
+    let mut subdirs: Vec<SafFolderEntry> = Vec::new();
+    for e in list(folder_url) {
+        if e.is_dir {
+            subdirs.push(e);
+        } else {
+            files.push(e);
+        }
+    }
+    files.sort_by(|a, b| a.filename.cmp(&b.filename));
+    subdirs.sort_by(|a, b| a.filename.cmp(&b.filename));
+
+    for e in files {
+        if out.len() >= max_results {
+            return;
+        }
+        if is_ignored_system_file_name(&e.filename) {
+            continue;
+        }
+        if keep(&e.filename.to_ascii_lowercase()) {
+            out.push((e.filename, e.url));
+        }
+    }
+    for d in subdirs {
+        if out.len() >= max_results {
+            return;
+        }
+        scan_saf_folder(&d.url, depth + 1, max_depth, max_results, list, keep, out);
+    }
+}
+
+// Video predicate for SAF scans. Unlike `scan_video_folder`, ALL image-
+// sequence formats (dng/png/jpg/exr) are dropped: a content URI cannot carry
+// a `%0Nd` pattern, so numbered frames cannot be folded into one sequence job
+// and emitting them individually would flood the queue with per-frame jobs.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn saf_video_filename_keep(
+    filename_lower: &str,
+    exts_lower: &[String],
+    suffix_lower: &str,
+) -> bool {
+    let Some(ext) = file_extension(filename_lower) else {
+        return false;
+    };
+    if ext == "gyroflow" || ext == "crm" {
+        return false;
+    }
+    if is_image_sequence_ext(&ext) || is_non_source_image_ext(&ext) {
+        return false;
+    }
+    if !exts_lower.iter().any(|x| x == &ext) {
+        return false;
+    }
+    !stem_matches_default_suffix(filename_lower, suffix_lower)
+}
+
+// CRM-pairing candidate predicate: keep crm files plus every whitelisted
+// video that could serve as its proxy; actual pairing happens afterwards via
+// `crm_proxy_pairs_impl` (URL-string based, works on document URIs because
+// sibling documents share the same encoded folder prefix).
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn saf_crm_candidate_keep(filename_lower: &str, exts_lower: &[String]) -> bool {
+    match file_extension(filename_lower) {
+        Some(ext) => ext == "crm" || exts_lower.iter().any(|x| x == &ext),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // android-saf-folder-import: SAF walker traversal + filename predicates.
+    fn saf_entry(filename: &str, url: &str, is_dir: bool) -> SafFolderEntry {
+        SafFolderEntry {
+            filename: filename.to_string(),
+            url: url.to_string(),
+            is_dir,
+        }
+    }
+
+    fn saf_mock_tree() -> HashMap<String, Vec<SafFolderEntry>> {
+        let mut t = HashMap::new();
+        t.insert(
+            "root".to_string(),
+            vec![
+                saf_entry("Zulu.MP4", "root/Zulu.MP4", false),
+                saf_entry("._Zulu.MP4", "root/._Zulu.MP4", false),
+                saf_entry("alpha.mov", "root/alpha.mov", false),
+                saf_entry("Footage.2024", "root/Footage.2024/", true),
+                saf_entry("sub", "root/sub/", true),
+            ],
+        );
+        t.insert(
+            "root/Footage.2024/".to_string(),
+            vec![saf_entry("clip.mkv", "root/Footage.2024/clip.mkv", false)],
+        );
+        t.insert(
+            "root/sub/".to_string(),
+            vec![
+                saf_entry("d2", "root/sub/d2/", true),
+                saf_entry("beta_stabilized.mp4", "root/sub/beta_stabilized.mp4", false),
+                saf_entry("frame_0001.dng", "root/sub/frame_0001.dng", false),
+                saf_entry("gamma_mix.bin", "root/sub/gamma_mix.bin", false),
+            ],
+        );
+        t.insert(
+            "root/sub/d2/".to_string(),
+            vec![
+                saf_entry("d3", "root/sub/d2/d3/", true),
+                saf_entry("deep.mp4", "root/sub/d2/deep.mp4", false),
+            ],
+        );
+        t.insert(
+            "root/sub/d2/d3/".to_string(),
+            vec![
+                saf_entry("d4", "root/sub/d2/d3/d4/", true),
+                saf_entry("deepest.mp4", "root/sub/d2/d3/d4/too_deep_parent.mp4", false),
+            ],
+        );
+        t.insert(
+            "root/sub/d2/d3/d4/".to_string(),
+            vec![saf_entry("beyond.mp4", "root/sub/d2/d3/d4/beyond.mp4", false)],
+        );
+        t
+    }
+
+    #[test]
+    fn saf_walker_collects_videos_recursively() {
+        let tree = saf_mock_tree();
+        let list = |u: &str| tree.get(u).cloned().unwrap_or_default();
+        let exts = vec!["mp4".to_string(), "mov".to_string(), "mkv".to_string(), "dng".to_string()];
+        let mut out = Vec::new();
+        scan_saf_folder(
+            "root",
+            0,
+            3,
+            600,
+            &list,
+            &|f| saf_video_filename_keep(f, &exts, "_stabilized"),
+            &mut out,
+        );
+        let urls: Vec<&str> = out.iter().map(|(_, u)| u.as_str()).collect();
+        // Per-dir sorted, files before subdirs; `._`, `_stabilized`, dng and
+        // depth>3 entries are all absent; dot-named dir is recursed into.
+        assert_eq!(
+            urls,
+            vec![
+                "root/Zulu.MP4",
+                "root/alpha.mov",
+                "root/Footage.2024/clip.mkv",
+                "root/sub/d2/deep.mp4",
+                "root/sub/d2/d3/d4/too_deep_parent.mp4",
+            ]
+        );
+    }
+
+    #[test]
+    fn saf_walker_honors_result_cap() {
+        let tree = saf_mock_tree();
+        let list = |u: &str| tree.get(u).cloned().unwrap_or_default();
+        let exts = vec!["mp4".to_string(), "mov".to_string(), "mkv".to_string()];
+        let mut out = Vec::new();
+        scan_saf_folder(
+            "root",
+            0,
+            3,
+            2,
+            &list,
+            &|f| saf_video_filename_keep(f, &exts, ""),
+            &mut out,
+        );
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn saf_walker_collects_gyro_mix_files() {
+        let tree = saf_mock_tree();
+        let list = |u: &str| tree.get(u).cloned().unwrap_or_default();
+        let mut out = Vec::new();
+        scan_saf_folder("root", 0, 3, usize::MAX, &list, &|f| f.ends_with("_mix.bin"), &mut out);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].1, "root/sub/gamma_mix.bin");
+    }
+
+    #[test]
+    fn saf_video_keep_predicate() {
+        let exts = vec!["mp4".to_string(), "braw".to_string(), "dng".to_string()];
+        assert!(saf_video_filename_keep("a001.mp4", &exts, "_stabilized"));
+        assert!(saf_video_filename_keep("b.braw", &exts, "_stabilized"));
+        // Image-sequence formats are dropped on SAF even when whitelisted.
+        assert!(!saf_video_filename_keep("frame_0001.dng", &exts, "_stabilized"));
+        assert!(!saf_video_filename_keep("shot.png", &exts, "_stabilized"));
+        assert!(!saf_video_filename_keep("a001_stabilized.mp4", &exts, "_stabilized"));
+        assert!(!saf_video_filename_keep("project.gyroflow", &exts, "_stabilized"));
+        assert!(!saf_video_filename_keep("raw.crm", &exts, "_stabilized"));
+        assert!(!saf_video_filename_keep("noext", &exts, "_stabilized"));
+        assert!(!saf_video_filename_keep("other.avi", &exts, "_stabilized"));
+    }
+
+    #[test]
+    fn saf_crm_candidate_predicate() {
+        let exts = vec!["mp4".to_string(), "mov".to_string()];
+        assert!(saf_crm_candidate_keep("a001.crm", &exts));
+        assert!(saf_crm_candidate_keep("a001.mov", &exts));
+        assert!(!saf_crm_candidate_keep("a001.wav", &exts));
+        assert!(!saf_crm_candidate_keep("noext", &exts));
+    }
+
+    #[test]
+    fn crm_pairing_works_on_saf_document_uris() {
+        // Sibling documents share the encoded folder prefix, so the URL-string
+        // based pairing keys match just like file:// URLs.
+        let urls = vec![
+            "content://com.android.externalstorage.documents/tree/primary%3AWork/document/primary%3AWork%2FA001.crm".to_string(),
+            "content://com.android.externalstorage.documents/tree/primary%3AWork/document/primary%3AWork%2FA001.mov".to_string(),
+            "content://com.android.externalstorage.documents/tree/primary%3AWork/document/primary%3AWork%2FB002.mov".to_string(),
+        ];
+        let pairs = crm_proxy_pairs_impl(&urls);
+        assert_eq!(pairs.len(), 1);
+        assert_eq!(pairs[0].crm_url, urls[0]);
+        assert_eq!(pairs[0].proxy_url, urls[1]);
+    }
 
     // mounting-rotation-propagation: batch-queued job stabs inherit the main
     // stab's mounting rotation via this helper.

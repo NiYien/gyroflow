@@ -219,13 +219,13 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
                 + " first=" + picked.get(0)
                 + " requestCode=" + requestCode
                 + " manufacturer=" + Build.MANUFACTURER);
-        if (picked.size() == 1) {
-            // Preserve the existing single-URL bridge for single-pick / folder /
-            // legacy callers; QML's onUrl_opened still routes via pendingPickerCallback.
-            urlReceived(picked.get(0));
-        } else {
-            urlsReceived(joined);
-        }
+        // All picker results (single pick, multi pick, folder tree) go through
+        // the urls bridge: its Rust side (catch_urls_open) only emits the QML
+        // picker route. The single-URL bridge (urlReceived -> catch_url_open)
+        // stays reserved for VIEW/SEND intents - it additionally feeds the
+        // openFileOnStart main-preview mechanism, which must never fire for
+        // picker results (a folder tree URI would be fed to the video player).
+        urlsReceived(joined);
     }
 
     @Override

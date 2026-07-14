@@ -1003,12 +1003,14 @@ Item {
                 root.checkBatchDrain();
             }
             function onAdd_skipped(job_id: real, filename: string, reason: string): void {
-                // The job opened but produced no usable VideoInfo, so add_file's
-                // async body emits this instead of added/error. Clear the pending
-                // entry (otherwise the loader spinner leaks) and collect the
+                // The job was not enqueued (unreadable VideoInfo, or a
+                // duplicate of an already-queued input), so add_file emits
+                // this instead of added/error. Clear the pending entry
+                // (otherwise the loader spinner leaks) and collect the
                 // filename for an aggregate notice when the batch drains.
                 delete loader.pendingJobs[job_id];
-                loader.skippedFiles.push(filename);
+                if (reason === "duplicate") loader.duplicateFiles.push(filename);
+                else loader.skippedFiles.push(filename);
                 if (r3dSeqLoader.waiting) {
                     r3dSeqLoader.waiting = false;
                     r3dSeqLoader.loadNext();
@@ -1251,12 +1253,10 @@ Item {
                     if (Qt.platform.os === "android") {
                         window.pendingPickerCallback = function(urls) {
                             // FolderDialog SAF returns a tree URI (e.g.
-                            // content://.../tree/primary%3ADCIM). Do NOT pipe
-                            // it through dt.loadFiles: the no-extension
-                            // heuristic there is unreliable for tree URIs and
-                            // a misclassification feeds the URI to mdk's
-                            // video opener, which trips a JNI abort because
-                            // ContentResolver rejects tree URIs as file URIs.
+                            // content://.../tree/primary%3ADCIM). Register the
+                            // access grant, then hand it to the queue's
+                            // loadFiles pipeline below - is_dir/folder scanning
+                            // handle content:// trees natively.
                             console.log("[AddFolder] picker returned urls.length=" + (urls ? urls.length : "null"));
                             if (!urls || !urls.length) return;
                             const folderUrl = urls[0];
@@ -2819,6 +2819,10 @@ Item {
                 return;
             }
             let videoUrls = [];
+            // Gyro files registered during this drop; used to tell "nothing
+            // usable in the selection" (prompt) apart from "gyro-only
+            // selection" (legitimate silent path) when no videos were found.
+            let gyroFilesAdded = 0;
             // Image sequences found while scanning dropped folders that still
             // need a user-provided frame rate (no telemetry fps). Resolved via
             // a chained prompt before add() runs (see resolveFpsPromptsThen).
@@ -2827,6 +2831,7 @@ Item {
                 const fname = filesystem.get_filename(url).toLowerCase();
                 if (render_queue.is_gyro_mix_file(url.toString())) {
                     render_queue.add_gyro_file(url.toString());
+                    gyroFilesAdded += 1;
                 } else if (fname.endsWith(".crm")) {
                     videoUrls.push(url);
                 } else if (fname.endsWith(".bin")) {
@@ -2839,7 +2844,7 @@ Item {
                     // filtered by fileDialog.extensions, excluding files whose
                     // stem ends with the configured output suffix, e.g.
                     // _stabilized).
-                    render_queue.add_gyro_folder(url.toString());
+                    gyroFilesAdded += render_queue.add_gyro_folder(url.toString());
                     try {
                         const jsonStr = render_queue.list_video_files_in_folder(
                             url.toString(),
@@ -2891,7 +2896,12 @@ Item {
                 }
             }
             if (!videoUrls.length) {
-                console.log("[queue_drop:drop] reason=no_video_urls filtered=" + urls.length);
+                console.log("[queue_drop:drop] reason=no_video_urls filtered=" + urls.length + " gyroAdded=" + gyroFilesAdded);
+                if (!gyroFilesAdded) {
+                    // Nothing usable at all (e.g. an empty or unsupported-only
+                    // folder): tell the user instead of silently doing nothing.
+                    messageBox(Modal.Info, qsTr("No supported files were found in the selection."), [ { text: qsTr("Ok") } ]);
+                }
                 return;
             }
             console.log("[queue_drop:queue] queued=" + videoUrls.length);
@@ -3171,6 +3181,9 @@ Item {
         // (add_skipped). Reported once as an aggregate notice when the current
         // batch drains, then cleared.
         property var skippedFiles: [];
+        // Filenames skipped because the same input is already in the queue
+        // (add_skipped with reason "duplicate"); separate notice wording.
+        property var duplicateFiles: [];
         function updateStatus(): void { active = Object.keys(pendingJobs).length > 0; }
     }
 
@@ -3184,6 +3197,11 @@ Item {
             const n = loader.skippedFiles.length;
             loader.skippedFiles = [];
             messageBox(Modal.Warning, qsTr("%1 files could not be read and were skipped.").arg(n), [{ text: qsTr("Ok") }]);
+        }
+        if (loader.duplicateFiles.length > 0) {
+            const n = loader.duplicateFiles.length;
+            loader.duplicateFiles = [];
+            messageBox(Modal.Info, qsTr("%1 file(s) are already in the render queue.").arg(n), [{ text: qsTr("Ok") }]);
         }
     }
 }

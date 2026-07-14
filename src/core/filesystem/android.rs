@@ -125,7 +125,13 @@ pub fn get_url_info(url: &str) -> Result<AndroidFileInfo> {
         check_exception!(env, AndroidFileInfo; {
             let mut ret = AndroidFileInfo::default();
 
-            let uri = Uri::parse(&mut env, url)?;
+            // Bare tree URIs (picker results) must be converted to a document URI
+            // before querying; document / plain content URIs are queried as-is.
+            let uri = if super::is_bare_content_tree_url(url) {
+                DocumentsContract::build_document_uri_from_tree(&mut env, url)?
+            } else {
+                Uri::parse(&mut env, url)?
+            };
 
             for x in ContentResolver::query(&mut env, &uri, &["_display_name", "_size", "_data", "mime_type"])? {
                 for (k, v) in x {
@@ -240,7 +246,10 @@ pub fn is_dir_url(url: &str) -> bool {
                 match get_url_info(&format!("{url}/")) {
                     Ok(x) => x.is_dir,
                     Err(e) => {
-                        log::error!("Failed to get url info for {url}: {e:?}");
+                        // Both queries failed (non-SAF provider edge case); fall back to
+                        // the extension heuristic below. warn (not error): bare tree URIs
+                        // no longer hit this path since get_url_info converts them.
+                        log::warn!("Failed to get url info for {url}: {e:?}");
                         // Check if the file has extension - not ideal but should work for most cases
                         // FIXME: write this properly
                         url.split('/')
@@ -287,6 +296,7 @@ impl Uri {
             .l()?;
         Ok(env.as_cast::<JString>(&uri_str)?.to_string())
     }
+    #[allow(dead_code)]
     pub fn get_authority<'a>(env: &mut jni::Env<'a>, uri: &JObject<'a>) -> Result<JObject<'a>> {
         Ok(env
             .call_method(uri, jni_str!("getAuthority"), jni_sig!(() -> JString), &[])?
@@ -414,18 +424,47 @@ impl DocumentsContract {
         tree_uri: &JObject<'a>,
         doc_id: &str,
     ) -> Result<String> {
-        let authority = Uri::get_authority(env, tree_uri)?;
+        // Must use the *UsingTree* variant: the plain buildChildDocumentsUri
+        // yields content://<auth>/document/<id>/children, which carries no
+        // /tree/ segment - listing it then fails both the is_dir_url gate and
+        // the tree-scoped permission grant, so subfolders of a picked SAF
+        // tree could never be enumerated.
         let doc_id = env.new_string(doc_id)?;
         let document_uri = env
             .call_static_method(
                 jni_str!("android/provider/DocumentsContract"),
-                jni_str!("buildChildDocumentsUri"),
-                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Landroid/net/Uri;"),
-                &[JValue::Object(&authority), JValue::Object(&doc_id)],
+                jni_str!("buildChildDocumentsUriUsingTree"),
+                jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(tree_uri), JValue::Object(&doc_id)],
             )?
             .l()?;
 
         Uri::to_string(env, &document_uri)
+    }
+    // Convert a bare tree URI (ACTION_OPEN_DOCUMENT_TREE result) into a queryable
+    // document URI pointing at the tree's root document. Bare tree URIs cannot be
+    // passed to ContentResolver.query directly - providers throw for them.
+    pub fn build_document_uri_from_tree<'a>(
+        env: &mut jni::Env<'a>,
+        url: &str,
+    ) -> Result<JObject<'a>> {
+        let uri = Uri::parse(env, url)?;
+        let doc_id = env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("getTreeDocumentId"),
+                jni_sig!("(Landroid/net/Uri;)Ljava/lang/String;"),
+                &[JValue::Object(&uri)],
+            )?
+            .l()?;
+        Ok(env
+            .call_static_method(
+                jni_str!("android/provider/DocumentsContract"),
+                jni_str!("buildDocumentUriUsingTree"),
+                jni_sig!("(Landroid/net/Uri;Ljava/lang/String;)Landroid/net/Uri;"),
+                &[JValue::Object(&uri), JValue::Object(&doc_id)],
+            )?
+            .l()?)
     }
     pub fn build_child_documents_uri_using_tree<'a>(
         env: &mut jni::Env<'a>,
