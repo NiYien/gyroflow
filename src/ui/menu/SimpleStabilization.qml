@@ -376,6 +376,10 @@ Column {
     CheckBox {
         id: aiSyncCb;
         text: qsTr("AI SYNC");
+        // Hidden on mobile: NeuFlow Burn has no mobile support, so AI sync can
+        // never take effect there (has_neuflow_support() fallback already keeps
+        // the behavior correct; hiding avoids offering a dead toggle).
+        visible: !isMobile;
         checked: settings.value("simpleAiSync", false) === true || settings.value("simpleAiSync", false) === "true";
         onCheckedChanged: {
             settings.setValue("simpleAiSync", checked);
