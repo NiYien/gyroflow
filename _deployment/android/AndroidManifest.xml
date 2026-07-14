@@ -10,6 +10,9 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- In-app update: allows requesting the system package installer for the
+         downloaded APK (user still confirms in the installer UI). -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-feature android:glEsVersion="0x00030000" android:required="true" />
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
 
@@ -90,5 +93,18 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/qtprovider_paths"/>
         </provider-->
+
+        <!-- In-app update: exposes the downloaded APK in the update cache to
+             the system package installer via a content URI. Kept separate from
+             Qt's (commented) qtprovider so the two never collide. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.niyien.gyroflow.updateprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/update_provider_paths"/>
+        </provider>
     </application>
 </manifest>

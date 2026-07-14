@@ -2274,22 +2274,43 @@ Rectangle {
         function onApp_update_ready(path: string, platform: string, message: string): void {
             appUpdateReadyMessage = message || "";
             window.closeAppUpdateDialog();
-            const quitWarning = qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");
+            const isAndroid = platform === "android";
+            const quitWarning = isAndroid
+                ? qsTr("The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.")
+                : qsTr("Installing the update will quit Gyroflow. Make sure your project is saved before continuing.");
             const extra = platform === "macos"
                 ? "\n\n" + qsTr("After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.")
                 : "";
+            const installLabel = platform === "macos" ? qsTr("Open DMG and quit")
+                               : isAndroid           ? qsTr("Install")
+                                                     : qsTr("Install and quit");
             appUpdateDialog = messageBox(Modal.Info, qsTr("Update is ready.") + "\n\n" + quitWarning + extra, [
-                { text: platform === "macos" ? qsTr("Open DMG and quit") : qsTr("Install and quit"), accent: true, clicked: () => controller.open_downloaded_update_and_quit() },
+                { text: installLabel, accent: true, clicked: () => controller.open_downloaded_update_and_quit() },
                 { text: qsTr("Close") }
             ], undefined, Text.MarkdownText);
         }
         function onApp_update_error(message: string): void {
             window.closeAppUpdateDialog();
+            // Mirrors INSTALL_PERMISSION_REQUIRED_ERROR in src/distribution.rs:
+            // Android opened the "install unknown apps" settings page; the
+            // downloaded APK stays cached, so a retry needs no re-download.
+            if (message === "install-permission-required") {
+                appUpdateDialog = messageBox(Modal.Info, qsTr("Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again."), [
+                    { text: qsTr("Close") }
+                ]);
+                return;
+            }
             appUpdateDialog = messageBox(Modal.Error, qsTr("Update failed: %1").arg(message), [
                 { text: qsTr("Close") }
             ]);
         }
         function onApp_update_handoff_started(): void {
+            if (Qt.platform.os === "android") {
+                // The system installer takes over from here: it kills the app
+                // when the install commits, and a user-canceled install should
+                // return to a live session — so no self-quit on Android.
+                return;
+            }
             main_window.closeConfirmed = true;
             Qt.quit();
         }

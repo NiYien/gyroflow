@@ -596,6 +596,48 @@ pub fn install_crash_handler() -> std::io::Result<()> {
     Ok(())
 }
 
+// In-app update handoff: forward the downloaded APK to MainActivity.installApk,
+// which dispatches the system package installer (or the unknown-sources grant
+// page). Uses the activity's classloader to resolve the app class — a plain
+// FindClass on a Rust worker thread only sees system classes.
+#[cfg(target_os = "android")]
+pub fn android_install_apk(path: &str) -> Result<(), String> {
+    use jni::objects::{JClass, JObject, JString, JValue};
+    let jvm = unsafe { jni::JavaVM::from_raw(ndk_context::android_context().vm().cast()) };
+    let status = jvm
+        .attach_current_thread(|env| {
+            let activity = unsafe {
+                JObject::from_raw(env, ndk_context::android_context().context().cast())
+            };
+            let activity_class = env.get_object_class(&activity)?;
+            let class_loader = activity_class.get_class_loader(env)?;
+            let class_name = env.new_string("com.niyien.gyroflow.MainActivity")?;
+            let class = JClass::for_name_with_loader(env, class_name, true, class_loader)?;
+            let jpath = env.new_string(path)?;
+            let result = env
+                .call_static_method(
+                    class,
+                    jni::jni_str!("installApk"),
+                    jni::jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                    &[JValue::Object(jpath.as_ref())],
+                )?
+                .l()?;
+            Ok::<String, jni::errors::Error>(env.as_cast::<JString>(&result)?.to_string())
+        })
+        .map_err(|err| format!("installApk JNI call failed: {err}"))?;
+    match status.as_str() {
+        "ok" => {
+            ::log::info!(target: "update", "android install handoff dispatched");
+            Ok(())
+        }
+        "needs-permission" => Err(crate::distribution::INSTALL_PERMISSION_REQUIRED_ERROR.to_owned()),
+        other => Err(match other.strip_prefix("error:") {
+            Some(detail) => detail.to_owned(),
+            None => format!("unexpected installApk status: {other}"),
+        }),
+    }
+}
+
 #[cfg(target_os = "android")]
 pub fn android_log(v: String) {
     use std::ffi::{CStr, CString};

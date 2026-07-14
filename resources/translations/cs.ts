@@ -754,6 +754,21 @@ Z důvodu omezení systémových kodérů není vykreslování na pozadí podpor
         <translation>Instalace aktualizace ukončí Gyroflow. Před pokračováním se ujistěte, že je projekt uložen.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Systémový instalátor během aktualizace ukončí Gyroflow. Před pokračováním se ujistěte, že máte projekt uložený.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Nainstalovat</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Povolte prosím Gyroflow instalaci aplikací na právě otevřené stránce systémových nastavení a poté znovu stiskněte Nainstalovat.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Po otevření DMG přetáhněte Gyroflow(NiYien).app do složky Applications.</translation>

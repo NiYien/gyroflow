@@ -753,6 +753,21 @@ Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tu
         <translation>Päivityksen asennus sulkee Gyroflowin. Varmista, että projekti on tallennettu ennen jatkamista.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Järjestelmän asennusohjelma sulkee Gyroflown päivityksen ajaksi. Varmista, että projektisi on tallennettu ennen jatkamista.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Asenna</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Salli Gyroflown asentaa sovelluksia juuri avautuneella järjestelmäasetussivulla ja paina sitten Asenna uudelleen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Kun DMG avautuu, vedä Gyroflow(NiYien).app Applications-kansioon.</translation>

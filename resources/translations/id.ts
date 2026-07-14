@@ -755,6 +755,21 @@ Rendering di latar belakang tidak didukung, karena keterbatasan sistem encoder v
         <translation>Memasang pembaruan akan menutup Gyroflow. Pastikan proyek Anda telah disimpan sebelum melanjutkan.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Pemasang sistem akan menutup Gyroflow selama pembaruan. Pastikan proyek Anda sudah disimpan sebelum melanjutkan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Pasang</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Izinkan Gyroflow memasang aplikasi di halaman pengaturan sistem yang baru saja terbuka, lalu tekan Pasang lagi.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Setelah DMG terbuka, seret Gyroflow(NiYien).app ke folder Applications.</translation>

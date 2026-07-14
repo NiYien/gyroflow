@@ -754,6 +754,21 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>アップデートのインストールにより Gyroflow が終了します。続行する前にプロジェクトが保存されていることを確認してください。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>更新中はシステムのインストーラーが Gyroflow を終了します。続行する前にプロジェクトが保存されていることを確認してください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>インストール</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>開いたシステム設定ページで Gyroflow にアプリのインストールを許可してから、もう一度インストールを押してください。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>DMG が開いたら、Gyroflow(NiYien).app を Applications フォルダにドラッグしてください。</translation>

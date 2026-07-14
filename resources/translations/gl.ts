@@ -753,6 +753,21 @@ Debido ás limitacións dos codificadores de vídeo do sistema, non se admite a 
         <translation>Instalar a actualización pechará Gyroflow. Asegúrate de gardar o teu proxecto antes de continuar.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>O instalador do sistema pechará Gyroflow durante a actualización. Asegúrate de gardar o teu proxecto antes de continuar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Instalar</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Permite que Gyroflow instale aplicacións na páxina de axustes do sistema que se acaba de abrir e despois preme Instalar de novo.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Unha vez aberto o DMG, arrastra Gyroflow(NiYien).app ao cartafol Applications.</translation>

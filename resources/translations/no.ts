@@ -754,6 +754,21 @@ På grunn av begrensninger for systemets videokodere, støttes ikke gjengivelse 
         <translation>Installasjon av oppdateringen vil avslutte Gyroflow. Pass på at prosjektet er lagret før du fortsetter.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Systeminstallatøren lukker Gyroflow under oppdateringen. Sørg for at prosjektet ditt er lagret før du fortsetter.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Installer</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Tillat Gyroflow å installere apper på systeminnstillingssiden som nettopp åpnet, og trykk deretter på Installer igjen.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Når DMG-filen åpnes, drar du Gyroflow(NiYien).app til Applications-mappen.</translation>

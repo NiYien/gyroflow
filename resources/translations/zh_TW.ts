@@ -528,6 +528,21 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>安裝更新會結束 Gyroflow。繼續前請確認專案已儲存。</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>系統安裝程式在更新時會關閉 Gyroflow。繼續前請確保專案已儲存。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>安裝</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>請在剛開啟的系統設定頁面中允許 Gyroflow 安裝應用程式，然後再次點選「安裝」。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2052"/>
         <source>Install and quit</source>
         <translation>安裝並結束</translation>

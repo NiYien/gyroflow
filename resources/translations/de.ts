@@ -753,6 +753,21 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
         <translation>Die Installation des Updates beendet Gyroflow. Stellen Sie sicher, dass Ihr Projekt gespeichert ist, bevor Sie fortfahren.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Der System-Installer schließt Gyroflow während der Aktualisierung. Stelle sicher, dass dein Projekt gespeichert ist, bevor du fortfährst.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Installieren</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Bitte erlaube Gyroflow auf der soeben geöffneten Systemeinstellungsseite die Installation von Apps und drücke dann erneut auf Installieren.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Ziehen Sie nach dem Öffnen der DMG-Datei Gyroflow(NiYien).app in den Ordner Applications.</translation>

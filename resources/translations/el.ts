@@ -754,6 +754,21 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Η εγκατάσταση της ενημέρωσης θα κλείσει το Gyroflow. Βεβαιωθείτε ότι το έργο σας έχει αποθηκευτεί πριν συνεχίσετε.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Το πρόγραμμα εγκατάστασης του συστήματος θα κλείσει το Gyroflow κατά την ενημέρωση. Βεβαιωθείτε ότι το έργο σας έχει αποθηκευτεί πριν συνεχίσετε.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Εγκατάσταση</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Επιτρέψτε στο Gyroflow να εγκαθιστά εφαρμογές στη σελίδα ρυθμίσεων συστήματος που μόλις άνοιξε και έπειτα πατήστε ξανά Εγκατάσταση.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Όταν ανοίξει το DMG, σύρετε το Gyroflow(NiYien).app στον φάκελο Applications.</translation>

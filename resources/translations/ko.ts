@@ -753,6 +753,21 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>업데이트를 설치하면 Gyroflow가 종료됩니다. 계속하기 전에 프로젝트가 저장되었는지 확인하세요.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>업데이트 중에는 시스템 설치 프로그램이 Gyroflow를 종료합니다. 계속하기 전에 프로젝트가 저장되었는지 확인하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>설치</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>방금 열린 시스템 설정 페이지에서 Gyroflow의 앱 설치를 허용한 다음 설치를 다시 누르세요.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>DMG가 열리면 Gyroflow(NiYien).app을 Applications 폴더로 드래그하세요.</translation>

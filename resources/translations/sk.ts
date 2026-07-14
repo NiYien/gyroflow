@@ -754,6 +754,21 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
         <translation>Inštalácia aktualizácie ukončí Gyroflow. Pred pokračovaním sa uistite, že je projekt uložený.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Systémový inštalátor počas aktualizácie ukončí Gyroflow. Pred pokračovaním sa uistite, že máte projekt uložený.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Nainštalovať</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Povoľte prosím Gyroflow inštaláciu aplikácií na práve otvorenej stránke systémových nastavení a potom znovu stlačte Nainštalovať.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Po otvorení DMG pretiahnite Gyroflow(NiYien).app do priečinka Applications.</translation>

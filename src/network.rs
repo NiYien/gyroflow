@@ -135,7 +135,7 @@ fn retry_config() -> (u32, Duration) {
 
 /// Exponential backoff capped at 5s. With the default 500ms base the schedule
 /// is 500ms, 2s, 5s (8s capped), ... per successive retry.
-fn backoff_delay(base: Duration, retry_index: u32) -> Duration {
+pub fn backoff_delay(base: Duration, retry_index: u32) -> Duration {
     let factor = 4u64.saturating_pow(retry_index);
     let ms = (base.as_millis() as u64)
         .saturating_mul(factor)
@@ -283,6 +283,41 @@ fn download_prewarm_enabled() -> bool {
         );
         enabled
     })
+}
+
+/// Resolve whether body-phase resume (HTTP Range continuation after a mid-body
+/// read failure) is enabled for update downloads. The `.call()` retry above
+/// cannot help once response headers have arrived; without resume, a single
+/// mid-stream disconnect fails the whole download (observed: 932KB/53MB on a
+/// phone Wi-Fi blip). `NIYIEN_UPDATE_BODY_RESUME=0|off|false|no` disables it,
+/// restoring the pre-change single-shot body behavior byte-for-byte. Default
+/// on. Logged once on first use, next to the other update resolve lines.
+pub fn body_resume_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let (enabled, source) = match std::env::var("NIYIEN_UPDATE_BODY_RESUME") {
+            Ok(v) => (
+                !matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                ),
+                "env",
+            ),
+            Err(_) => (true, "default"),
+        };
+        log::info!(
+            target: "update",
+            "body resume resolved: enabled={enabled} source={source}"
+        );
+        enabled
+    })
+}
+
+/// Expose the shared app/update retry profile so the body-resume loop in
+/// `distribution.rs` shares the same attempt budget and backoff base as the
+/// `.call()`-phase retry (one knob tunes both phases).
+pub fn update_retry_profile() -> (u32, Duration) {
+    retry_config()
 }
 
 /// Plugin-download variant of `call_with_retry` using the dedicated, more

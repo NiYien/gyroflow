@@ -752,6 +752,21 @@ Sisteminizin video enkoderlerinin sınırlarından ötürü arkaplanda render i�
         <translation>Güncellemeyi kurmak Gyroflow&apos;u kapatacak. Devam etmeden önce projenizin kaydedildiğinden emin olun.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Güncelleme sırasında sistem yükleyicisi Gyroflow'u kapatacaktır. Devam etmeden önce projenizin kaydedildiğinden emin olun.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Yükle</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Az önce açılan sistem ayarları sayfasında Gyroflow'un uygulama yüklemesine izin verin, ardından tekrar Yükle'ye basın.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>DMG açıldıktan sonra Gyroflow(NiYien).app&apos;i Applications klasörüne sürükleyin.</translation>

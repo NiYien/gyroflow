@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Grants the system package installer read access to the in-app update
+     download cache only (Qt sets TMPDIR to the app cache dir, so the update
+     lands under cache/gyroflow-niyien/updates/). -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="updates" path="gyroflow-niyien/updates/" />
+</paths>

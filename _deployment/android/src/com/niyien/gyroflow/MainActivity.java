@@ -49,6 +49,10 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     private static final String FILE_PICKER_TAG = "GyroflowNiYienPicker";
     private static final long PICKER_DEDUPE_WINDOW_MS = 1500;
 
+    private static final String UPDATE_TAG = "GyroflowNiYienUpdate";
+    // Must match the <provider android:authorities=...> entry in AndroidManifest.xml.
+    private static final String UPDATE_PROVIDER_AUTHORITY = "com.niyien.gyroflow.updateprovider";
+
     private static MainActivity instance;
 
     private UsbManager usbManager;
@@ -260,6 +264,82 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         if (activity != null) {
             activity.closeUsbDevice();
         }
+    }
+
+    // ---- In-app update: hand the downloaded APK to the system installer ----
+
+    // Called from Rust (distribution.rs open_downloaded_update via JNI) on a
+    // worker thread. Returns "ok", "needs-permission", or "error:<detail>".
+    // The FileProvider authority must match AndroidManifest.xml and expose the
+    // update cache dir (res/xml/update_provider_paths.xml).
+    public static String installApk(String path) {
+        MainActivity activity = instance;
+        if (activity == null) {
+            return "error:Android activity is not ready";
+        }
+        try {
+            java.io.File apk = new java.io.File(path);
+            if (!apk.isFile()) {
+                return "error:update file not found: " + path;
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+                    && !activity.getPackageManager().canRequestPackageInstalls()) {
+                // Guide the user to the per-app "install unknown apps" grant;
+                // the Rust side maps "needs-permission" to a dedicated dialog
+                // and the cached APK stays ready for a retry after granting.
+                Intent settings = new Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        Uri.parse("package:" + activity.getPackageName()));
+                settings.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                String settingsError = startActivityOnUiThreadBlocking(activity, settings);
+                Log.i(UPDATE_TAG, "install blocked: unknown-sources not granted, opened settings"
+                        + (settingsError != null ? " (settings open failed: " + settingsError + ")" : ""));
+                return "needs-permission";
+            }
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                    activity, UPDATE_PROVIDER_AUTHORITY, apk);
+            Intent install = new Intent(Intent.ACTION_VIEW);
+            install.setDataAndType(uri, "application/vnd.android.package-archive");
+            install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            String error = startActivityOnUiThreadBlocking(activity, install);
+            if (error != null) {
+                return "error:" + error;
+            }
+            Log.i(UPDATE_TAG, "package installer dispatched for " + apk.getName());
+            return "ok";
+        } catch (Throwable t) {
+            Log.e(UPDATE_TAG, "installApk failed", t);
+            String msg = t.getMessage();
+            return "error:" + t.getClass().getSimpleName() + (msg != null ? ": " + msg : "");
+        }
+    }
+
+    // startActivity must run on the UI thread; block the (Rust worker) caller
+    // briefly so dispatch failures propagate back into the returned status
+    // instead of vanishing in a fire-and-forget runnable.
+    private static String startActivityOnUiThreadBlocking(MainActivity activity, Intent intent) {
+        final java.util.concurrent.atomic.AtomicReference<String> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        final java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        activity.runOnUiThread(() -> {
+            try {
+                activity.startActivity(intent);
+            } catch (Throwable t) {
+                Log.e(UPDATE_TAG, "startActivity failed", t);
+                failure.set(t.toString());
+            } finally {
+                done.countDown();
+            }
+        });
+        try {
+            if (!done.await(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                return "UI-thread dispatch timed out";
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return "interrupted while dispatching installer intent";
+        }
+        return failure.get();
     }
 
     private void initUsbBridge() {

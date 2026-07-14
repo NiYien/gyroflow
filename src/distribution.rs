@@ -1099,6 +1099,175 @@ where
     })
 }
 
+// 8-hex-char URL fingerprint used to key partial download files to their
+// source URL, so a manifest URL change (e.g. a new actions run) never resumes
+// into a stale partial from the previous URL.
+fn url_hash8(url: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(url.as_bytes());
+    hex_digest(&hasher.finalize()[..4])
+}
+
+fn resumable_temp_path(final_path: &Path, url: &str, kind: &str) -> PathBuf {
+    final_path.with_extension(format!("{}.{kind}", url_hash8(url)))
+}
+
+// Remove leftover partials for `final_path` written for other URLs (including
+// the legacy unsuffixed temp names), keeping only `keep`. Best-effort.
+fn clean_stale_partials(final_path: &Path, keep: &Path, kind: &str) {
+    let Some(parent) = final_path.parent() else {
+        return;
+    };
+    let Some(stem) = final_path.file_stem().and_then(|s| s.to_str()) else {
+        return;
+    };
+    let keep_name = keep
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or_default()
+        .to_owned();
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name != keep_name
+            && name.starts_with(&format!("{stem}."))
+            && name.ends_with(kind)
+            && std::fs::remove_file(entry.path()).is_ok()
+        {
+            log::info!(target: "update", "removed stale update partial {name}");
+        }
+    }
+}
+
+// Body-resume streaming (design D4). One call covers the whole body phase: it
+// re-issues ranged GETs after mid-body failures, appending to `temp_path`,
+// until the stream reaches EOF at the known total or the shared retry budget
+// (`update_retry_profile`) is exhausted. Header-phase failures inside each
+// issue still go through `call_with_retry` with its own budget; both budgets
+// are small so the worst-case product stays bounded.
+fn stream_update_body_resumable<F>(
+    label: &str,
+    url: &str,
+    temp_path: &Path,
+    expected_total: u64,
+    progress: &mut F,
+    progress_status: &str,
+) -> Result<(), String>
+where
+    F: FnMut(u64, u64, &str),
+{
+    let (retries, base) = crate::network::update_retry_profile();
+    let mut body_tries = 0u32;
+    let mut buffer = [0_u8; 128 * 1024];
+    loop {
+        let offset = std::fs::metadata(temp_path).map(|m| m.len()).unwrap_or(0);
+        let ranged = offset > 0;
+        let response = crate::network::call_with_retry(label, || {
+            let mut request = configure_geo_request(crate::network::get(url));
+            if ranged {
+                request = request.header("Range", format!("bytes={offset}-"));
+            }
+            request.call()
+        });
+        let response = match response {
+            Ok(response) => response,
+            // 416: our partial is at or past the remote length (content changed
+            // under the same URL, or local corruption) — drop it and restart.
+            Err(ureq::Error::StatusCode(416)) if ranged => {
+                let _ = std::fs::remove_file(temp_path);
+                if body_tries >= retries {
+                    return Err(format!("download {label} failed: HTTP 416 on resume"));
+                }
+                log::warn!(
+                    target: "update",
+                    "download {label} resume from {offset} got HTTP 416, restarting from zero"
+                );
+                body_tries += 1;
+                continue;
+            }
+            Err(err) => return Err(format!("download {label} failed: {err}")),
+        };
+        // 206 = the server honored the range and we append; a 200 means the
+        // range was ignored, so the file restarts from scratch.
+        let append = ranged && response.status() == 206;
+        let base_offset = if append { offset } else { 0 };
+        let content_length = response
+            .headers()
+            .get("content-length")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
+        let content_range_total = response
+            .headers()
+            .get("content-range")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.rsplit('/').next()?.trim().parse::<u64>().ok());
+        let known_total = content_range_total
+            .or(content_length.map(|len| base_offset + len))
+            .unwrap_or(expected_total);
+
+        let mut reader = response.into_body().into_reader();
+        let mut output = if append {
+            std::fs::OpenOptions::new().append(true).open(temp_path)
+        } else {
+            std::fs::File::create(temp_path)
+        }
+        .map_err(|err| format!("create update temp file failed: {err}"))?;
+        let mut written = base_offset;
+        let body_error = loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break None,
+                Ok(read) => {
+                    // Disk write failures are not transient network errors —
+                    // surface them immediately instead of burning the budget.
+                    output
+                        .write_all(&buffer[..read])
+                        .map_err(|err| format!("write update download failed: {err}"))?;
+                    written += read as u64;
+                    progress(written, known_total.max(written), progress_status);
+                }
+                Err(err) => break Some(err.to_string()),
+            }
+        };
+        if body_error.is_none() {
+            output
+                .flush()
+                .map_err(|err| format!("flush update download failed: {err}"))?;
+        }
+        drop(output);
+        // A clean EOF short of the known total is a truncated stream (server
+        // closed early) — resume it like a mid-body failure instead of handing
+        // a short file to checksum verification.
+        let failure = body_error.or_else(|| {
+            (known_total > 0 && written < known_total)
+                .then(|| format!("stream ended early at {written}/{known_total} bytes"))
+        });
+        match failure {
+            None => return Ok(()),
+            Some(err) => {
+                if body_tries >= retries {
+                    return Err(format!(
+                        "read {label} body failed after {} attempts: {err}",
+                        body_tries + 1
+                    ));
+                }
+                let delay = crate::network::backoff_delay(base, body_tries);
+                log::warn!(
+                    target: "update",
+                    "download {label} body interrupted at {written}/{} (attempt {}/{}): {err}; resuming in {delay:?}",
+                    known_total,
+                    body_tries + 1,
+                    retries + 1
+                );
+                body_tries += 1;
+                std::thread::sleep(delay);
+            }
+        }
+    }
+}
+
 fn download_or_reuse_update_file<F>(
     label: &str,
     url: &str,
@@ -1136,6 +1305,38 @@ where
     // Cold-edge prewarm before the (retried) app-update download — same 123 CDN
     // cold-origin 504 as the plugin path. Best-effort, gated by env.
     crate::network::prewarm_url(url);
+
+    if crate::network::body_resume_enabled() {
+        let temp_path = resumable_temp_path(&path, url, "download");
+        clean_stale_partials(&path, &temp_path, "download");
+        stream_update_body_resumable(
+            label,
+            url,
+            &temp_path,
+            expected_size,
+            progress,
+            progress_status,
+        )?;
+        // Hash the completed file from disk so verification covers the resumed
+        // prefix as well as the freshly streamed bytes.
+        let (actual_sha256, _) = sha256_file_hex(&temp_path)
+            .map_err(|err| format!("read {label} download failed: {err}"))?;
+        if let Err(err) = verify_sha256_hex(label, &actual_sha256, expected_sha256) {
+            // A complete-but-wrong file must not be resumed into next time.
+            let _ = std::fs::remove_file(&temp_path);
+            return Err(err);
+        }
+        if path.exists() {
+            std::fs::remove_file(&path)
+                .map_err(|err| format!("replace cached update file failed: {err}"))?;
+        }
+        std::fs::rename(&temp_path, &path)
+            .map_err(|err| format!("activate update download failed: {err}"))?;
+        return Ok(path);
+    }
+
+    // Legacy single-shot body path (NIYIEN_UPDATE_BODY_RESUME=0): kept
+    // byte-identical to the pre-resume behavior as the rollback path.
     let response = crate::network::call_with_retry(label, || {
         configure_geo_request(crate::network::get(url)).call()
     })
@@ -1240,6 +1441,38 @@ where
 {
     // Cold-edge prewarm before the (retried) nightly-wrapper download.
     crate::network::prewarm_url(url);
+
+    if crate::network::body_resume_enabled() {
+        // The wrapper size is not in the manifest (sha/size describe the inner
+        // file), so short-read detection relies on per-attempt headers.
+        let wrapper_path = resumable_temp_path(&path, url, "nightly-wrapper.zip");
+        clean_stale_partials(&path, &wrapper_path, "nightly-wrapper.zip");
+        stream_update_body_resumable(
+            &format!("{label} (nightly wrapper)"),
+            url,
+            &wrapper_path,
+            0,
+            progress,
+            progress_status,
+        )?;
+        let mut buffer = [0_u8; 128 * 1024];
+        let extract_result = extract_nightly_inner_file(
+            label,
+            &wrapper_path,
+            &path,
+            expected_sha256,
+            expected_size,
+            &mut buffer,
+            progress,
+            progress_status,
+        );
+        let _ = std::fs::remove_file(&wrapper_path);
+        extract_result?;
+        return Ok(path);
+    }
+
+    // Legacy single-shot body path (NIYIEN_UPDATE_BODY_RESUME=0): kept
+    // byte-identical to the pre-resume behavior as the rollback path.
     let response = crate::network::call_with_retry(label, || {
         configure_geo_request(crate::network::get(url)).call()
     })
@@ -1422,6 +1655,12 @@ fn sha256_file_hex(path: &Path) -> Result<(String, u64), std::io::Error> {
     Ok((hex_digest(hasher.finalize().as_slice()), size))
 }
 
+/// Sentinel error surfaced to QML when Android blocks the install because the
+/// per-app "install unknown apps" grant is missing. QML shows a guidance
+/// dialog instead of the generic failure message (same sentinel pattern as
+/// the plugin-copy-blocked message in nle_plugins).
+pub const INSTALL_PERMISSION_REQUIRED_ERROR: &str = "install-permission-required";
+
 pub fn open_downloaded_update(prepared: &PreparedAppUpdate) -> Result<(), String> {
     if prepared.selection.platform == "macos" {
         return open_macos_update(&prepared.path);
@@ -1429,10 +1668,25 @@ pub fn open_downloaded_update(prepared: &PreparedAppUpdate) -> Result<(), String
     if prepared.selection.platform == "windows" {
         return launch_windows_update(prepared);
     }
+    if prepared.selection.platform == "android" {
+        return open_android_update(&prepared.path);
+    }
     Err(format!(
         "app update handoff is not supported on {}",
         prepared.selection.platform
     ))
+}
+
+fn open_android_update(path: &Path) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        crate::util::android_install_apk(&path.to_string_lossy())
+    }
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = path;
+        Err("Android update handoff is only available on Android".to_owned())
+    }
 }
 
 pub fn windows_setup_update_args(
@@ -2009,6 +2263,218 @@ mod app_update_tests {
                 && status == "ready"
         }));
         let _ = fs::remove_file(prepared.path);
+    }
+
+    // Minimal HTTP/1.1 stub for body-resume tests. Serves one connection per
+    // plan entry in order, always answering `Connection: close` so ureq never
+    // reuses a socket across plans. The first request is always the best-effort
+    // prewarm probe (`Range: bytes=0-0`), so plans start with `Prewarm`.
+    enum StubPlan {
+        Prewarm,
+        // 200 with the full Content-Length declared but only the first `1` (n)
+        // bytes of the body sent before a clean close — a truncated stream.
+        TruncatedAt(Vec<u8>, usize),
+        // Honors `Range: bytes=N-` with a 206; serves 200 full without Range.
+        Ranged(Vec<u8>),
+        // Ignores any Range header and always serves the full body with 200.
+        FullIgnoringRange(Vec<u8>),
+    }
+
+    fn spawn_http_stub(plans: Vec<StubPlan>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+        use std::io::{Read as _, Write as _};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let handle = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for plan in plans {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0_u8; 8192];
+                let mut req = Vec::new();
+                loop {
+                    match stream.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            req.extend_from_slice(&buf[..n]);
+                            if req.windows(4).any(|w| w == b"\r\n\r\n") {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+                let req_text = String::from_utf8_lossy(&req).into_owned();
+                let range_start = req_text.lines().find_map(|line| {
+                    line.to_ascii_lowercase()
+                        .strip_prefix("range: bytes=")
+                        .and_then(|v| v.split('-').next()?.trim().parse::<usize>().ok())
+                });
+                seen.push(req_text);
+                let mut response = Vec::new();
+                match &plan {
+                    StubPlan::Prewarm => {
+                        response.extend_from_slice(
+                            b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-0/1\r\nContent-Length: 1\r\nConnection: close\r\n\r\nX",
+                        );
+                    }
+                    StubPlan::TruncatedAt(content, cut) => {
+                        response.extend_from_slice(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                content.len()
+                            )
+                            .as_bytes(),
+                        );
+                        response.extend_from_slice(&content[..*cut]);
+                    }
+                    StubPlan::Ranged(content) => match range_start {
+                        Some(start) if start < content.len() => {
+                            let body = &content[start..];
+                            response.extend_from_slice(
+                                format!(
+                                    "HTTP/1.1 206 Partial Content\r\nContent-Range: bytes {}-{}/{}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                    start,
+                                    content.len() - 1,
+                                    content.len(),
+                                    body.len()
+                                )
+                                .as_bytes(),
+                            );
+                            response.extend_from_slice(body);
+                        }
+                        _ => {
+                            response.extend_from_slice(
+                                format!(
+                                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                    content.len()
+                                )
+                                .as_bytes(),
+                            );
+                            response.extend_from_slice(content);
+                        }
+                    },
+                    StubPlan::FullIgnoringRange(content) => {
+                        response.extend_from_slice(
+                            format!(
+                                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                                content.len()
+                            )
+                            .as_bytes(),
+                        );
+                        response.extend_from_slice(content);
+                    }
+                }
+                let _ = stream.write_all(&response);
+            }
+            seen
+        });
+        (format!("http://127.0.0.1:{port}"), handle)
+    }
+
+    fn resume_test_target(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "gyroflow-resume-test-{tag}-{}-{}.bin",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn resume_test_content() -> Vec<u8> {
+        (0_u32..300_000).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn download_resumes_with_range_after_mid_body_truncation() {
+        let content = resume_test_content();
+        let cut = 150_000_usize;
+        let (base, stub) = spawn_http_stub(vec![
+            StubPlan::Prewarm,
+            StubPlan::TruncatedAt(content.clone(), cut),
+            StubPlan::Ranged(content.clone()),
+        ]);
+        let path = resume_test_target("range");
+        let result = download_or_reuse_update_file(
+            "app update",
+            &format!("{base}/resume-range.bin"),
+            &sha256_hex_for_test(&content),
+            content.len() as u64,
+            path.clone(),
+            &mut |_, _, _| {},
+            "downloading",
+        )
+        .unwrap();
+        assert_eq!(fs::read(&result).unwrap(), content);
+        let requests = stub.join().unwrap();
+        assert!(
+            requests[2]
+                .to_ascii_lowercase()
+                .contains(&format!("range: bytes={cut}-")),
+            "resume request should carry the partial offset, got: {}",
+            requests[2]
+        );
+        let _ = fs::remove_file(&result);
+    }
+
+    #[test]
+    fn download_restarts_from_zero_when_server_ignores_range() {
+        let content = resume_test_content();
+        let (base, stub) = spawn_http_stub(vec![
+            StubPlan::Prewarm,
+            StubPlan::TruncatedAt(content.clone(), 100_000),
+            StubPlan::FullIgnoringRange(content.clone()),
+        ]);
+        let path = resume_test_target("ignored");
+        let result = download_or_reuse_update_file(
+            "app update",
+            &format!("{base}/resume-ignored.bin"),
+            &sha256_hex_for_test(&content),
+            content.len() as u64,
+            path.clone(),
+            &mut |_, _, _| {},
+            "downloading",
+        )
+        .unwrap();
+        assert_eq!(fs::read(&result).unwrap(), content);
+        let requests = stub.join().unwrap();
+        assert!(requests[2].to_ascii_lowercase().contains("range: bytes=100000-"));
+        let _ = fs::remove_file(&result);
+    }
+
+    #[test]
+    fn download_cleans_stale_partials_from_other_urls() {
+        let content = resume_test_content();
+        let (base, stub) = spawn_http_stub(vec![
+            StubPlan::Prewarm,
+            StubPlan::Ranged(content.clone()),
+        ]);
+        let path = resume_test_target("stale");
+        // Partials left by a previous URL (hash-suffixed) and by the legacy
+        // unsuffixed temp name must be swept, not resumed into.
+        let stale_other_url = path.with_extension("deadbeef.download");
+        let stale_legacy = path.with_extension("download");
+        fs::write(&stale_other_url, b"stale-bytes").unwrap();
+        fs::write(&stale_legacy, b"stale-bytes").unwrap();
+        let result = download_or_reuse_update_file(
+            "app update",
+            &format!("{base}/resume-stale.bin"),
+            &sha256_hex_for_test(&content),
+            content.len() as u64,
+            path.clone(),
+            &mut |_, _, _| {},
+            "downloading",
+        )
+        .unwrap();
+        assert_eq!(fs::read(&result).unwrap(), content);
+        assert!(!stale_other_url.exists(), "old-URL partial must be swept");
+        assert!(!stale_legacy.exists(), "legacy temp partial must be swept");
+        let requests = stub.join().unwrap();
+        assert!(
+            !requests[1].to_ascii_lowercase().contains("range:"),
+            "fresh download must not resume from a stale partial"
+        );
+        let _ = fs::remove_file(&result);
     }
 
     #[test]

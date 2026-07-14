@@ -754,6 +754,21 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Встановлення оновлення закриє Gyroflow. Перш ніж продовжити, переконайтеся, що ваш проєкт збережено.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2279"/>
+        <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
+        <translation>Системний інсталятор закриє Gyroflow під час оновлення. Переконайтеся, що проєкт збережено, перш ніж продовжити.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2285"/>
+        <source>Install</source>
+        <translation>Встановити</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2298"/>
+        <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
+        <translation>Дозвольте Gyroflow встановлювати застосунки на щойно відкритій сторінці налаштувань системи, а потім знову натисніть «Встановити».</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="2049"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Після відкриття DMG перетягніть Gyroflow(NiYien).app до теки Applications.</translation>
