@@ -157,13 +157,20 @@ fn set_priority_native(level: WorkerPriority) -> Result<(), String> {
     }
 }
 
-#[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
+#[cfg(target_os = "android")]
 unsafe fn libc_errno() -> *mut i32 {
-    // __errno_location is glibc/musl/bionic; all three target families ship it.
-    unsafe extern "C" {
-        fn __errno_location() -> *mut i32;
-    }
-    unsafe { __errno_location() }
+    // Bionic exports __errno, not __errno_location. Referencing the latter
+    // leaves an unresolvable symbol in the cdylib and dlopen fails on device.
+    unsafe { libc::__errno() }
+}
+
+#[cfg(all(
+    unix,
+    not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+))]
+unsafe fn libc_errno() -> *mut i32 {
+    // glibc and musl both export __errno_location.
+    unsafe { libc::__errno_location() }
 }
 
 #[cfg(not(any(windows, unix)))]
