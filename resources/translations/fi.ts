@@ -3905,6 +3905,18 @@ Napsauta Ok ja valitse kohdekansio.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Osumaa ei löytynyt yhdestäkään gyrotiedostosta. Tallenteet eivät ehkä kata tätä videota, tai videon liike on epäluotettava.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Odottaa sovitusta</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Tarkista objektiivinumerot</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Gyrodata määritetty. Tarkista jokaisen jonossa olevan videon objektiivinumero. Napsauta videota hiiren oikealla painikkeella ja muuta se kohdasta "%1", paina sitten "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

@@ -3906,6 +3906,18 @@ Kliknij Ok i wybierz folder docelowy.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Nie znaleziono dopasowania w żadnym pliku żyroskopu. Nagrania mogą nie obejmować tego wideo lub ruch w wideo jest niewiarygodny.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Oczekuje na dopasowanie</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Sprawdź numery obiektywów</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Dane żyroskopu przypisane. Sprawdź numer obiektywu każdego filmu w kolejce. Kliknij film prawym przyciskiem myszy i zmień go przez "%1", a następnie naciśnij "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

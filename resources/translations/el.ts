@@ -3906,6 +3906,18 @@ Click Ok and select the destination folder.</source>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Δεν βρέθηκε αντιστοιχία σε κανένα αρχείο γυροσκοπίου. Οι εγγραφές ενδέχεται να μην καλύπτουν αυτό το βίντεο, ή η κίνηση του βίντεο είναι αναξιόπιστη.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Εκκρεμεί αντιστοίχιση</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Έλεγχος αριθμών φακού</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Τα δεδομένα γυροσκοπίου αντιστοιχίστηκαν. Ελέγξτε τον αριθμό φακού κάθε βίντεο στην ουρά. Κάντε δεξί κλικ σε ένα βίντεο και χρησιμοποιήστε το "%1" για να τον αλλάξετε, έπειτα πατήστε "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

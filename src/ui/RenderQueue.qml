@@ -129,8 +129,10 @@ Item {
     property bool matchDirty: true
     // Auto-match in-flight flag (moved up from the removed standalone "Auto match" button).
     property bool matching: false
-    // Simple-mode match-then-sync orchestration: "" | "sync" | "export".
+    // Simple-mode match-then-sync orchestration: "" | "sync" | "export" | "review".
     // Set by beginMatchThenSync(); dispatched / cleared on match completion.
+    // "review" runs the match pass alone and then prompts the user to verify
+    // the assigned lens numbers instead of dispatching sync/export.
     property string pendingAction: ""
     // Tracks a batch autosync we kicked off so we can clear window.syncDirty when it settles.
     property bool _batchSyncInFlight: false
@@ -523,10 +525,14 @@ Item {
                     // the shared window-level flows — distribution happens
                     // inside the triggered main action (match first, then
                     // sync/render), exactly as if the bottom-bar button was
-                    // pressed. [Done] just closes.
+                    // pressed. In Manual edit mode the third button runs a
+                    // match-only pass ("review") so the user can verify the
+                    // assigned lens numbers before stabilizing; otherwise
+                    // [Later] just closes.
                     deepMatchDialog.close();
                     if (index === 0)      window.runPluginStabilizeFlow();
                     else if (index === 1) window.runStabilizedBatchExport();
+                    else if (index === 2 && controller.lens_group_manual_edit) root.beginMatchThenSync("review");
                     return;
                 }
                 // Request cancellation; the dialog closes when
@@ -599,7 +605,10 @@ Item {
                         }
                         deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3))
                                              + "\n" + qsTr("No further deep search needed for this day's clips.");
-                        deepMatchDialog.buttons = [qsTr("Stabilize (or use with plugins)"), qsTr("Export stabilized video"), qsTr("Later")];
+                        // manual-lens-pending-match-review: in Manual edit mode the
+                        // third button becomes a match-only "review" trigger so lens
+                        // numbers land on the queue rows before the user stabilizes.
+                        deepMatchDialog.buttons = [qsTr("Stabilize (or use with plugins)"), qsTr("Export stabilized video"), controller.lens_group_manual_edit ? qsTr("Review lens numbers") : qsTr("Later")];
                         deepMatchDialog.succeeded = true;
                         // Deep match does not go through onGyro_files_changed, so
                         // mark the batch dirty here. The next main Export action
@@ -717,6 +726,14 @@ Item {
                 }
                 // A fresh match invalidates any prior sync.
                 window.syncDirty = true;
+                // manual-lens-pending-match-review: the match pass just assigned
+                // lens numbers to the queue rows — prompt the user to verify them
+                // (right-click to change) and stabilize when satisfied. No
+                // sync/export dispatch on this path.
+                if (action === "review") {
+                    messageBox(Modal.Info, qsTr("Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use \"%1\" to change it, then press \"%2\".").arg(qsTr("Change lens group")).arg(qsTr("Stabilize (or use with plugins)")), [ { text: qsTr("Ok") } ]);
+                    return;
+                }
                 if (action === "sync") {
                     window.runSimpleBatchSync();
                 } else if (action === "export") {
@@ -2354,20 +2371,23 @@ Item {
                         BasicText {
                             // simple-mode-ux-overhaul: in Manual edit mode, the focal
                             // length slot becomes a "Manual: L<n>" tag where n is the
-                            // effective lens group (per-job override > telemetry > L1).
+                            // effective lens group (per-job override > telemetry).
+                            // manual-lens-pending-match-review: -1 sentinel = no lens
+                            // number known yet (no override, no telemetry lens_index) —
+                            // shown as "Pending match" instead of a misleading L1.
                             property bool isManualMode: controller.lens_group_manual_edit;
                             property int effectiveLensIdx: {
                                 if (dlg.displayParams && typeof dlg.displayParams.lens_index_override === "number")
                                     return dlg.displayParams.lens_index_override;
                                 if (dlg.displayParams && typeof dlg.displayParams.lens_index_effective === "number")
                                     return dlg.displayParams.lens_index_effective;
-                                return 0;
+                                return -1;
                             }
                             visible: isManualMode
                                 || ((dlg.displayParams.focal_length || 0) > 0
                                     && (dlg.displayParams.lens_group_display_mode || "auto") === "auto");
                             text: isManualMode
-                                ? "<b>" + qsTr("Manual") + ": L" + (effectiveLensIdx + 1) + "</b>"
+                                ? "<b>" + qsTr("Manual") + ": " + (effectiveLensIdx >= 0 ? "L" + (effectiveLensIdx + 1) : qsTr("Pending match")) + "</b>"
                                 : "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
                             font.pixelSize: basicTextSize;
                         }

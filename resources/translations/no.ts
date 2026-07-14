@@ -3906,6 +3906,18 @@ Klikk OK og velg målmappen.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Ingen match funnet i noen gyrofil. Opptakene dekker kanskje ikke denne videoen, eller videoens bevegelse er upålitelig.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Venter på match</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Sjekk objektivnumre</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Gyrodata tildelt. Sjekk objektivnummeret på hver video i køen. Høyreklikk på en video og bruk "%1" for å endre det, og trykk deretter "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

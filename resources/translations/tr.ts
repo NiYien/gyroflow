@@ -3899,6 +3899,18 @@ Click Ok and select the destination folder.</source>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Hiçbir jiroskop dosyasında eşleşme bulunamadı. Kayıtlar bu videoyu kapsamıyor olabilir veya videonun hareketi güvenilir değil.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Eşleştirme bekleniyor</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Lens numaralarını incele</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Jiroskop verileri atandı. Kuyruktaki her videonun lens numarasını kontrol edin. Bir videoya sağ tıklayıp "%1" ile değiştirin, ardından "%2" düğmesine basın.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

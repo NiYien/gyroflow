@@ -3904,6 +3904,18 @@ Faga clic en Aceptar e seleccione o cartafol de destino.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Non se atopou ningunha coincidencia en ningún ficheiro do xiroscopio. É posible que as gravacións non cubran este vídeo, ou que o movemento do vídeo non sexa fiable.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Pendente de emparellar</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Revisar números de obxectivo</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Datos do xiroscopio asignados. Comproba o número de obxectivo de cada vídeo na cola. Preme co botón dereito nun vídeo e usa "%1" para cambialo; despois preme "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

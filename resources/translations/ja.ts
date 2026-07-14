@@ -3907,6 +3907,18 @@ OKをクリックして保存先フォルダを選択します。</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>どのジャイロファイルにも一致が見つかりませんでした。記録がこの動画をカバーしていないか、動画の動きが不安定な可能性があります。</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>マッチング待ち</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>レンズ番号を確認</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>ジャイロデータを割り当てました。キュー内の各動画のレンズ番号を確認してください。動画を右クリックして「%1」で変更し、その後「%2」を押してください。</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

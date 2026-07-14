@@ -3905,6 +3905,18 @@ Click Ok and select the destination folder.</source>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>어떤 자이로 파일에서도 일치 항목을 찾지 못했습니다. 기록이 이 영상을 포함하지 않거나 영상의 움직임이 불안정할 수 있습니다.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>매칭 대기 중</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>렌즈 번호 확인</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>자이로 데이터가 할당되었습니다. 대기열에 있는 각 동영상의 렌즈 번호를 확인하세요. 동영상을 마우스 오른쪽 버튼으로 클릭해 "%1"(으)로 변경한 다음 "%2" 버튼을 누르세요.</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

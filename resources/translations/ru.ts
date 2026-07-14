@@ -3906,6 +3906,18 @@ Click Ok and select the destination folder.</source>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Совпадение не найдено ни в одном файле гироскопа. Записи могут не охватывать это видео, либо движение в видео ненадёжно.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Ожидает сопоставления</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Проверить номера объективов</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Данные гироскопа распределены. Проверьте номер объектива у каждого видео в очереди. Щёлкните видео правой кнопкой мыши и измените его через "%1", затем нажмите "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

@@ -3906,6 +3906,18 @@ Klikni na OK pre výber cieľovej zložky.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>V žiadnom súbore gyroskopu sa nenašla zhoda. Záznamy nemusia pokrývať toto video, alebo je pohyb videa nespoľahlivý.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Čaká na spárovanie</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Skontrolovať čísla objektívov</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Údaje gyroskopu priradené. Skontrolujte číslo objektívu pri každom videu vo fronte. Kliknite na video pravým tlačidlom a zmeňte ho cez "%1", potom stlačte "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

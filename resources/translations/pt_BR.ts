@@ -3905,6 +3905,18 @@ Clique em OK e selecione a pasta de destino.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Nenhuma correspondência encontrada em nenhum arquivo do giroscópio. As gravações podem não cobrir este vídeo, ou o movimento do vídeo pode não ser confiável.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Aguardando pareamento</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Revisar números da lente</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Dados do giroscópio atribuídos. Verifique o número da lente de cada vídeo na fila. Clique com o botão direito em um vídeo e use "%1" para alterá-lo; depois pressione "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

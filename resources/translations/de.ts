@@ -3905,6 +3905,18 @@ Klicke auf Ok, um den Zielordner auszuwählen.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>In keiner Gyro-Datei wurde eine Übereinstimmung gefunden. Die Aufzeichnungen decken dieses Video möglicherweise nicht ab, oder die Bewegung des Videos ist unzuverlässig.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Zuordnung ausstehend</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Objektivnummern prüfen</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Gyrodaten zugeordnet. Prüfen Sie die Objektivnummer jedes Videos in der Warteschlange. Klicken Sie mit der rechten Maustaste auf ein Video und ändern Sie sie über "%1", drücken Sie anschließend "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

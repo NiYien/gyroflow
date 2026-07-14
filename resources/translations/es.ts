@@ -3904,6 +3904,18 @@ Haga clic en Ok y seleccione la carpeta de destino.</translation>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>No se encontró ninguna coincidencia en ningún archivo de giroscopio. Es posible que las grabaciones no cubran este video, o que el movimiento del video no sea fiable.</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>Pendiente de emparejar</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>Revisar números de objetivo</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>Datos de giroscopio asignados. Comprueba el número de objetivo de cada vídeo en la cola. Haz clic derecho en un vídeo y usa "%1" para cambiarlo; después pulsa "%2".</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>

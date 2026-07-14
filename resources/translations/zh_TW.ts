@@ -3906,6 +3906,18 @@ Click Ok and select the destination folder.</source>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>所有陀螺儀檔案中均未找到匹配。記錄可能未涵蓋此影片，或影片運動不可靠。</translation>
     </message>
+    <message>
+        <source>Pending match</source>
+        <translation>待匹配</translation>
+    </message>
+    <message>
+        <source>Review lens numbers</source>
+        <translation>再檢查鏡頭編號</translation>
+    </message>
+    <message>
+        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
+        <translation>陀螺儀資料已分配。請檢查佇列中每個影片的鏡頭編號；在影片上按右鍵，用“%1”修改，確認後按“%2”。</translation>
+    </message>
 </context>
 <context>
     <name>SettingsSelector</name>
