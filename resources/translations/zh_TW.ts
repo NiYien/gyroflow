@@ -2164,6 +2164,21 @@ Do you want to submit your profile?</source>
         <translation>手動編輯</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>自動對焦鏡頭</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>手動對焦或變形鏡頭</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>為手動對焦或變形鏡頭開啟：當影片缺少遙測焦距時套用手動輸入的焦距（&gt; 5mm），啟用變形時套用變形設定。關閉後將隱藏這些欄位，但保留已輸入的值。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>開啟後，若影片缺少遙測焦距，或啟用了變形鏡頭，每個鏡頭組會回退到手動輸入的焦距 / 變形比例。焦距必須 &gt; 5mm 才會生效。</translation>

@@ -2161,6 +2161,21 @@ Do you want to submit your profile?</source>
         <translation>Edit manual</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Lensa fokus otomatis</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Lensa fokus manual atau anamorfik</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Aktifkan untuk lensa fokus manual atau anamorfik: panjang fokus yang dimasukkan secara manual (&gt; 5mm) berlaku saat video tidak memiliki panjang fokus telemetri, dan pengaturan anamorfik berlaku saat diaktifkan. Menonaktifkannya menyembunyikan kolom tetapi nilai yang dimasukkan tetap tersimpan.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Saat aktif, setiap grup lensa kembali ke focal length / anamorphic yang dimasukkan secara manual jika video tidak memiliki telemetri focal length, atau anamorphic aktif. Focal length harus &gt; 5mm agar berlaku.</translation>

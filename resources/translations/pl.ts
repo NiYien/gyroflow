@@ -2164,6 +2164,21 @@ Czy chcesz przesłać swój profil?</translation>
         <translation>Edycja ręczna</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Obiektyw z autofokusem</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Obiektyw z ręcznym ostrzeniem lub anamorficzny</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Włącz dla obiektywów z ręcznym ostrzeniem lub anamorficznych: ręcznie wprowadzona ogniskowa (&gt; 5mm) jest stosowana, gdy wideo nie ma ogniskowej z telemetrii, a ustawienia anamorficzne są stosowane, gdy są włączone. Wyłączenie ukrywa pola, ale zachowuje wprowadzone wartości.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Gdy włączone, każda grupa obiektywów wraca do ręcznie wprowadzonej ogniskowej / wartości anamorficznej, jeśli wideo nie ma telemetrii ogniskowej lub gdy włączono anamorficzny. Aby zadziałało, ogniskowa musi wynosić &gt; 5 mm.</translation>

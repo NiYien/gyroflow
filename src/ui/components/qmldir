@@ -40,6 +40,7 @@ SidePanel 1.0 SidePanel.qml
 Slider 1.0 Slider.qml
 SliderWithField 1.0 SliderWithField.qml
 SplitButton 1.0 SplitButton.qml
+Switch 1.0 Switch.qml
 TabbedPopup 1.0 TabbedPopup.qml
 TabColumn 1.0 TabColumn.qml
 TableList 1.0 TableList.qml

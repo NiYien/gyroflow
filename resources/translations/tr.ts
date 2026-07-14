@@ -2160,6 +2160,21 @@ Profilinizi yüklemek istiyor musunuz?</translation>
         <translation>Manuel düzenle</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Otomatik odaklı lens</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Manuel odaklı veya anamorfik lens</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Manuel odaklı veya anamorfik lensler için açın: videoda telemetri odak uzaklığı yoksa manuel girilen odak uzaklığı (&gt; 5mm) uygulanır, anamorfik etkinleştirildiğinde anamorfik ayarlar uygulanır. Kapatmak alanları gizler ancak girilen değerler korunur.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Açık olduğunda, video odak uzaklığı telemetrisi yoksa veya anamorfik etkinse her lens grubu manuel olarak girilen odak uzaklığı / anamorfik değerine geri döner. Etkili olması için odak uzaklığı &gt; 5 mm olmalıdır.</translation>

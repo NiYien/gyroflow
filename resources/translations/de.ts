@@ -2163,6 +2163,21 @@ Soll das Profil hoch geladen werden?</translation>
         <translation>Manuell bearbeiten</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Autofokus-Objektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Objektiv mit manuellem Fokus oder anamorphes Objektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Für Objektive mit manuellem Fokus oder anamorphe Objektive einschalten: Die manuell eingegebene Brennweite (&gt; 5mm) gilt, wenn das Video keine Telemetrie-Brennweite hat, und anamorphe Einstellungen gelten, wenn aktiviert. Beim Ausschalten werden die Felder ausgeblendet, die eingegebenen Werte bleiben erhalten.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Wenn aktiviert, greift jede Objektivgruppe auf die manuell eingegebene Brennweite / anamorphotische Einstellung zurück, falls das Video keine Brennweiten-Telemetrie hat oder anamorphotisch aktiviert ist. Die Brennweite muss &gt; 5 mm betragen, damit dies wirksam wird.</translation>

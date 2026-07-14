@@ -2164,6 +2164,21 @@ Vil du sende inn profilen din?</translation>
         <translation>Manuell redigering</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Autofokusobjektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Objektiv med manuell fokus eller anamorft objektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Slå på for objektiver med manuell fokus eller anamorfe objektiver: den manuelt angitte brennvidden (&gt; 5mm) brukes når videoen ikke har telemetri-brennvidde, og anamorfe innstillinger brukes når de er aktivert. Når den slås av, skjules feltene, men de angitte verdiene beholdes.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Når aktivert, bruker hver objektivgruppe den manuelt angitte brennvidden / anamorfiske verdien hvis videoen ikke har brennvidde-telemetri eller anamorfisk er aktivert. Brennvidden må være &gt; 5 mm for å tre i kraft.</translation>

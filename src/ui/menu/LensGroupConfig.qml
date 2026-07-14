@@ -20,7 +20,6 @@ MenuItem {
     property var presets: []
     property int selectedLensIndex: 0
     property bool syncing: false
-    property bool manualEditExpanded: false
     // Lock auto-selection after the user has manually picked a lens group from
     // the dropdown — otherwise loadConfigs / loadStatuses would re-run
     // updateSelection on every persist and snap selection back to whichever
@@ -44,11 +43,6 @@ MenuItem {
     readonly property bool batchScope: !!(window.videoArea
         && window.videoArea.queue
         && window.videoArea.queue.selectedCount > 0)
-    // Lens-group fields are editable at all times — the Manual edit flag only decides whether
-    // the values are *applied* (manual focal auto-fills telemetry gaps regardless; anamorphic
-    // needs the flag, which persistConfigs raises automatically once a group has a manual value).
-    readonly property bool editorVisible: true
-
     readonly property bool lightTheme: style === "light"
     readonly property color cardColor: root.lightTheme ? "#ffffff" : styleButtonColor
     readonly property color sectionColor: root.lightTheme ? "#f7f9fc" : styleBackground2
@@ -321,13 +315,8 @@ MenuItem {
         // Skip persistence during boot — NumberField default-value initial
         // change events would otherwise wipe lens_group_configs_v1 to "[]".
         if (!_bootDone) return
-        // "Manual" tracks whether any group actually carries a manual value: setting a focal
-        // length / anamorphic enters manual mode (so anamorphic applies and the value reaches
-        // queued jobs); clearing them all returns to telemetry auto. The fields stay editable
-        // regardless of this flag (editorVisible is always true).
-        const anyManual = next.some(c => root.hasManualFocusValue(c) || !!c.anamorphic_enabled)
-        if (controller.lens_group_manual_edit !== anyManual)
-            controller.lens_group_manual_edit = anyManual
+        // The manual-edit flag is user-controlled only (the lens-type switch above);
+        // config values never flip it automatically.
         // simple-mode-ux-overhaul: write goes to global config unconditionally.
         // batchScope path removed — per-job overrides are now read-only data carried
         // from .gyroflow load, edited via the render-queue right-click menu.
@@ -387,14 +376,12 @@ MenuItem {
         updateCurrentConfig(config => {
             config.focal_length_mm = null
         })
-        manualEditExpanded = false
     }
     onSelectedLensIndexChanged: {
         if (!syncing)
             refreshUiFromSelection()
     }
     onBatchScopeChanged: {
-        manualEditExpanded = false
         // Reset user lens pick when scope changes (entering / leaving batch view) —
         // each scope is allowed its own auto-selected lens group.
         userPickedLens = false
@@ -476,24 +463,22 @@ MenuItem {
                     anchors.margins: 10 * dpiScale
                     spacing: 6 * dpiScale
 
-                    BasicText {
-                        width: parent.width
-                        leftPadding: 0
-                        text: qsTr("Manually set lens focal length or anamorphic info.")
-                        color: root.mutedTextColor
-                        wrapMode: Text.WordWrap
-                    }
-
-                    // Global "Manual edit" toggle for all 6 lens groups. Persists to
-                    // settings.json via controller.lens_group_manual_edit. When off, the
-                    // fields below stay editable but calibration still follows telemetry
-                    // (auto) for every group. When on, a group's focal length / anamorphic
-                    // decision follows should_use_manual_config in Rust: missing focal can
-                    // be filled manually, and anamorphic can override when enabled.
-                    CheckBox {
+                    // Global lens-type switch for all 6 lens groups. Persists to
+                    // settings.json via controller.lens_group_manual_edit. Both options
+                    // are always visible (vertical switch), the knob points at the
+                    // active one. When off, the editing fields below are hidden and
+                    // calibration follows telemetry (auto) for every group; entered
+                    // values are kept, not cleared. When on, a group's focal length /
+                    // anamorphic decision follows should_use_manual_config in Rust:
+                    // missing focal can be filled manually, and anamorphic can override
+                    // when enabled. The flag is user-controlled only — editing config
+                    // values never flips it.
+                    Switch {
                         id: manualEditSwitch
-                        text: qsTr("Manual edit")
-                        tooltip: qsTr("When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be > 5mm to take effect.")
+                        width: parent.width
+                        textOff: qsTr("Auto-focus lens")
+                        textOn: qsTr("Manual-focus or anamorphic lens")
+                        tooltip: qsTr("Turn on for manual-focus or anamorphic lenses: manually-entered focal length (> 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.")
                         checked: controller.lens_group_manual_edit
                         onCheckedChanged: {
                             if (checked === controller.lens_group_manual_edit) return
@@ -511,9 +496,28 @@ MenuItem {
             }
 
             Column {
+                id: editorColumn
                 width: parent.width
                 spacing: 10 * dpiScale
-                visible: root.editorVisible
+                // Expand/collapse follows the lens-type switch above. Same animation
+                // pattern as AdvancedSection: the height Ease is only enabled around
+                // the toggle so content-driven implicitHeight changes (e.g. the
+                // anamorphic sub-section) don't animate.
+                property bool opened: controller.lens_group_manual_edit
+                visible: opacity > 0
+                opacity: opened ? 1 : 0
+                height: opened ? implicitHeight : -10 * dpiScale
+                Ease on opacity { }
+                Ease on height { id: editorHeightAnim; enabled: false; }
+                onOpenedChanged: {
+                    editorHeightAnim.enabled = true
+                    editorAnimTimer.start()
+                }
+                Timer {
+                    id: editorAnimTimer
+                    interval: 700
+                    onTriggered: editorHeightAnim.enabled = false
+                }
 
                 // simple-mode-ux-overhaul: batchScope notice removed — edits are always
                 // global now. Per-job overrides come from .gyroflow load only; users

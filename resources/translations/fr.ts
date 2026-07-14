@@ -2163,6 +2163,21 @@ Voulez-vous soumettre votre profil ?</translation>
         <translation>Édition manuelle</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Objectif à mise au point automatique</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Objectif à mise au point manuelle ou anamorphique</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>À activer pour les objectifs à mise au point manuelle ou anamorphiques : la focale saisie manuellement (&gt; 5mm) s'applique lorsque la vidéo n'a pas de focale de télémétrie, et les réglages anamorphiques s'appliquent lorsqu'ils sont activés. La désactivation masque les champs mais conserve les valeurs saisies.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Lorsque cette option est activée, chaque groupe d&apos;objectifs utilise la distance focale / anamorphique saisie manuellement si la vidéo n&apos;a pas de télémétrie de distance focale ou si l&apos;anamorphique est activé. La distance focale doit être &gt; 5 mm pour prendre effet.</translation>

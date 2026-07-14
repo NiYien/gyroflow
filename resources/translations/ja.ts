@@ -2165,6 +2165,21 @@ Do you want to submit your profile?</source>
         <translation>手動編集</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>オートフォーカスレンズ</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>マニュアルフォーカスまたはアナモルフィックレンズ</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>マニュアルフォーカスレンズまたはアナモルフィックレンズの場合にオンにします。動画にテレメトリーの焦点距離がない場合は手動入力した焦点距離（&gt; 5mm）が適用され、アナモルフィックが有効な場合はその設定が適用されます。オフにするとフィールドは非表示になりますが、入力した値は保持されます。</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>オンの場合、各レンズグループは、動画に焦点距離テレメトリがない、またはアナモルフィックが有効な場合に、手動で入力された焦点距離 / アナモルフィックにフォールバックします。有効にするには焦点距離が 5mm を超える必要があります。</translation>

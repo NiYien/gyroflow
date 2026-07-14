@@ -2163,6 +2163,21 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Muokkaa käsin</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Automaattitarkennusobjektiivi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Käsitarkennus- tai anamorfinen objektiivi</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Kytke päälle käsitarkennus- tai anamorfisille objektiiveille: käsin syötettyä polttoväliä (&gt; 5mm) käytetään, kun videolla ei ole telemetrian polttoväliä, ja anamorfisia asetuksia käytetään, kun ne ovat käytössä. Pois kytkeminen piilottaa kentät, mutta syötetyt arvot säilyvät.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Kun käytössä, kukin objektiiviryhmä käyttää manuaalisesti syötettyä polttoväliä / anamorfista arvoa, jos videolla ei ole polttovälitelemetriää tai jos anamorfinen on käytössä. Polttovälin on oltava &gt; 5 mm, jotta se tulee voimaan.</translation>

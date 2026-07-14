@@ -2163,6 +2163,21 @@ Você deseja enviar seu perfil?</translation>
         <translation>Edição manual</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Lente com foco automático</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Lente com foco manual ou anamórfica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Ative para lentes com foco manual ou anamórficas: a distância focal inserida manualmente (&gt; 5mm) é aplicada quando o vídeo não tem distância focal de telemetria, e as configurações anamórficas são aplicadas quando habilitadas. Desativar oculta os campos, mas mantém os valores inseridos.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Quando ativado, cada grupo de lentes recorre à distância focal / anamórfica inserida manualmente se o vídeo não tiver telemetria de distância focal ou se anamórfica estiver ativada. A distância focal deve ser &gt; 5 mm para ter efeito.</translation>

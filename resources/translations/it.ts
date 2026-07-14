@@ -2162,6 +2162,21 @@ Vuoi inviare il tuo profilo?</translation>
         <translation>Modifica manuale</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Obiettivo con messa a fuoco automatica</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Obiettivo con messa a fuoco manuale o anamorfico</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Attivalo per obiettivi con messa a fuoco manuale o anamorfici: la lunghezza focale inserita manualmente (&gt; 5mm) si applica quando il video non ha una lunghezza focale dalla telemetria, e le impostazioni anamorfiche si applicano quando abilitate. Disattivandolo i campi vengono nascosti ma i valori inseriti vengono conservati.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Se attivato, ogni gruppo di obiettivi utilizza la lunghezza focale / anamorfica inserita manualmente se il video non ha la telemetria della lunghezza focale o se l&apos;anamorfico è abilitato. La lunghezza focale deve essere &gt; 5 mm per avere effetto.</translation>

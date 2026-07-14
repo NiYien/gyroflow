@@ -2164,6 +2164,21 @@ Do you want to submit your profile?</source>
         <translation>Ручне редагування</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Об'єктив з автофокусом</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Об'єктив з ручним фокусуванням або анаморфотний</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Увімкніть для об'єктивів з ручним фокусуванням або анаморфотних об'єктивів: введена вручну фокусна відстань (&gt; 5mm) застосовується, коли відео не має фокусної відстані з телеметрії, а анаморфотні налаштування застосовуються, коли їх увімкнено. Вимкнення приховує поля, але зберігає введені значення.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Коли увімкнено, кожна група об&apos;єктивів повертається до вручну введеної фокусної відстані / анаморфної, якщо у відео немає телеметрії фокусної відстані або увімкнено анаморфне. Щоб набуло чинності, фокусна відстань має бути &gt; 5 мм.</translation>

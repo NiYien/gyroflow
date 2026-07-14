@@ -2163,6 +2163,21 @@ Do you want to submit your profile?</source>
         <translation>수동 편집</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>자동 초점 렌즈</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>수동 초점 또는 아나모픽 렌즈</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>수동 초점 또는 아나모픽 렌즈의 경우 켜세요. 영상에 텔레메트리 초점 거리가 없으면 수동으로 입력한 초점 거리(&gt; 5mm)가 적용되고, 아나모픽이 활성화되면 해당 설정이 적용됩니다. 끄면 필드가 숨겨지지만 입력한 값은 유지됩니다.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>켜져 있으면 영상에 초점 거리 텔레메트리가 없거나 아나모픽이 활성화된 경우, 각 렌즈 그룹이 수동으로 입력된 초점 거리 / 아나모픽으로 폴백합니다. 적용되려면 초점 거리가 5mm를 초과해야 합니다.</translation>

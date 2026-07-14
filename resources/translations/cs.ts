@@ -2164,6 +2164,21 @@ Chcete odeslat svůj profil?</translation>
         <translation>Ruční úpravy</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Auto-focus lens</source>
+        <translation>Objektiv s automatickým ostřením</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <source>Manual-focus or anamorphic lens</source>
+        <translation>Objektiv s ručním ostřením nebo anamorfní objektiv</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="485"/>
+        <source>Turn on for manual-focus or anamorphic lenses: manually-entered focal length (&gt; 5mm) applies when the video has no telemetry focal length, and anamorphic settings apply when enabled. Turning it off hides the fields but keeps the entered values.</source>
+        <translation>Zapněte pro objektivy s ručním ostřením nebo anamorfní objektivy: ručně zadaná ohnisková vzdálenost (&gt; 5mm) se použije, když video nemá ohniskovou vzdálenost z telemetrie, a anamorfní nastavení se použije, když je povoleno. Vypnutím se pole skryjí, ale zadané hodnoty zůstanou zachovány.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
         <translation>Když je zapnuto, každá skupina objektivů použije ručně zadanou ohniskovou vzdálenost / anamorfickou hodnotu, pokud video nemá telemetrii ohniskové vzdálenosti nebo je povolen anamorfický režim. Pro účinek musí být ohnisková vzdálenost &gt; 5 mm.</translation>
