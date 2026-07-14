@@ -12,6 +12,7 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.hardware.usb.UsbEndpoint;
 import android.hardware.usb.UsbInterface;
 import android.hardware.usb.UsbManager;
+import android.content.pm.ActivityInfo;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -48,6 +49,11 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
     // urlReceived JNI bridge (already used for VIEW/SEND intents).
     private static final String FILE_PICKER_TAG = "GyroflowNiYienPicker";
     private static final long PICKER_DEDUPE_WINDOW_MS = 1500;
+
+    private static final String WINDOW_TAG = "GyroflowNiYienWindow";
+    // Devices narrower than this (smallest width, dp) are treated as phones
+    // and locked to sensor landscape; wider devices (tablets) rotate freely.
+    private static final int TABLET_SMALLEST_WIDTH_DP = 600;
 
     private static final String UPDATE_TAG = "GyroflowNiYienUpdate";
     // Must match the <provider android:authorities=...> entry in AndroidManifest.xml.
@@ -126,6 +132,8 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
         super.onCreate(savedInstanceState);
         instance = this;
         forceShowSystemBars("onCreate");
+        applyOrientationPolicy();
+        applySystemBarInsets();
         initUsbBridge();
         Intent intent = getIntent();
         if (intent != null && intent.getAction() != null) {
@@ -171,6 +179,64 @@ public class MainActivity extends org.qtproject.qt.android.bindings.QtActivity {
             Log.i(TAG, "forceShowSystemBars from " + origin + " sysUi=0x" + Integer.toHexString(sysUi));
         } catch (Throwable t) {
             Log.w(TAG, "forceShowSystemBars failed", t);
+        }
+    }
+
+    // Phones lock to sensor landscape (both landscape orientations, follows
+    // the sensor); tablets keep free rotation. Runtime policy because a
+    // manifest screenOrientation attribute can't branch on device class.
+    private void applyOrientationPolicy() {
+        try {
+            int sw = getResources().getConfiguration().smallestScreenWidthDp;
+            if (sw < TABLET_SMALLEST_WIDTH_DP) {
+                setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE);
+                Log.i(WINDOW_TAG, "orientation policy: sensorLandscape (smallestScreenWidthDp=" + sw + ")");
+            } else {
+                Log.i(WINDOW_TAG, "orientation policy: free rotation (smallestScreenWidthDp=" + sw + ")");
+            }
+        } catch (Throwable t) {
+            Log.w(WINDOW_TAG, "applyOrientationPolicy failed", t);
+        }
+    }
+
+    // Android 15+ force-enables edge-to-edge for apps targeting SDK 35: the
+    // window always extends behind the system bars and the legacy layout
+    // flags cleared in forceShowSystemBars() no longer affect layout, so we
+    // must consume the insets ourselves. Older releases still lay the window
+    // out below the bars, and attaching a listener there would double-pad —
+    // hence the API gate. displayCutout is included because the app locks to
+    // landscape on phones, putting punch-hole cameras at the padded edges.
+    private void applySystemBarInsets() {
+        if (Build.VERSION.SDK_INT < 35) return;
+        try {
+            final View content = findViewById(android.R.id.content);
+            if (content == null) {
+                Log.w(WINDOW_TAG, "insets: content view not found");
+                return;
+            }
+            content.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+                @Override
+                public android.view.WindowInsets onApplyWindowInsets(View v, android.view.WindowInsets insets) {
+                    android.graphics.Insets bars = insets.getInsets(
+                            android.view.WindowInsets.Type.systemBars()
+                          | android.view.WindowInsets.Type.displayCutout());
+                    v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+                    // Consume only what we handled; IME (soft keyboard) insets
+                    // must keep flowing to Qt's view for its own handling.
+                    return new android.view.WindowInsets.Builder(insets)
+                            .setInsets(android.view.WindowInsets.Type.systemBars(), android.graphics.Insets.NONE)
+                            .setInsets(android.view.WindowInsets.Type.displayCutout(), android.graphics.Insets.NONE)
+                            .build();
+                }
+            });
+            // After padding, the strip behind the system bars shows the window
+            // background; match the app's dark theme (#1e1e1e) instead of the
+            // platform default.
+            getWindow().getDecorView().setBackgroundColor(0xFF1E1E1E);
+            content.requestApplyInsets();
+            Log.i(WINDOW_TAG, "system bar insets listener attached (api=" + Build.VERSION.SDK_INT + ")");
+        } catch (Throwable t) {
+            Log.w(WINDOW_TAG, "applySystemBarInsets failed", t);
         }
     }
 

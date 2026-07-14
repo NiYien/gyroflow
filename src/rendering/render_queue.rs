@@ -6803,12 +6803,20 @@ impl RenderQueue {
 
     // T1: Add a gyro file to the list and start background parsing (T2).
     fn add_gyro_file(&mut self, url: String) {
-        let filename = url
-            .rsplit('/')
-            .next()
-            .or_else(|| url.rsplit('\\').next())
-            .unwrap_or(&url)
-            .to_string();
+        // Resolve through the filesystem layer so Android SAF content URIs
+        // yield the ContentResolver display name instead of the raw
+        // percent-encoded document id (e.g. "primary%3A...").
+        let mut filename = filesystem::get_filename(&url);
+        if filename.is_empty() {
+            // Some providers don't expose _display_name (e.g. MIUI file
+            // explorer); fall back to the decoded display path's last segment.
+            filename = filesystem::display_url(&url)
+                .replace('\\', "/")
+                .rsplit('/')
+                .next()
+                .unwrap_or(&url)
+                .to_string();
+        }
         let gyro_file_id = self.next_gyro_file_id;
         self.next_gyro_file_id = self.next_gyro_file_id.wrapping_add(1);
         let index = self.gyro_files.len();
@@ -19089,13 +19097,20 @@ mod tests {
     fn render_queue_mobile_add_bar_and_drop_hint_visibility_are_layout_specific() {
         let qml = include_str!("../ui/RenderQueue.qml");
 
+        // android-ux-fixes: the standalone mobileAddArea band was folded into
+        // the title row (titleAddButtons) to reclaim a queue row of vertical
+        // space on phones.
+        assert!(
+            !qml.contains("id: mobileAddArea"),
+            "standalone mobile add band must stay removed (folded into title row)"
+        );
         let add_area_idx = qml
-            .find("id: mobileAddArea")
-            .expect("mobile add area exists");
+            .find("id: titleAddButtons")
+            .expect("title-row add buttons exist");
         let add_area = &qml[add_area_idx..];
         assert!(
             add_area.contains("visible: window.isMobileLayout"),
-            "mobile add area must only be visible on mobile layout"
+            "title-row add buttons must only be visible on mobile layout"
         );
         assert!(add_area.contains("mobileAddFilesDialog.open2()"));
         assert!(add_area.contains("mobileAddFolderDialog.open()"));

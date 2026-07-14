@@ -80,7 +80,12 @@ Rectangle {
         Ease on anchors.verticalCenterOffset { }
         Ease on opacity { }
         opacity: root.opened? 1 : 0;
-        width: Math.min(window.width * 0.95, Math.max(btnsRow.width + 100 * dpiScale, root.isWide? parent.width * (isMobileLayout && !isLandscape? 0.99 : root.widthRatio) : 400 * dpiScale));
+        // Mobile: always window-relative width — the desktop 400*dpiScale
+        // fixed target overflows small screens once dpiScale is inflated
+        // (Android multiplies it by 1.2 on top of the device ratio).
+        // Desktop expression is unchanged.
+        width: isMobileLayout? Math.min(window.width * 0.95, Math.max(btnsRow.width + 20 * dpiScale, window.width * (isLandscape? 0.7 : 0.95)))
+                             : Math.min(window.width * 0.95, Math.max(btnsRow.width + 100 * dpiScale, root.isWide? parent.width * root.widthRatio : 400 * dpiScale));
         height: col.height;
         property real offs: 0;
         BorderImage {
@@ -111,7 +116,7 @@ Rectangle {
                 property string iconName: "";
                 visible: false;
                 color: styleTextColor;
-                height: 70 * dpiScale;
+                height: (isMobileLayout? 40 : 70) * dpiScale;
                 width: height;
                 anchors.horizontalCenter: parent.horizontalCenter;
                 source: iconName? "qrc:/resources/icons/svg/" + iconName + ".svg" : "";
@@ -126,7 +131,14 @@ Rectangle {
             Flickable {
                 id: flick;
                 width: parent.width;
-                height: Math.min(contentHeight, root.height - icon.height - btnsRow.height - 150 * dpiScale);
+                // Mobile: budget the text area from the exact chrome heights
+                // (spacers + icon + full button band incl. wrapped rows) so
+                // col.height can never exceed ~95% of the window; the desktop
+                // formula under-counts the button band (btnsRow vs btnsBand)
+                // which is fine there because windows are tall.
+                height: Math.min(contentHeight, isMobileLayout
+                    ? Math.max(30 * dpiScale, window.height * 0.95 - 25 * dpiScale - (icon.visible? icon.height : 0) - btnsBand.height)
+                    : root.height - icon.height - btnsRow.height - 150 * dpiScale);
                 boundsBehavior: Flickable.StopAtBounds;
                 contentWidth: width;
                 contentHeight: mainColumn.height + 25 * dpiScale;
@@ -161,6 +173,7 @@ Rectangle {
             }
 
             Rectangle {
+                id: btnsBand;
                 width: parent.width;
                 height: btnsCol.height + 30 * dpiScale;
                 color: "#B0" + stylePopupBorder.substring(1);

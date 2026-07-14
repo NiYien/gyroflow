@@ -288,6 +288,7 @@ pub struct Controller {
     video_loading_in_progress: qt_property!(bool; NOTIFY video_loading_in_progress_changed),
     video_loading_in_progress_changed: qt_signal!(),
     abort_pending_video_load: qt_method!(fn(&mut self)),
+    restore_video_after_resume: qt_method!(fn(&mut self, player: QJSValue) -> bool),
 
     calib_model: qt_property!(RefCell<SimpleListModel<CalibrationItem>>; NOTIFY calib_model_updated),
     calib_model_updated: qt_signal!(),
@@ -601,34 +602,7 @@ impl Controller {
         // Build the MDK custom decoder string deterministically from the URL
         // so the worker can hand it to MDK without re-reading any
         // self.* state.
-        let mut custom_decoder = String::new();
-        if self.image_sequence_start > 0 {
-            custom_decoder = format!(
-                "FFmpeg:avformat_options=start_number={}",
-                self.image_sequence_start
-            );
-        }
-        let options = {
-            let target_height = self.preview_resolution;
-            if target_height > 0 {
-                format!(":scale={}x{}", (target_height * 16) / 9, target_height)
-            } else {
-                "".to_owned()
-            }
-        };
-        if filename.to_ascii_lowercase().ends_with("braw") {
-            let gpu = if self.stabilizer.gpu_decoding.load(SeqCst) {
-                "auto"
-            } else {
-                "no"
-            };
-            custom_decoder = format!("BRAW:gpu={}{}", gpu, options);
-        }
-        if filename.to_ascii_lowercase().ends_with("r3d")
-            || filename.to_ascii_lowercase().ends_with("nev")
-        {
-            custom_decoder = format!("R3D:gpu=auto{}", options);
-        }
+        let custom_decoder = self.make_custom_decoder(&filename);
         if !custom_decoder.is_empty() {
             ::log::debug!(target: "video.load", "Custom decoder: {custom_decoder}");
         }
@@ -2776,6 +2750,75 @@ impl Controller {
                 "video_load_aborted reason=metadata_error_or_explicit"
             );
         }
+    }
+
+    // MDK custom decoder string, derived deterministically from the filename
+    // and current controller state. Shared by load_video and
+    // restore_video_after_resume so a post-suspend reload picks the same
+    // decoder as the original load.
+    fn make_custom_decoder(&self, filename: &str) -> String {
+        let mut custom_decoder = String::new();
+        if self.image_sequence_start > 0 {
+            custom_decoder = format!(
+                "FFmpeg:avformat_options=start_number={}",
+                self.image_sequence_start
+            );
+        }
+        let options = {
+            let target_height = self.preview_resolution;
+            if target_height > 0 {
+                format!(":scale={}x{}", (target_height * 16) / 9, target_height)
+            } else {
+                "".to_owned()
+            }
+        };
+        if filename.to_ascii_lowercase().ends_with("braw") {
+            let gpu = if self.stabilizer.gpu_decoding.load(SeqCst) {
+                "auto"
+            } else {
+                "no"
+            };
+            custom_decoder = format!("BRAW:gpu={}{}", gpu, options);
+        }
+        if filename.to_ascii_lowercase().ends_with("r3d")
+            || filename.to_ascii_lowercase().ends_with("nev")
+        {
+            custom_decoder = format!("R3D:gpu=auto{}", options);
+        }
+        custom_decoder
+    }
+
+    // Android resume fallback: the OS reclaimed the render surface while the
+    // app was suspended, which destroyed the MDK player mid-session (scene
+    // graph invalidation → qml-video-rs release_resources → empty player on
+    // rebuild). All Rust-side state (telemetry, stabilization params) is
+    // intact — only the player lost its media, so re-issue setUrl at the
+    // player level. Deliberately NOT routed through load_video: that would
+    // re-enter the OpGuard lifecycle, clear the stabilizer and reload
+    // telemetry. The original start_accessing_url grant is still held, so no
+    // re-acquisition here either.
+    fn restore_video_after_resume(&mut self, player: QJSValue) -> bool {
+        let url = self.stabilizer.input_file.read().url.clone();
+        if url.is_empty() {
+            return false;
+        }
+        let filename = filesystem::get_filename(&url);
+        let custom_decoder = self.make_custom_decoder(&filename);
+        if let Some(vid) = player.to_qobject::<MDKVideoItem>() {
+            let vid = unsafe { &mut *vid.as_ptr() };
+            ::log::info!(
+                target: "lifecycle",
+                "resume_restore: re-issuing MDK setUrl filename={} decoder={}",
+                filename,
+                video_log_decoder_label(&custom_decoder),
+            );
+            vid.setUrl(
+                QUrl::from(QString::from(url)),
+                QString::from(custom_decoder),
+            );
+            return true;
+        }
+        false
     }
 
     fn export_gyroflow_file(&self, url: QUrl, typ: QString, additional_data: QJsonObject) {

@@ -819,6 +819,88 @@ Item {
         font.bold: true;
     }
 
+    // Mobile: compact add buttons live in the otherwise-empty title row.
+    // A dedicated 42dpi band below the progress row (the original
+    // mobileAddArea) cost a full queue row of vertical space on phones.
+    Row {
+        id: titleAddButtons;
+        visible: window.isMobileLayout;
+        anchors.right: closeBtn.left;
+        anchors.rightMargin: 8 * dpiScale;
+        y: 5 * dpiScale;
+        spacing: 8 * dpiScale;
+        Button {
+            text: qsTr("Add files");
+            iconName: "plus";
+            height: 26 * dpiScale;
+            font.pixelSize: 11 * dpiScale;
+            leftPadding: 8 * dpiScale;
+            rightPadding: 8 * dpiScale;
+            topPadding: 2 * dpiScale;
+            bottomPadding: 2 * dpiScale;
+            icon.width: 13 * dpiScale;
+            icon.height: 13 * dpiScale;
+            onClicked: {
+                // Route picked URIs into the render queue batch loader on Android.
+                if (Qt.platform.os === "android") {
+                    window.pendingPickerCallback = function(urls) {
+                        dt.loadFiles(urls);
+                    };
+                }
+                mobileAddFilesDialog.open2();
+            }
+        }
+        Button {
+            text: qsTr("Add folder");
+            iconName: "folder";
+            height: 26 * dpiScale;
+            font.pixelSize: 11 * dpiScale;
+            leftPadding: 8 * dpiScale;
+            rightPadding: 8 * dpiScale;
+            topPadding: 2 * dpiScale;
+            bottomPadding: 2 * dpiScale;
+            icon.width: 13 * dpiScale;
+            icon.height: 13 * dpiScale;
+            onClicked: {
+                if (Qt.platform.os === "android") {
+                    window.pendingPickerCallback = function(urls) {
+                        // FolderDialog SAF returns a tree URI (e.g.
+                        // content://.../tree/primary%3ADCIM). Register the
+                        // access grant, then hand it to the queue's
+                        // loadFiles pipeline below - is_dir/folder scanning
+                        // handle content:// trees natively.
+                        console.log("[AddFolder] picker returned urls.length=" + (urls ? urls.length : "null"));
+                        if (!urls || !urls.length) return;
+                        const folderUrl = urls[0];
+                        console.log("[AddFolder] folderUrl=" + folderUrl);
+                        try {
+                            filesystem.folder_access_granted(folderUrl);
+                            Qt.callLater(filesystem.save_allowed_folders);
+                            console.log("[AddFolder] folder_access_granted ok");
+                        } catch (e) {
+                            console.log("[AddFolder] folder_access_granted FAILED:", e);
+                            return;
+                        }
+                        // Hand the folder url straight to the queue's loadFiles
+                        // handler — the single path that scans gyro files,
+                        // collapses image sequences (consecutive frames -> one
+                        // %0Nd job), resolves their frame rate, and enqueues
+                        // videos + crm proxies. Expanding the folder inline here
+                        // broke once list_video_files_in_folder began returning
+                        // structured objects instead of plain url strings.
+                        try {
+                            dt.loadFiles([folderUrl]);
+                            console.log("[AddFolder] dt.loadFiles dispatched folder " + folderUrl);
+                        } catch (e) {
+                            console.log("[AddFolder] dt.loadFiles FAILED:", e);
+                        }
+                    };
+                }
+                mobileAddFolderDialog.open();
+            }
+        }
+    }
+
     LinkButton {
         id: closeBtn;
         anchors.right: parent.right;
@@ -865,7 +947,7 @@ Item {
 
     Row {
         id: progressRow;
-        y: 55 * dpiScale;
+        y: (window.isMobileLayout? 44 : 55) * dpiScale;
         spacing: 10 * dpiScale;
         x: 10 * dpiScale;
         Column {
@@ -1208,98 +1290,16 @@ Item {
         }
     }
 
-    Rectangle {
-        id: mobileAddArea;
-        visible: window.isMobileLayout;
-        x: 10 * dpiScale;
-        anchors.top: matchWarningBar.bottom;
-        anchors.topMargin: visible ? 6 * dpiScale : 0;
-        width: parent.width - 20 * dpiScale;
-        height: visible ? 42 * dpiScale : 0;
-        color: "transparent";
-        clip: true;
-
-        Row {
-            anchors.fill: parent;
-            spacing: 8 * dpiScale;
-
-            Button {
-                text: qsTr("Add files");
-                iconName: "plus";
-                width: (parent.width - parent.spacing) / 2;
-                height: parent.height;
-                font.pixelSize: 13 * dpiScale;
-                leftPadding: 10 * dpiScale;
-                rightPadding: 10 * dpiScale;
-                onClicked: {
-                    // Route picked URIs into the render queue batch loader on Android.
-                    if (Qt.platform.os === "android") {
-                        window.pendingPickerCallback = function(urls) {
-                            dt.loadFiles(urls);
-                        };
-                    }
-                    mobileAddFilesDialog.open2();
-                }
-            }
-            Button {
-                text: qsTr("Add folder");
-                iconName: "folder";
-                width: (parent.width - parent.spacing) / 2;
-                height: parent.height;
-                font.pixelSize: 13 * dpiScale;
-                leftPadding: 10 * dpiScale;
-                rightPadding: 10 * dpiScale;
-                onClicked: {
-                    if (Qt.platform.os === "android") {
-                        window.pendingPickerCallback = function(urls) {
-                            // FolderDialog SAF returns a tree URI (e.g.
-                            // content://.../tree/primary%3ADCIM). Register the
-                            // access grant, then hand it to the queue's
-                            // loadFiles pipeline below - is_dir/folder scanning
-                            // handle content:// trees natively.
-                            console.log("[AddFolder] picker returned urls.length=" + (urls ? urls.length : "null"));
-                            if (!urls || !urls.length) return;
-                            const folderUrl = urls[0];
-                            console.log("[AddFolder] folderUrl=" + folderUrl);
-                            try {
-                                filesystem.folder_access_granted(folderUrl);
-                                Qt.callLater(filesystem.save_allowed_folders);
-                                console.log("[AddFolder] folder_access_granted ok");
-                            } catch (e) {
-                                console.log("[AddFolder] folder_access_granted FAILED:", e);
-                                return;
-                            }
-                            // Hand the folder url straight to the queue's loadFiles
-                            // handler — the single path that scans gyro files,
-                            // collapses image sequences (consecutive frames -> one
-                            // %0Nd job), resolves their frame rate, and enqueues
-                            // videos + crm proxies. Expanding the folder inline here
-                            // broke once list_video_files_in_folder began returning
-                            // structured objects instead of plain url strings.
-                            try {
-                                dt.loadFiles([folderUrl]);
-                                console.log("[AddFolder] dt.loadFiles dispatched folder " + folderUrl);
-                            } catch (e) {
-                                console.log("[AddFolder] dt.loadFiles FAILED:", e);
-                            }
-                        };
-                    }
-                    mobileAddFolderDialog.open();
-                }
-            }
-        }
-    }
-
     ListView {
         id: lv;
         anchors.left: parent.left;
         anchors.leftMargin: 10 * dpiScale;
         anchors.right: parent.right;
         anchors.rightMargin: 10 * dpiScale;
-        anchors.top: mobileAddArea.bottom;
+        anchors.top: matchWarningBar.bottom;
         anchors.topMargin: 5 * dpiScale;
         anchors.bottom: multiSelectBar.visible ? multiSelectBar.top : parent.bottom;
-        anchors.bottomMargin: multiSelectBar.visible ? 5 * dpiScale : 30 * dpiScale;
+        anchors.bottomMargin: multiSelectBar.visible ? 5 * dpiScale : (window.isMobileLayout? 10 : 30) * dpiScale;
         clip: true;
         model: render_queue.queue;
         // [queue-lifecycle T1] Historical restore timer and save connections were removed.
@@ -1478,7 +1478,13 @@ Item {
                 Timer {
                     id: rowLongPressTimer;
                     interval: 600;
-                    onTriggered: contextMenu.popup(dlg, rowContextArea._lpStartX, rowContextArea._lpStartY);
+                    onTriggered: {
+                        // The list may have stolen the touch grab (delivered as
+                        // onCanceled) or still be scrolling; never pop the menu
+                        // mid-scroll.
+                        if (lv.moving || lv.dragging) return;
+                        contextMenu.popup(dlg, rowContextArea._lpStartX, rowContextArea._lpStartY);
+                    }
                 }
 
                 onPressed: (mouse) => {
@@ -1498,6 +1504,11 @@ Item {
                     }
                 }
                 onReleased: rowLongPressTimer.stop();
+                // Grab-steal by the ListView's Flickable is delivered as
+                // onCanceled (not onReleased), after which no positionChanged
+                // arrives either — without this the timer keeps running and
+                // pops the menu mid-scroll.
+                onCanceled: rowLongPressTimer.stop();
                 onPositionChanged: (mouse) => {
                     if (!rowLongPressTimer.running) return;
                     const dx = mouse.x - rowContextArea._lpStartX;
@@ -1839,6 +1850,9 @@ Item {
                         id: armMultiSelectTimer;
                         interval: 600;
                         onTriggered: {
+                            // Never arm multi-select mid-scroll (grab-steal by the
+                            // Flickable is delivered as onCanceled, see below).
+                            if (lv.moving || lv.dragging) return;
                             root.beginDragSelection(index, !dlg.isSelected);
                             root._touchSelectActive = true;
                             lv.interactive = false;
@@ -1850,6 +1864,17 @@ Item {
                         armMultiSelectTimer.restart();
                     }
                     onReleased: {
+                        armMultiSelectTimer.stop();
+                        if (root._touchSelectActive) {
+                            root.endDragSelection();
+                            root._touchSelectActive = false;
+                            lv.interactive = true;
+                        }
+                    }
+                    // Grab-steal (list scroll) or system gesture cancels the press
+                    // without onReleased; mirror its cleanup so the timer never
+                    // fires post-steal and lv.interactive can't get stuck false.
+                    onCanceled: {
                         armMultiSelectTimer.stop();
                         if (root._touchSelectActive) {
                             root.endDragSelection();

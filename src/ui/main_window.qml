@@ -71,6 +71,10 @@ Window {
 
     Component.onCompleted: {
         ui_tools.set_icon(main_window);
+        // Android suspend/resume video recovery: track render-surface
+        // teardown so VideoArea can decide on resume whether the MDK player
+        // needs a media reload (see VideoArea's Qt.application Connections).
+        if (Qt.platform.os === "android") ui_tools.watch_scene_graph_invalidation(main_window);
              if (!isMobile && sett.visibility == Window.FullScreen) main_window.showFullScreen();
         else if (!isMobile && sett.visibility == Window.Maximized)  main_window.showMaximized();
         else if (!isMobile) {

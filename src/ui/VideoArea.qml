@@ -55,6 +55,38 @@ Item {
 
     property Menu.VideoInformation vidInfo: null;
 
+    // Android suspend/resume video recovery: when the OS reclaims the GL
+    // surface in the background, the scene graph invalidation destroys the
+    // MDK player and it rebuilds with no media (permanent black preview).
+    // Snapshot playback state on suspend; on resume, if the scene graph was
+    // actually invalidated, re-issue the media at the player level and let
+    // fileLoaded() short-circuit into a seek-only restore.
+    property real suspendTimestamp: -1;
+    property bool suspendWasPlaying: false;
+    property bool restoringFromSuspend: false;
+    Connections {
+        target: Qt.application;
+        enabled: Qt.platform.os === "android" && !root.isCalibrator;
+        function onStateChanged() {
+            if (Qt.application.state === Qt.ApplicationSuspended) {
+                if (vid.loaded) {
+                    root.suspendTimestamp = vid.timestamp;
+                    root.suspendWasPlaying = vid.playing;
+                    console.log("suspend snapshot: ts=" + root.suspendTimestamp + " playing=" + root.suspendWasPlaying);
+                }
+            } else if (Qt.application.state === Qt.ApplicationActive) {
+                if (ui_tools.take_scene_graph_invalidated()) {
+                    if (root.suspendTimestamp >= 0 && vid.loaded) {
+                        root.restoringFromSuspend = true;
+                        if (!controller.restore_video_after_resume(vid)) {
+                            root.restoringFromSuspend = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     function loadGyroflowData(obj: var, queueJobId: var): void {
         root.pendingGyroflowData = null;
         root.pendingQueueJobId = 0;
@@ -399,6 +431,9 @@ Item {
     }
 
     function loadFile(url: url, skip_detection: bool, queueJobId: int, crmTelemetryUrl: url, suppressAssociatedGyroflow: bool): void {
+        // An explicit new load supersedes any pending post-suspend restore.
+        root.restoringFromSuspend = false;
+        root.suspendTimestamp = -1;
         const activeProjectFileUrl = controller.project_file_url ? controller.project_file_url.toString() : "";
         const skipAssociatedGyroflow = !!suppressAssociatedGyroflow;
         let filename = filesystem.get_filename(url);
@@ -957,6 +992,20 @@ Item {
                         Qt.callLater(fileLoaded, md);
                     }
                     function fileLoaded(md: var): void {
+                        if (root.restoringFromSuspend) {
+                            // Post-suspend player-level reload: Rust-side state
+                            // (telemetry, stabilization) is intact — only seek
+                            // back and restore the pause state. Everything else
+                            // (telemetry reload, trim reset, prompts) must NOT run.
+                            root.restoringFromSuspend = false;
+                            loaded = vid.videoWidth > 0;
+                            console.log("resume restore: loaded=" + loaded + " seeking to ts=" + root.suspendTimestamp);
+                            if (loaded) {
+                                vid.seekToTimestamp(root.suspendTimestamp, true);
+                                if (root.suspendWasPlaying) vid.play(); else vid.pause();
+                            }
+                            return;
+                        }
                         loaded = vid.videoWidth > 0;
                         videoLoader.active = false;
                         vidInfo.loader = false;
@@ -1002,6 +1051,10 @@ Item {
                     property bool errorShown: false;
                     onMetadataChanged: {
                         controller.log_video_metadata_state(vid.videoWidth, vid.videoHeight, vid.duration, vid.frameRate, vid.frameCount);
+                        // Post-suspend restore drives its own seek in fileLoaded
+                        // (which runs later via callLater and clears the flag);
+                        // the buffer nudge below would fight it back to frame 0.
+                        if (root.restoringFromSuspend && vid.videoWidth > 0) return;
                         if (vid.videoWidth > 0) {
                             // Trigger seek to buffer the video frames
                             if (vid.duration == 0) {
@@ -1014,6 +1067,9 @@ Item {
                                 bufferTrigger.start();
                             }
                         } else if (!errorShown) {
+                            // Failed post-suspend restore must not leave the flag
+                            // armed — it would short-circuit the next real load.
+                            root.restoringFromSuspend = false;
                             // Re-probe: MDK reports videoWidth=0 for permission denials too.
                             // Upgrade the generic "unsupported" message to the actionable
                             // permission dialog when the real cause is a TCC block.

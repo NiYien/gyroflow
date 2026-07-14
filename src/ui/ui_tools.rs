@@ -17,8 +17,18 @@ use windows::Win32::{
 cpp! {{
     #include <QTranslator>
     #include <QJsonObject>
+    #include <QQuickWindow>
     #include <qpa/qplatformwindow.h>
 }}
+
+// Set (from the render thread) when Qt tears down the scene graph — on
+// Android that happens when the OS reclaims the GL surface in the
+// background, which also destroys the MDK player (qml-video-rs
+// release_resources). QML polls-and-clears it on resume via
+// take_scene_graph_invalidated() to decide whether the video preview
+// needs a player-level reload.
+pub static SCENE_GRAPH_INVALIDATED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 #[derive(Default, QObject)]
 pub struct UITools {
@@ -31,6 +41,8 @@ pub struct UITools {
     set_icon: qt_method!(fn(&mut self, wnd: QJSValue)),
     get_safe_area_margins: qt_method!(fn(&mut self, wnd: QJSValue) -> QJsonObject),
     ensure_window_visible: qt_method!(fn(&mut self, wnd: QJSValue)),
+    watch_scene_graph_invalidation: qt_method!(fn(&mut self, wnd: QJSValue)),
+    take_scene_graph_invalidated: qt_method!(fn(&mut self) -> bool),
     set_progress: qt_method!(fn(&self, progress: f64)),
     modify_digit:
         qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
@@ -183,6 +195,25 @@ impl UITools {
                 { "left",   safeArea.left() }
             };
         })
+    }
+
+    pub fn watch_scene_graph_invalidation(&mut self, wnd: QJSValue) {
+        cpp!(unsafe [wnd as "QJSValue"] {
+            auto obj = qobject_cast<QQuickWindow *>(wnd.toQObject());
+            if (!obj) return;
+            // Emitted from the render thread; the atomic store is thread-safe.
+            QObject::connect(obj, &QQuickWindow::sceneGraphInvalidated, [] {
+                rust!(Rust_scene_graph_invalidated [] {
+                    crate::ui::ui_tools::SCENE_GRAPH_INVALIDATED
+                        .store(true, std::sync::atomic::Ordering::SeqCst);
+                    ::log::info!(target: "lifecycle", "scene graph invalidated (render surface torn down)");
+                });
+            });
+        });
+    }
+
+    pub fn take_scene_graph_invalidated(&mut self) -> bool {
+        SCENE_GRAPH_INVALIDATED.swap(false, std::sync::atomic::Ordering::SeqCst)
     }
 
     pub fn ensure_window_visible(&mut self, wnd: QJSValue) {
