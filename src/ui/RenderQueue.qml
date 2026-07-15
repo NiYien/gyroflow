@@ -1185,7 +1185,15 @@ Item {
                             render_queue.render_job(job_id);
                         }
                     });
-                    buttons.push({ text: qsTr("Cancel") });
+                    buttons.push({
+                        text: qsTr("Cancel"),
+                        clicked: () => {
+                            // Cancel the export entirely: drop the main-preview job
+                            // so the app returns to its pre-export state.
+                            render_queue.remove(job_id);
+                            render_queue.main_job_id = 0;
+                        }
+                    });
 
                     messageBox(Modal.Question, qsTr("GPU accelerated encoder doesn't support this pixel format (%1).\nDo you want to convert to a different supported pixel format or keep the original one and render on the CPU?").arg(format), buttons);
                 }
@@ -2153,6 +2161,13 @@ Item {
 
                                     // Simple-mode path: single modal per batch, then auto-apply to the rest
                                     if (window.isSimpleMode) {
+                                        // Main-preview export: onConvert_format already raises its own
+                                        // modal (with Cancel) for this job — don't stack the batch modal
+                                        // on top of it or collect it into the batch latch.
+                                        if (job_id == render_queue.main_job_id) {
+                                            btns.model = [];
+                                            return;
+                                        }
                                         // Choice already made earlier in this batch: apply it here too.
                                         if (root.pendingConvertFormatChoice !== "") {
                                             // If that chosen format was itself rejected by the device, the retry
@@ -2193,6 +2208,27 @@ Item {
                                             text: qsTr("Render using CPU"),
                                             accent: candidate == '',
                                             clicked: () => { root.applyConvertFormatChoice("cpu"); }
+                                        });
+                                        modalBtns.push({
+                                            text: qsTr("Cancel"),
+                                            clicked: () => {
+                                                // Cancel the whole export step: stop() first so its
+                                                // cancel_flag keeps in-flight jobs from raising a new
+                                                // convert_format after the latch is reset below.
+                                                render_queue.stop();
+                                                const jobs = root.pendingConvertFormatJobs;
+                                                root.resetConvertFormatBatchState();
+                                                for (let i = 0; i < jobs.length; ++i) {
+                                                    // Back to Queued so the next export re-schedules
+                                                    // them (start() only picks Queued; prepare_* leaves
+                                                    // Error jobs alone). The stopped queue keeps them
+                                                    // from re-rendering right away. Own closure per job:
+                                                    // Qt.callLater merges repeated calls that share the
+                                                    // same function reference.
+                                                    const jid = jobs[i];
+                                                    Qt.callLater(() => render_queue.reset_job(jid));
+                                                }
+                                            }
                                         });
                                         messageBox(Modal.Question,
                                             qsTr("Selected encoder does not support the source pixel format.\nChoose a target pixel format or render on CPU.\nThis choice applies to all remaining jobs in this batch."),
