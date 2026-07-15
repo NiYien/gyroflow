@@ -2555,6 +2555,32 @@ document.getElementById('migrate-changelog-btn')?.addEventListener('click', asyn
   }
 });
 
+// Manual supported-camera list rebuild (control-center-supported-cameras).
+document.getElementById('sync-cameras-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('sync-cameras-btn');
+  const statusEl = document.getElementById('sync-cameras-status');
+  btn.disabled = true;
+  statusEl.textContent = '同步中...';
+  statusEl.className = 'text-sm text-slate-500';
+  try {
+    const r = await pywebview.api.sync_supported_cameras_now();
+    if (r.ok) {
+      statusEl.textContent = r.changed
+        ? `已同步: ${r.brands} 品牌 ${r.models} 机型 (${r.tag})`
+        : `无变化: ${r.brands} 品牌 ${r.models} 机型 (${r.tag})`;
+      statusEl.className = 'text-sm text-emerald-600';
+    } else {
+      statusEl.textContent = `失败: ${r.error}`;
+      statusEl.className = 'text-sm text-red-600';
+    }
+  } catch (e) {
+    statusEl.textContent = `调用失败: ${e}`;
+    statusEl.className = 'text-sm text-red-600';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // Auto-load settings when switching to that view (first time only)
 let settingsLoaded = false;
 document.querySelector('[data-view="settings"].nav-btn')?.addEventListener('click', () => {

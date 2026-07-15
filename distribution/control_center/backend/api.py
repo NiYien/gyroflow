@@ -1771,10 +1771,14 @@ class Api:
                 hook_note = self._trigger_deploy_hook(cfg)
             except Exception as e:
                 hook_note = f"redeploy 触发失败: {e}"
+            # The switch changes the effective lens data tag → refresh the
+            # docs supported-camera list. Warning-only, never blocks.
+            cameras_note = self._sync_supported_cameras_after_publish(cfg, lens_tag)
+            cameras_segment = f"; {cameras_note}" if cameras_note else ""
             artifact_segment = f"; {artifact_resolve_note}" if artifact_resolve_note else ""
             return {
                 "ok": True,
-                "message": f"已 upsert {len(mapping)} 个 env 到 Vercel{extras_note}{artifact_segment}; {sync_note}; {hook_note}",
+                "message": f"已 upsert {len(mapping)} 个 env 到 Vercel{extras_note}{artifact_segment}; {sync_note}; {hook_note}{cameras_segment}",
                 "deploy_hook": hook_note,
                 "policy_sync": sync_note,
                 "artifact_resolve": artifact_resolve_note,
@@ -3116,6 +3120,104 @@ class Api:
         except Exception as e:
             return _error(e, "migrate_changelog_archive")
 
+    @staticmethod
+    def _supported_cameras_target(cfg: dict) -> tuple[str, str, str, str] | None:
+        """Resolve (owner, repo, branch, path) of the docs repo supported-camera
+        snapshot from config, falling back to DEFAULT_CONFIG per field.
+        Returns None when the target is incomplete."""
+        cameras_cfg = cfg.get("supported_cameras")
+        if not isinstance(cameras_cfg, dict):
+            cameras_cfg = {}
+        defaults = config_module.DEFAULT_CONFIG.get("supported_cameras", {})
+        owner = str(cameras_cfg.get("owner", "") or defaults.get("owner", "")).strip()
+        repo = str(cameras_cfg.get("repo", "") or defaults.get("repo", "")).strip()
+        branch = str(cameras_cfg.get("branch", "") or defaults.get("branch", "")).strip()
+        path = str(cameras_cfg.get("path", "") or defaults.get("path", "")).strip()
+        if not (owner and repo and branch and path):
+            return None
+        return owner, repo, branch, path
+
+    def _sync_supported_cameras(self, cfg: dict, lens_tag: str) -> dict:
+        """Regenerate docs cameras.json from the given lens data tag's
+        camera_db. Raises on failure — callers pick their own degradation.
+        """
+        from . import supported_cameras as _cameras
+
+        target = self._supported_cameras_target(cfg)
+        if target is None:
+            raise RuntimeError("supported_cameras 配置不完整 (owner/repo/branch/path)")
+        docs_owner, docs_repo, docs_branch, docs_path = target
+        lens_owner = str(cfg.get("lens_data_owner", "") or "NiYien").strip()
+        lens_repo = str(cfg.get("lens_data_repo", "") or "niyien-lens-data").strip()
+        token = self._get_publish_secret("GITHUB_TOKEN", cfg=cfg)
+        proxy = cfg.get("network_proxy", "")
+        lens_client = GitHubClient(owner=lens_owner, repo=lens_repo, token=token, proxy_url=proxy)
+        docs_client = GitHubClient(owner=docs_owner, repo=docs_repo, token=token, proxy_url=proxy)
+        return _cameras.sync_supported_cameras(
+            lens_client,
+            docs_client,
+            lens_owner=lens_owner,
+            lens_repo=lens_repo,
+            lens_ref=lens_tag,
+            docs_owner=docs_owner,
+            docs_repo=docs_repo,
+            docs_branch=docs_branch,
+            docs_path=docs_path,
+            commit_message=f"cameras: sync supported-camera list ({lens_tag})",
+        )
+
+    def _sync_supported_cameras_after_publish(self, cfg: dict, lens_tag: str) -> str:
+        """Mirror the published lens tag's camera_db into the docs supported
+        cameras page (control-center-supported-cameras).
+
+        Best-effort by design: any failure returns a warning note for the
+        publish result message and never raises — publishing must not be
+        blocked by the list. The manual button recovers a failed sync.
+        """
+        lens_tag = str(lens_tag or "").strip()
+        if not lens_tag:
+            return ""
+        if self._supported_cameras_target(cfg) is None:
+            return "⚠ 支持列表配置不完整 (supported_cameras), 跳过"
+        try:
+            result = self._sync_supported_cameras(cfg, lens_tag)
+            if result.get("changed"):
+                return (
+                    f"支持列表已同步 ({result['brands']} 品牌 "
+                    f"{result['models']} 机型, {lens_tag})"
+                )
+            return "支持列表无变化"
+        except Exception as e:
+            return f"⚠ 支持列表同步失败: {e.__class__.__name__}: {e}; 可用手动按钮重试"
+
+    def sync_supported_cameras_now(self) -> dict:
+        """Manual re-sync of the docs supported-camera list from the currently
+        effective lens data tag (env NIYIEN_LENS_DATA_TAG →
+        publish_defaults.lens_data_tag). Returns {ok, changed, brands,
+        models, tag} or {ok: False, error}.
+        """
+        try:
+            cfg = config_module.load_config()
+            tag = ""
+            try:
+                envs = self._vercel(cfg).list_envs_decrypted()
+                tag = str(envs.get("NIYIEN_LENS_DATA_TAG", "")).strip()
+            except Exception:
+                tag = ""
+            if not tag:
+                defaults = cfg.get("publish_defaults") or {}
+                tag = str(defaults.get("lens_data_tag", "")).strip()
+            if not tag:
+                return {
+                    "ok": False,
+                    "error": "无法解析当前生效的 lens data tag "
+                             "(env NIYIEN_LENS_DATA_TAG 与 publish_defaults.lens_data_tag 均为空)",
+                }
+            result = self._sync_supported_cameras(cfg, tag)
+            return {"ok": True, **result}
+        except Exception as e:
+            return _error(e, "sync_supported_cameras_now")
+
     def _sync_changelog_archive_after_publish(self, cfg: dict, policy_json: str,
                                               version: str) -> str:
         """Mirror the just-published version's release notes into the docs
@@ -3305,6 +3407,13 @@ class Api:
         )
         if archive_note:
             hook_note = f"{hook_note}; {archive_note}"
+        # Lens-publishing actions also refresh the docs supported-camera
+        # list from the published data tag. Same warning-only semantics.
+        cameras_note = self._sync_supported_cameras_after_publish(
+            cfg, (finalize_summary or {}).get("lens_release_tag", ""),
+        )
+        if cameras_note:
+            hook_note = f"{hook_note}; {cameras_note}"
         return hook_note
 
     def _trigger_deploy_hook(self, cfg: dict) -> str:

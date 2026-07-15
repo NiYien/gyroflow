@@ -45,6 +45,15 @@ DEFAULT_CONFIG: dict = {
         "branch": "main",
         "path": "changelog/archive.json",
     },
+    # Supported-camera list snapshot committed into the docs repo,
+    # regenerated from the published lens data tag's camera_db.
+    # Consumed by the /cameras/ page.
+    "supported_cameras": {
+        "owner": "NiYien",
+        "repo": "docs",
+        "branch": "main",
+        "path": "cameras/cameras.json",
+    },
     "publish_defaults": {
         "lens_data_tag": "",
         "plugins_source_mode": "release",
