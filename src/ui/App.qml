@@ -141,10 +141,6 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Simple forces silent overwrite (1); Full honors user setting
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
-        // simple-mode-ux-overhaul: force preserve-original via runtime-only flag.
-        // Persistent preserveOutputSettings.checked is left untouched so Full-mode
-        // preferences survive mode toggling.
-        if (window.exportSettings) window.exportSettings.simpleModePreserveActive = isSimpleMode;
         if (isSimpleMode) applySimpleModeDefaults();
         reparentSimplePanels();
         // [tutorial] The overlay only knows simple-mode anchors; if the user
@@ -440,6 +436,14 @@ Rectangle {
         function onMatch_apply_finished(): void {
             controller.refresh_lens_group_status();
             window.updateLensGroupPanelState();
+        }
+        function onQueue_cleared(): void {
+            // Fresh-start semantics: clearing the queue drops export panel
+            // leftovers from the previous batch. The explicit preserve
+            // checkbox is a deliberate cross-video preference and is exempt.
+            if (window.exportSettings && !window.exportSettings.preserveOutputSettings.checked) {
+                window.exportSettings.resetToSourceDefaults();
+            }
         }
     }
 
@@ -2653,9 +2657,6 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Initialize overwrite mode per current mode — Simple forces silent overwrite
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
-        // simple-mode-ux-overhaul: initialize preserve-original flag (onIsSimpleModeChanged
-        // will not fire for the default value, so seed it here).
-        if (window.exportSettings) window.exportSettings.simpleModePreserveActive = isSimpleMode;
         // NOTE: do NOT call applySimpleModeDefaults() at startup. The controller defaults are already
         // Simple-friendly (smoothing index 1 = DefaultAlgo, feature/flow overlays are only drawn while
         // sync runs). Invoking set_smoothing_method here races with queue-edit reload and blanks the

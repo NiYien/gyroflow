@@ -1083,6 +1083,12 @@ pub struct RenderQueue {
 
     pub queue_finished: qt_signal!(),
 
+    /// Emitted from `clear()` only when the queue actually became empty
+    /// (`row_count() == 0`, same branch as `clear_learned_clock_shift`).
+    /// QML resets export panel leftovers on this signal unless the explicit
+    /// preserve checkbox is on. Not emitted when a Rendering job survives.
+    pub queue_cleared: qt_signal!(),
+
     pub jobs_added: HashSet<u32>,
 
     paused_timestamp: Option<u64>,
@@ -2629,6 +2635,10 @@ impl RenderQueue {
             // removal does NOT reach here — only the clear action empties the
             // queue in one shot, so the removal asymmetry is preserved.
             self.clear_learned_clock_shift("clear_queue");
+            // Same fresh-start semantics for export panel leftovers: let QML
+            // recompute size/bitrate from the currently loaded video so stale
+            // values from a previous batch can't stick to the next one.
+            self.queue_cleared();
         }
     }
     // Stop the whole queue, then clear it. QML's "Clear render queue" calls this
@@ -14551,6 +14561,93 @@ mod tests {
         assert_eq!(queue.learned_clock_shift_ms, None);
         assert_eq!(queue.learned_clock_shift_day, None);
         assert!(!queue.pause_flag.load(SeqCst));
+    }
+
+    #[test]
+    fn clear_emits_queue_cleared_in_the_empty_branch_only() {
+        // Structural guard: queue_cleared() must be emitted from clear()'s
+        // row_count()==0 branch, right next to clear_learned_clock_shift
+        // ("fresh start" semantics share one point), and nowhere earlier.
+        let source = include_str!("render_queue.rs");
+        let fn_idx = source.find("pub fn clear(&mut self)").expect("clear() exists");
+        let body = &source[fn_idx..];
+        let end_idx = body
+            .find("pub fn stop_and_clear")
+            .expect("clear() ends before stop_and_clear");
+        let body = &body[..end_idx];
+        let branch_idx = body
+            .find("row_count() == 0")
+            .expect("clear() keeps the empty-queue branch");
+        let shift_idx = body
+            .find("clear_learned_clock_shift(\"clear_queue\")")
+            .expect("clear() keeps the learned-shift clearing point");
+        let signal_idx = body
+            .find("self.queue_cleared()")
+            .expect("clear() must emit queue_cleared for the export panel reset");
+        assert!(
+            branch_idx < shift_idx && shift_idx < signal_idx,
+            "queue_cleared must be emitted inside the empty-queue branch, after clear_learned_clock_shift"
+        );
+    }
+
+    #[test]
+    fn batch_add_derives_per_source_output_defaults() {
+        let qml = include_str!("../ui/RenderQueue.qml");
+        let fn_idx = qml
+            .find("function prepareBatchAdditionalData(")
+            .expect("prepareBatchAdditionalData exists");
+        let body = &qml[fn_idx..];
+        let end_idx = body
+            .find("function add(outFolder")
+            .expect("prepareBatchAdditionalData ends before dt.add");
+        let body = &body[..end_idx];
+
+        assert!(
+            body.contains("!window.exportSettings.preserveOutputSettings.checked"),
+            "batch add must key the scrub on the explicit preserve checkbox only"
+        );
+        assert!(
+            !body.contains("isPreserveActive"),
+            "batch add must not consult the removed runtime preserve helper semantics"
+        );
+        assert!(
+            body.contains("delete additional.output.output_width")
+                && body.contains("delete additional.output.output_height")
+                && body.contains("delete additional.output.bitrate"),
+            "batch add must drop size AND bitrate so jobs derive them from their own source"
+        );
+    }
+
+    #[test]
+    fn queue_cleared_resets_export_panel_in_qml() {
+        let app_qml = include_str!("../ui/App.qml");
+        let export_qml = include_str!("../ui/menu/Export.qml");
+
+        assert!(
+            app_qml.contains("function onQueue_cleared()")
+                && app_qml.contains("resetToSourceDefaults()")
+                && app_qml.contains("!window.exportSettings.preserveOutputSettings.checked"),
+            "App.qml must reset the export panel on queue_cleared unless explicit preserve is on"
+        );
+        assert!(
+            export_qml.contains("function resetToSourceDefaults()")
+                && export_qml.contains("root.sourceBitrate = br;"),
+            "Export.qml must record the source bitrate and offer resetToSourceDefaults"
+        );
+    }
+
+    #[test]
+    fn simple_mode_runtime_preserve_flag_is_gone() {
+        let app_qml = include_str!("../ui/App.qml");
+        let queue_qml = include_str!("../ui/RenderQueue.qml");
+        let export_qml = include_str!("../ui/menu/Export.qml");
+
+        assert!(
+            !app_qml.contains("simpleModePreserveActive = ")
+                && !queue_qml.contains("simpleModePreserveActive")
+                && !export_qml.contains("property bool simpleModePreserveActive"),
+            "simpleModePreserveActive must stay removed; per-source derivation replaces it"
+        );
     }
 
     #[test]

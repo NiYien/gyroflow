@@ -116,11 +116,12 @@ MenuItem {
     property alias outAudio: audio.checked;
     property alias preserveOutputSettings: preserveOutputSettings;
     property alias preserveOutputPath: preserveOutputPath;
-    // simple-mode-ux-overhaul: runtime-only flag set by App.qml when entering Simple
-    // mode. When true, preserve-original behavior is forced without touching the
-    // persisted preserveOutputSettings.checked value.
-    property bool simpleModePreserveActive: false;
-    function isPreserveActive(): bool { return preserveOutputSettings.checked || simpleModePreserveActive; }
+    // Only the explicit persisted preserve checkbox carries settings across
+    // videos. Simple mode no longer forces preserve at runtime: batch-added
+    // jobs derive per-source output settings in prepareBatchAdditionalData,
+    // and the (hidden) panel always follows the loaded video, so stale
+    // preserved* values cannot leak into new batches.
+    function isPreserveActive(): bool { return preserveOutputSettings.checked; }
     property alias exportTrimsSeparately: exportTrimsSeparately;
     // [queue-batch-streamline T3] 队列输出路径设置
     property alias queueOutputMode: queueOutputModeBox.currentIndex
@@ -128,6 +129,10 @@ MenuItem {
     property string outCodecOptions: "";
     property real originalWidth: outWidth;
     property real originalHeight: outHeight;
+    // Source bitrate of the currently loaded video, recorded in
+    // videoInfoLoaded before any preserved* override is applied. Used by
+    // resetToSourceDefaults() to restore pristine per-video defaults.
+    property real sourceBitrate: 0;
     property bool lensProfileOutputSizeActive: false;
     property real lensProfileOutputWidth: 0;
     property real lensProfileOutputHeight: 0;
@@ -174,8 +179,7 @@ MenuItem {
     property bool disableUpdate: false;
     function notifySizeChanged(): void {
         controller.set_output_size(outWidth, outHeight);
-        // Only the persistent preserve toggle writes preserved* settings — simpleModePreserveActive
-        // must not pollute the user's saved Full-mode preferences.
+        // Only the persistent preserve toggle writes preserved* settings.
         if (preserveOutputSettings.checked && outWidth > 0 && outHeight > 0) {
             settings.setValue("preservedWidth", outWidth);
             settings.setValue("preservedHeight", outHeight);
@@ -212,6 +216,7 @@ MenuItem {
         setDefaultSize(w, h);
         root.originalWidth = w;
         root.originalHeight = h;
+        root.sourceBitrate = br;
         Qt.callLater(notifySizeChanged);
         if (isPreserveActive()) {
             const pbr = +settings.value("preservedBitrate", br);
@@ -231,6 +236,27 @@ MenuItem {
     function lensProfileLoaded(w: real, h: real): void {
         setDefaultSize(w, h);
         Qt.callLater(notifySizeChanged);
+    }
+    // clear-queue-resets-export-settings: restore the panel to the current
+    // main-preview video's own defaults (or pristine startup state when no
+    // video is loaded). Invoked on render_queue.queue_cleared unless the
+    // explicit preserve checkbox is on, so leftovers from a previous batch
+    // cannot outlive an explicit "clear queue" fresh start.
+    function resetToSourceDefaults(): void {
+        if (originalWidth > 0 && originalHeight > 0) {
+            setDefaultSize(originalWidth, originalHeight);
+            Qt.callLater(notifySizeChanged);
+            outBitrate     = sourceBitrate;
+            defaultBitrate = sourceBitrate;
+        } else {
+            disableUpdate = true;
+            outWidth  = 0;
+            outHeight = 0;
+            disableUpdate = false;
+            outBitrate     = 0;
+            defaultBitrate = 0;
+            sourceBitrate  = 0;
+        }
     }
     function lensProfileOutputDimensionLoaded(w: real, h: real): void {
         lensProfileOutputSizeActive = true;

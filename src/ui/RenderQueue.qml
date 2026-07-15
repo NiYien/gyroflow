@@ -2661,9 +2661,15 @@ Item {
         function prepareBatchAdditionalData(additional: var): var {
             if (!additional || !additional.output) return additional;
 
-            if (!window.exportSettings.isPreserveActive()) {
+            // Batch-added jobs derive output size and bitrate from their own
+            // source video (per-source fallback in render_queue::add_file).
+            // Only the explicit preserve checkbox carries panel values across
+            // sources — the panel reflects the main-preview video, not the
+            // files being enqueued.
+            if (!window.exportSettings.preserveOutputSettings.checked) {
                 delete additional.output.output_width;
                 delete additional.output.output_height;
+                delete additional.output.bitrate;
             }
             return additional;
         }
