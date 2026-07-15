@@ -1016,6 +1016,37 @@ fn effective_lens_group_config_for_group<'a>(
     global_configs.get(lens_index).map(|config| (config, false))
 }
 
+// batch-lens-group-missing-data-gate: env kill-switch for the batch pre-processing
+// lens-data gate. GYROFLOW_LENS_DATA_GATE=0|off|false disables the gate (the check
+// method returns an empty jobs list, so QML always dispatches — byte-identical to
+// the pre-gate behavior). Resolved once per process, logged once.
+fn lens_data_gate_enabled() -> bool {
+    use std::sync::OnceLock;
+    static RESOLVED: OnceLock<(bool, bool)> = OnceLock::new();
+    static LOGGED: OnceLock<()> = OnceLock::new();
+    let (enabled, from_env) = *RESOLVED.get_or_init(|| {
+        match std::env::var("GYROFLOW_LENS_DATA_GATE") {
+            Ok(raw) if !raw.trim().is_empty() => {
+                let off = matches!(
+                    raw.trim().to_ascii_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                );
+                (!off, true)
+            }
+            _ => (true, false),
+        }
+    });
+    if LOGGED.set(()).is_ok() {
+        ::log::info!(
+            target: "lifecycle",
+            "lens_data_gate resolved={} source={}",
+            if enabled { "on" } else { "off" },
+            if from_env { "env" } else { "default" }
+        );
+    }
+    enabled
+}
+
 fn metadata_snapshot_for_job(job: &Job) -> Option<core::gyro_source::FileMetadata> {
     if let Some(stab) = job.stab.as_ref() {
         let gyro = stab.gyro.read();
@@ -1306,6 +1337,9 @@ pub struct RenderQueue {
         qt_method!(fn(&mut self, job_ids_json: String, focal_mm: f64)),
     clear_all_per_job_lens_group_for_indices:
         qt_method!(fn(&mut self, indices_json: String)),
+    // batch-lens-group-missing-data-gate: pre-dispatch check for the batch
+    // lens-data gate. Empty jobs list = dispatch may proceed.
+    get_lens_groups_missing_data_json: qt_method!(fn(&self) -> QString),
     manual_set_calibration_pair: qt_method!(fn(&mut self, job_id: u32, gyro_index: usize)),
     get_manual_pair_gyro_index: qt_method!(fn(&self, job_id: u32) -> i32),
     // Deep gyro match (2026-06-11): single-job coarse-offset search against
@@ -11210,6 +11244,72 @@ impl RenderQueue {
         )
     }
 
+    // batch-lens-group-missing-data-gate: pre-dispatch check for the batch
+    // lens-data gate. Returns {"jobs":[{job_id, filename, lens_index, reasons}]};
+    // an empty list means the dispatch may proceed. Only evaluates when the
+    // manual lens-group edit mode is on. Lens-number resolution mirrors
+    // deep_match_needs_lens_choice; CalibrationPair jobs are excluded via
+    // collect_video_job_ids. The per-config predicate lives in
+    // niyien_lens_presets::lens_group_missing_reasons (unit-tested there).
+    fn get_lens_groups_missing_data_json(&self) -> QString {
+        if !lens_data_gate_enabled() {
+            return QString::from(r#"{"jobs":[]}"#);
+        }
+        let manual_edit = core::settings::get_bool("lens_group_manual_edit", false);
+        QString::from(self.lens_groups_missing_data_impl(manual_edit).to_string())
+    }
+
+    // Settings-free core of get_lens_groups_missing_data_json so tests can drive
+    // the manual_edit flag directly (settings::set would schedule a disk write).
+    fn lens_groups_missing_data_impl(&self, manual_edit: bool) -> serde_json::Value {
+        let mut jobs_json: Vec<serde_json::Value> = Vec::new();
+        if !manual_edit {
+            return serde_json::json!({ "jobs": jobs_json });
+        }
+        let global_configs = self.stabilizer.lens_group_config.read().clone();
+        for job_id in self.collect_video_job_ids() {
+            let Some(job) = self.jobs.get(&job_id) else {
+                continue;
+            };
+            let metadata = metadata_snapshot_for_job(job);
+            let Some(lens_index) = job.lens_index_override.or(job.lens_group_index).or_else(|| {
+                metadata
+                    .as_ref()
+                    .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
+            }) else {
+                continue;
+            };
+            let effective_configs = effective_lens_group_configs(job, &global_configs);
+            let Some(config) = effective_configs.get(lens_index) else {
+                continue;
+            };
+            let video_focal_present = metadata
+                .as_ref()
+                .and_then(niyien_lens_presets::extract_video_focus_length_mm)
+                .is_some();
+            let camera_matrix_bare = job
+                .stab
+                .as_ref()
+                .map(|s| s.lens.read().fisheye_params.camera_matrix.is_empty())
+                .unwrap_or(true);
+            let reasons = niyien_lens_presets::lens_group_missing_reasons(
+                config,
+                video_focal_present,
+                camera_matrix_bare,
+            );
+            if reasons.is_empty() {
+                continue;
+            }
+            jobs_json.push(serde_json::json!({
+                "job_id": job_id,
+                "filename": job.render_options.input_filename,
+                "lens_index": lens_index,
+                "reasons": reasons,
+            }));
+        }
+        serde_json::json!({ "jobs": jobs_json })
+    }
+
     // The learned clock shift derives from an accepted deep match — when the
     // user rejects a pairing (unpair / reset-all) or clears the whole render
     // queue (clear_queue), what it taught goes too. A cancelled IN-PROGRESS
@@ -15003,6 +15103,80 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
         assert_eq!(v["state"], "ok");
+    }
+
+    #[test]
+    fn lens_groups_missing_data_states() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        // The manager seeds lens_group_config from persisted settings; reset
+        // to a clean slate so this test is deterministic on any machine.
+        *queue.stabilizer.lens_group_config.write() =
+            niyien_lens_presets::default_lens_group_configs();
+        queue.jobs.get_mut(&1).unwrap().render_options.input_filename = "clip.mp4".to_string();
+
+        let jobs = |queue: &RenderQueue, manual_edit: bool| -> serde_json::Value {
+            queue.lens_groups_missing_data_impl(manual_edit)["jobs"].clone()
+        };
+
+        // No lens number assigned -> the job is skipped even with manual edit on.
+        assert!(jobs(&queue, true).as_array().unwrap().is_empty());
+
+        // Assign L3 (index 2): group empty, no video focal, bare camera matrix
+        // -> mode A hit with the full detail payload.
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(2);
+        let v = jobs(&queue, true);
+        assert_eq!(v.as_array().unwrap().len(), 1);
+        assert_eq!(v[0]["job_id"], 1);
+        assert_eq!(v[0]["filename"], "clip.mp4");
+        assert_eq!(v[0]["lens_index"], 2);
+        assert_eq!(v[0]["reasons"], serde_json::json!(["focal"]));
+
+        // Manual edit OFF -> the whole gate is skipped.
+        assert!(jobs(&queue, false).as_array().unwrap().is_empty());
+
+        // Filling the group's focal length clears the hit.
+        queue.stabilizer.lens_group_config.write()[2].focal_length_mm = Some(50.0);
+        assert!(jobs(&queue, true).as_array().unwrap().is_empty());
+
+        // Anamorphic enabled without preset/squeeze -> anamorphic reason.
+        queue.stabilizer.lens_group_config.write()[2].anamorphic_enabled = true;
+        assert_eq!(jobs(&queue, true)[0]["reasons"], serde_json::json!(["anamorphic"]));
+
+        // A per-job override with complete data wins over the incomplete global
+        // group (effective_lens_group_configs replaces enabled groups wholesale).
+        {
+            let mut override_configs = niyien_lens_presets::default_lens_group_configs();
+            override_configs[2].focal_length_mm = Some(40.0);
+            let mut enabled_groups = vec![false; niyien_lens_presets::LENS_GROUP_COUNT];
+            enabled_groups[2] = true;
+            queue.jobs.get_mut(&1).unwrap().lens_group_config_override =
+                Some(JobLensGroupOverride {
+                    configs: override_configs,
+                    enabled_groups,
+                });
+        }
+        assert!(jobs(&queue, true).as_array().unwrap().is_empty());
+        queue.jobs.get_mut(&1).unwrap().lens_group_config_override = None;
+
+        // Global group is still incomplete -> hit is back...
+        assert_eq!(jobs(&queue, true).as_array().unwrap().len(), 1);
+        // ...but a CalibrationPair job is excluded from the gate.
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results: vec![core::gyro_match::MatchResult {
+                video_index: 0,
+                job_id: Some(1),
+                gyro_index: Some(0),
+                status: core::gyro_match::MatchStatus::CalibrationPair,
+                global_offset_ms: None,
+                gyro_start_ms: None,
+                gyro_end_ms: None,
+                init_offset_ms: None,
+            }],
+            global_offset_ms: None,
+            error: None,
+        });
+        assert!(jobs(&queue, true).as_array().unwrap().is_empty());
     }
 
     #[test]

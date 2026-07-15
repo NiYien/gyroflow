@@ -303,6 +303,36 @@ fn lens_group_build_decision(
     (fills_missing_focal, applies_anamorphic)
 }
 
+/// Missing-data check for the batch pre-processing gate. Returns the reasons why
+/// processing a job assigned to this lens group would silently produce a wrong or
+/// missing lens profile:
+///   - "anamorphic": anamorphic is enabled but resolve_anamorphic_config cannot
+///     satisfy it (empty/unknown preset and no valid manual squeeze ratio), so the
+///     desqueeze would be silently skipped.
+///   - "focal": no usable focal length anywhere (group manual focal and video
+///     telemetry focal both missing). Only reported when the lens-group profile is
+///     actually load-bearing: with anamorphic intent (a profile build failure drops
+///     the desqueeze too, regardless of any existing profile), or when the current
+///     camera matrix is bare (nothing else provides lens geometry).
+/// The manual_edit gate and lens-number resolution live at the queue layer.
+pub fn lens_group_missing_reasons(
+    config: &LensGroupConfig,
+    video_focal_present: bool,
+    camera_matrix_bare: bool,
+) -> Vec<&'static str> {
+    let mut reasons = Vec::new();
+    if config.anamorphic_enabled && resolve_anamorphic_config(Some(config)).is_none() {
+        reasons.push("anamorphic");
+    }
+    let manual_focal_present = sanitize_manual_focal_length_mm(config.focal_length_mm).is_some();
+    if !manual_focal_present && !video_focal_present
+        && (config.anamorphic_enabled || camera_matrix_bare)
+    {
+        reasons.push("focal");
+    }
+    reasons
+}
+
 pub fn extract_lens_index(additional_data: &serde_json::Value) -> Option<usize> {
     additional_data
         .get("lens_index")
@@ -1103,6 +1133,110 @@ mod tests {
         .unwrap();
         assert_eq!(selected.0, 28.0);
         assert_eq!(selected.1, FocalLengthSource::Manual);
+    }
+
+    // ── lens_group_missing_reasons (batch pre-processing gate) ──
+
+    #[test]
+    fn missing_reasons_mode_a_bare_group_bare_matrix() {
+        // Mode A: no focal anywhere, no anamorphic intent, bare camera matrix.
+        let config = LensGroupConfig::default();
+        assert_eq!(lens_group_missing_reasons(&config, false, true), vec!["focal"]);
+    }
+
+    #[test]
+    fn missing_reasons_mode_b_anamorphic_without_data() {
+        // Mode B: anamorphic enabled but neither preset nor squeeze ratio; the
+        // focal side is satisfied so only the anamorphic reason fires.
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+        assert_eq!(lens_group_missing_reasons(&config, false, false), vec!["anamorphic"]);
+    }
+
+    #[test]
+    fn missing_reasons_mode_c_anamorphic_data_but_no_focal() {
+        // Mode C: valid squeeze but no focal anywhere. A non-bare camera matrix
+        // does NOT exempt: the profile build failure drops the desqueeze too.
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        };
+        assert_eq!(lens_group_missing_reasons(&config, false, false), vec!["focal"]);
+    }
+
+    #[test]
+    fn missing_reasons_mode_b_and_c_combined() {
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            lens_group_missing_reasons(&config, false, true),
+            vec!["anamorphic", "focal"]
+        );
+    }
+
+    #[test]
+    fn missing_reasons_exempt_video_telemetry_focal() {
+        let config = LensGroupConfig::default();
+        assert!(lens_group_missing_reasons(&config, true, true).is_empty());
+    }
+
+    #[test]
+    fn missing_reasons_exempt_non_bare_matrix_without_anamorphic() {
+        // Existing profile provides valid geometry and there is no anamorphic
+        // intent that a failed build would drop.
+        let config = LensGroupConfig::default();
+        assert!(lens_group_missing_reasons(&config, false, false).is_empty());
+    }
+
+    #[test]
+    fn missing_reasons_exempt_complete_anamorphic_with_focal() {
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            focal_length_mm: Some(50.0),
+            squeeze_ratio: Some(1.5),
+            ..Default::default()
+        };
+        assert!(lens_group_missing_reasons(&config, false, true).is_empty());
+    }
+
+    #[test]
+    fn missing_reasons_exempt_builtin_preset_without_manual_squeeze() {
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            focal_length_mm: Some(50.0),
+            preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_string()),
+            ..Default::default()
+        };
+        assert!(lens_group_missing_reasons(&config, false, true).is_empty());
+    }
+
+    #[test]
+    fn missing_reasons_unknown_preset_falls_back_to_manual_squeeze() {
+        // Unknown preset id with a valid manual squeeze ratio still resolves
+        // (resolve_anamorphic_config falls back), so no anamorphic reason.
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            focal_length_mm: Some(50.0),
+            preset_id: Some("no_such_preset".to_string()),
+            squeeze_ratio: Some(1.33),
+            ..Default::default()
+        };
+        assert!(lens_group_missing_reasons(&config, false, false).is_empty());
+
+        // Without the fallback ratio the intent is unsatisfiable.
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            focal_length_mm: Some(50.0),
+            preset_id: Some("no_such_preset".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(lens_group_missing_reasons(&config, false, false), vec!["anamorphic"]);
     }
 
     #[test]

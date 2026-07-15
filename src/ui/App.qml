@@ -180,6 +180,7 @@ Rectangle {
             property string channelTitle: "";
             property string versionText: "";
             property string changelogText: "";
+            property bool changelogTruncated: false;
             property bool stable: false;
             signal installClicked();
 
@@ -1877,7 +1878,70 @@ Rectangle {
 
     // Simple-mode batch sync dispatch (queue mode). Shared by simpleAutoSyncBtn and by
     // RenderQueue's match-then-sync orchestration. Keeps the anamorphic confirmation.
+    // batch-lens-group-missing-data-gate: hard pre-dispatch gate. Every batch
+    // dispatch path must pass this check before mutating any state. Returns true
+    // when processing may proceed; otherwise shows the per-lens-group detail
+    // modal ([Go to settings] / [Cancel], deliberately no "process anyway")
+    // and returns false. The predicate lives in Rust
+    // (RenderQueue::get_lens_groups_missing_data_json); it only fires when
+    // manual lens-group edit is ON and a job's assigned group cannot build a
+    // correct lens profile. GYROFLOW_LENS_DATA_GATE=0 disables it.
+    function lensDataGatePasses(): bool {
+        let res = { jobs: [] };
+        try { res = JSON.parse(render_queue.get_lens_groups_missing_data_json()); } catch (e) { }
+        const jobs = res.jobs || [];
+        if (!jobs.length) return true;
+        // Group hits by lens number: lens_index -> reason set. The modal lists
+        // only the lens numbers and what they lack — no per-file detail.
+        let groups = {};
+        for (const j of jobs) {
+            if (!groups[j.lens_index]) groups[j.lens_index] = {};
+            for (const r of (j.reasons || [])) groups[j.lens_index][r] = true;
+        }
+        let lines = [];
+        for (const k of Object.keys(groups).map(Number).sort((a, b) => a - b)) {
+            let reasonWords = [];
+            if (groups[k]["focal"])      reasonWords.push(qsTr("missing focal length"));
+            if (groups[k]["anamorphic"]) reasonWords.push(qsTr("missing anamorphic parameters"));
+            lines.push("L" + (k + 1) + ": " + reasonWords.join(", "));
+        }
+        messageBox(Modal.Warning, qsTr("Lens data is not set up correctly. Set the missing data in \"%1\" first, then process again.").arg(qsTr("Sensor && Lens").replace("&&", "&")) + "\n\n" + lines.join("\n"), [
+            { text: qsTr("Go to settings"), accent: true, clicked: function() { window.navigateToLensGroupConfig(); } },
+            { text: qsTr("Cancel") },
+        ]);
+        return false;
+    }
+    // Scroll the right panel to the lens-group configuration card. Mirrors
+    // TutorialOverlay.scrollIntoView (map into the panel column, walk up to the
+    // Flickable); silently no-ops when the target is not resolvable in the
+    // current layout (e.g. mobile). The gate only fires with manual edit ON,
+    // so the card's edit fields are already visible once scrolled to.
+    function navigateToLensGroupConfig(): void {
+        simpleSensorLensSection.opened = true;
+        // The callLater callback stays an untyped closure and swallows its own
+        // errors: a `: void` function throwing inside a delayed callback hits
+        // the Qt 6.7.3 V4 JIT void-coercion AV, and "not resolvable" is a
+        // silent no-op by design anyway.
+        Qt.callLater(function() {
+            try {
+                const t = lensGroupConfigCard;
+                if (!rightPanel || !rightPanel.col || !t || !t.visible) return;
+                const col = rightPanel.col;
+                let inPanel = false, p = t;
+                while (p) { if (p === col) { inPanel = true; break; } p = p.parent; }
+                if (!inPanel) return;
+                let flick = col.parent;
+                while (flick && typeof flick.contentY !== "number") flick = flick.parent;
+                if (!flick) return;
+                const yInCol = t.mapToItem(col, 0, 0).y;
+                const margin = 40 * dpiScale;
+                const maxY = Math.max(0, flick.contentHeight - flick.height);
+                flick.contentY = Math.max(0, Math.min(maxY, yInCol - margin));
+            } catch (e) { }
+        });
+    }
     function runSimpleBatchSync(): void {
+        if (!lensDataGatePasses()) return;
         const anamorphicCount = render_queue.get_anamorphic_applied_count();
         if (anamorphicCount > 0) {
             messageBox(Modal.Question, qsTranslate("RenderQueue", "%1 video(s) will use Anamorphic lens").arg(anamorphicCount), [
@@ -1895,6 +1959,7 @@ Rectangle {
     // Simple-mode batch export dispatch (queue mode). Shared by simpleExportStabilizedBtn and
     // by RenderQueue's match-then-sync orchestration. Batch render auto-syncs not-yet-synced jobs.
     function runSimpleBatchExport(): void {
+        if (!lensDataGatePasses()) return;
         if (render_queue.has_crm_proxy_jobs()) {
             window.showCanonCrmProjectOnlyMessage();
             return;
@@ -1912,8 +1977,11 @@ Rectangle {
         messageBox(Modal.Question, qsTr("Already exported. Re-export?"), [
             { text: qsTr("Yes"), clicked: function() {
                 if (kind === "video") {
-                    // Mirror runSimpleBatchExport's CRM-proxy guard + export_project,
-                    // but requeue already-rendered video exports for re-render.
+                    // Mirror runSimpleBatchExport's lens-data gate + CRM-proxy guard
+                    // + export_project, but requeue already-rendered video exports
+                    // for re-render. This branch dispatches inline (not via
+                    // runSimpleBatchExport), so the gate needs its own call here.
+                    if (!window.lensDataGatePasses()) return;
                     if (render_queue.has_crm_proxy_jobs()) {
                         window.showCanonCrmProjectOnlyMessage();
                         return;
