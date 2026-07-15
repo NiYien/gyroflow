@@ -886,6 +886,22 @@ Se disponi di un dispositivo moderno, degli ultimi driver GPU e pensi che questo
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>L&apos; encoder audio non è riuscito a elaborare i dati in ingresso. Prova a deselezionare &quot;Esporta audio&quot; nelle impostazioni di Esportazione.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>I dati dell'obiettivo non sono configurati correttamente. Inserisci prima i dati mancanti in &quot;%1&quot;, poi elabora di nuovo.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>lunghezza focale mancante</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>parametri anamorfici mancanti</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Vai alle impostazioni</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3912,8 +3928,8 @@ Fare clic su Ok e selezionare la cartella di destinazione.</translation>
         <translation>Verifica numeri obiettivo</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Dati giroscopio assegnati. Controlla il numero di obiettivo di ogni video nella coda. Fai clic destro su un video e usa "%1" per modificarlo, poi premi "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Controlla il numero di obiettivo di ogni video nella coda. Fai clic destro per modificarlo, poi stabilizza.</translation>
     </message>
 </context>
 <context>

@@ -887,6 +887,22 @@ Wenn dies ein modernes System mit aktuellen Treibern ist, das GPU-encoding unter
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Der Audio-Encoder kann die Eingabedaten nicht richtig verarbeiten. In diesem Fall kann es hilfreich sein, das Video ohne Ton zu exportieren und &quot;Audio&quot; in den Export-Einstellungen zu deaktivieren.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Die Objektivdaten sind nicht korrekt eingerichtet. Zuerst die fehlenden Daten in &quot;%1&quot; ergänzen, dann erneut verarbeiten.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>fehlende Brennweite</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>fehlende Anamorphot-Parameter</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Zu den Einstellungen</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3914,8 +3930,8 @@ Klicke auf Ok, um den Zielordner auszuwählen.</translation>
         <translation>Objektivnummern prüfen</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Gyrodaten zugeordnet. Prüfen Sie die Objektivnummer jedes Videos in der Warteschlange. Klicken Sie mit der rechten Maustaste auf ein Video und ändern Sie sie über "%1", drücken Sie anschließend "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Prüfen Sie die Objektivnummer jedes Videos in der Warteschlange. Zum Ändern rechtsklicken, danach stabilisieren.</translation>
     </message>
 </context>
 <context>

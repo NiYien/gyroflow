@@ -888,6 +888,22 @@ Jeśli posiadasz nowoczesne urządzenie, najnowsze sterowniki GPU i uważasz, ż
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Enkoder audio nie mógł przetworzyć danych z pliku. Spróbuj odznaczyć &quot;Eksportuj dźwięk&quot; w ustawieniach eksportu.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Dane obiektywu nie są poprawnie skonfigurowane. Najpierw uzupełnij brakujące dane w &quot;%1&quot;, a następnie przetwórz ponownie.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>brak ogniskowej</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>brak parametrów anamorficznych</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Przejdź do ustawień</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Kliknij Ok i wybierz folder docelowy.</translation>
         <translation>Sprawdź numery obiektywów</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Dane żyroskopu przypisane. Sprawdź numer obiektywu każdego filmu w kolejce. Kliknij film prawym przyciskiem myszy i zmień go przez "%1", a następnie naciśnij "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Sprawdź numer obiektywu każdego filmu w kolejce. Kliknij prawym przyciskiem myszy, aby go zmienić, a następnie ustabilizuj.</translation>
     </message>
 </context>
 <context>

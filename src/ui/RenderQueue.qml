@@ -731,7 +731,7 @@ Item {
                 // (right-click to change) and stabilize when satisfied. No
                 // sync/export dispatch on this path.
                 if (action === "review") {
-                    messageBox(Modal.Info, qsTr("Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use \"%1\" to change it, then press \"%2\".").arg(qsTr("Change lens group")).arg(qsTr("Stabilize (or use with plugins)")), [ { text: qsTr("Ok") } ]);
+                    messageBox(Modal.Info, qsTr("Check the lens number on each video in the queue. Right-click to change it, then stabilize."), [ { text: qsTr("Ok") } ]);
                     return;
                 }
                 if (action === "sync") {

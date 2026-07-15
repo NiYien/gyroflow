@@ -888,6 +888,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>音频编码器无法处理输入数据。请尝试在导出设置中取消 &quot;导出音频&quot;。</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>镜头数据未正确设置。请先在&quot;%1&quot;中补全缺失数据，再进行处理。</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>缺焦距</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>缺变宽参数</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>去设置</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Click Ok and select the destination folder.</source>
         <translation>再检查镜头号</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>陀螺仪数据已分配。请检查队列中每个视频的镜头号；右键点击视频，用“%1”修改，确认后按“%2”。</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>请核对队列中各视频的镜头号，右键可修改，完成后再稳定。</translation>
     </message>
 </context>
 <context>

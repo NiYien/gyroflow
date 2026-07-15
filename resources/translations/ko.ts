@@ -887,6 +887,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>음성 인코더가 입력 데이터를 처리할 수 없습니다. 내보내기 설정의 &apos;음성 내보내기&apos; 옵션을 해제해 보세요.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>렌즈 데이터가 올바르게 설정되지 않았습니다. 먼저 &quot;%1&quot;에서 누락된 데이터를 입력한 후 다시 처리하세요.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>초점 거리 누락</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>아나모픽 파라미터 누락</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>설정으로 이동</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3914,8 +3930,8 @@ Click Ok and select the destination folder.</source>
         <translation>렌즈 번호 확인</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>자이로 데이터가 할당되었습니다. 대기열에 있는 각 동영상의 렌즈 번호를 확인하세요. 동영상을 마우스 오른쪽 버튼으로 클릭해 "%1"(으)로 변경한 다음 "%2" 버튼을 누르세요.</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>대기열에 있는 각 동영상의 렌즈 번호를 확인하세요. 마우스 오른쪽 버튼으로 클릭해 변경한 다음 안정화하세요.</translation>
     </message>
 </context>
 <context>

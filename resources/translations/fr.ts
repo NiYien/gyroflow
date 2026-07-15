@@ -887,6 +887,22 @@ Si vous avez du matériel récent, les derniers pilotes de votre carte graphique
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>L&apos;encodeur audio n&apos;a pas pu traiter les données entrantes. Essayez de décocher &quot;Exporter l&apos;audio&quot; dans les paramètres d&apos;exportation.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Les données d'optique ne sont pas correctement configurées. Renseignez d'abord les données manquantes dans &quot;%1&quot;, puis relancez le traitement.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>distance focale manquante</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>paramètres anamorphiques manquants</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Aller aux réglages</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3914,8 +3930,8 @@ Cliquez sur Ok et sélectionnez le fichier de destination.</translation>
         <translation>Vérifier les numéros d'objectif</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Données gyro attribuées. Vérifiez le numéro d'objectif de chaque vidéo dans la file d'attente. Faites un clic droit sur une vidéo et utilisez "%1" pour le modifier, puis appuyez sur "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Vérifiez le numéro d'objectif de chaque vidéo dans la file d'attente. Faites un clic droit pour le modifier, puis stabilisez.</translation>
     </message>
 </context>
 <context>

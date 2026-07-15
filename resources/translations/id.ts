@@ -886,6 +886,22 @@ Jika Anda memiliki perangkat modern, driver GPU terbaru, dan menurut Anda hal in
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Pembuat enkode audio tidak dapat memproses data masukan. Coba hapus centang &quot;Ekspor audio&quot; di setelan Ekspor.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Data lensa belum diatur dengan benar. Isi dulu data yang hilang di &quot;%1&quot;, lalu proses lagi.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>panjang fokus belum diisi</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>parameter anamorfik belum diisi</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Buka pengaturan</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3911,8 +3927,8 @@ Klik Ok dan pilih folder tujuan.</translation>
         <translation>Periksa nomor lensa</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Data gyro telah ditetapkan. Periksa nomor lensa pada setiap video dalam antrean. Klik kanan video dan gunakan "%1" untuk mengubahnya, lalu tekan "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Periksa nomor lensa pada setiap video dalam antrean. Klik kanan untuk mengubahnya, lalu stabilkan.</translation>
     </message>
 </context>
 <context>

@@ -888,6 +888,22 @@ Se você possui um dispositivo moderno, os drivers GPU mais recentes e acha que 
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>O codificador de áudio não conseguiu processar os dados de entrada. Tente desmarcar &quot;Exportar áudio&quot; nas configurações de exportação.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Os dados da objetiva não estão configurados corretamente. Preencha primeiro os dados em falta em &quot;%1&quot; e depois processe novamente.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>distância focal em falta</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>parâmetros anamórficos em falta</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Ir para as definições</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Clique em Ok e selecione a pasta de destino.</translation>
         <translation>Rever números da objetiva</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Dados do giroscópio atribuídos. Verifique o número da objetiva de cada vídeo na fila. Clique com o botão direito num vídeo e use "%1" para o alterar; depois prima "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Verifique o número da objetiva de cada vídeo na fila. Clique com o botão direito para o alterar e depois estabilize.</translation>
     </message>
 </context>
 <context>

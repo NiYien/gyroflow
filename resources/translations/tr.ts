@@ -884,6 +884,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Ses enkoderi veriyi işleyemedi. Dışarı aktarma ayarlarından &quot;Sesi dışarı aktar&quot; seçeneğini kaldırmayı deneyin.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Lens verileri doğru ayarlanmamış. Önce &quot;%1&quot; içindeki eksik verileri doldurun, sonra yeniden işleyin.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>odak uzaklığı eksik</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>anamorfik parametreler eksik</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Ayarlara git</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3908,8 +3924,8 @@ Click Ok and select the destination folder.</source>
         <translation>Lens numaralarını incele</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Jiroskop verileri atandı. Kuyruktaki her videonun lens numarasını kontrol edin. Bir videoya sağ tıklayıp "%1" ile değiştirin, ardından "%2" düğmesine basın.</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Kuyruktaki her videonun lens numarasını kontrol edin. Değiştirmek için sağ tıklayın, ardından sabitleyin.</translation>
     </message>
 </context>
 <context>

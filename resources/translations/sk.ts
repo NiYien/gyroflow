@@ -888,6 +888,22 @@ Ak máš novší počítač, aktuálne ovládače na GPU a myslíš si, že by s
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Kodek zvuku neumožnuje spracovať vstupné data. Skús deaktivovať &quot;Export zvuku&quot; v nastaveniach exportu.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Údaje objektívu nie sú správne nastavené. Najprv doplňte chýbajúce údaje v &quot;%1&quot; a potom spracujte znova.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>chýba ohnisková vzdialenosť</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>chýbajú anamorfné parametre</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Prejsť do nastavení</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Klikni na OK pre výber cieľovej zložky.</translation>
         <translation>Skontrolovať čísla objektívov</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Údaje gyroskopu priradené. Skontrolujte číslo objektívu pri každom videu vo fronte. Kliknite na video pravým tlačidlom a zmeňte ho cez "%1", potom stlačte "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Skontrolujte číslo objektívu pri každom videu vo fronte. Kliknite pravým tlačidlom pre zmenu, potom stabilizujte.</translation>
     </message>
 </context>
 <context>

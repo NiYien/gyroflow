@@ -887,6 +887,22 @@ Jos sinulla on nykyaikainen laite, uusimmat GPU-ajurit ja uskot, että näin ei 
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Äänikooderi ei voinut käsitellä syöttötietoja. Yritä poistaa Vie ääni -valintaruudun valinta Vientiasetuksista.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Objektiivin tietoja ei ole määritetty oikein. Täytä ensin puuttuvat tiedot kohdassa &quot;%1&quot; ja käsittele sitten uudelleen.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>polttoväli puuttuu</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>anamorfiset parametrit puuttuvat</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Siirry asetuksiin</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3914,8 +3930,8 @@ Napsauta Ok ja valitse kohdekansio.</translation>
         <translation>Tarkista objektiivinumerot</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Gyrodata määritetty. Tarkista jokaisen jonossa olevan videon objektiivinumero. Napsauta videota hiiren oikealla painikkeella ja muuta se kohdasta "%1", paina sitten "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Tarkista jokaisen jonossa olevan videon objektiivinumero. Muuta napsauttamalla hiiren oikealla painikkeella ja vakauta sitten.</translation>
     </message>
 </context>
 <context>

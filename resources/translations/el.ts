@@ -888,6 +888,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Ο κωδικοποιητής ήχου δεν μπόρεσε να επεξεργαστεί τα δεδομένα εισόδου. Δοκιμάστε να καταργήσετε την επιλογή &quot;Εξαγωγή ήχου&quot; στις ρυθμίσεις εξαγωγής.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Τα δεδομένα φακού δεν έχουν ρυθμιστεί σωστά. Συμπληρώστε πρώτα τα δεδομένα που λείπουν στο &quot;%1&quot; και μετά επεξεργαστείτε ξανά.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>λείπει η εστιακή απόσταση</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>λείπουν οι αναμορφικές παράμετροι</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Μετάβαση στις ρυθμίσεις</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Click Ok and select the destination folder.</source>
         <translation>Έλεγχος αριθμών φακού</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Τα δεδομένα γυροσκοπίου αντιστοιχίστηκαν. Ελέγξτε τον αριθμό φακού κάθε βίντεο στην ουρά. Κάντε δεξί κλικ σε ένα βίντεο και χρησιμοποιήστε το "%1" για να τον αλλάξετε, έπειτα πατήστε "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Ελέγξτε τον αριθμό φακού κάθε βίντεο στην ουρά. Κάντε δεξί κλικ για αλλαγή και έπειτα σταθεροποιήστε.</translation>
     </message>
 </context>
 <context>

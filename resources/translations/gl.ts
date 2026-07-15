@@ -886,6 +886,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>O codificador de audio non&apos; puido procesar os datos de entrada. Probe a desmarcar &quot;Exportar audio&quot; en Configuración de exportación.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Os datos da lente non están configurados correctamente. Complete primeiro os datos que faltan en &quot;%1&quot; e volva procesar.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>falta a distancia focal</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>faltan os parámetros anamórficos</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Ir á configuración</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3913,8 +3929,8 @@ Faga clic en Aceptar e seleccione o cartafol de destino.</translation>
         <translation>Revisar números de obxectivo</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Datos do xiroscopio asignados. Comproba o número de obxectivo de cada vídeo na cola. Preme co botón dereito nun vídeo e usa "%1" para cambialo; despois preme "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Comproba o número de obxectivo de cada vídeo na cola. Preme co botón dereito para cambialo e despois estabiliza.</translation>
     </message>
 </context>
 <context>

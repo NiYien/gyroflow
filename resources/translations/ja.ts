@@ -888,6 +888,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>オーディオエンコーダが入力データを処理できません。エクスポート設定で、「音声をエクスポート」のチェックを外してみてください。</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>レンズデータが正しく設定されていません。先に &quot;%1&quot; で不足データを設定してから、再度処理してください。</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>焦点距離が未設定</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>アナモルフィックのパラメータが未設定</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>設定へ移動</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3916,8 +3932,8 @@ OKをクリックして保存先フォルダを選択します。</translation>
         <translation>レンズ番号を確認</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>ジャイロデータを割り当てました。キュー内の各動画のレンズ番号を確認してください。動画を右クリックして「%1」で変更し、その後「%2」を押してください。</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>キュー内の各動画のレンズ番号を確認してください。右クリックで変更し、その後スタビライズしてください。</translation>
     </message>
 </context>
 <context>

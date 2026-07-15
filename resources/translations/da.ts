@@ -888,6 +888,22 @@ Hvis du har en moderne enhed, seneste GPU drivere, og du tror, at dette ikke bø
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Lydkoderen kunnne ikke behandle inputdataene. Prøv at deaktivere &quot;Eksportér lyd&quot; i Eksportindstillinger.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Objektivdata er ikke sat korrekt op. Udfyld først de manglende data i &quot;%1&quot;, og behandl derefter igen.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>manglende brændvidde</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>manglende anamorfe parametre</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Gå til indstillinger</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Klik på Ok, og vælg destinationsmappen.</translation>
         <translation>Gennemgå objektivnumre</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Gyrodata tildelt. Tjek objektivnummeret på hver video i køen. Højreklik på en video og brug "%1" for at ændre det, og tryk derefter på "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Tjek objektivnummeret på hver video i køen. Højreklik for at ændre det, og stabiliser derefter.</translation>
     </message>
 </context>
 <context>

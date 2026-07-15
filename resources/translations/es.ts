@@ -886,6 +886,22 @@ Si tiene un dispositivo moderno, los controladores GPU actualizados y cree que e
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Codificador de audio no pudo procesar los datos de entrada. Intente desmarcar &quot;Exportar audio&quot; en Ajustes de Exportación.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Los datos del objetivo no están configurados correctamente. Complete primero los datos que faltan en &quot;%1&quot; y vuelva a procesar.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>falta la distancia focal</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>faltan los parámetros anamórficos</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Ir a ajustes</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3913,8 +3929,8 @@ Haga clic en Ok y seleccione la carpeta de destino.</translation>
         <translation>Revisar números de objetivo</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Datos de giroscopio asignados. Comprueba el número de objetivo de cada vídeo en la cola. Haz clic derecho en un vídeo y usa "%1" para cambiarlo; después pulsa "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Comprueba el número de objetivo de cada vídeo en la cola. Haz clic derecho para cambiarlo y luego estabiliza.</translation>
     </message>
 </context>
 <context>

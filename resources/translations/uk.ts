@@ -888,6 +888,22 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
         <translation>Аудіокодер не зміг обробити вхідні дані. Спробуйте зняти прапорець &quot;Експортувати аудіо&quot; у налаштуваннях експорту.</translation>
     </message>
+    <message>
+        <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
+        <translation>Дані об'єктива налаштовано неправильно. Спочатку заповніть відсутні дані у &quot;%1&quot;, а потім повторіть обробку.</translation>
+    </message>
+    <message>
+        <source>missing focal length</source>
+        <translation>не вказано фокусну відстань</translation>
+    </message>
+    <message>
+        <source>missing anamorphic parameters</source>
+        <translation>не вказано анаморфні параметри</translation>
+    </message>
+    <message>
+        <source>Go to settings</source>
+        <translation>Перейти до налаштувань</translation>
+    </message>
 </context>
 <context>
     <name>CalibrationTarget</name>
@@ -3915,8 +3931,8 @@ Click Ok and select the destination folder.</source>
         <translation>Перевірити номери об'єктивів</translation>
     </message>
     <message>
-        <source>Gyro data assigned. Check the lens number on each video in the queue. Right-click a video and use "%1" to change it, then press "%2".</source>
-        <translation>Дані гіроскопа розподілено. Перевірте номер об'єктива для кожного відео в черзі. Клацніть відео правою кнопкою миші та змініть його через "%1", потім натисніть "%2".</translation>
+        <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
+        <translation>Перевірте номер об'єктива для кожного відео в черзі. Клацніть правою кнопкою миші, щоб змінити його, потім стабілізуйте.</translation>
     </message>
 </context>
 <context>
