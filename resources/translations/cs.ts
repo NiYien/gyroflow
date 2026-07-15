@@ -733,6 +733,11 @@ Z důvodu omezení systémových kodérů není vykreslování na pozadí podpor
         <translation>Dostupné aktualizace</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Zobrazit úplnou historii aktualizací starších verzí</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

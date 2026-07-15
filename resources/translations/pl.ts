@@ -733,6 +733,11 @@ Ze względu na ograniczenia systemowych enkoderów wideo, renderowanie w tle nie
         <translation>Dostępne aktualizacje</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Zobacz pełną historię aktualizacji wcześniejszych wersji</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

@@ -218,11 +218,34 @@ Rectangle {
                         font.pixelSize: 12 * dpiScale;
                         wrapMode: Text.WordWrap;
                     }
-                    BasicText {
+                    Flickable {
+                        // Aggregated notes can span several versions; scroll
+                        // inside the card so the Update button stays in view.
+                        id: changelogFlick;
                         visible: updateOption.changelogText.length > 0;
                         width: parent.width;
-                        text: updateOption.changelogText;
-                        textFormat: Text.MarkdownText;
+                        height: Math.min(changelogTextItem.implicitHeight, 220 * dpiScale);
+                        contentWidth: width;
+                        contentHeight: changelogTextItem.implicitHeight;
+                        boundsBehavior: Flickable.StopAtBounds;
+                        clip: true;
+                        QQC.ScrollBar.vertical: QQC.ScrollBar { }
+                        BasicText {
+                            id: changelogTextItem;
+                            width: changelogFlick.width;
+                            text: updateOption.changelogText;
+                            textFormat: Text.MarkdownText;
+                            font.pixelSize: 12 * dpiScale;
+                            wrapMode: Text.WordWrap;
+                        }
+                    }
+                    BasicText {
+                        visible: updateOption.changelogTruncated;
+                        width: parent.width;
+                        // Pass the app UI language so the history page opens
+                        // in the same language (it falls back to English).
+                        text: "<a href=\"https://niyien.com/changelog/?lang=" + encodeURIComponent(settings.value("lang", "en")) + "\">" + qsTr("See the full update history for earlier versions") + "</a>";
+                        textFormat: Text.StyledText;
                         font.pixelSize: 12 * dpiScale;
                         wrapMode: Text.WordWrap;
                     }
@@ -2230,6 +2253,7 @@ Rectangle {
             channelTitle: channelTitle,
             versionText: versionText,
             changelogText: changelogText.replace(/\r\n|\n\r|\n|\r/g, "\n"),
+            changelogTruncated: updateInfo.changelog_truncated === true,
             stable: !isManual
         });
         option.installClicked.connect(() => {
@@ -2283,7 +2307,8 @@ Rectangle {
             const candidate = {
                 channel: updateInfo.channel,
                 version: versionText,
-                changelog: updateInfo.changelog || ""
+                changelog: updateInfo.changelog || "",
+                changelog_truncated: updateInfo.changelog_truncated === true
             };
             if (candidate.channel === "auto" && stableUpdate === null) {
                 stableUpdate = candidate;
@@ -2341,8 +2366,8 @@ Rectangle {
                 Qt.openUrlExternally("https://github.com/gyroflow/gyroflow/releases");
             }
         }
-        function onUpdates_available(version: string, changelog: string, download_url: string): void {
-            const info = { channel: "auto", version: version, changelog: changelog };
+        function onUpdates_available(version: string, changelog: string, download_url: string, changelog_truncated: bool): void {
+            const info = { channel: "auto", version: version, changelog: changelog, changelog_truncated: changelog_truncated === true };
             // [update-deferral] Hold the automatic prompt during first-launch onboarding so it
             // doesn't appear over the language picker / tutorial; endOnboarding() flushes it.
             if (window.onboardingActive) {

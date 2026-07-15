@@ -37,6 +37,14 @@ DEFAULT_CONFIG: dict = {
     "translate_model": "",
     "network_proxy": "127.0.0.1:7897",
     "git_remote": "origin",
+    # Append-only changelog archive committed into the docs repo (the
+    # niyien.com Vercel deployment). Consumed by the /changelog/ page.
+    "changelog_archive": {
+        "owner": "NiYien",
+        "repo": "docs",
+        "branch": "main",
+        "path": "changelog/archive.json",
+    },
     "publish_defaults": {
         "lens_data_tag": "",
         "plugins_source_mode": "release",

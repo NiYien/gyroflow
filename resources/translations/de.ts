@@ -732,6 +732,11 @@ Aufgrund von Einschränkungen der Systemvideo-Encoder wird das Rendern im Hinter
         <translation>Verfügbare Updates</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Vollständigen Updateverlauf für frühere Versionen ansehen</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

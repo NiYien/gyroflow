@@ -733,6 +733,11 @@ Kôli limitácii video enkodéra, renderovanie na pozadí nieje podporované.</t
         <translation>Dostupné aktualizácie</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Zobraziť úplnú históriu aktualizácií starších verzií</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

@@ -584,6 +584,11 @@ Please check the file bitrate after rendering and if you&apos;re affected by thi
         <translation>可用更新</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>查看更早版本的完整更新記錄</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1730"/>
         <source>Check for updates</source>
         <translation>檢查更新</translation>

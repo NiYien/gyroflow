@@ -12,6 +12,13 @@ import requests
 from .helpers import build_proxy_mapping, normalize_proxy_url
 
 
+class ContentsConflictError(RuntimeError):
+    """PUT /contents rejected because the provided blob sha is stale.
+
+    Callers re-read the file (fresh sha), re-merge and retry once.
+    """
+
+
 class GitHubClient:
     def __init__(self, owner: str, repo: str, token: str = "", proxy_url: str = ""):
         self.owner = owner.strip()
@@ -188,6 +195,108 @@ class GitHubClient:
                 f"GitHub 拒绝创建 tag ({response.status_code}: {msg})。可能原因:\n"
                 f"  1. fine-grained PAT 未授权 {owner}/{repo} 的 Contents: Read and write 权限\n"
                 f"     → Settings → Developer settings → Personal access tokens → Fine-grained → 编辑 token,Repository access 加入此仓库并勾 Contents write\n"
+                f"  2. Classic PAT 缺少 'repo' scope\n"
+                f"  3. 仓库/组织设有 push restriction"
+            )
+        response.raise_for_status()
+        return response.json()
+
+    # ---- Repository contents (Contents API) ----
+
+    def get_contents(
+        self,
+        owner: str | None = None,
+        repo: str | None = None,
+        *,
+        path: str,
+        ref: str = "",
+    ) -> dict | None:
+        """GET /repos/{owner}/{repo}/contents/{path}.
+
+        Returns the file payload dict (base64 `content` + blob `sha`), or
+        None when the file doesn't exist yet (404).
+        """
+        self._ensure_ready()
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        path = path.strip().strip("/")
+        if not path:
+            raise RuntimeError("contents path is required")
+        params: dict = {}
+        if ref.strip():
+            params["ref"] = ref.strip()
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        # Deliberately NOT self._get: its "drop the token and retry
+        # anonymously on 403/404" fallback turns the perfectly normal
+        # "file doesn't exist yet" 404 into an anonymous request that can
+        # die on the per-IP rate limit (60/h behind a shared proxy).
+        response = requests.get(
+            url,
+            headers=self._headers(),
+            params=params or None,
+            **self._request_kwargs(timeout=30),
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return response.json()
+
+    def put_contents(
+        self,
+        owner: str | None = None,
+        repo: str | None = None,
+        *,
+        path: str,
+        message: str,
+        content_bytes: bytes,
+        sha: str = "",
+        branch: str = "",
+    ) -> dict:
+        """PUT /repos/{owner}/{repo}/contents/{path} — create or update one file.
+
+        Requires a write token. `sha` is the current blob sha when updating
+        (optimistic lock); omit it when creating. Raises ContentsConflictError
+        on a stale-sha conflict (409/422) so callers can re-read and retry.
+        """
+        self._ensure_ready()
+        if not self.token:
+            raise RuntimeError("Missing GitHub token for contents update")
+        owner = (owner or self.owner).strip()
+        repo = (repo or self.repo).strip()
+        path = path.strip().strip("/")
+        if not path:
+            raise RuntimeError("contents path is required")
+        import base64
+
+        body: dict = {
+            "message": message,
+            "content": base64.b64encode(content_bytes).decode("ascii"),
+        }
+        if sha.strip():
+            body["sha"] = sha.strip()
+        if branch.strip():
+            body["branch"] = branch.strip()
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        response = requests.put(
+            url,
+            headers=self._headers(),
+            json=body,
+            **self._request_kwargs(timeout=30),
+        )
+        if response.status_code in (409, 422):
+            try:
+                msg = response.json().get("message", "contents sha conflict")
+            except Exception:
+                msg = "contents sha conflict"
+            raise ContentsConflictError(f"GitHub contents conflict ({response.status_code}): {msg}")
+        if response.status_code in (401, 403):
+            try:
+                msg = response.json().get("message", "forbidden")
+            except Exception:
+                msg = "forbidden"
+            raise RuntimeError(
+                f"GitHub 拒绝写入 {owner}/{repo}/{path} ({response.status_code}: {msg})。可能原因:\n"
+                f"  1. fine-grained PAT 未授权 {owner}/{repo} 的 Contents: Read and write 权限\n"
                 f"  2. Classic PAT 缺少 'repo' scope\n"
                 f"  3. 仓库/组织设有 push restriction"
             )

@@ -636,6 +636,16 @@
         </div>
       </details>
 
+      <!-- Maintenance ops -->
+      <div class="bg-white rounded-lg shadow-sm p-5 mb-4">
+        <h2 class="font-semibold mb-3">维护操作</h2>
+        <div class="flex items-center gap-3">
+          <button id="migrate-changelog-btn" class="px-3 py-1.5 text-sm rounded-md bg-slate-100 text-slate-700 hover:bg-slate-200">迁移 changelog 存档</button>
+          <span id="migrate-changelog-status" class="text-sm text-slate-500"></span>
+        </div>
+        <p class="text-xs text-slate-400 mt-2">把当前 policy.versions 全量导入 docs 仓库 changelog/archive.json (已存在版本跳过, 可重复执行)。这是 niyien.com/changelog/ 更新历史页的数据源; 之后每次发版会自动追加。</p>
+      </div>
+
       <!-- Read-only constants -->
       <details class="bg-slate-100 rounded-lg p-4 text-sm">
         <summary class="cursor-pointer font-semibold select-none">只读常量 (需要改时直接编辑 control_center.config.json)</summary>

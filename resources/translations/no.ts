@@ -733,6 +733,11 @@ På grunn av begrensninger for systemets videokodere, støttes ikke gjengivelse 
         <translation>Tilgjengelige oppdateringer</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Se hele oppdateringshistorikken for tidligere versjoner</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

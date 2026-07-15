@@ -21,6 +21,12 @@
   "telemetry_rebuild_token": "",
   "deploy_hook_url": "",
   "distribution_config_path": "distribution/niyien.toml",
+  "changelog_archive": {
+    "owner": "NiYien",
+    "repo": "docs",
+    "branch": "main",
+    "path": "changelog/archive.json"
+  },
   "publish_defaults": {
     "lens_data_tag": "",
     "plugins_source_mode": "release",

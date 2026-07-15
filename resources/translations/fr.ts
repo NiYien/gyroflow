@@ -733,6 +733,11 @@ En raison des limitations du système d&apos;encodage vidéo, le rendu en arriè
         <translation>Mises à jour disponibles</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Voir l&apos;historique complet des mises à jour des versions précédentes</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

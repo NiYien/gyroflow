@@ -732,6 +732,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>사용 가능한 업데이트</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>이전 버전의 전체 업데이트 기록 보기</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

@@ -321,7 +321,7 @@ pub struct Controller {
 
     check_updates: qt_method!(fn(&self)),
     fetch_available_versions: qt_method!(fn(&self) -> QString),
-    updates_available: qt_signal!(version: QString, changelog: QString, download_url: QString),
+    updates_available: qt_signal!(version: QString, changelog: QString, download_url: QString, changelog_truncated: bool),
     start_app_update: qt_method!(fn(&self)),
     start_app_update_version: qt_method!(fn(&self, version: QString)),
     open_downloaded_update_and_quit: qt_method!(fn(&self)),
@@ -3352,11 +3352,12 @@ impl Controller {
     fn check_updates(&self) {
         let update = util::qt_queued_callback_mut(
             QPointer::from(self as &Self),
-            |this, (version, changelog, download_url): (String, String, String)| {
+            |this, (version, changelog, download_url, changelog_truncated): (String, String, String, bool)| {
                 this.updates_available(
                     QString::from(version),
                     QString::from(changelog),
                     QString::from(download_url),
+                    changelog_truncated,
                 )
             },
         );
@@ -3404,7 +3405,9 @@ impl Controller {
                     // `gyroflow_core::settings::set("lang", ...)`, so we
                     // read it back the same way to stay in sync.
                     let locale = gyroflow_core::settings::get_str("lang", "en");
-                    let changelog = crate::distribution::pick_changelog(
+                    let (changelog, changelog_truncated) = crate::distribution::resolve_update_changelog(
+                        &manifest.app.manual_versions,
+                        &manifest.app.version,
                         &manifest.app.changelog,
                         &manifest.app.changelogs,
                         &locale,
@@ -3413,6 +3416,7 @@ impl Controller {
                         manifest.app.version,
                         changelog,
                         manifest.app.url,
+                        changelog_truncated,
                     ));
                 }
             }

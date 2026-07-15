@@ -3057,10 +3057,122 @@ class Api:
             promoted.update(preserved)
         return env_overrides
 
+    @staticmethod
+    def _changelog_archive_target(cfg: dict) -> tuple[str, str, str, str] | None:
+        """Resolve (owner, repo, branch, path) of the docs repo changelog
+        archive from config, falling back to DEFAULT_CONFIG per field.
+        Returns None when the target is incomplete."""
+        archive_cfg = cfg.get("changelog_archive")
+        if not isinstance(archive_cfg, dict):
+            archive_cfg = {}
+        defaults = config_module.DEFAULT_CONFIG.get("changelog_archive", {})
+        owner = str(archive_cfg.get("owner", "") or defaults.get("owner", "")).strip()
+        repo = str(archive_cfg.get("repo", "") or defaults.get("repo", "")).strip()
+        branch = str(archive_cfg.get("branch", "") or defaults.get("branch", "")).strip()
+        path = str(archive_cfg.get("path", "") or defaults.get("path", "")).strip()
+        if not (owner and repo and branch and path):
+            return None
+        return owner, repo, branch, path
+
+    def migrate_changelog_archive(self) -> dict:
+        """One-time import: backfill every current policy version into the
+        docs repo changelog archive (published_at="" for historical
+        entries). Idempotent — versions already archived are skipped and
+        never overwritten. Returns {ok, added, skipped} or {ok: False}.
+        """
+        try:
+            from . import changelog_archive as _archive
+
+            cfg = config_module.load_config()
+            vercel = self._vercel(cfg)
+            env_records = vercel.list_env_records()
+            policy = self._load_current_policy(cfg, vercel, env_records)
+            policy_versions = policy.get("versions", []) if isinstance(policy, dict) else []
+            valid_count = sum(
+                1 for v in policy_versions if _archive.entry_from_policy(v) is not None
+            )
+            target = self._changelog_archive_target(cfg)
+            if target is None:
+                return {"ok": False, "error": "changelog_archive 配置不完整 (owner/repo/branch/path)"}
+            owner, repo, branch, path = target
+            token = self._get_publish_secret("GITHUB_TOKEN", cfg=cfg)
+            client = GitHubClient(
+                owner=owner,
+                repo=repo,
+                token=token,
+                proxy_url=cfg.get("network_proxy", ""),
+            )
+            stats = _archive.sync_archive(
+                client,
+                owner=owner,
+                repo=repo,
+                branch=branch,
+                path=path,
+                commit_message="changelog: migrate policy versions",
+                policy_versions=policy_versions,
+            )
+            added = int(stats.get("backfilled", 0))
+            return {"ok": True, "added": added, "skipped": max(0, valid_count - added)}
+        except Exception as e:
+            return _error(e, "migrate_changelog_archive")
+
+    def _sync_changelog_archive_after_publish(self, cfg: dict, policy_json: str,
+                                              version: str) -> str:
+        """Mirror the just-published version's release notes into the docs
+        repo changelog archive (changelog-history-page-and-cumulative-notes).
+
+        Best-effort by design: any failure returns a warning note for the
+        publish result message and never raises — publishing must not be
+        blocked by the archive. Missing versions self-heal on the next
+        publish (sync_archive backfills every policy version absent from
+        the archive).
+        """
+        import json as _json
+
+        version = str(version or "").strip()
+        if not version:
+            return ""
+        try:
+            from . import changelog_archive as _archive
+
+            policy = _json.loads(policy_json)
+            policy_versions = policy.get("versions", []) if isinstance(policy, dict) else []
+            upserts = [v for v in policy_versions if isinstance(v, dict) and v.get("version") == version]
+            target = self._changelog_archive_target(cfg)
+            if target is None:
+                return "⚠ changelog 存档配置不完整 (changelog_archive), 跳过"
+            owner, repo, branch, path = target
+            token = self._get_publish_secret("GITHUB_TOKEN", cfg=cfg)
+            client = GitHubClient(
+                owner=owner,
+                repo=repo,
+                token=token,
+                proxy_url=cfg.get("network_proxy", ""),
+            )
+            stats = _archive.sync_archive(
+                client,
+                owner=owner,
+                repo=repo,
+                branch=branch,
+                path=path,
+                commit_message=f"changelog: v{version.lstrip('v')}",
+                policy_versions=policy_versions,
+                upsert_versions=upserts,
+            )
+            if not upserts:
+                return f"⚠ changelog 存档: policy 中未找到版本 {version}, 仅补齐 {stats['backfilled']} 条"
+            return (
+                f"changelog 存档已更新 (upsert {stats['added'] + stats['updated']}, "
+                f"backfill {stats['backfilled']})"
+            )
+        except Exception as e:
+            return f"⚠ changelog 存档写入失败: {e.__class__.__name__}: {e}; 下次发版将自动补齐"
+
     def _finalize_publish_to_manifest(self, cfg: dict, policy_json: str,
                                        finalize_summary: dict | None = None,
                                        *, target_version: str = "",
-                                       extra_envs: dict | None = None) -> str:
+                                       extra_envs: dict | None = None,
+                                       changelog_archive_version: str = "") -> str:
         """Two-phase commit step 2: push policy to Vercel + trigger deploy hook.
 
         Called either inline (manual_only / hide_version actions, no
@@ -3181,9 +3293,19 @@ class Api:
         if last_err is not None:
             raise RuntimeError(f"upsert envs failed after {attempts} attempt(s): {last_err}")
         try:
-            return self._trigger_deploy_hook(cfg)
+            hook_note = self._trigger_deploy_hook(cfg)
         except Exception as e:
-            return f"deploy hook failed: {e}"
+            hook_note = f"deploy hook failed: {e}"
+        # Release-notes-writing actions mirror the published version into
+        # the docs repo changelog archive. Warning-only: the note is
+        # appended to the publish message, the publish itself already
+        # succeeded (env upsert done) regardless of the archive outcome.
+        archive_note = self._sync_changelog_archive_after_publish(
+            cfg, upsert_map["NIYIEN_RELEASE_POLICY_JSON"], changelog_archive_version,
+        )
+        if archive_note:
+            hook_note = f"{hook_note}; {archive_note}"
+        return hook_note
 
     def _trigger_deploy_hook(self, cfg: dict) -> str:
         """Force a fresh production deployment so upserted env vars actually
@@ -3509,6 +3631,10 @@ class Api:
             next((v.get("run_id", 0) for v in policy.get("versions", []) if v.get("version") == version), 0) or 0
         )
 
+        # Only release-notes-writing actions mirror into the changelog
+        # archive; switch_auto / rollback_auto don't produce new notes.
+        archive_version = version if action in {"manual_only", "publish_and_push"} else ""
+
         def _on_pan123_finalize(finalize_summary: dict) -> str:
             return self._finalize_publish_to_manifest(
                 cfg,
@@ -3516,6 +3642,7 @@ class Api:
                 finalize_summary,
                 target_version=version,
                 extra_envs=_extra_envs(),
+                changelog_archive_version=archive_version,
             )
 
         pan_result = self._start_pan123_publish(
@@ -3745,9 +3872,11 @@ class Api:
                 # the whole task as failed (manifest never pushed).
                 policy_to_push = staged_policy_json
                 cfg_for_finalize = cfg
+                archive_version = version if action == "publish_and_push" else ""
                 def _on_pan123_finalize(finalize_summary: dict) -> str:
                     return self._finalize_publish_to_manifest(
                         cfg_for_finalize, policy_to_push, finalize_summary,
+                        changelog_archive_version=archive_version,
                     )
 
                 # Strict scope: app-only. execute_app_action publishes a new
@@ -3786,6 +3915,7 @@ class Api:
                     cfg,
                     staged_policy_json,
                     extra_envs=hide_resource_envs or None,
+                    changelog_archive_version=(version if action == "manual_only" else ""),
                 )
                 result["deploy_hook"] = hook_note
                 result["message"] = f"{base_message} · {hook_note}"

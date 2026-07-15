@@ -733,6 +733,11 @@ A causa delle limitazioni degli encoder video di sistema, il rendering in backgr
         <translation>Aggiornamenti disponibili</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Vedi la cronologia completa degli aggiornamenti delle versioni precedenti</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

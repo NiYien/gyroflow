@@ -732,6 +732,11 @@ Debido a las limitaciones de los codificadores de vídeo del sistema, no se admi
         <translation>Actualizaciones disponibles</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Ver el historial completo de actualizaciones de versiones anteriores</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

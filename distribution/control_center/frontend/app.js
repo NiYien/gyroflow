@@ -2531,6 +2531,30 @@ async function saveSettings() {
 document.getElementById('settings-reload-btn')?.addEventListener('click', loadSettings);
 document.getElementById('settings-save-btn')?.addEventListener('click', saveSettings);
 
+// One-time changelog archive migration (changelog-history-page change).
+document.getElementById('migrate-changelog-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('migrate-changelog-btn');
+  const statusEl = document.getElementById('migrate-changelog-status');
+  btn.disabled = true;
+  statusEl.textContent = '迁移中...';
+  statusEl.className = 'text-sm text-slate-500';
+  try {
+    const r = await pywebview.api.migrate_changelog_archive();
+    if (r.ok) {
+      statusEl.textContent = `完成: 新增 ${r.added} 条, 跳过 ${r.skipped} 条`;
+      statusEl.className = 'text-sm text-emerald-600';
+    } else {
+      statusEl.textContent = `失败: ${r.error}`;
+      statusEl.className = 'text-sm text-red-600';
+    }
+  } catch (e) {
+    statusEl.textContent = `调用失败: ${e}`;
+    statusEl.className = 'text-sm text-red-600';
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 // Auto-load settings when switching to that view (first time only)
 let settingsLoaded = false;
 document.querySelector('[data-view="settings"].nav-btn')?.addEventListener('click', () => {

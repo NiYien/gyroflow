@@ -733,6 +733,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Διαθέσιμες ενημερώσεις</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Δείτε το πλήρες ιστορικό ενημερώσεων για παλαιότερες εκδόσεις</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

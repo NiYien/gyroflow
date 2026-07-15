@@ -733,6 +733,11 @@ På grund af begrænsninger af systemets videokodere understøttes gengivelse i 
         <translation>Tilgængelige opdateringer</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Se den fulde opdateringshistorik for tidligere versioner</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

@@ -734,6 +734,11 @@ Rendering di latar belakang tidak didukung, karena keterbatasan sistem encoder v
         <translation>Pembaruan tersedia</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Lihat riwayat pembaruan lengkap untuk versi sebelumnya</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>

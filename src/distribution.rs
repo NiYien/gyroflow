@@ -100,6 +100,10 @@ pub struct AppUpdateCandidate {
     pub channel: String,
     pub version: String,
     pub changelog: String,
+    // True when the aggregated release notes dropped older skipped
+    // versions to stay within the display cap; the update dialog shows
+    // a "full history" link in that case (changelog-history page).
+    pub changelog_truncated: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Default)]
@@ -745,33 +749,101 @@ fn base_lang_code(locale: &str) -> &str {
     if base.len() >= 2 { base } else { "" }
 }
 
+/// Cap on how many skipped versions the update dialog aggregates.
+pub const AGGREGATED_CHANGELOG_MAX_VERSIONS: usize = 5;
+
+/// Locale-resolved release notes for an update candidate targeting
+/// `target_version`, aggregated across every version the user skipped:
+/// entries of `manual_versions` newer than the running build and not
+/// newer than `target_version`, newest first. Each entry resolves its
+/// text through `pick_changelog`; entries that resolve to empty text
+/// don't count against the display cap. With two or more entries each
+/// section gets a bold version heading (the dialog renders Markdown);
+/// a single entry stays plain so the current look doesn't change.
+/// Returns the joined text plus whether older entries were dropped by
+/// the cap.
+///
+/// Old or malformed manifests may not carry the target version inside
+/// `manual_versions`; its section is then synthesized from the
+/// candidate's own `changelog`/`changelogs` fields so the dialog never
+/// shows only older versions' notes (and a plain non-aggregated
+/// manifest degrades to exactly the pre-aggregation behavior).
+pub fn resolve_update_changelog(
+    manual_versions: &[ManualAppVersion],
+    target_version: &str,
+    fallback_legacy: &str,
+    fallback_changelogs: &BTreeMap<String, String>,
+    locale: &str,
+) -> (String, bool) {
+    let mut entries: Vec<(&str, String)> = manual_versions
+        .iter()
+        .filter(|v| {
+            app_version_is_newer_than_current(&v.version)
+                && compare_app_versions(&v.version, target_version) != Ordering::Greater
+        })
+        .filter_map(|v| {
+            let text = pick_changelog(&v.changelog, &v.changelogs, locale);
+            let text = text.trim().to_owned();
+            (!text.is_empty()).then(|| (v.version.trim(), text))
+        })
+        .collect();
+    if !entries.iter().any(|(v, _)| app_versions_equivalent(v, target_version)) {
+        let text = pick_changelog(fallback_legacy, fallback_changelogs, locale)
+            .trim()
+            .to_owned();
+        if !text.is_empty() {
+            entries.push((target_version.trim(), text));
+        }
+    }
+    entries.sort_by(|a, b| compare_app_versions(b.0, a.0));
+    let truncated = entries.len() > AGGREGATED_CHANGELOG_MAX_VERSIONS;
+    entries.truncate(AGGREGATED_CHANGELOG_MAX_VERSIONS);
+    if entries.len() <= 1 {
+        return (entries.pop().map(|(_, text)| text).unwrap_or_default(), truncated);
+    }
+    let text = entries
+        .iter()
+        .map(|(version, text)| format!("**v{}**\n\n{}", version.trim_start_matches('v'), text))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (text, truncated)
+}
+
 pub fn app_update_candidates(
     manifest: &Manifest,
     locale: &str,
 ) -> Vec<AppUpdateCandidate> {
     let mut candidates = Vec::new();
     if has_app_update(manifest) {
+        let (changelog, changelog_truncated) = resolve_update_changelog(
+            &manifest.app.manual_versions,
+            &manifest.app.version,
+            &manifest.app.changelog,
+            &manifest.app.changelogs,
+            locale,
+        );
         candidates.push(AppUpdateCandidate {
             channel: "auto".to_owned(),
             version: manifest.app.version.trim().to_owned(),
-            changelog: pick_changelog(
-                &manifest.app.changelog,
-                &manifest.app.changelogs,
-                locale,
-            ),
+            changelog,
+            changelog_truncated,
         });
     }
     if let Some(manual) = latest_manual_app_update(manifest)
         .filter(|manual| !app_versions_equivalent(&manual.version, &manifest.app.version))
     {
+        let (changelog, changelog_truncated) = resolve_update_changelog(
+            &manifest.app.manual_versions,
+            &manual.version,
+            &manual.changelog,
+            &manual.changelogs,
+            locale,
+        );
         candidates.push(AppUpdateCandidate {
             channel: "manual".to_owned(),
             version: manual.version.trim().to_owned(),
-            changelog: pick_changelog(
-                &manual.changelog,
-                &manual.changelogs,
-                locale,
-            ),
+            changelog,
+            changelog_truncated,
         });
     }
     candidates
@@ -2643,10 +2715,20 @@ mod app_update_tests {
         assert_eq!(candidates.len(), 2);
         assert_eq!(candidates[0].channel, "auto");
         assert_eq!(candidates[0].version, "9999.9.8");
-        assert_eq!(candidates[0].changelog, "stable update");
+        // Aggregated: the target version (synthesized from the top-level
+        // fields, absent from manual_versions here) plus the skipped one.
+        assert_eq!(
+            candidates[0].changelog,
+            "**v9999.9.8**\n\nstable update\n\n**v9999.9.7-ni.10**\n\nolder test"
+        );
+        assert!(!candidates[0].changelog_truncated);
         assert_eq!(candidates[1].channel, "manual");
         assert_eq!(candidates[1].version, "9999.9.9-ni.1");
-        assert_eq!(candidates[1].changelog, "latest test");
+        assert_eq!(
+            candidates[1].changelog,
+            "**v9999.9.9-ni.1**\n\nlatest test\n\n**v9999.9.7-ni.10**\n\nolder test"
+        );
+        assert!(!candidates[1].changelog_truncated);
     }
 
     #[test]
@@ -2853,6 +2935,166 @@ mod app_update_tests {
         let candidates = app_update_candidates(&manifest, "ja_JP");
         assert_eq!(candidates[0].changelog, "legacy single");
         assert_eq!(candidates[1].changelog, "legacy manual");
+    }
+
+    // ---- changelog-history-page-and-cumulative-notes: aggregation ----
+
+    #[test]
+    fn aggregated_changelog_spans_skipped_versions_with_headings() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "changelog": "top-level stable",
+                    "manual_versions": [
+                        { "version": "9999.9.6", "changelog": "notes six" },
+                        { "version": "9999.9.8", "changelog": "notes eight" },
+                        { "version": "9999.9.7", "changelog": "notes seven" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest, "");
+        assert_eq!(candidates[0].channel, "auto");
+        // Descending by version, each section headed by its version; the
+        // target's own entry from manual_versions wins over the top-level
+        // fallback (no synthesis when the entry exists).
+        assert_eq!(
+            candidates[0].changelog,
+            "**v9999.9.8**\n\nnotes eight\n\n**v9999.9.7**\n\nnotes seven\n\n**v9999.9.6**\n\nnotes six"
+        );
+        assert!(!candidates[0].changelog_truncated);
+    }
+
+    #[test]
+    fn aggregated_changelog_single_version_has_no_heading() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "changelog": "top-level stable",
+                    "manual_versions": [
+                        { "version": "9999.9.8", "changelog": "only entry" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest, "");
+        assert_eq!(candidates[0].changelog, "only entry");
+        assert!(!candidates[0].changelog_truncated);
+    }
+
+    #[test]
+    fn aggregated_changelog_caps_at_five_and_sets_truncated() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.7",
+                    "manual_versions": [
+                        { "version": "9999.9.1", "changelog": "one" },
+                        { "version": "9999.9.2", "changelog": "two" },
+                        { "version": "9999.9.3", "changelog": "three" },
+                        { "version": "9999.9.4", "changelog": "four" },
+                        { "version": "9999.9.5", "changelog": "five" },
+                        { "version": "9999.9.6", "changelog": "six" },
+                        { "version": "9999.9.7", "changelog": "seven" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest, "");
+        let text = &candidates[0].changelog;
+        assert!(candidates[0].changelog_truncated);
+        // Newest five survive, oldest two are dropped by the cap.
+        for kept in ["**v9999.9.7**", "**v9999.9.6**", "**v9999.9.5**", "**v9999.9.4**", "**v9999.9.3**"] {
+            assert!(text.contains(kept), "missing {kept} in {text}");
+        }
+        assert!(!text.contains("**v9999.9.2**"));
+        assert!(!text.contains("**v9999.9.1**"));
+    }
+
+    #[test]
+    fn aggregated_changelog_skips_empty_entries_without_consuming_cap() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.6",
+                    "manual_versions": [
+                        { "version": "9999.9.1", "changelog": "one" },
+                        { "version": "9999.9.2", "changelog": "  " },
+                        { "version": "9999.9.3", "changelog": "three" },
+                        { "version": "9999.9.4", "changelog": "four" },
+                        { "version": "9999.9.5", "changelog": "five" },
+                        { "version": "9999.9.6", "changelog": "six" }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest, "");
+        let text = &candidates[0].changelog;
+        // The blank 9999.9.2 doesn't consume a slot: five non-empty
+        // sections remain and nothing was truncated.
+        assert!(!candidates[0].changelog_truncated);
+        for kept in ["**v9999.9.6**", "**v9999.9.5**", "**v9999.9.4**", "**v9999.9.3**", "**v9999.9.1**"] {
+            assert!(text.contains(kept), "missing {kept} in {text}");
+        }
+        assert!(!text.contains("**v9999.9.2**"));
+    }
+
+    #[test]
+    fn aggregated_changelog_falls_back_when_manual_versions_empty() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "changelog": "top-level only"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let candidates = app_update_candidates(&manifest, "");
+        assert_eq!(candidates[0].changelog, "top-level only");
+        assert!(!candidates[0].changelog_truncated);
+    }
+
+    #[test]
+    fn aggregated_changelog_resolves_locale_per_version() {
+        let manifest: Manifest = serde_json::from_str(
+            r#"{
+                "app": {
+                    "version": "9999.9.8",
+                    "manual_versions": [
+                        {
+                            "version": "9999.9.7",
+                            "changelog": "legacy seven",
+                            "changelogs": { "zh": "七中文", "en": "seven en" }
+                        },
+                        {
+                            "version": "9999.9.8",
+                            "changelog": "legacy eight",
+                            "changelogs": { "ja": "八日本語", "en": "eight en" }
+                        }
+                    ]
+                }
+            }"#,
+        )
+        .unwrap();
+
+        // ja_JP: the 9999.9.8 entry has ja, the 9999.9.7 one falls back to en.
+        let candidates = app_update_candidates(&manifest, "ja_JP");
+        assert_eq!(
+            candidates[0].changelog,
+            "**v9999.9.8**\n\n八日本語\n\n**v9999.9.7**\n\nseven en"
+        );
     }
 
     #[test]

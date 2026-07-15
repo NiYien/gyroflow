@@ -733,6 +733,11 @@ Due to limitations of the system video encoders, rendering in the background is 
         <translation>Доступные обновления</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="245"/>
+        <source>See the full update history for earlier versions</source>
+        <translation>Посмотреть полную историю обновлений предыдущих версий</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/App.qml" line="1958"/>
         <location filename="../../src/ui/App.qml" line="2058"/>
         <source>Update failed: %1</source>
