@@ -46,6 +46,55 @@ fn tutorial_capture_enabled() -> bool {
     }
     enabled
 }
+
+// batch-params-gyroflow-writeback: debounced write-back of batch parameter
+// edits to already-exported .gyroflow project files. Pure parser kept separate
+// from the OnceLock wrapper so it is unit-testable without env mutation.
+const WRITEBACK_DEBOUNCE_DEFAULT_MS: u64 = 1000;
+const WRITEBACK_DEBOUNCE_MIN_MS: u64 = 100;
+const WRITEBACK_DEBOUNCE_MAX_MS: u64 = 10000;
+
+fn parse_writeback_config(
+    enabled_raw: Option<&str>,
+    debounce_raw: Option<&str>,
+) -> (bool, u64, &'static str) {
+    let enabled = !matches!(
+        enabled_raw.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("0") | Some("off") | Some("false") | Some("no")
+    );
+    let (debounce_ms, source) = match debounce_raw.map(str::trim) {
+        None | Some("") => (WRITEBACK_DEBOUNCE_DEFAULT_MS, "default"),
+        Some(v) => match v.parse::<u64>() {
+            Ok(ms) if ms < WRITEBACK_DEBOUNCE_MIN_MS => (WRITEBACK_DEBOUNCE_MIN_MS, "env_clamped"),
+            Ok(ms) if ms > WRITEBACK_DEBOUNCE_MAX_MS => (WRITEBACK_DEBOUNCE_MAX_MS, "env_clamped"),
+            Ok(ms) => (ms, "env"),
+            Err(_) => (WRITEBACK_DEBOUNCE_DEFAULT_MS, "default_invalid"),
+        },
+    };
+    (enabled, debounce_ms, source)
+}
+
+static WRITEBACK_CONFIG: OnceLock<(bool, u64)> = OnceLock::new();
+
+fn writeback_config() -> (bool, u64) {
+    *WRITEBACK_CONFIG.get_or_init(|| {
+        let enabled_raw = std::env::var("GYROFLOW_BATCH_PARAMS_WRITEBACK").ok();
+        let debounce_raw = std::env::var("GYROFLOW_BATCH_PARAMS_WRITEBACK_DEBOUNCE_MS").ok();
+        let (enabled, debounce_ms, source) =
+            parse_writeback_config(enabled_raw.as_deref(), debounce_raw.as_deref());
+        if source == "default_invalid" {
+            ::log::warn!(
+                target: "video.render",
+                "[batch-params-writeback] invalid GYROFLOW_BATCH_PARAMS_WRITEBACK_DEBOUNCE_MS, falling back to {debounce_ms}"
+            );
+        }
+        ::log::info!(
+            target: "video.render",
+            "[batch-params-writeback] config resolved: enabled={enabled} debounce_ms={debounce_ms} source={source}"
+        );
+        (enabled, debounce_ms)
+    })
+}
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, SimpleListItem, Debug)]
@@ -812,6 +861,52 @@ fn update_project_data_batch_params(data: &mut serde_json::Value, params: &serde
     }
 }
 
+// Dereference the file-reference form of `project_data` ({"project_file": url},
+// produced on the finished tick when export_project != 2 with stab released)
+// into the full project JSON read from disk. That reference form made batch
+// parameter edits a silent no-op: the JSON surgery finds no "stabilization"
+// key and stab is None. Returns true when the content was replaced; on any
+// read/parse failure the input is left untouched.
+fn deref_project_file_reference(project_data: &mut String) -> bool {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(project_data) else {
+        return false;
+    };
+    if v.get("stabilization").is_some() {
+        return false;
+    }
+    let Some(url) = v.get("project_file").and_then(|u| u.as_str()) else {
+        return false;
+    };
+    match filesystem::read_to_string(url) {
+        Ok(contents) => {
+            if serde_json::from_str::<serde_json::Value>(&contents)
+                .map(|d| d.is_object())
+                .unwrap_or(false)
+            {
+                *project_data = contents;
+                ::log::info!(
+                    target: "video.render",
+                    "[batch-params-writeback] deref {url}"
+                );
+                true
+            } else {
+                ::log::warn!(
+                    target: "video.render",
+                    "[batch-params-writeback] deref failed {url}: not a JSON object"
+                );
+                false
+            }
+        }
+        Err(e) => {
+            ::log::warn!(
+                target: "video.render",
+                "[batch-params-writeback] deref failed {url}: {e:?}"
+            );
+            false
+        }
+    }
+}
+
 fn apply_batch_params_to_stab(stab: &StabilizationManager, params: &serde_json::Value) {
     if let Some(smoothness) = params.get("smoothness").and_then(|v| v.as_f64()) {
         stab.set_smoothing_param("smoothness", smoothness);
@@ -1143,6 +1238,16 @@ pub struct RenderQueue {
     // hint. Lives and dies with learned_clock_shift_ms (same write point,
     // same clearing points).
     learned_clock_shift_day: Option<chrono::NaiveDate>,
+
+    // batch-params-gyroflow-writeback: jobs whose batch parameter edits await
+    // the debounced disk write-back, with the per-job merged params (later
+    // edits overwrite the same keys within one debounce window). Flushed by
+    // flush_params_writeback when the generation still matches.
+    pending_writeback: HashMap<u32, serde_json::Value>,
+    // Bumped on every schedule; a settled debounce thread whose captured
+    // generation no longer matches was superseded by a newer edit and returns
+    // without flushing.
+    writeback_generation: u64,
 
     add_gyro_file: qt_method!(fn(&mut self, url: String)),
     add_gyro_folder: qt_method!(fn(&mut self, folder_url: String) -> i32),
@@ -3908,20 +4013,49 @@ impl RenderQueue {
             Ok(p) => p,
             Err(_) => return,
         };
+        let writeback_enabled = writeback_config().0;
+        self.batch_update_params_inner(&job_ids, &params, writeback_enabled);
+        if writeback_enabled {
+            self.schedule_params_writeback();
+        }
+    }
 
-        for &job_id in &job_ids {
+    // Core of batch_update_params with the write-back gate injected, so tests
+    // can exercise both the enabled and the disabled (pre-change) behavior in
+    // one process despite the OnceLock-cached env config.
+    fn batch_update_params_inner(
+        &mut self,
+        job_ids: &[u32],
+        params: &serde_json::Value,
+        writeback_enabled: bool,
+    ) {
+        for &job_id in job_ids {
             let mut export_settings = None;
             if let Some(job) = self.jobs.get_mut(&job_id) {
                 if let Some(ref mut data_str) = job.project_data {
+                    if writeback_enabled {
+                        deref_project_file_reference(data_str);
+                    }
                     if let Ok(mut data) = serde_json::from_str::<serde_json::Value>(data_str) {
-                        update_project_data_batch_params(&mut data, &params);
+                        update_project_data_batch_params(&mut data, params);
                         *data_str = serde_json::to_string(&data).unwrap_or_default();
                     }
                 }
                 if let Some(ref stab) = job.stab {
-                    apply_batch_params_to_stab(stab, &params);
+                    apply_batch_params_to_stab(stab, params);
                     export_settings =
                         Some(job.render_options.settings_string(stab.params.read().get_scaled_fps()));
+                }
+                if writeback_enabled {
+                    let entry = self
+                        .pending_writeback
+                        .entry(job_id)
+                        .or_insert_with(|| serde_json::json!({}));
+                    if let (Some(obj), Some(new_params)) = (entry.as_object_mut(), params.as_object()) {
+                        for (k, v) in new_params {
+                            obj.insert(k.clone(), v.clone());
+                        }
+                    }
                 }
             }
             if let Some(export_settings) = export_settings {
@@ -3931,6 +4065,125 @@ impl RenderQueue {
             }
         }
         self.queue_changed();
+    }
+
+    // Debounce gate for the disk write-back: every edit bumps the generation
+    // and arms a sleep thread; only the thread whose captured generation is
+    // still current when it settles flushes the pending set. QML has no real
+    // debounce (batchApplyTimer interval=0), so slider drags hit this at frame
+    // rate — this is the only actual debounce layer.
+    fn schedule_params_writeback(&mut self) {
+        if self.pending_writeback.is_empty() {
+            return;
+        }
+        let debounce_ms = writeback_config().1;
+        self.writeback_generation = self.writeback_generation.wrapping_add(1);
+        let my_generation = self.writeback_generation;
+        ::log::debug!(
+            target: "video.render",
+            "[batch-params-writeback] scheduled jobs={} debounce_ms={}",
+            self.pending_writeback.len(),
+            debounce_ms
+        );
+        let settle = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, generation: u64| {
+                this.flush_params_writeback(generation);
+            },
+        );
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(debounce_ms));
+            settle(my_generation);
+        });
+    }
+
+    // Main-thread settle: snapshot the write-back batch (job data access must
+    // not race the jobs map), then hand the pure disk work to a worker thread.
+    fn flush_params_writeback(&mut self, generation: u64) {
+        if generation != self.writeback_generation {
+            ::log::debug!(
+                target: "video.render",
+                "[batch-params-writeback] skip flush reason=superseded"
+            );
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_writeback);
+        if pending.is_empty() {
+            return;
+        }
+        let default_suffix = self.default_suffix.to_string();
+        let mut batch: Vec<(u32, String, serde_json::Value)> = Vec::new();
+        {
+            let q = self.queue.borrow();
+            for (job_id, params) in pending {
+                let Some(job) = self.jobs.get(&job_id) else {
+                    continue;
+                };
+                // Rendering jobs are skipped without retry: the render itself
+                // rewrites the project on completion (export_project branch).
+                let rendering = job.queue_index < q.row_count() as usize
+                    && q[job.queue_index].status == JobStatus::Rendering;
+                if rendering {
+                    ::log::debug!(
+                        target: "video.render",
+                        "[batch-params-writeback] skip job={job_id} reason=rendering"
+                    );
+                    continue;
+                }
+                let (_data, gf_url) = Self::build_export_project_payload(
+                    &job.additional_data,
+                    &job.render_options,
+                    &default_suffix,
+                );
+                batch.push((job_id, gf_url, params));
+            }
+        }
+        if batch.is_empty() {
+            return;
+        }
+        core::run_threaded(move || {
+            for (job_id, gf_url, params) in batch {
+                match Self::rewrite_project_params_on_disk(&gf_url, &params) {
+                    Ok(true) => ::log::info!(
+                        target: "video.render",
+                        "[batch-params-writeback] rewrote {gf_url} job={job_id}"
+                    ),
+                    Ok(false) => ::log::debug!(
+                        target: "video.render",
+                        "[batch-params-writeback] skip {gf_url} job={job_id} reason=not_on_disk"
+                    ),
+                    Err(e) => ::log::warn!(
+                        target: "video.render",
+                        "[batch-params-writeback] failed {gf_url} job={job_id}: {e}"
+                    ),
+                }
+            }
+        });
+    }
+
+    // Rewrite parameter fields inside an already-exported .gyroflow on disk.
+    // The disk file is the base: only the fields touched by
+    // update_project_data_batch_params change; offsets, embedded gyro data and
+    // hand edits survive verbatim. That is what keeps the batch-sync yellow
+    // "offsets pinned empty on disk" semantics intact — never serialize the
+    // in-memory stab (its offsets would leak back into the file).
+    // Ok(false) = file not on disk (never exported, or deleted by the user).
+    fn rewrite_project_params_on_disk(
+        gf_url: &str,
+        params: &serde_json::Value,
+    ) -> Result<bool, String> {
+        if !filesystem::exists(gf_url) {
+            return Ok(false);
+        }
+        let contents =
+            filesystem::read_to_string(gf_url).map_err(|e| format!("read: {e:?}"))?;
+        let mut data: serde_json::Value =
+            serde_json::from_str(&contents).map_err(|e| format!("parse: {e}"))?;
+        update_project_data_batch_params(&mut data, params);
+        let serialized =
+            serde_json::to_string_pretty(&data).map_err(|e| format!("serialize: {e}"))?;
+        filesystem::write(gf_url, serialized.as_bytes()).map_err(|e| format!("write: {e:?}"))?;
+        Ok(true)
     }
 
     pub fn render_job(&mut self, job_id: u32) {
@@ -19746,5 +19999,271 @@ mod tests {
             })
             .unwrap_or((0.0, 0, 0));
         assert_eq!((fps2, start2, count2), (0.0, 0, 0));
+    }
+
+    // ── batch-params-gyroflow-writeback ──────────────────────────────────────
+
+    #[test]
+    fn parse_writeback_config_defaults_clamps_and_disable() {
+        assert_eq!(parse_writeback_config(None, None), (true, 1000, "default"));
+        for v in ["0", "off", "FALSE", "No", " off "] {
+            assert!(!parse_writeback_config(Some(v), None).0, "{v} should disable");
+        }
+        for v in ["1", "on", "yes", "anything"] {
+            assert!(parse_writeback_config(Some(v), None).0, "{v} should keep enabled");
+        }
+        assert_eq!(parse_writeback_config(None, Some("2500")), (true, 2500, "env"));
+        assert_eq!(parse_writeback_config(None, Some("50")), (true, 100, "env_clamped"));
+        assert_eq!(parse_writeback_config(None, Some("99999")), (true, 10000, "env_clamped"));
+        assert_eq!(parse_writeback_config(None, Some("abc")), (true, 1000, "default_invalid"));
+        assert_eq!(parse_writeback_config(None, Some("")), (true, 1000, "default"));
+    }
+
+    // Minimal but structurally faithful .gyroflow content: parameter fields the
+    // surgery touches, plus offsets and an unknown key that must survive.
+    fn full_project_json(smoothness: f64, offsets: serde_json::Value) -> String {
+        serde_json::to_string_pretty(&serde_json::json!({
+            "title": "Gyroflow data file",
+            "videofile": "C:/clips/test.mp4",
+            "stabilization": {
+                "smoothing_params": [
+                    { "name": "smoothness", "value": smoothness },
+                    { "name": "per_axis", "value": 0.0 }
+                ],
+                "horizon_lock_amount": 0.0,
+                "adaptive_zoom_window": 4.0,
+                "lens_correction_amount": 1.0
+            },
+            "video_info": { "fps": 25.0, "duration_ms": 10000.0 },
+            "offsets": offsets,
+            "custom_user_key": { "keep": "me" }
+        }))
+        .unwrap()
+    }
+
+    fn queue_with_writeback_job(project_data: Option<String>) -> RenderQueue {
+        let mut queue = RenderQueue::default();
+        queue.queue.borrow_mut().push(RenderQueueItem {
+            job_id: 1,
+            total_frames: 100,
+            status: JobStatus::Finished,
+            ..Default::default()
+        });
+        queue.jobs.insert(
+            1,
+            Job {
+                queue_index: 0,
+                render_options: RenderOptions::default(),
+                base_render_output_size: None,
+                original_output_size: (0, 0),
+                auto_rotate: false,
+                additional_data: String::new(),
+                cancel_flag: Default::default(),
+                render_epoch: Default::default(),
+                project_data,
+                last_finished_export_project: Some(4),
+                last_written_offsets: None,
+                stab: None,
+                base_lens_metadata: None,
+                lens_group_config_override: None,
+                lens_index_override: None,
+                lens_group_index: None,
+                video_created_at: None,
+                plugin_only: false,
+                original_video_rotation: 0.0,
+            },
+        );
+        queue
+    }
+
+    #[test]
+    fn deref_project_file_reference_replaces_reference_form_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let gf_url = filesystem::path_to_url(&dir.path().join("clip.gyroflow").to_string_lossy());
+        filesystem::write(&gf_url, full_project_json(0.42, serde_json::json!({})).as_bytes())
+            .unwrap();
+
+        // Reference form → replaced with the full JSON read from disk.
+        let mut data = serde_json::json!({ "project_file": gf_url }).to_string();
+        assert!(deref_project_file_reference(&mut data));
+        let v: serde_json::Value = serde_json::from_str(&data).unwrap();
+        assert!(v.get("stabilization").is_some());
+
+        // Full-JSON form → untouched (no second disk read: dereference is one-shot).
+        let before = data.clone();
+        assert!(!deref_project_file_reference(&mut data));
+        assert_eq!(data, before);
+
+        // Missing file → untouched, no panic.
+        let missing_url =
+            filesystem::path_to_url(&dir.path().join("gone.gyroflow").to_string_lossy());
+        let mut missing = serde_json::json!({ "project_file": missing_url }).to_string();
+        let before_missing = missing.clone();
+        assert!(!deref_project_file_reference(&mut missing));
+        assert_eq!(missing, before_missing);
+    }
+
+    #[test]
+    fn batch_update_params_inner_derefs_and_collects_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let gf_url = filesystem::path_to_url(&dir.path().join("clip.gyroflow").to_string_lossy());
+        filesystem::write(&gf_url, full_project_json(0.42, serde_json::json!({})).as_bytes())
+            .unwrap();
+
+        let reference = serde_json::json!({ "project_file": gf_url }).to_string();
+        let mut queue = queue_with_writeback_job(Some(reference));
+        let params = serde_json::json!({ "smoothness": 0.8 });
+        queue.batch_update_params_inner(&[1], &params, true);
+
+        // The export_project=4 no-op is fixed: reference resolved to the full
+        // project and the surgery applied in memory.
+        let data = queue.jobs.get(&1).unwrap().project_data.clone().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&data).unwrap();
+        let smoothness = v["stabilization"]["smoothing_params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "smoothness")
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap();
+        assert_eq!(smoothness, 0.8);
+        assert_eq!(queue.pending_writeback.get(&1), Some(&params));
+    }
+
+    #[test]
+    fn batch_update_params_inner_disabled_keeps_reference_and_no_pending() {
+        let dir = tempfile::tempdir().unwrap();
+        let gf_url = filesystem::path_to_url(&dir.path().join("clip.gyroflow").to_string_lossy());
+        filesystem::write(&gf_url, full_project_json(0.42, serde_json::json!({})).as_bytes())
+            .unwrap();
+
+        let reference = serde_json::json!({ "project_file": gf_url }).to_string();
+        let mut queue = queue_with_writeback_job(Some(reference.clone()));
+        queue.batch_update_params_inner(&[1], &serde_json::json!({ "smoothness": 0.8 }), false);
+
+        // Pre-change behavior: the reference stays (surgery finds no
+        // "stabilization" key) and nothing is scheduled for write-back.
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().project_data.as_deref(),
+            Some(reference.as_str())
+        );
+        assert!(queue.pending_writeback.is_empty());
+    }
+
+    #[test]
+    fn pending_writeback_merges_params_by_key() {
+        let mut queue =
+            queue_with_writeback_job(Some(full_project_json(0.5, serde_json::json!({}))));
+        queue.batch_update_params_inner(&[1], &serde_json::json!({ "framerate": 30.0 }), true);
+        queue.batch_update_params_inner(
+            &[1],
+            &serde_json::json!({ "smoothness": 0.7, "framerate": 60.0 }),
+            true,
+        );
+        let merged = queue.pending_writeback.get(&1).unwrap();
+        assert_eq!(merged["framerate"].as_f64(), Some(60.0), "later edit wins per key");
+        assert_eq!(merged["smoothness"].as_f64(), Some(0.7));
+    }
+
+    #[test]
+    fn flush_params_writeback_generation_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut queue =
+            queue_with_writeback_job(Some(full_project_json(0.5, serde_json::json!({}))));
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.render_options.output_folder =
+                filesystem::path_to_url(&dir.path().to_string_lossy());
+            job.render_options.output_filename = "clip_stabilized.mp4".into();
+        }
+        queue.batch_update_params_inner(&[1], &serde_json::json!({ "smoothness": 0.7 }), true);
+        queue.writeback_generation = 5;
+
+        // Superseded generation: pending survives for the newer debounce thread.
+        queue.flush_params_writeback(4);
+        assert!(!queue.pending_writeback.is_empty());
+
+        // Current generation: pending drained (the disk side is a no-op here —
+        // no .gyroflow was ever exported, so the write-back gate skips it).
+        queue.flush_params_writeback(5);
+        assert!(queue.pending_writeback.is_empty());
+    }
+
+    #[test]
+    fn rewrite_project_params_on_disk_updates_params_keeps_offsets_and_unknown_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let gf_url = filesystem::path_to_url(&dir.path().join("clip.gyroflow").to_string_lossy());
+
+        // Yellow semantics: offsets pinned empty on disk must survive the rewrite.
+        filesystem::write(&gf_url, full_project_json(0.42, serde_json::json!({})).as_bytes())
+            .unwrap();
+        let params = serde_json::json!({
+            "smoothness": 0.8,
+            "horizon_lock_amount": 30.0,
+            "zoom_mode": "static",
+            "lens_correction": 0.5,
+            "framerate": 50.0,
+        });
+        assert_eq!(
+            RenderQueue::rewrite_project_params_on_disk(&gf_url, &params),
+            Ok(true)
+        );
+        let raw = filesystem::read_to_string(&gf_url).unwrap();
+        assert!(raw.contains('\n'), "pretty-printed output expected");
+        let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let smoothness = v["stabilization"]["smoothing_params"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["name"] == "smoothness")
+            .unwrap()["value"]
+            .as_f64()
+            .unwrap();
+        assert_eq!(smoothness, 0.8);
+        assert_eq!(v["stabilization"]["horizon_lock_amount"].as_f64(), Some(30.0));
+        assert_eq!(v["stabilization"]["adaptive_zoom_window"].as_f64(), Some(-1.0));
+        assert_eq!(v["stabilization"]["lens_correction_amount"].as_f64(), Some(0.5));
+        assert_eq!(v["video_info"]["fps_scale"].as_f64(), Some(2.0));
+        assert_eq!(v["video_info"]["vfr_fps"].as_f64(), Some(50.0));
+        assert_eq!(v["video_info"]["vfr_duration_ms"].as_f64(), Some(5000.0));
+        assert_eq!(
+            v["offsets"].as_object().map(|o| o.len()),
+            Some(0),
+            "yellow pinned-empty offsets must survive"
+        );
+        assert_eq!(v["custom_user_key"]["keep"].as_str(), Some("me"));
+
+        // Green semantics: non-empty confirmed offsets survive key-for-key.
+        filesystem::write(
+            &gf_url,
+            full_project_json(0.42, serde_json::json!({ "1000000": 5.5 })).as_bytes(),
+        )
+        .unwrap();
+        assert_eq!(
+            RenderQueue::rewrite_project_params_on_disk(
+                &gf_url,
+                &serde_json::json!({ "smoothness": 0.9 })
+            ),
+            Ok(true)
+        );
+        let v: serde_json::Value =
+            serde_json::from_str(&filesystem::read_to_string(&gf_url).unwrap()).unwrap();
+        assert_eq!(v["offsets"]["1000000"].as_f64(), Some(5.5));
+    }
+
+    #[test]
+    fn rewrite_project_params_on_disk_missing_file_is_skipped_not_created() {
+        let dir = tempfile::tempdir().unwrap();
+        let gf_url =
+            filesystem::path_to_url(&dir.path().join("never_exported.gyroflow").to_string_lossy());
+        assert_eq!(
+            RenderQueue::rewrite_project_params_on_disk(
+                &gf_url,
+                &serde_json::json!({ "smoothness": 0.8 })
+            ),
+            Ok(false)
+        );
+        assert!(!filesystem::exists(&gf_url));
     }
 }
