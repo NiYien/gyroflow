@@ -1193,6 +1193,11 @@ pub struct RenderQueue {
     apply_mounting_rotation_to_all:
         qt_method!(fn(&mut self, pitch_deg: f64, roll_deg: f64, yaw_deg: f64)),
 
+    // Mirror the current "render queue output path" setting (mode + fixed path)
+    // from QML into queue_output_mode / queue_fixed_output_path. Called on every
+    // setting change and at panel init; consumed by reapply_queue_output_path.
+    set_queue_output_path: qt_method!(fn(&mut self, mode: u32, fixed_path: QString)),
+
     pause_flag: Arc<AtomicBool>,
 
     pub default_suffix: qt_property!(QString),
@@ -1204,6 +1209,13 @@ pub struct RenderQueue {
     pub export_metadata: Option<(usize, String, serde_json::Value)>,
     pub export_stmap: Option<(usize, String)>,
     pub overwrite_mode: qt_property!(u32),
+
+    // Current "render queue output path" setting, mirrored from QML via
+    // set_queue_output_path. reapply_queue_output_path (called from start())
+    // re-derives every Queued job's output_folder from these so a setting change
+    // takes effect without a restart. 0 = same as source file, 1 = fixed path.
+    queue_output_mode: u32,
+    queue_fixed_output_path: String,
 
     pub request_close: qt_signal!(),
 
@@ -1801,6 +1813,68 @@ impl RenderQueue {
             });
         }
         self.batch_sync_status_changed();
+    }
+
+    // Mirror the current "render queue output path" setting from QML. Called on
+    // every setting change (mode dropdown, fixed-path browse) and at panel init.
+    pub fn set_queue_output_path(&mut self, mode: u32, fixed_path: QString) {
+        self.queue_output_mode = mode;
+        self.queue_fixed_output_path = fixed_path.to_string();
+        ::log::debug!(
+            target: "video.render",
+            "[queue-output-path] set mode={} fixed='{}'",
+            mode,
+            self.queue_fixed_output_path
+        );
+    }
+
+    // Re-derive every Queued job's output_folder from the current output-path
+    // setting so a mode/path change takes effect without a restart (the add-time
+    // bake never re-applies to already-queued jobs). Called from start() before
+    // dispatch. Assigns directly, bypassing the sticky get_output_folder, so a
+    // "fixed path -> same as source" switch actually rolls back.
+    fn reapply_queue_output_path(&mut self) {
+        let mode = self.queue_output_mode;
+        let fixed_path = self.queue_fixed_output_path.clone();
+        let mut q = self.queue.borrow_mut();
+        for (_job_id, job) in self.jobs.iter_mut() {
+            if job.queue_index >= q.row_count() as usize {
+                continue;
+            }
+            if q[job.queue_index].status != JobStatus::Queued {
+                continue;
+            }
+            let input_url = job.render_options.input_url.clone();
+            if input_url.is_empty() {
+                continue;
+            }
+            let new_folder = if mode == 1 {
+                // Fixed path is a picker-granted folder on SAF too, so it is safe
+                // to apply to every job regardless of source scheme.
+                fixed_path.clone()
+            } else {
+                // Same-as-source: SAF content:// sources are not writable and keep
+                // the picker-granted output_folder from add() — never redirect them
+                // to the bare source folder.
+                if input_url.starts_with("content://") {
+                    continue;
+                }
+                filesystem::get_folder(&input_url)
+            };
+            // mode==1 with an empty fixed path is a not-yet-configured state; leave
+            // the existing output_folder untouched rather than blanking it.
+            if new_folder.is_empty() || job.render_options.output_folder == new_folder {
+                continue;
+            }
+            job.render_options.output_folder = new_folder.clone();
+            let mut itm = q[job.queue_index].clone();
+            itm.output_folder = QString::from(new_folder.as_str());
+            itm.display_output_path = QString::from(filesystem::display_folder_filename(
+                &new_folder,
+                &job.render_options.output_filename,
+            ));
+            q.change_line(job.queue_index, itm);
+        }
     }
 
     pub fn start_batch_autosync(&mut self) {
@@ -2816,6 +2890,12 @@ impl RenderQueue {
             return;
         }
 
+        // Re-derive Queued jobs' output_folder from the current output-path
+        // setting so switching the setting takes effect on the existing queue
+        // without a restart. Single choke point for every batch entry
+        // (start_batch_autosync, video export, re-export, match-then-sync).
+        self.reapply_queue_output_path();
+
         for (_id, job) in self.jobs.iter() {
             job.cancel_flag.store(false, SeqCst);
         }
@@ -3386,7 +3466,11 @@ impl RenderQueue {
             additional_data.to_owned()
         };
 
-        let gf_folder = render_options.output_folder.clone();
+        // All callers of this helper (T1 / T2 green / T2 yellow / params-writeback)
+        // are the export_project==2 batch-sync path, so the .gyroflow is written
+        // next to the source video (see project_file_folder).
+        let gf_folder =
+            Self::project_file_folder(2, &render_options.input_url, &render_options.output_folder);
         let gf_file = filesystem::filename_with_extension(
             &render_options.output_filename.replace(default_suffix, ""),
             "gyroflow",
@@ -4869,7 +4953,15 @@ impl RenderQueue {
                         }
                         additional_data = serde_json::to_string(&obj).unwrap_or_default();
                     }
-                    let gf_folder = render_options.output_folder.to_owned();
+                    // Stabilize-only (export_project==2, e.g. trusted built-in gyro
+                    // jobs that skip the T1/T2 defer path) writes the .gyroflow next
+                    // to the source; project+encode variants (1/3/4) alongside the
+                    // render output. See project_file_folder.
+                    let gf_folder = Self::project_file_folder(
+                        export_project,
+                        &input_file.url,
+                        &render_options.output_folder,
+                    );
                     let gf_file = filesystem::filename_with_extension(
                         &render_options.output_filename.replace(&default_suffix, ""),
                         "gyroflow",
@@ -5051,6 +5143,25 @@ impl RenderQueue {
             return ui_output_folder.to_owned();
         }
         filesystem::get_folder(input_url)
+    }
+
+    // Folder a job's .gyroflow project file is written to. Stabilize-only
+    // (export_project==2) is a sidecar of the source video, so it lands next to
+    // the source regardless of the render output folder (which may be a fixed
+    // path for the encoded video). Project+encode variants (1/3/4) keep writing
+    // alongside the render output. Falls back to output_folder only when the
+    // source url is missing.
+    fn project_file_folder(export_project: u32, source_url: &str, output_folder: &str) -> String {
+        if export_project == 2 {
+            let source_folder = filesystem::get_folder(source_url);
+            if source_folder.is_empty() {
+                output_folder.to_owned()
+            } else {
+                source_folder
+            }
+        } else {
+            output_folder.to_owned()
+        }
     }
     fn get_output_filename(
         input_url: &str,
@@ -17528,6 +17639,158 @@ mod tests {
             },
         );
         queue
+    }
+
+    // --- batch-output-path-source-and-reapply ---
+
+    // Issue 1: stabilize/batch-sync .gyroflow lands next to the source video,
+    // decoupled from a fixed render output folder.
+    #[test]
+    fn build_export_project_payload_writes_gyroflow_next_to_source() {
+        let ro = RenderOptions {
+            input_url: "file:///C:/footage/clip.mp4".to_string(),
+            output_folder: "file:///C:/exports/".to_string(),
+            output_filename: "clip_stabilized.mp4".to_string(),
+            ..Default::default()
+        };
+        let (_data, gf_url) = RenderQueue::build_export_project_payload("{}", &ro, "_stabilized");
+        let expected = filesystem::get_file_url(
+            &filesystem::get_folder("file:///C:/footage/clip.mp4"),
+            "clip.gyroflow",
+            true,
+        );
+        assert_eq!(gf_url, expected, "gf_url={gf_url}");
+        let wrong = filesystem::get_file_url("file:///C:/exports/", "clip.gyroflow", true);
+        assert_ne!(gf_url, wrong, "must not land in the fixed output folder");
+    }
+
+    #[test]
+    fn build_export_project_payload_empty_output_folder_still_source() {
+        let ro = RenderOptions {
+            input_url: "file:///C:/footage/clip.mp4".to_string(),
+            output_folder: String::new(),
+            output_filename: "clip_stabilized.mp4".to_string(),
+            ..Default::default()
+        };
+        let (_data, gf_url) = RenderQueue::build_export_project_payload("{}", &ro, "_stabilized");
+        let expected = filesystem::get_file_url(
+            &filesystem::get_folder("file:///C:/footage/clip.mp4"),
+            "clip.gyroflow",
+            true,
+        );
+        assert_eq!(gf_url, expected, "gf_url={gf_url}");
+    }
+
+    // Issue 1: the export_project>0 single-write branch (built-in gyro jobs) also
+    // routes export_project==2 to the source folder; 1/3/4 keep output_folder.
+    #[test]
+    fn project_file_folder_export_project_2_uses_source() {
+        let folder =
+            RenderQueue::project_file_folder(2, "file:///C:/footage/komodo.mov", "file:///C:/exports/");
+        assert_eq!(folder, filesystem::get_folder("file:///C:/footage/komodo.mov"));
+    }
+
+    #[test]
+    fn project_file_folder_export_project_1_3_4_uses_output_folder() {
+        for ep in [1u32, 3, 4] {
+            let folder = RenderQueue::project_file_folder(
+                ep,
+                "file:///C:/footage/komodo.mov",
+                "file:///C:/exports/",
+            );
+            assert_eq!(folder, "file:///C:/exports/", "export_project={ep}");
+        }
+    }
+
+    #[test]
+    fn project_file_folder_export_project_2_falls_back_when_no_source() {
+        let folder = RenderQueue::project_file_folder(2, "", "file:///C:/exports/");
+        assert_eq!(folder, "file:///C:/exports/");
+    }
+
+    // Issue 2: start() re-derives Queued jobs' output_folder from the current
+    // setting, supporting the fixed <-> same-as-source round-trip.
+    #[test]
+    fn reapply_queue_output_path_switches_fixed_to_same_as_source() {
+        let mut queue = queue_with_input_job(1, "file:///C:/footage/a.mp4");
+        queue.jobs.get_mut(&1).unwrap().render_options.output_folder =
+            "file:///C:/exports/".to_string();
+
+        queue.set_queue_output_path(0, QString::from(""));
+        queue.reapply_queue_output_path();
+
+        let of = queue.jobs.get(&1).unwrap().render_options.output_folder.clone();
+        assert_eq!(of, filesystem::get_folder("file:///C:/footage/a.mp4"), "of={of}");
+    }
+
+    #[test]
+    fn reapply_queue_output_path_switches_same_as_source_to_fixed() {
+        let mut queue = queue_with_input_job(1, "file:///C:/footage/a.mp4");
+        queue.jobs.get_mut(&1).unwrap().render_options.output_folder =
+            filesystem::get_folder("file:///C:/footage/a.mp4");
+
+        queue.set_queue_output_path(1, QString::from("file:///C:/exports/"));
+        queue.reapply_queue_output_path();
+
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().render_options.output_folder,
+            "file:///C:/exports/"
+        );
+    }
+
+    #[test]
+    fn reapply_queue_output_path_only_touches_queued_jobs() {
+        let mut queue = queue_with_input_job(1, "file:///C:/footage/a.mp4");
+        queue.jobs.get_mut(&1).unwrap().render_options.output_folder =
+            "file:///C:/exports/".to_string();
+        {
+            let mut q = queue.queue.borrow_mut();
+            let mut itm = q[0].clone();
+            itm.status = JobStatus::Rendering;
+            q.change_line(0, itm);
+        }
+        queue.set_queue_output_path(0, QString::from(""));
+        queue.reapply_queue_output_path();
+
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().render_options.output_folder,
+            "file:///C:/exports/",
+            "Rendering job output_folder must be untouched"
+        );
+    }
+
+    // Issue 2 guard: SAF content:// source keeps its picker-granted output folder
+    // in same-as-source mode; desktop file:// sources reapply normally.
+    #[test]
+    fn reapply_queue_output_path_skips_saf_content_source_in_same_as_source() {
+        let mut queue =
+            queue_with_input_job(1, "content://com.android.providers.media/document/a.mp4");
+        queue.jobs.get_mut(&1).unwrap().render_options.output_folder =
+            "content://com.android.externalstorage/tree/primary/exports".to_string();
+
+        queue.set_queue_output_path(0, QString::from(""));
+        queue.reapply_queue_output_path();
+
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().render_options.output_folder,
+            "content://com.android.externalstorage/tree/primary/exports",
+            "SAF grant must not be overwritten with the bare source folder"
+        );
+    }
+
+    #[test]
+    fn reapply_queue_output_path_reapplies_desktop_file_source() {
+        let mut queue = queue_with_input_job(1, "file:///C:/footage/a.mp4");
+        queue.jobs.get_mut(&1).unwrap().render_options.output_folder =
+            "file:///C:/exports/".to_string();
+
+        queue.set_queue_output_path(0, QString::from(""));
+        queue.reapply_queue_output_path();
+
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().render_options.output_folder,
+            filesystem::get_folder("file:///C:/footage/a.mp4")
+        );
     }
 
     #[test]

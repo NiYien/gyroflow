@@ -78,6 +78,10 @@ MenuItem {
         if (parsed) {
             outputSizePresets = parsed;
         }
+        // sett's Component.onCompleted (settings.init) runs first (child before
+        // parent), so the persisted queue output-path setting is already restored
+        // here — push it into render_queue for the initial state.
+        root.syncQueueOutputPath();
     }
 
     Item {
@@ -147,6 +151,14 @@ MenuItem {
             filesystem.folder_access_granted(dialog.selectedFolder);
         });
         dialog.open();
+    }
+    // Mirror the current render-queue output-path setting (mode + fixed path)
+    // into render_queue so start() can re-derive queued jobs' output_folder from
+    // it. Both simple and full mode changes funnel through queueOutputModeBox /
+    // browseQueueOutputFolder, so this is the single sync choke point.
+    function syncQueueOutputPath(): void {
+        if (typeof render_queue !== "undefined")
+            render_queue.set_queue_output_path(queueOutputModeBox.currentIndex, queueFixedOutputPathField.folderUrl);
     }
 
     function getExportOptions(): var {
@@ -622,6 +634,9 @@ MenuItem {
             font.pixelSize: 12 * dpiScale;
             width: parent.width;
             currentIndex: 0;
+            // Simple-mode dropdown writes through exportSettings.queueOutputMode
+            // (this alias), so this handler covers both simple and full mode.
+            onCurrentIndexChanged: root.syncQueueOutputPath();
         }
     }
     Row {
@@ -635,6 +650,9 @@ MenuItem {
             property string folderUrl: ""
             text: folderUrl ? filesystem.url_to_path(folderUrl) : ""
             readOnly: true;
+            // Covers every fixed-path write point (browse dialog, Android SAF
+            // add-time grants in RenderQueue.qml, settings restore).
+            onFolderUrlChanged: root.syncQueueOutputPath();
         }
         LinkButton {
             id: browseQueueOutputBtn;
