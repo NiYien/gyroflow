@@ -5420,7 +5420,9 @@ mod tests {
         // without a 500 ms timer, old R3D players are torn down off the GUI
         // thread, callbacks are bound to their originating player, loaded setup
         // is de-duplicated, the MDK download is pinned to the wang-bin 503d1ed
-        // nightly.link build (Nikon ZR .R3D native frame size), the macOS
+        // build served from the fork's own mdk-503d1ed release mirror (Nikon
+        // ZR .R3D native frame size; nightly.link degraded 2026-07-18 and the
+        // source artifacts expire 2026-08-21), the macOS
         // R3D decoder requests a 16-aligned scale to avoid REDMetal red-channel
         // stripes, and the Android AMediaCodec decoder uses image=1
         // (AImageReader) instead of the SurfaceTexture handoff whose missing
@@ -5428,7 +5430,7 @@ mod tests {
         // drops these and can reintroduce R3D Play stalls, clip-switch
         // freezes, a regressed MDK, macOS preview striping, or Android
         // bottom-of-frame tearing.
-        const PINNED_REV: &str = "70a8b39fef1eddca0de9b4ab5e2d3c3151f5c5d8";
+        const PINNED_REV: &str = "d1bab3340f5bfa147e087e687177d3628907a29c";
         let lock_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
         let lock = std::fs::read_to_string(&lock_path).expect("read Cargo.lock");
         let expected = format!(
