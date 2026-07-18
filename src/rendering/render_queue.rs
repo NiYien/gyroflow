@@ -8305,7 +8305,11 @@ impl RenderQueue {
                         let gyro = stab.gyro.read();
                         let md = gyro.file_metadata.read();
                         (
-                            params.video_created_at,
+                            // Project import does not restore video_created_at (export-only
+                            // field), so a stab recreated from project_data (e.g. reset-pairing
+                            // after a finished render) reports None here — fall back to the
+                            // Job-level cache like the stab-released branch below does.
+                            params.video_created_at.or(job.video_created_at),
                             video_match_duration_ms(&params, &md),
                             params.duration_ms,
                             params.fps,
