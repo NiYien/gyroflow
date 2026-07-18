@@ -21,11 +21,13 @@ MenuItem {
     property real customYaw: 0
     property bool initialized: false
 
+    // Roll sign follows the legacy NiYien Tool convention (lens_set.cpp):
+    // device mounted on the camera's left side = +90° about the optical axis.
     readonly property var presetAngles: ({
         "top":    [0, 0, 0],
         "bottom": [0, 180, 0],
-        "left":   [0, -90, 0],
-        "right":  [0, 90, 0]
+        "left":   [0, 90, 0],
+        "right":  [0, -90, 0]
     })
     readonly property var modeKeys:   ["top", "bottom", "left", "right", "custom"]
     readonly property var modeLabels: [qsTr("Top"), qsTr("Bottom"), qsTr("Left"), qsTr("Right"), qsTr("Custom")]
