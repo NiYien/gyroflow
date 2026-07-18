@@ -19,10 +19,45 @@ pub enum WgpuError {
     NoAvailableAdapter,
 }
 
+#[derive(Clone)]
 enum PipelineType {
     None,
     Render(wgpu::RenderPipeline),
     Compute(wgpu::ComputePipeline),
+}
+
+// gpu-backend-reuse: everything that identifies a compiled pipeline variant.
+// Sizes are deliberately absent — the kernel receives them via uniforms and the
+// bind group layout uses runtime-validated (None) minimums for the
+// size-dependent bindings, so one compiled pipeline serves every buffer size.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct PipelineKey {
+    device_key: (usize, u64),
+    lens_id: String,
+    digital_lens_id: String,
+    scalar: String,
+    format: wgpu::TextureFormat,
+    uses_textures: bool,
+    interpolation: i32,
+    pix_element_count: i32,
+    bytes_per_pixel: i32,
+    flags: i32,
+}
+
+// gpu-backend-reuse: NLE hosts interleave renders at several sizes (playback
+// res + filmstrip thumbnails) on the same effect instance, so wrappers get
+// rebuilt constantly. Device creation (100-400ms) and shader/pipeline
+// compilation (50-150ms) are size-independent — share them process-wide so a
+// rebuild only re-allocates the size-dependent resources (~ms).
+fn shared_init_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let v = std::env::var("GYROFLOW_WGPU_SHARED_INIT").unwrap_or_default();
+        let enabled = !matches!(v.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false" | "no");
+        let source = if v.is_empty() { "default" } else { "env" };
+        log::info!(target: "gpu", "wgpu shared init resolved: enabled={enabled} source={source}");
+        enabled
+    })
 }
 
 pub struct WgpuWrapper {
@@ -72,6 +107,10 @@ lazy_static::lazy_static! {
     static ref INSTANCE: Mutex<wgpu::Instance> = Mutex::new(wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle()));
     static ref ADAPTERS: RwLock<Vec<Adapter>> = RwLock::new(Vec::new());
     static ref ADAPTER: AtomicUsize = AtomicUsize::new(0);
+    // Keyed by (adapter index, host command-queue ptr). wgpu handles are
+    // internally ref-counted, so cloning shares the underlying device.
+    static ref SHARED_DEVICES: Mutex<std::collections::HashMap<(usize, u64), (wgpu::Device, wgpu::Queue)>> = Mutex::new(Default::default());
+    static ref SHARED_PIPELINES: Mutex<std::collections::HashMap<PipelineKey, PipelineType>> = Mutex::new(Default::default());
 }
 
 const EXCLUSIONS: &[&'static str] = &["Microsoft Basic Render Driver"];
@@ -213,7 +252,21 @@ impl WgpuWrapper {
                 "WGPU initializing adapter #{adapter_id}: {:?}",
                 adapter.get_info()
             );
-            let (device, queue) = match &buffers.input.data {
+            // gpu-backend-reuse: reuse one Device/Queue per (adapter, host queue) —
+            // `request_device` costs 100-400ms and is fully size-independent.
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            let host_queue_key: u64 = match &buffers.input.data {
+                BufferSource::Metal { command_queue, .. } | BufferSource::MetalBuffer { command_queue, .. } => *command_queue as u64,
+                _ => 0,
+            };
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            let host_queue_key: u64 = 0;
+            let device_key = (adapter_id, host_queue_key);
+            let init_t_device = std::time::Instant::now();
+            let cached_device = if shared_init_enabled() { SHARED_DEVICES.lock().get(&device_key).cloned() } else { None };
+            let device_shared = cached_device.is_some();
+            let (device, queue) = if let Some(dq) = cached_device { dq } else {
+                let dq = match &buffers.input.data {
                 #[cfg(any(target_os = "macos", target_os = "ios"))]
                 BufferSource::Metal { command_queue, .. }
                 | BufferSource::MetalBuffer { command_queue, .. }
@@ -351,51 +404,56 @@ impl WgpuWrapper {
                     }
                     result?
                 }
+                };
+                if shared_init_enabled() {
+                    SHARED_DEVICES.lock().insert(device_key, (dq.0.clone(), dq.1.clone()));
+                }
+                dq
             };
+            let device_ms = init_t_device.elapsed().as_millis() as u64;
 
             device.on_uncaptured_error(std::sync::Arc::new(|e| {
                 log::error!("Uncaptured device error: {e:?}");
             }));
 
-            let mut kernel = include_str!("wgpu_undistort.wgsl").to_string();
-            //let mut kernel = std::fs::read_to_string("D:/programowanie/projekty/Rust/gyroflow/src/core/gpu/wgpu_undistort.wgsl").unwrap();
-
-            let mut lens_model_functions = distortion_model.wgsl_functions().to_string();
-            let default_digital_lens = "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }
-                                        fn digital_distort_point  (uv: vec2<f32>) -> vec2<f32> { return uv; }";
-            lens_model_functions.push_str(
-                digital_lens
-                    .as_ref()
-                    .map(|x| x.wgsl_functions())
-                    .unwrap_or(default_digital_lens),
-            );
-            kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_model_functions);
-            kernel = kernel.replace("SCALAR", wgpu_format.1);
-
             if !drawing_enabled {
                 drawing_len = 16;
             }
 
+            let init_t_alloc = std::time::Instant::now();
             let backend = adapter.get_info().backend;
             let in_texture = init_texture(&device, backend, &buffers.input, wgpu_format.0, true);
             let out_texture = init_texture(&device, backend, &buffers.output, wgpu_format.0, false);
 
             let uses_textures = in_texture.wgpu_texture.is_some();
-            if uses_textures {
-                while let Some(pos) = kernel.find("{buffer_input}") {
-                    kernel.replace_range(pos..kernel.find("{/buffer_input}").unwrap() + 15, "");
-                }
-            } else {
-                while let Some(pos) = kernel.find("{texture_input}") {
-                    kernel.replace_range(pos..kernel.find("{/texture_input}").unwrap() + 16, "");
-                }
-            }
-            // log::info!("Using kernel: {kernel}");
+            // Kernel source assembly, only needed on a pipeline-cache miss.
+            let build_kernel_source = || {
+                let mut kernel = include_str!("wgpu_undistort.wgsl").to_string();
+                //let mut kernel = std::fs::read_to_string("D:/programowanie/projekty/Rust/gyroflow/src/core/gpu/wgpu_undistort.wgsl").unwrap();
 
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(kernel)),
-                label: None,
-            });
+                let mut lens_model_functions = distortion_model.wgsl_functions().to_string();
+                let default_digital_lens = "fn digital_undistort_point(uv: vec2<f32>) -> vec2<f32> { return uv; }
+                                            fn digital_distort_point  (uv: vec2<f32>) -> vec2<f32> { return uv; }";
+                lens_model_functions.push_str(
+                    digital_lens
+                        .as_ref()
+                        .map(|x| x.wgsl_functions())
+                        .unwrap_or(default_digital_lens),
+                );
+                kernel = kernel.replace("LENS_MODEL_FUNCTIONS;", &lens_model_functions);
+                kernel = kernel.replace("SCALAR", wgpu_format.1);
+                if uses_textures {
+                    while let Some(pos) = kernel.find("{buffer_input}") {
+                        kernel.replace_range(pos..kernel.find("{/buffer_input}").unwrap() + 15, "");
+                    }
+                } else {
+                    while let Some(pos) = kernel.find("{texture_input}") {
+                        kernel.replace_range(pos..kernel.find("{/texture_input}").unwrap() + 16, "");
+                    }
+                }
+                // log::info!("Using kernel: {kernel}");
+                kernel
+            };
 
             let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as i32;
             let padding = (align - output_stride % align) % align;
@@ -439,6 +497,29 @@ impl WgpuWrapper {
                 mapped_at_creation: false,
             });
 
+            // gpu-backend-reuse: shader compilation + pipeline creation are
+            // size-independent (sizes flow in via uniforms and runtime-validated
+            // bindings) — look up by variant key before compiling.
+            let pipeline_key = PipelineKey {
+                device_key,
+                lens_id: distortion_model.id().to_string(),
+                digital_lens_id: digital_lens.as_ref().map(|x| x.id().to_string()).unwrap_or_default(),
+                scalar: wgpu_format.1.to_string(),
+                format: wgpu_format.0,
+                uses_textures,
+                interpolation: params.interpolation,
+                pix_element_count: params.pix_element_count,
+                bytes_per_pixel: params.bytes_per_pixel,
+                flags: params.flags,
+            };
+            let init_t_compile = std::time::Instant::now();
+            let cached_pipeline = if shared_init_enabled() { SHARED_PIPELINES.lock().get(&pipeline_key).cloned() } else { None };
+            let pipeline_cached = cached_pipeline.is_some();
+            let pipeline = if let Some(p) = cached_pipeline { p } else {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(build_kernel_source())),
+                label: None,
+            });
             let bind_group_layout = if uses_textures {
                 let sample_type = match wgpu_format.1 {
                     "f32" => wgpu::TextureSampleType::Float { filterable: false },
@@ -470,7 +551,9 @@ impl WgpuWrapper {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(params_size as _),
+                                // gpu-backend-reuse: size-dependent minimum would tie the
+                                // pipeline to one buffer size — validate at bind time instead.
+                                min_binding_size: None,
                             },
                             count: None,
                         },
@@ -504,7 +587,7 @@ impl WgpuWrapper {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(drawing_len as _),
+                                min_binding_size: None,
                             },
                             count: None,
                         },
@@ -544,7 +627,9 @@ impl WgpuWrapper {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(params_size as _),
+                                // gpu-backend-reuse: size-dependent minimum would tie the
+                                // pipeline to one buffer size — validate at bind time instead.
+                                min_binding_size: None,
                             },
                             count: None,
                         },
@@ -578,7 +663,7 @@ impl WgpuWrapper {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(drawing_len as _),
+                                min_binding_size: None,
                             },
                             count: None,
                         },
@@ -588,7 +673,7 @@ impl WgpuWrapper {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: true },
                                 has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(in_size as _),
+                                min_binding_size: None,
                             },
                             count: None,
                         },
@@ -598,7 +683,7 @@ impl WgpuWrapper {
                             ty: wgpu::BindingType::Buffer {
                                 ty: wgpu::BufferBindingType::Storage { read_only: false },
                                 has_dynamic_offset: false,
-                                min_binding_size: wgpu::BufferSize::new(out_size as _),
+                                min_binding_size: None,
                             },
                             count: None,
                         },
@@ -623,7 +708,7 @@ impl WgpuWrapper {
                 ..Default::default()
             };
 
-            let pipeline = if uses_textures {
+            let built = if uses_textures {
                 PipelineType::Render(device.create_render_pipeline(
                     &wgpu::RenderPipelineDescriptor {
                         label: None,
@@ -666,6 +751,18 @@ impl WgpuWrapper {
                     },
                 ))
             };
+            if shared_init_enabled() {
+                let mut cache = SHARED_PIPELINES.lock();
+                // Unbounded growth guard: variants are few in practice (lens model x
+                // format x flags), a full clear on overflow is simpler than LRU.
+                if cache.len() > 64 {
+                    cache.clear();
+                }
+                cache.insert(pipeline_key, built.clone());
+            }
+            built
+            };
+            let compile_ms = if pipeline_cached { 0 } else { init_t_compile.elapsed().as_millis() as u64 };
 
             let bind_group = match &pipeline {
                 PipelineType::None => None,
@@ -752,6 +849,13 @@ impl WgpuWrapper {
                     }),
                 ),
             };
+
+            let total_ms = init_t_alloc.elapsed().as_millis() as u64;
+            let alloc_ms = total_ms.saturating_sub(compile_ms);
+            log::info!(
+                target: "gpu",
+                "wgpu_init device_ms={device_ms} shared_device={device_shared} compile_ms={compile_ms} pipeline_cached={pipeline_cached} alloc_ms={alloc_ms}",
+            );
 
             Ok(Self {
                 device,

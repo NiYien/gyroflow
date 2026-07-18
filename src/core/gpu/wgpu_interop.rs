@@ -447,13 +447,18 @@ pub fn handle_input_texture(
         }
         #[cfg(any(target_os = "windows", target_os = "linux"))]
         BufferSource::CUDABuffer { buffer } => {
-            super::wgpu_interop_cuda::cuda_synchronize();
+            // cuda-interop-sync-scope: safety pad for host in-flight writes into the
+            // input buffer. Default on; GYROFLOW_CUDA_INPUT_CTX_SYNC=0 disables it
+            // experimentally to measure whether the host already guarantees readiness.
+            if super::wgpu_interop_cuda::cuda_input_ctx_sync_enabled() {
+                super::wgpu_interop_cuda::cuda_synchronize();
+            }
             if let Some(NativeTexture::Cuda(cuda_mem)) = &in_texture.native_texture {
                 let bpp = super::wgpu_interop_cuda::bytes_per_pixel(format);
                 let row_bytes = buf.size.0 * bpp;
                 let dst_pitch = cuda_mem.vulkan_pitch_alignment; // actual vk::SubresourceLayout.row_pitch
                 let src_pitch = buf.size.2; // producer's stride
-                super::wgpu_interop_cuda::cuda_2d_copy_on_device(
+                super::wgpu_interop_cuda::cuda_2d_copy_and_sync(
                     bpp,
                     buf.size.0,
                     buf.size.1,
@@ -463,7 +468,6 @@ pub fn handle_input_texture(
                     *buffer as CUdeviceptr,
                     src_pitch,
                 );
-                super::wgpu_interop_cuda::cuda_synchronize();
             }
             if let Some(in_buf) = &in_texture.wgpu_buffer {
                 if let Some(in_tex) = &in_texture.wgpu_texture {
@@ -856,7 +860,7 @@ pub fn handle_output_texture_post(
                 let row_bytes = buf.size.0 * bpp;
                 let src_pitch = cuda_mem.vulkan_pitch_alignment; // image row pitch
                 let dst_pitch = buf.size.2; // consumer's stride
-                super::wgpu_interop_cuda::cuda_2d_copy_on_device(
+                super::wgpu_interop_cuda::cuda_2d_copy_and_sync(
                     bpp,
                     buf.size.0,
                     buf.size.1,
@@ -867,7 +871,6 @@ pub fn handle_output_texture_post(
                     src_pitch,
                 );
             }
-            super::wgpu_interop_cuda::cuda_synchronize();
         }
         #[cfg(not(any(target_os = "macos", target_os = "ios")))]
         BufferSource::Vulkan { .. } => {

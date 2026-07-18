@@ -292,6 +292,13 @@ pub struct Stabilization {
     // the Qt scene-graph render thread and hard-deadlocks the driver (dump
     // 2026-06-04). Draining here keeps the teardown serialized with rendering.
     pending_gpu_drop: Vec<TakenGpuBindings>,
+
+    // Segmented snapshot of the backend cache key from the last (re-)init,
+    // kept only for the `backend_rebuild` diagnostic in `init_backends`.
+    // Segments decompose everything `get_current_key` hashes so a rebuild
+    // log can name the exact component that changed (rect values vs thread
+    // vs sizes ...) instead of an opaque checksum mismatch.
+    last_backend_key_diag: Option<Vec<(&'static str, String)>>,
 }
 
 #[derive(Debug)]
@@ -644,6 +651,64 @@ impl Stabilization {
         crc32fast::hash(self.get_current_key(buffers).as_bytes())
     }
 
+    /// Decompose every input of `get_current_key` into named segments for the
+    /// `backend_rebuild` diagnostic. Segment count and order are static so two
+    /// snapshots can be compared pairwise. Must stay in sync with
+    /// `get_current_key` / `BufferDescription::get_checksum` — a key change with
+    /// no differing segment here means this list is missing a component.
+    fn backend_key_diag_segments(&self, buffers: &Buffers) -> Vec<(&'static str, String)> {
+        let mut flags = self.get_kernel_flags(0, buffers);
+        flags.set(KernelParamsFlags::FILL_WITH_BACKGROUND, false);
+        vec![
+            ("in_geom",  format!("{:?}", buffers.input.size)),
+            ("in_rect",  format!("{:?}", buffers.input.rect)),
+            ("in_rot",   format!("{:?}", buffers.input.rotation)),
+            ("in_pa",    format!("{:?}", buffers.input.post_affine)),
+            ("in_flip",  format!("{}{}", buffers.input.flip_h as u8, buffers.input.flip_v as u8)),
+            ("in_src",   buffers.input.source_diag()),
+            ("out_geom", format!("{:?}", buffers.output.size)),
+            ("out_rect", format!("{:?}", buffers.output.rect)),
+            ("out_rot",  format!("{:?}", buffers.output.rotation)),
+            ("out_pa",   format!("{:?}", buffers.output.post_affine)),
+            ("out_flip", format!("{}{}", buffers.output.flip_h as u8, buffers.output.flip_v as u8)),
+            ("out_src",  buffers.output.source_diag()),
+            ("lens",     format!("{}", self.compute_params.distortion_model.id())),
+            ("dlens",    format!("{}", self.compute_params.digital_lens.as_ref().map(|x| x.id()).unwrap_or_default())),
+            ("interp",   format!("{}", self.interpolation as u32)),
+            ("flags",    format!("{}", flags.bits())),
+            ("proc_size", format!("{:?}->{:?}", self.size, self.output_size)),
+            ("thread",   format!("{:?}", std::thread::current().id())),
+        ]
+    }
+
+    /// Emit one `target="gpu"` line naming exactly which key segment(s) forced
+    /// this backend (re-)init, then store the new snapshot. Only called from the
+    /// rebuild path so it costs nothing on the steady-state per-frame path.
+    fn log_backend_rebuild_diff(&mut self, buffers: &Buffers) {
+        let new_segs = self.backend_key_diag_segments(buffers);
+        match self.last_backend_key_diag.as_ref() {
+            None => {
+                let full: Vec<String> = new_segs.iter().map(|(k, v)| format!("{k}={v}")).collect();
+                log::info!(target: "gpu", "backend_rebuild first_init key: {}", full.join(" | "));
+            }
+            Some(old) => {
+                let changed: Vec<String> = old.iter()
+                    .zip(new_segs.iter())
+                    .filter(|(o, n)| o.1 != n.1)
+                    .map(|(o, n)| format!("{}: {} -> {}", o.0, o.1, n.1))
+                    .collect();
+                if changed.is_empty() {
+                    // Key identical to last init: the backend was invalidated externally
+                    // (device change, take_gpu_bindings, TLS cache miss on same thread).
+                    log::info!(target: "gpu", "backend_rebuild no key change (external invalidation)");
+                } else {
+                    log::info!(target: "gpu", "backend_rebuild changed: {}", changed.join(" | "));
+                }
+            }
+        }
+        self.last_backend_key_diag = Some(new_segs);
+    }
+
     pub fn init_size(&mut self, size: (usize, usize), output_size: (usize, usize)) {
         // Move the previous OpenCL / wgpu wrappers out (this also resets
         // initialized_backend / next_backend / stab_data synchronously) but
@@ -798,6 +863,10 @@ impl Stabilization {
         let current_hash = self.initialized_backend.get_hash();
 
         if current_hash != hash {
+            // Name the exact key segment that forced this rebuild (rect values,
+            // thread rotation, sizes, ...) — backend_init_ms alone only proves
+            // that rebuilds happen, not why.
+            self.log_backend_rebuild_diff(buffers);
             // §3.3: measure wall time of the (re-)init path and emit it under
             // the chosen backend's bucket. Lazy `add_and_maybe_emit` at the
             // end of this function so we know which backend won the init.

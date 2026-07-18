@@ -141,7 +141,82 @@ fn align(a: usize, b: usize) -> usize {
     ((a + b - 1) / b) * b
 }
 
-pub fn cuda_2d_copy_on_device(
+// cuda-interop-sync-scope: sync mode + input safety pad, resolved once from env.
+// mode=stream narrows every copy's completion wait to a private stream instead
+// of draining the host's whole CUDA context (`cuCtxSynchronize`); mode=ctx is
+// the byte-identical pre-change path.
+fn cuda_sync_resolved() -> (bool, bool) {
+    static RESOLVED: std::sync::OnceLock<(bool, bool)> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let mode_raw = std::env::var("GYROFLOW_CUDA_SYNC_MODE").unwrap_or_default();
+        let stream_mode = !matches!(mode_raw.trim().to_ascii_lowercase().as_str(), "ctx");
+        let pad_raw = std::env::var("GYROFLOW_CUDA_INPUT_CTX_SYNC").unwrap_or_default();
+        let input_pad = !matches!(pad_raw.trim().to_ascii_lowercase().as_str(), "0" | "off" | "false" | "no");
+        let symbols = CUDA.as_ref().map(|c| {
+            c.cuStreamCreate.is_some() && c.cuStreamSynchronize.is_some()
+                && c.cuStreamDestroy.is_some() && c.cuMemcpy2DAsync_v2.is_some()
+        }).unwrap_or(false);
+        log::info!(
+            target: "gpu",
+            "cuda sync resolved: mode={} source={} input_ctx_sync={} stream_symbols={symbols}",
+            if stream_mode { "stream" } else { "ctx" },
+            if mode_raw.is_empty() { "default" } else { "env" },
+            input_pad,
+        );
+        (stream_mode && symbols, input_pad)
+    })
+}
+
+pub fn cuda_input_ctx_sync_enabled() -> bool {
+    cuda_sync_resolved().1
+}
+
+// One copy stream per render thread: no cross-thread stream sharing, reused
+// across backend rebuilds (nothing to leak), destroyed at thread exit.
+// Created with CU_STREAM_DEFAULT (blocking stream) so it stays implicitly
+// ordered against work the host enqueued on the legacy default stream.
+struct ThreadCopyStream(std::cell::Cell<Option<CUstream>>);
+impl Drop for ThreadCopyStream {
+    fn drop(&mut self) {
+        if let Some(s) = self.0.get() {
+            if let Ok(cuda) = CUDA.as_ref() {
+                if let Some(destroy) = &cuda.cuStreamDestroy {
+                    unsafe { (destroy)(s); }
+                }
+            }
+        }
+    }
+}
+thread_local! {
+    static COPY_STREAM: ThreadCopyStream = ThreadCopyStream(std::cell::Cell::new(None));
+}
+
+fn get_copy_stream() -> Option<CUstream> {
+    if !cuda_sync_resolved().0 {
+        return None;
+    }
+    let cuda = CUDA.as_ref().ok()?;
+    let create = cuda.cuStreamCreate.as_ref()?;
+    COPY_STREAM.with(|c| {
+        if let Some(s) = c.0.get() {
+            return Some(s);
+        }
+        let mut s: CUstream = std::ptr::null_mut();
+        let err = unsafe { (create)(&mut s, 0) };
+        if err != CUresult::CUDA_SUCCESS || s.is_null() {
+            log::warn!("cuStreamCreate failed: {err:?}, falling back to ctx sync");
+            return None;
+        }
+        c.0.set(Some(s));
+        Some(s)
+    })
+}
+
+/// Device-to-device 2D copy INCLUDING its completion wait. In stream mode the
+/// wait only covers this copy (private per-thread stream); in ctx mode (or when
+/// stream symbols are unavailable) this is the pre-change sequence
+/// `cuMemcpy2D_v2` + `cuCtxSynchronize`, byte-identical.
+pub fn cuda_2d_copy_and_sync(
     bpp: usize,
     _width: usize,
     height: usize,
@@ -179,12 +254,22 @@ pub fn cuda_2d_copy_on_device(
         srcY: 0,
     };
     if let Ok(cuda) = CUDA.as_ref() {
-        // let mut base = 0; let mut size = 0; let mut size2 = 0;
-        // cuda!(cuda.cuMemGetAddressRange_v2(&mut base, &mut size, src));
-        // cuda!(cuda.cuMemGetAddressRange_v2(&mut base, &mut size2, dst));
-        // log::debug!("cuMemcpy2D_v2 | 0x{src:08x} ({size} bytes) => 0x{dst:08x} ({size2} bytes) | Device {}", get_current_cuda_device());
-        // cuda!(cuda.cuMemcpy(dst, src, size.2 * size.1));
+        if let Some(stream) = get_copy_stream() {
+            // Symbols guaranteed present by get_copy_stream's gate.
+            if let (Some(copy_async), Some(stream_sync)) = (&cuda.cuMemcpy2DAsync_v2, &cuda.cuStreamSynchronize) {
+                let err = unsafe { (copy_async)(&desc as *const _, stream) };
+                if err != CUresult::CUDA_SUCCESS {
+                    log::error!("Call to cuMemcpy2DAsync_v2 failed: {err:?}");
+                }
+                let err = unsafe { (stream_sync)(stream) };
+                if err != CUresult::CUDA_SUCCESS {
+                    log::error!("Call to cuStreamSynchronize failed: {err:?}");
+                }
+                return;
+            }
+        }
         cuda!(cuda.cuMemcpy2D_v2(&desc as *const _));
+        cuda_synchronize();
     }
 }
 
@@ -783,6 +868,7 @@ pub struct CUextMemory_st {
     _unused: [u8; 0],
 }
 pub type CUexternalMemory = *mut CUextMemory_st;
+pub type CUstream = *mut std::ffi::c_void;
 #[repr(i32)]
 #[derive(Debug, Copy, Clone, Hash, PartialOrd, Ord, PartialEq, Eq)]
 pub enum CUexternalMemoryHandleType_enum {
@@ -931,6 +1017,18 @@ pub struct CudaFunctions {
     >,
     pub cuDestroyExternalMemory:
         dl::Symbol<unsafe extern "C" fn(extMem: CUexternalMemory) -> CUresult>,
+
+    // cuda-interop-sync-scope: optional stream API — present on any remotely
+    // recent driver, but loaded as Option so a missing symbol degrades to the
+    // legacy ctx-sync path instead of failing the whole CUDA binding.
+    pub cuStreamCreate: Option<
+        dl::Symbol<unsafe extern "C" fn(phStream: *mut CUstream, flags: std::os::raw::c_uint) -> CUresult>,
+    >,
+    pub cuStreamSynchronize: Option<dl::Symbol<unsafe extern "C" fn(hStream: CUstream) -> CUresult>>,
+    pub cuStreamDestroy: Option<dl::Symbol<unsafe extern "C" fn(hStream: CUstream) -> CUresult>>,
+    pub cuMemcpy2DAsync_v2: Option<
+        dl::Symbol<unsafe extern "C" fn(pCopy: *const CUDA_MEMCPY2D_st, hStream: CUstream) -> CUresult>,
+    >,
 }
 
 impl CudaFunctions {
@@ -1002,6 +1100,14 @@ impl CudaFunctions {
                 cuImportExternalMemory: nvcuda.get(b"cuImportExternalMemory")?,
                 cuExternalMemoryGetMappedBuffer: nvcuda.get(b"cuExternalMemoryGetMappedBuffer")?,
                 cuDestroyExternalMemory: nvcuda.get(b"cuDestroyExternalMemory")?,
+
+                cuStreamCreate: nvcuda.get(b"cuStreamCreate").ok(),
+                cuStreamSynchronize: nvcuda.get(b"cuStreamSynchronize").ok(),
+                cuStreamDestroy: nvcuda
+                    .get(b"cuStreamDestroy_v2")
+                    .or_else(|_| nvcuda.get(b"cuStreamDestroy"))
+                    .ok(),
+                cuMemcpy2DAsync_v2: nvcuda.get(b"cuMemcpy2DAsync_v2").ok(),
 
                 _cudart: cudart,
                 _nvcuda: nvcuda,

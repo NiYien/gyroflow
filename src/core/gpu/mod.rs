@@ -186,6 +186,68 @@ impl<'a> BufferDescription<'a> {
         }
         hasher.finalize()
     }
+
+    /// Human-readable identity of the data source for backend-rebuild diagnostics.
+    /// Mirrors exactly which handles `get_checksum` folds into the hash (per-variant,
+    /// including the `texture_copy` gating), so a difference in this string explains
+    /// a difference in the checksum — and equal strings mean the source did not
+    /// contribute to a hash change.
+    pub fn source_diag(&self) -> String {
+        match &self.data {
+            BufferSource::None => "none".to_string(),
+            BufferSource::Cpu { .. } => "cpu".to_string(),
+            #[cfg(feature = "use-opencl")]
+            BufferSource::OpenCL { texture: _, queue } => format!("opencl(queue={:?})", *queue),
+            BufferSource::OpenGL { texture, context } => {
+                if !self.texture_copy {
+                    format!("opengl(tex={texture},ctx={:?})", *context)
+                } else {
+                    format!("opengl(ctx={:?})", *context)
+                }
+            }
+            #[cfg(target_os = "windows")]
+            BufferSource::DirectX11 { texture, device, device_context } => {
+                if !self.texture_copy {
+                    format!("d3d11(tex={:?},dev={:?},ctx={:?})", *texture, *device, *device_context)
+                } else {
+                    format!("d3d11(dev={:?},ctx={:?})", *device, *device_context)
+                }
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+            BufferSource::Vulkan { texture, instance, device, physical_device } => {
+                if !self.texture_copy {
+                    format!("vulkan(tex={texture:#x},inst={instance:#x},dev={device:#x},pdev={physical_device:#x})")
+                } else {
+                    format!("vulkan(inst={instance:#x},dev={device:#x},pdev={physical_device:#x})")
+                }
+            }
+            #[cfg(any(target_os = "windows", target_os = "linux"))]
+            BufferSource::CUDABuffer { buffer } => {
+                let dev = wgpu_interop_cuda::get_current_cuda_device();
+                if !self.texture_copy {
+                    format!("cuda(buf={:?},dev={dev})", *buffer)
+                } else {
+                    format!("cuda(dev={dev})")
+                }
+            }
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            BufferSource::Metal { texture, command_queue } => {
+                if !self.texture_copy {
+                    format!("metal(tex={:?},queue={:?})", *texture, *command_queue)
+                } else {
+                    format!("metal(queue={:?})", *command_queue)
+                }
+            }
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            BufferSource::MetalBuffer { buffer, command_queue } => {
+                if !self.texture_copy {
+                    format!("metalbuf(buf={:?},queue={:?})", *buffer, *command_queue)
+                } else {
+                    format!("metalbuf(queue={:?})", *command_queue)
+                }
+            }
+        }
+    }
 }
 impl<'a> Buffers<'a> {
     pub fn get_checksum(&self) -> u32 {
