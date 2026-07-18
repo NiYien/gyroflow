@@ -1804,9 +1804,69 @@ impl StabilizationManager {
 
     pub fn recompute_blocking(&self) {
         crate::smooth_diag::init_session();
-        self.recompute_smoothness();
-        self.recompute_adaptive_zoom();
+        if !smooth_blocking_gate_enabled() {
+            self.recompute_smoothness();
+            self.recompute_adaptive_zoom();
+            self.recompute_undistortion();
+            crate::smooth_diag::flush_and_close();
+            return;
+        }
+
+        // Gated path: same checksum criteria as recompute_threaded, with the
+        // lazy `*_invalidated` flags honored as force triggers (and cleared
+        // when the corresponding leg actually runs). The ledger atomics are
+        // shared with the threaded path so neither redoes the other's work.
+        let gyro_checksum = self.gyro.read().get_checksum();
+        let run_smoothing = self.smoothing_invalidated.load(SeqCst)
+            || self.smoothing.read().get_state_checksum(gyro_checksum)
+                != self.smoothing_checksum.load(SeqCst);
+        let mut smoothing_ms = 0.0f64;
+        if run_smoothing {
+            let t = std::time::Instant::now();
+            self.recompute_smoothness();
+            smoothing_ms = t.elapsed().as_secs_f64() * 1000.0;
+            self.smoothing_invalidated.store(false, SeqCst);
+        }
+        // Publish the ledger only if gyro didn't change under us mid-run;
+        // a mid-run mutation stores 0 so the next recompute can't skip.
+        let gyro_checksum_after = self.gyro.read().get_checksum();
+        let ledger = if gyro_checksum_after == gyro_checksum {
+            self.smoothing.read().get_state_checksum(gyro_checksum)
+        } else {
+            0
+        };
+        self.smoothing_checksum.store(ledger, SeqCst);
+
+        // Camera fovs aren't hashed, so skip calculate_camera_fovs here.
+        let zoom_checksum =
+            zooming::get_checksum(&stabilization::ComputeParams::from_manager(self));
+        let run_zoom = run_smoothing
+            || self.zooming_invalidated.load(SeqCst)
+            || zoom_checksum != self.zooming_checksum.load(SeqCst);
+        let mut zoom_ms = 0.0f64;
+        if run_zoom {
+            let t = std::time::Instant::now();
+            self.recompute_adaptive_zoom();
+            zoom_ms = t.elapsed().as_secs_f64() * 1000.0;
+            self.zooming_invalidated.store(false, SeqCst);
+            self.zooming_checksum.store(zoom_checksum, SeqCst);
+        }
+        // Undistortion stays unconditional: it's the cheap leg and keeps
+        // callers that write params directly (fov, lens_correction_amount,
+        // background, ...) correct without any checksum coverage.
         self.recompute_undistortion();
+        self.undistortion_invalidated.store(false, SeqCst);
+
+        ::log::info!(
+            target: "stab.timing",
+            "recompute_blocking smoothing_ms={:.1} zoom_ms={:.1} quats={} frames={} gated_smoothing={} gated_zoom={}",
+            smoothing_ms,
+            zoom_ms,
+            self.gyro.read().quaternions.len(),
+            self.params.read().frame_count,
+            if run_smoothing { "run" } else { "skip" },
+            if run_zoom { "run" } else { "skip" },
+        );
         crate::smooth_diag::flush_and_close();
     }
 
@@ -1852,6 +1912,8 @@ impl StabilizationManager {
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
             let mut smoothing_changed = false;
+            let mut smoothing_ms = 0.0f64;
+            let t_smoothing = std::time::Instant::now();
             if smoothing.read().get_state_checksum(gyro_checksum) != smoothing_checksum.load(SeqCst) {
                 let (mut smoothing, horizon_lock) = {
                     let lock = smoothing.read();
@@ -1869,12 +1931,16 @@ impl StabilizationManager {
                 lib_gyro.smoothing_status = smoothing.get_status_json();
                 gyro_checksum = lib_gyro.get_checksum();
                 smoothing_changed = true;
+                smoothing_ms = t_smoothing.elapsed().as_secs_f64() * 1000.0;
             }
             smoothing_checksum.store(smoothing.read().get_state_checksum(gyro_checksum), SeqCst);
 
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
-            if smoothing_changed || zooming::get_checksum(&params) != zooming_checksum.load(SeqCst) {
+            let t_zoom = std::time::Instant::now();
+            let zoom_ran = smoothing_changed
+                || zooming::get_checksum(&params) != zooming_checksum.load(SeqCst);
+            if zoom_ran {
                 let (fovs, minimal_fovs, debug_points) = Self::recompute_adaptive_zoom_static(&params, &stabilization_params);
                 params.fovs = fovs;
                 params.minimal_fovs = minimal_fovs;
@@ -2003,6 +2069,16 @@ impl StabilizationManager {
                     } // end §4 pre-skip guard (async)
                 }
             }
+            ::log::info!(
+                target: "stab.timing",
+                "recompute_threaded smoothing_ms={:.1} zoom_ms={:.1} quats={} frames={} gated_smoothing={} gated_zoom={}",
+                smoothing_ms,
+                if zoom_ran { t_zoom.elapsed().as_secs_f64() * 1000.0 } else { 0.0 },
+                gyro.read().quaternions.len(),
+                params.frame_count,
+                if smoothing_changed { "run" } else { "skip" },
+                if zoom_ran { "run" } else { "skip" },
+            );
 
             if current_compute_id.load(SeqCst) != compute_id { return cb((compute_id, true)); }
 
@@ -4413,6 +4489,29 @@ where
     THREAD_POOL.spawn(cb);
 }
 
+/// `recompute_blocking` checksum gate. Default on; `GYROFLOW_SMOOTH_BLOCKING_GATE=0|off|false|no`
+/// restores the pre-gate unconditional recompute of all three legs.
+fn smooth_blocking_gate_enabled() -> bool {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        let (enabled, source) = match std::env::var("GYROFLOW_SMOOTH_BLOCKING_GATE") {
+            Ok(v) => {
+                let off = matches!(
+                    v.trim().to_ascii_lowercase().as_str(),
+                    "0" | "off" | "false" | "no"
+                );
+                (!off, "env")
+            }
+            Err(_) => (true, "default"),
+        };
+        ::log::info!(
+            target: "lifecycle",
+            "smooth blocking gate resolved: enabled={enabled} source={source}"
+        );
+        enabled
+    })
+}
+
 use std::str::FromStr;
 #[derive(Debug, Clone, PartialEq, ::serde::Serialize, ::serde::Deserialize)]
 pub enum GyroflowProjectType {
@@ -4484,6 +4583,126 @@ pub enum GyroflowCoreError {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    // smoothing-perf-recompute-gating: recompute_blocking checksum gate tests.
+    // A sentinel entry planted into smoothed_quaternions detects whether the
+    // smoothing leg actually ran (a rerun rebuilds the map, dropping it).
+
+    fn manager_with_synthetic_gyro() -> StabilizationManager {
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.fps = 30.0;
+            params.size = (1920, 1080);
+            params.output_size = (1920, 1080);
+            // frame_count = 0 keeps the zoom leg a no-op (empty timestamps)
+            // and makes gyro windowing fall back to the full quats range.
+            params.frame_count = 0;
+            params.duration_ms = 1000.0;
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.duration_ms = 1000.0;
+            for i in 0..100i64 {
+                gyro.quaternions.insert(
+                    i * 10_000,
+                    crate::gyro_source::Quat64::from_euler_angles(0.0, 0.0, i as f64 * 0.001),
+                );
+            }
+        }
+        manager
+    }
+
+    const SMOOTHING_SENTINEL_TS: i64 = 987_654_321;
+    fn plant_smoothing_sentinel(manager: &StabilizationManager) {
+        manager
+            .gyro
+            .write()
+            .smoothed_quaternions
+            .insert(SMOOTHING_SENTINEL_TS, crate::gyro_source::Quat64::identity());
+    }
+    fn smoothing_sentinel_alive(manager: &StabilizationManager) -> bool {
+        manager
+            .gyro
+            .read()
+            .smoothed_quaternions
+            .contains_key(&SMOOTHING_SENTINEL_TS)
+    }
+
+    #[test]
+    fn blocking_gate_size_only_change_skips_smoothing() {
+        let m = manager_with_synthetic_gyro();
+        m.recompute_blocking();
+        assert!(!m.gyro.read().smoothed_quaternions.is_empty());
+        plant_smoothing_sentinel(&m);
+        m.params.write().output_size = (1280, 720);
+        m.recompute_blocking();
+        assert!(
+            smoothing_sentinel_alive(&m),
+            "size-only change must not rerun smoothing"
+        );
+    }
+
+    #[test]
+    fn blocking_gate_unchanged_inputs_skip_smoothing() {
+        let m = manager_with_synthetic_gyro();
+        m.recompute_blocking();
+        plant_smoothing_sentinel(&m);
+        m.recompute_blocking();
+        assert!(smoothing_sentinel_alive(&m));
+    }
+
+    #[test]
+    fn blocking_gate_smoothing_param_change_reruns_smoothing() {
+        let m = manager_with_synthetic_gyro();
+        m.recompute_blocking();
+        plant_smoothing_sentinel(&m);
+        m.smoothing
+            .write()
+            .current_mut()
+            .set_parameter("smoothness", 0.123);
+        m.recompute_blocking();
+        assert!(
+            !smoothing_sentinel_alive(&m),
+            "smoothing param change must rerun smoothing"
+        );
+    }
+
+    #[test]
+    fn blocking_gate_invalidate_smoothing_forces_rerun() {
+        let m = manager_with_synthetic_gyro();
+        m.recompute_blocking();
+        plant_smoothing_sentinel(&m);
+        m.invalidate_smoothing();
+        m.recompute_blocking();
+        assert!(!smoothing_sentinel_alive(&m));
+    }
+
+    #[test]
+    fn blocking_gate_lazy_invalidated_flag_forces_rerun_and_clears() {
+        let m = manager_with_synthetic_gyro();
+        m.recompute_blocking();
+        plant_smoothing_sentinel(&m);
+        m.invalidate_blocking_smoothing();
+        m.recompute_blocking();
+        assert!(!smoothing_sentinel_alive(&m));
+        assert!(!m.smoothing_invalidated.load(SeqCst));
+        assert!(!m.zooming_invalidated.load(SeqCst));
+        assert!(!m.undistortion_invalidated.load(SeqCst));
+    }
+
+    #[test]
+    fn blocking_gate_publishes_ledger_for_threaded_path() {
+        let m = manager_with_synthetic_gyro();
+        m.recompute_blocking();
+        let gyro_checksum = m.gyro.read().get_checksum();
+        let state = m.smoothing.read().get_state_checksum(gyro_checksum);
+        assert_eq!(
+            m.smoothing_checksum.load(SeqCst),
+            state,
+            "threaded gate must see fresh accounts after a blocking recompute"
+        );
+    }
 
     // Operation lifecycle primitive tests (§1.9-1.13).
 
