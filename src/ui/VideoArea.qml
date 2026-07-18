@@ -199,7 +199,11 @@ Item {
                 if (window.simpleMounting) {
                     window.simpleMounting.loadGyroflow(obj);
                 } else {
-                    window.pendingMountingRotation = (obj.gyro_source || {}).rotation || null;
+                    // Park a normalized rotation so the selector's
+                    // Component.onCompleted adopts null/absent as top too
+                    // (project-authoritative mounting semantics).
+                    const projRot = (obj.gyro_source || {}).rotation;
+                    window.pendingMountingRotation = (projRot && projRot.length === 3) ? projRot : [0, 0, 0];
                 }
                 window.stab.loadGyroflow(obj);
                 window.advanced.loadGyroflow(obj);

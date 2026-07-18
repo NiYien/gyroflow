@@ -61,6 +61,11 @@ Column {
     property int _autoRotationDeg: 0
     property bool _metadataRotationApplied: false
     property bool _syncingBatchAutoRotate: false
+    // Project readback guard: while loadGyroflow mirrors project values into
+    // the controls, their change handlers must not push derived values back
+    // to core — the Rust import already holds the authoritative (exact)
+    // values and e.g. the zoom-mode bucket write would clobber them.
+    property bool _importing: false;
 
     readonly property bool _batchActive: window.batchState && window.batchState.active
 
@@ -167,17 +172,52 @@ Column {
 
     function loadGyroflow(obj: var): void {
         const stab = obj && obj.stabilization ? obj.stabilization : null;
-        if (!stab || typeof stab.frame_readout_time === "undefined") {
+        if (!stab) {
             return;
         }
 
-        const importedTime = Math.abs(+stab.frame_readout_time || 0);
-        const importedDirection = readoutDirectionToInt(stab.frame_readout_direction);
+        // Mirror project values into the simple-mode controls (display only —
+        // core already got the exact values from the Rust import). Controls
+        // whose field is absent in the project stay untouched.
+        root._importing = true;
+        try {
+            if (stab.smoothing_params) {
+                for (const x of stab.smoothing_params) {
+                    if (x.name === "smoothness") smoothnessSlider.value = +x.value * 100.0;
+                }
+            }
 
-        shutter.value = importedTime;
-        shutterCb.checked = importedTime > 0;
-        controller.frame_readout_direction = importedDirection;
-        controller.frame_readout_time = shutterCb.checked ? importedTime : 0.0;
+            const kf = (typeof obj.keyframes === "object" && obj.keyframes !== null) ? obj.keyframes : ({});
+            if (stab.hasOwnProperty("horizon_lock_amount")) {
+                const locked = (+stab.horizon_lock_amount || 0) > 0;
+                horizonCb.checked = locked;
+                // Keyframed horizon values stay keyframe-driven (same rule as
+                // the Full-mode panel) — only static values are mirrored.
+                if (typeof kf.LockHorizonAmount !== "object") horizonSlider.value = locked ? +stab.horizon_lock_amount : 100;
+                if (typeof kf.LockHorizonRoll !== "object") horizonRollSlider.value = locked ? (+stab.horizon_lock_roll || 0) : 0;
+            }
+
+            if (stab.hasOwnProperty("adaptive_zoom_window")) {
+                const az = +stab.adaptive_zoom_window;
+                croppingMode.currentIndex = az < -0.9 ? 2 : (az > 0 ? 1 : 0);
+            }
+
+            if (stab.hasOwnProperty("lens_correction_amount")) {
+                lensCorrectionToggle.checked = +stab.lens_correction_amount > 0;
+            }
+        } finally {
+            root._importing = false;
+        }
+
+        if (typeof stab.frame_readout_time !== "undefined") {
+            const importedTime = Math.abs(+stab.frame_readout_time || 0);
+            const importedDirection = readoutDirectionToInt(stab.frame_readout_direction);
+
+            shutter.value = importedTime;
+            shutterCb.checked = importedTime > 0;
+            controller.frame_readout_direction = importedDirection;
+            controller.frame_readout_time = shutterCb.checked ? importedTime : 0.0;
+        }
     }
 
     // ── Smoothness ──
@@ -197,6 +237,7 @@ Column {
             scaler: 1.0;
             keyframe: "SmoothingParamSmoothness";
             onValueChanged: {
+                if (root._importing) return;
                 if (window.batchState && window.batchState.active) {
                     window.batchState.smoothness = value;
                     return;
@@ -210,7 +251,7 @@ Column {
     CheckBoxWithContent {
         id: horizonCb;
         text: qsTranslate("Stabilization", "Lock horizon");
-        cb.onCheckedChanged: Qt.callLater(root.updateHorizonLock);
+        cb.onCheckedChanged: { if (root._importing) return; Qt.callLater(root.updateHorizonLock); }
 
         Label {
             position: Label.LeftPosition;
@@ -225,7 +266,7 @@ Column {
                 precision: 0;
                 value: 100;
                 keyframe: "LockHorizonAmount";
-                onValueChanged: Qt.callLater(root.updateHorizonLock);
+                onValueChanged: { if (root._importing) return; Qt.callLater(root.updateHorizonLock); }
             }
         }
 
@@ -245,7 +286,7 @@ Column {
                 unit: qsTr("°");
                 precision: 1;
                 keyframe: "LockHorizonRoll";
-                onValueChanged: Qt.callLater(root.updateHorizonLock);
+                onValueChanged: { if (root._importing) return; Qt.callLater(root.updateHorizonLock); }
             }
         }
     }
@@ -290,6 +331,7 @@ Column {
         width: parent.width;
         model: [QT_TRANSLATE_NOOP("Popup", "No zooming"), QT_TRANSLATE_NOOP("Popup", "Dynamic zooming"), QT_TRANSLATE_NOOP("Popup", "Static zoom")];
         onCurrentIndexChanged: {
+            if (root._importing) return;
             if (window.batchState && window.batchState.active) {
                 window.batchState.zoomMode = currentIndex;
                 return;
@@ -308,6 +350,7 @@ Column {
         text: qsTranslate("Stabilization", "Lens correction");
         checked: true;
         onCheckedChanged: {
+            if (root._importing) return;
             if (window.batchState && window.batchState.active) {
                 window.batchState.lensCorrection = checked ? 1.0 : 0.0;
                 return;

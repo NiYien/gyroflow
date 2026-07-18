@@ -58,18 +58,26 @@ MenuItem {
 
     // Adopt the mounting rotation stored in a loaded .gyroflow project: the
     // project reflects the device orientation of that shooting session, so the
-    // UI and the global setting both follow it. A null/absent rotation is "no
-    // statement" (same semantics as the import guard) and leaves the current
-    // state untouched.
+    // UI and the global setting both follow it. The project is authoritative —
+    // a null/absent/malformed rotation means "no mounting" and normalizes to
+    // top (0,0,0) instead of keeping the previous global state.
     function loadGyroflow(obj: var): void {
         const gyro = obj.gyro_source || {};
-        const rot = gyro.rotation;
-        if (!rot || rot.length !== 3) return;
+        const raw = gyro.rotation;
+        const rot = (raw && raw.length === 3) ? raw : [0, 0, 0];
         let mode = "custom";
         for (const key in root.presetAngles) {
             const a = root.presetAngles[key];
             if (a[0] === rot[0] && a[1] === rot[1] && a[2] === rot[2]) { mode = key; break; }
         }
+        // Compare against the currently effective angles BEFORE mutating any
+        // state: applyMode() reintegrates the whole IMU timeline, so it must
+        // only run when the adopted angles actually change something.
+        const cur = root.currentMode === "custom"
+            ? [root.customPitch, root.customRoll, root.customYaw]
+            : (root.presetAngles[root.currentMode] || [0, 0, 0]);
+        const changed = cur[0] !== rot[0] || cur[1] !== rot[1] || cur[2] !== rot[2];
+        const prevIdx = modeCombo.currentIndex;
         if (mode === "custom") {
             root.customPitch = rot[0];
             root.customRoll  = rot[1];
@@ -78,6 +86,10 @@ MenuItem {
         root.currentMode = mode;
         const idx = root.modeKeys.indexOf(mode);
         modeCombo.currentIndex = idx >= 0 ? idx : 0;
+        // A standalone project import fires no telemetry_loaded re-apply, and
+        // an unchanged combo index fires no onCurrentIndexChanged — apply
+        // explicitly then so the stab doesn't keep the pre-adoption rotation.
+        if (changed && modeCombo.currentIndex === prevIdx) root.applyMode();
         root.saveSettings();
     }
 
