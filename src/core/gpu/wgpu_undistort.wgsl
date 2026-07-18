@@ -681,9 +681,19 @@ fn undistort_fragment(@builtin(position) position: vec4<f32>) -> @location(0) ve
 // {buffer_input}
 @compute @workgroup_size(8, 8)
 fn undistort_compute(@builtin(global_invocation_id) global_id: vec3<u32>) {
-    let final_px = undistort(vec2<f32>(f32(global_id.x), f32(global_id.y)));
     let stride_px = params.output_stride / (bytes_per_pixel / pix_element_count);
     let buffer_pos = (global_id.y * u32(stride_px) + global_id.x * u32(pix_element_count));
+    // The dispatch is ceil(size/8) workgroups, so phantom threads exist whenever the
+    // buffer dimensions aren't multiples of 8. They must not write anything:
+    // - past the row's stride capacity: with a tight stride those bytes are the first
+    //   pixels of the NEXT row (races with that row's legitimate writes),
+    // - past the end of the buffer: out-of-bounds writes are implementation-defined
+    //   in WGSL and may be redirected instead of discarded.
+    if ((global_id.x + 1u) * u32(pix_element_count) > u32(stride_px)
+        || buffer_pos + u32(pix_element_count) > arrayLength(&output_buffer)) {
+        return;
+    }
+    let final_px = undistort(vec2<f32>(f32(global_id.x), f32(global_id.y)));
     if (pix_element_count >= 1) { output_buffer[buffer_pos + 0u] = final_px.x; }
     if (pix_element_count >= 2) { output_buffer[buffer_pos + 1u] = final_px.y; }
     if (pix_element_count >= 3) { output_buffer[buffer_pos + 2u] = final_px.z; }
