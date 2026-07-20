@@ -1896,7 +1896,7 @@ impl RenderQueue {
             self.reset_job(job_id);
         }
 
-        let (job_ids, batch_sync_job_ids) = {
+        let job_ids = {
             let Ok(queue) = self.queue.try_borrow() else {
                 return;
             };
@@ -1905,23 +1905,59 @@ impl RenderQueue {
                 .filter(|item| item.status == JobStatus::Queued && item.total_frames > 0)
                 .map(|item| item.job_id)
                 .collect::<Vec<_>>();
-            let batch_sync_job_ids = job_ids
-                .iter()
-                .copied()
-                .filter_map(|job_id| {
-                    let job = self.jobs.get(&job_id)?;
-                    let stab = job.stab.as_ref()?;
-                    // Videos whose built-in gyro is trusted (RED Komodo or Sony
-                    // with embedded gyro) keep that gyro and skip sync, so they
-                    // are excluded from batch sync point collection / repair.
-                    (!stab.gyro.read().file_metadata.read().keep_video_gyro).then_some(job_id)
-                })
-                .collect::<Vec<_>>();
-            (job_ids, batch_sync_job_ids)
+            job_ids
         };
         if job_ids.is_empty() {
             return;
         }
+
+        let no_gyro_job_ids = job_ids
+            .iter()
+            .copied()
+            .filter(|job_id| {
+                self.jobs
+                    .get(job_id)
+                    .and_then(|job| job.stab.as_ref())
+                    .is_some_and(|stab| {
+                        let gyro = stab.gyro.read();
+                        !gyro.file_metadata.read().keep_video_gyro && !gyro.has_motion()
+                    })
+            })
+            .collect::<Vec<_>>();
+        for &job_id in &no_gyro_job_ids {
+            update_model!(self, job_id, itm {
+                itm.skip_reason = QString::from("no_gyro");
+                itm.status = JobStatus::Skipped;
+            });
+            ::log::info!(
+                "[queue-render-skip] job {} marked Skipped (no_gyro, batch autosync admission)",
+                job_id
+            );
+        }
+
+        let job_ids = job_ids
+            .into_iter()
+            .filter(|job_id| !no_gyro_job_ids.contains(job_id))
+            .collect::<Vec<_>>();
+        if job_ids.is_empty() {
+            self.queue_changed();
+            self.progress_changed();
+            return;
+        }
+
+        let batch_sync_job_ids = job_ids
+            .iter()
+            .copied()
+            .filter_map(|job_id| {
+                let job = self.jobs.get(&job_id)?;
+                let stab = job.stab.as_ref()?;
+                // Videos whose built-in gyro is trusted (RED Komodo or Sony
+                // with embedded gyro) keep that gyro and skip sync, so they
+                // are excluded from batch sync point collection / repair.
+                (!stab.gyro.read().file_metadata.read().keep_video_gyro).then_some(job_id)
+            })
+            .collect::<Vec<_>>();
+
         // Reset the GPU-decode codec blocklist at every batch entry so a fresh
         // batch can re-attempt GPU even after a previous batch recorded failures.
         crate::rendering::gpu_codec_blocklist::clear();
@@ -14516,6 +14552,7 @@ mod tests {
     fn render_queue_start_batch_autosync_requeues_finished_sync_only_jobs() {
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
+        add_motion_to_job(&mut queue, 1, false);
         let job_id = 1;
         update_model!(queue, job_id, itm {
             itm.status = JobStatus::Finished;
@@ -16244,6 +16281,36 @@ mod tests {
 
         add_motion_to_job(&mut queue, 2, true);
         assert!(queue.batch_motion_ready());
+    }
+
+    #[test]
+    fn start_batch_autosync_skips_jobs_without_motion_data() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        // Keep the scheduler dormant: this test exercises only batch admission.
+        queue.pause_flag.store(true, SeqCst);
+
+        queue.start_batch_autosync();
+
+        let item = &queue.queue.borrow()[0];
+        assert_eq!(item.status, JobStatus::Skipped);
+        assert_eq!(item.skip_reason.to_string(), "no_gyro");
+        assert!(queue.batch_sync_job_ids.is_empty());
+        assert!(queue.expected_batch_sync_job_ids.is_empty());
+    }
+
+    #[test]
+    fn single_video_autosync_prompts_when_imu_data_is_missing() {
+        let qml = include_str!("../ui/menu/Synchronization.qml");
+        let start = qml
+            .find("function runAutosync(): void")
+            .expect("single-video autosync entry exists");
+        let body = &qml[start..]
+            .split("function loadGyroflow")
+            .next()
+            .expect("autosync entry ends before project loading");
+
+        assert!(body.contains("if (!controller.gyro_loaded)"));
+        assert!(body.contains("No IMU data is loaded. Load gyro data before synchronizing."));
     }
 
     #[test]

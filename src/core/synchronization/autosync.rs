@@ -125,6 +125,10 @@ pub fn describe_autosync_init_failure(
     )
 }
 
+pub(crate) fn autosync_can_run(mode: &str, has_motion: bool) -> bool {
+    mode != "synchronize" || has_motion
+}
+
 impl AutosyncProcess {
     pub fn from_manager(
         stab: &StabilizationManager,
@@ -139,6 +143,15 @@ impl AutosyncProcess {
         let org_duration_ms = params.duration_ms;
         let fps_scale = params.fps_scale;
         let duration_ms = params.get_scaled_duration_ms();
+        let has_motion = stab.gyro.read().has_motion();
+
+        if !autosync_can_run(&mode, has_motion) {
+            log::warn!(
+                target: "sync",
+                "autosync rejected: synchronize mode requires motion data"
+            );
+            return Err(());
+        }
 
         let SyncParams {
             search_size,
@@ -221,7 +234,7 @@ impl AutosyncProcess {
             return Err(());
         }
 
-        let mut ranges_us: Vec<(i64, i64)> = timestamps_fract
+        let ranges_us: Vec<(i64, i64)> = timestamps_fract
             .iter()
             .map(|x| {
                 let range = (
@@ -235,12 +248,6 @@ impl AutosyncProcess {
             })
             .collect();
 
-        if mode == "synchronize" && !stab.gyro.read().has_motion() {
-            // If no gyro data in file, analyze the entire video
-            ranges_us.clear();
-            ranges_us.push((0, (org_duration_ms * 1000.0).round() as i64));
-        }
-
         let scaled_ranges_us: Vec<(i64, i64)> = ranges_us
             .iter()
             .map(|(f, t)| {
@@ -251,9 +258,7 @@ impl AutosyncProcess {
             })
             .collect();
         // The fraction list was re-sorted after the probe was appended, so the
-        // probe's range is located by value, not by position (the no-motion
-        // branch above never runs when a probe was added — probe insertion is
-        // gated on has_motion()).
+        // probe's range is located by value, not by position.
         let probe_range_us = probe_fract
             .and_then(|f| timestamps_fract.iter().position(|x| *x == f))
             .and_then(|i| scaled_ranges_us.get(i).copied());
@@ -626,65 +631,7 @@ impl AutosyncProcess {
         );
         self.estimator.cleanup();
 
-        let mut scaled_ranges_us = Cow::Borrowed(&self.scaled_ranges_us);
-
-        if self.mode == "synchronize" && !self.compute_params.read().gyro.read().has_motion() {
-            // §5.6 no-motion fallback entry
-            if self.cancel_flag.load(SeqCst) {
-                log::info!(
-                    target: "lifecycle",
-                    "autosync canceled at no-motion fallback entry"
-                );
-                self.emit_canceled_progress();
-                return;
-            }
-            // If no gyro data in file, set the computed optical flow as gyro data
-            let compute_params = self.compute_params.write();
-            let mut gyro = compute_params.gyro.write();
-
-            gyro.file_metadata.set_raw_imu(
-                self.estimator
-                    .estimated_gyro
-                    .read()
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            );
-            // §5.7 before apply_transforms (the vqf.rs:1120 panic site)
-            if self.cancel_flag.load(SeqCst) {
-                log::info!(
-                    target: "lifecycle",
-                    "autosync canceled before apply_transforms in no-motion fallback"
-                );
-                drop(gyro);
-                drop(compute_params);
-                self.emit_canceled_progress();
-                return;
-            }
-            gyro.apply_transforms();
-
-            let timestamps_fract = [0.5];
-            let time_per_syncpoint = 500.0;
-
-            scaled_ranges_us = Cow::Owned(
-                timestamps_fract
-                    .into_iter()
-                    .map(|x| {
-                        (
-                            (((x * gyro.duration_ms) - (time_per_syncpoint / 2.0)).max(0.0)
-                                * 1000.0
-                                / self.fps_scale.unwrap_or(1.0))
-                            .round() as i64,
-                            (((x * gyro.duration_ms) + (time_per_syncpoint / 2.0))
-                                .min(gyro.duration_ms)
-                                * 1000.0
-                                / self.fps_scale.unwrap_or(1.0))
-                            .round() as i64,
-                        )
-                    })
-                    .collect(),
-            );
-        }
+        let scaled_ranges_us = Cow::Borrowed(&self.scaled_ranges_us);
 
         if let Some(cb) = &progress_cb {
             let d = self.total_detected_frames.load(SeqCst);
@@ -1129,6 +1076,19 @@ pub(crate) fn pick_probe_fraction(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn synchronize_mode_rejects_motionless_runs_before_decoding() {
+        let source = include_str!("autosync.rs");
+        let implementation = source
+            .split("#[cfg(test)]")
+            .next()
+            .expect("autosync implementation precedes its tests");
+
+        assert!(implementation.contains("if !autosync_can_run(&mode, has_motion)"));
+        assert!(!implementation.contains("ranges_us.push((0, (org_duration_ms * 1000.0).round() as i64));"));
+        assert!(!implementation.contains("gyro.file_metadata.set_raw_imu("));
+    }
 
     #[test]
     fn probe_escalation_gate() {

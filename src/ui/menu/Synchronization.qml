@@ -50,6 +50,12 @@ MenuItem {
     }
     function runAutosync(): void {
         if (controller.sync_in_progress) return;
+        if (!controller.gyro_loaded) {
+            messageBox(Modal.Info, qsTr("No IMU data is loaded. Load gyro data before synchronizing."), [
+                { text: qsTr("Ok"), accent: true },
+            ]);
+            return;
+        }
         if (!controller.lens_loaded) {
             messageBox(Modal.Warning, qsTr("Lens profile is not loaded, synchronization will most likely give wrong results. Are you sure you want to continue?"), [
                 { text: qsTr("Yes"), clicked: function() {
