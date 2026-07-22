@@ -3,7 +3,6 @@
 
 use itertools::Either;
 use parking_lot::RwLock;
-use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::AcqRel, Ordering::Relaxed, Ordering::SeqCst};
 
@@ -631,7 +630,7 @@ impl AutosyncProcess {
         );
         self.estimator.cleanup();
 
-        let scaled_ranges_us = Cow::Borrowed(&self.scaled_ranges_us);
+        let scaled_ranges_us: &[(i64, i64)] = &self.scaled_ranges_us;
 
         if let Some(cb) = &progress_cb {
             let d = self.total_detected_frames.load(SeqCst);
@@ -707,7 +706,7 @@ impl AutosyncProcess {
                 use super::find_offset::visual_features::find_offsets;
                 cb(Either::Left(find_offsets(
                     &self.estimator,
-                    &scaled_ranges_us,
+                    scaled_ranges_us,
                     &self.sync_params,
                     &self.compute_params.read(),
                     true,
@@ -721,7 +720,7 @@ impl AutosyncProcess {
                 let probe_cb: std::sync::Arc<dyn Fn(f64) + Send + Sync> =
                     std::sync::Arc::new(progress_cb2);
                 let guessed = FindOffsetsRssync::new(
-                    &scaled_ranges_us,
+                    scaled_ranges_us,
                     self.estimator.sync_results.clone(),
                     &self.sync_params,
                     &self.compute_params.read(),
