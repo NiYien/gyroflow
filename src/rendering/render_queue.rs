@@ -690,6 +690,10 @@ fn should_apply_auto_rotate(
         && gyro_detected_source.starts_with("SenseFlow")
 }
 
+fn auto_rotate_job_mounting_snapshot(stab: &StabilizationManager) -> Option<[f64; 3]> {
+    stab.gyro.read().imu_transforms.imu_rotation_angles
+}
+
 fn parse_job_ids_json(job_ids_json: &str) -> Vec<u32> {
     serde_json::from_str(job_ids_json).unwrap_or_default()
 }
@@ -9471,18 +9475,21 @@ impl RenderQueue {
                         queue_auto_rotate,
                         detected_source,
                     ) {
+                        let job_mounting = auto_rotate_job_mounting_snapshot(&item.stab);
                         ::log::info!(
-                            "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={}",
+                            "[auto_rotate input] file='{}' adjusted_range_ms={:?} md_duration_ms={:.1} imu_samples={} mounting_snapshot={:?}",
                             item.render_options.input_filename,
                             adjusted_range_ms,
                             md.duration_ms,
-                            md.raw_imu.len()
+                            md.raw_imu.len(),
+                            job_mounting
                         );
                         let rotation =
                             core::gyro_source::compute_auto_rotation_for_segment_with_state(
                                 &mut auto_rotate_state,
                                 &md.raw_imu,
                                 Some(&md.additional_data),
+                                job_mounting,
                                 &item.render_options.input_filename,
                             );
                         auto_rotation_results.insert(item.job_id, rotation);
@@ -16963,6 +16970,105 @@ mod tests {
         assert!(!should_apply_auto_rotate(false, false, false, "SenseFlow Mini"));
         assert!(!should_apply_auto_rotate(true, true, true, "SenseFlow Mini"));
         assert!(!should_apply_auto_rotate(false, true, true, "Sony FX3"));
+    }
+
+    #[test]
+    fn auto_rotate_mounting_snapshot_is_read_from_each_job() {
+        let stab_a = StabilizationManager::default();
+        let stab_b = StabilizationManager::default();
+        stab_a.set_imu_rotation(0.0, -90.0, 0.0);
+        stab_b.set_imu_rotation(0.0, 90.0, 0.0);
+
+        assert_eq!(
+            auto_rotate_job_mounting_snapshot(&stab_a),
+            Some([0.0, -90.0, 0.0])
+        );
+        assert_eq!(
+            auto_rotate_job_mounting_snapshot(&stab_b),
+            Some([0.0, 90.0, 0.0])
+        );
+
+        let stab_bottom = StabilizationManager::default();
+        stab_bottom.set_imu_rotation(0.0, 180.0, 0.0);
+        assert_eq!(
+            auto_rotate_job_mounting_snapshot(&stab_bottom),
+            Some([0.0, 180.0, 0.0])
+        );
+
+        // Top mounting is stored as a cleared snapshot, not as `Some([0,0,0])`:
+        // `IMUTransforms::set_imu_rotation` drops the angles when all three are
+        // zero. The pre-pass therefore sees `None` and logs `mounting_source=
+        // default`, while the effective correction stays zero either way.
+        let stab_top = StabilizationManager::default();
+        stab_top.set_imu_rotation(0.0, 0.0, 0.0);
+        assert_eq!(auto_rotate_job_mounting_snapshot(&stab_top), None);
+
+        // A previously set mounting must also clear when the user returns to the
+        // top preset, otherwise a stale snapshot would outlive the selection.
+        stab_a.set_imu_rotation(0.0, 0.0, 0.0);
+        assert_eq!(auto_rotate_job_mounting_snapshot(&stab_a), None);
+    }
+
+    #[test]
+    fn auto_rotate_portrait_dimensions_survive_project_export_and_job_reload() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let stab = queue.jobs[&1].stab.as_ref().unwrap().clone();
+        {
+            let mut params = stab.params.write();
+            params.size = (3840, 2160);
+        }
+        {
+            let mut lens = stab.lens.write();
+            lens.input_vertical_stretch = 1.6;
+            lens.output_dimension = Some(core::lens_profile::Dimensions {
+                w: 3840,
+                h: 3456,
+            });
+        }
+        stab.set_video_rotation(90.0);
+        stab.set_output_size(3456, 3840);
+
+        let mut render_options = RenderOptions::default();
+        render_options.output_width = 3456;
+        render_options.output_height = 3840;
+        let project_data = RenderQueue::get_gyroflow_data_internal(
+            &stab,
+            "{}",
+            &render_options,
+        )
+        .expect("project data export succeeds");
+        let project: serde_json::Value = serde_json::from_str(&project_data).unwrap();
+        assert_eq!(project["video_info"]["rotation"], 90.0);
+        assert_eq!(project["output"]["output_width"], 3456);
+        assert_eq!(project["output"]["output_height"], 3840);
+        assert_eq!(
+            project["calibration_data"]["output_dimension"],
+            serde_json::json!({ "w": 3840, "h": 3456 })
+        );
+
+        {
+            let job = queue.jobs.get_mut(&1).unwrap();
+            job.project_data = Some(project_data);
+            job.render_options = render_options;
+            job.stab = None;
+        }
+        queue.reset_job(1);
+
+        let job = &queue.jobs[&1];
+        assert_eq!(job.render_options.output_width, 3456);
+        assert_eq!(job.render_options.output_height, 3840);
+        let restored = job.stab.as_ref().expect("job stab restored");
+        assert_eq!(restored.params.read().video_rotation, 90.0);
+        assert_eq!(restored.params.read().output_size, (3456, 3840));
+        assert_eq!(
+            restored
+                .lens
+                .read()
+                .output_dimension
+                .as_ref()
+                .map(|dim| (dim.w, dim.h)),
+            Some((3840, 3456))
+        );
     }
 
     #[test]

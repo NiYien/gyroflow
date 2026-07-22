@@ -6214,6 +6214,7 @@ mod tests {
     fn rotated_output_dim_swaps_at_90_and_270_only() {
         assert_eq!(rotated_output_dim((1920, 1620), 0.0), (1920, 1620));
         assert_eq!(rotated_output_dim((1920, 1620), 90.0), (1620, 1920));
+        assert_eq!(rotated_output_dim((3840, 3456), 90.0), (3456, 3840));
         assert_eq!(rotated_output_dim((1920, 1620), -90.0), (1620, 1920));
         assert_eq!(rotated_output_dim((1920, 1620), 180.0), (1920, 1620));
         assert_eq!(rotated_output_dim((2554, 1080), 270.0), (1080, 2554));

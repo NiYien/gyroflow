@@ -84,20 +84,93 @@ fn senseflow_gyro_range(additional_data: Option<&serde_json::Value>) -> f32 {
         .unwrap_or(1000.0)
 }
 
-fn senseflow_install_angles(additional_data: Option<&serde_json::Value>) -> (i32, i32, i32) {
+fn senseflow_telemetry_install_angles(
+    additional_data: Option<&serde_json::Value>,
+) -> Option<(i32, i32, i32)> {
     let Some(arr) = additional_data
         .and_then(|x| x.get("install_angle"))
         .and_then(|x| x.as_array())
     else {
-        return (0, 0, 0);
+        return None;
     };
     if arr.len() != 3 {
-        return (0, 0, 0);
+        return None;
     }
     let to_i32 = |idx: usize| -> Option<i32> { arr.get(idx)?.as_i64().map(|x| x as i32) };
     match (to_i32(0), to_i32(1), to_i32(2)) {
-        (Some(pitch), Some(roll), Some(yaw)) => (pitch, roll, yaw),
-        _ => (0, 0, 0),
+        (Some(pitch), Some(roll), Some(yaw)) => Some((pitch, roll, yaw)),
+        _ => None,
+    }
+}
+
+fn senseflow_install_angles(additional_data: Option<&serde_json::Value>) -> (i32, i32, i32) {
+    senseflow_telemetry_install_angles(additional_data).unwrap_or_default()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SenseFlowInstallAngleSource {
+    Telemetry,
+    JobMounting,
+    Default,
+}
+
+impl SenseFlowInstallAngleSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Telemetry => "telemetry",
+            Self::JobMounting => "job_mounting",
+            Self::Default => "default",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ResolvedSenseFlowInstallAngles {
+    angles: (i32, i32, i32),
+    source: SenseFlowInstallAngleSource,
+}
+
+/// Selects exactly one mounting correction; telemetry and the job snapshot are
+/// never composed.
+///
+/// Telemetry keeps authority even when it reports all-zero angles: a present
+/// `install_angle` is an explicit device statement, not "unset". Note the
+/// locked telemetry-parser never emits this key for SenseFlow, so production
+/// currently always falls through to the job snapshot. If the parser ever
+/// starts writing a zero placeholder, that fallback would be silently shut off.
+///
+/// An all-zero UI mounting reaches this function as `None`, not
+/// `Some([0.0, 0.0, 0.0])`, because `IMUTransforms::set_imu_rotation` clears
+/// `imu_rotation_angles` when every angle is zero. Top mounting is therefore
+/// reported as `Default` rather than `JobMounting`; the effective angles are
+/// identical either way.
+fn resolve_senseflow_install_angles(
+    additional_data: Option<&serde_json::Value>,
+    job_mounting: Option<[f64; 3]>,
+) -> ResolvedSenseFlowInstallAngles {
+    if let Some(angles) = senseflow_telemetry_install_angles(additional_data) {
+        return ResolvedSenseFlowInstallAngles {
+            angles,
+            source: SenseFlowInstallAngleSource::Telemetry,
+        };
+    }
+
+    if let Some([pitch, roll, yaw]) = job_mounting.filter(|angles| {
+        angles.iter().all(|angle| angle.is_finite())
+    }) {
+        return ResolvedSenseFlowInstallAngles {
+            angles: (
+                pitch.round() as i32,
+                roll.round() as i32,
+                yaw.round() as i32,
+            ),
+            source: SenseFlowInstallAngleSource::JobMounting,
+        };
+    }
+
+    ResolvedSenseFlowInstallAngles {
+        angles: (0, 0, 0),
+        source: SenseFlowInstallAngleSource::Default,
     }
 }
 
@@ -357,6 +430,7 @@ pub fn compute_auto_rotation_for_segment_with_state(
     state: &mut SenseFlowAutoRotationState,
     raw_imu: &[TimeIMU],
     additional_data: Option<&serde_json::Value>,
+    job_mounting: Option<[f64; 3]>,
     debug_label: &str,
 ) -> Option<i32> {
     if raw_imu.is_empty() {
@@ -368,7 +442,8 @@ pub fn compute_auto_rotation_for_segment_with_state(
     let gyro_raw_scale = 32768.0_f32 / senseflow_gyro_range(additional_data);
     let first_ts = raw_imu.first().map(|x| x.timestamp_ms).unwrap_or_default();
     let end_ts = first_ts + SENSEFLOW_NIYIEN_INIT_QUAT_WINDOW_MS;
-    let install_angles = senseflow_install_angles(additional_data);
+    let resolved_install_angles =
+        resolve_senseflow_install_angles(additional_data, job_mounting);
 
     let mut used_samples = 0usize;
     for sample in raw_imu
@@ -391,9 +466,12 @@ pub fn compute_auto_rotation_for_segment_with_state(
         return None;
     }
 
-    let info = senseflow_auto_rotation_info_from_quat(state.quaternion(), install_angles)?;
+    let info = senseflow_auto_rotation_info_from_quat(
+        state.quaternion(),
+        resolved_install_angles.angles,
+    )?;
     log::info!(
-        "[auto_rotate niyien segment] file='{}' samples={} pitch={:.2} pitch_q={} roll={:.2} roll_q={} direction={} output_rotation={}",
+        "[auto_rotate niyien segment] file='{}' samples={} pitch={:.2} pitch_q={} roll={:.2} roll_q={} direction={} mounting_source={} install_angles={:?} output_rotation={}",
         debug_label,
         used_samples,
         info.pitch_deg,
@@ -401,6 +479,8 @@ pub fn compute_auto_rotation_for_segment_with_state(
         info.roll_deg,
         info.roll_quantized,
         info.direction,
+        resolved_install_angles.source.as_str(),
+        resolved_install_angles.angles,
         info.output_rotation
     );
     Some(info.output_rotation)
@@ -2467,6 +2547,145 @@ mod tests {
     }
 
     #[test]
+    fn senseflow_mounting_resolution_prefers_telemetry_then_job_snapshot() {
+        let telemetry = serde_json::json!({ "install_angle": [0, 90, 0] });
+        let resolved = resolve_senseflow_install_angles(
+            Some(&telemetry),
+            Some([0.0, -90.0, 0.0]),
+        );
+        assert_eq!(resolved.angles, (0, 90, 0));
+        assert_eq!(resolved.source, SenseFlowInstallAngleSource::Telemetry);
+
+        let resolved = resolve_senseflow_install_angles(
+            Some(&serde_json::json!({})),
+            Some([0.0, -90.0, 0.0]),
+        );
+        assert_eq!(resolved.angles, (0, -90, 0));
+        assert_eq!(resolved.source, SenseFlowInstallAngleSource::JobMounting);
+
+        let resolved = resolve_senseflow_install_angles(None, None);
+        assert_eq!(resolved.angles, (0, 0, 0));
+        assert_eq!(resolved.source, SenseFlowInstallAngleSource::Default);
+
+        let resolved = resolve_senseflow_install_angles(
+            None,
+            Some([0.0, f64::NAN, 0.0]),
+        );
+        assert_eq!(resolved.angles, (0, 0, 0));
+        assert_eq!(resolved.source, SenseFlowInstallAngleSource::Default);
+    }
+
+    #[test]
+    fn senseflow_mounting_presets_map_level_sensor_to_cardinal_rotation() {
+        // `None` is the shape top mounting actually takes in production, because
+        // an all-zero mounting clears `imu_rotation_angles`. `Some([0,0,0])` is
+        // kept as a defensive case only; it is unreachable from the UI.
+        let cases = [
+            (None, 0, SenseFlowInstallAngleSource::Default),
+            (
+                Some([0.0, 0.0, 0.0]),
+                0,
+                SenseFlowInstallAngleSource::JobMounting,
+            ),
+            (
+                Some([0.0, -90.0, 0.0]),
+                90,
+                SenseFlowInstallAngleSource::JobMounting,
+            ),
+            (
+                Some([0.0, 90.0, 0.0]),
+                270,
+                SenseFlowInstallAngleSource::JobMounting,
+            ),
+            (
+                Some([0.0, 180.0, 0.0]),
+                180,
+                SenseFlowInstallAngleSource::JobMounting,
+            ),
+        ];
+
+        for (job_mounting, expected, expected_source) in cases {
+            let resolved = resolve_senseflow_install_angles(None, job_mounting);
+            assert_eq!(
+                resolved.source, expected_source,
+                "mounting={job_mounting:?}"
+            );
+            let info = senseflow_auto_rotation_info_from_quat(
+                [1.0, 0.0, 0.0, 0.0],
+                resolved.angles,
+            )
+            .unwrap();
+            assert_eq!(info.output_rotation, expected, "mounting={job_mounting:?}");
+        }
+    }
+
+    /// End-to-end cover for every mounting preset through the real segment
+    /// entry point (IMU integration included), then on to the render-target
+    /// dimension rule. Only the right-side case has reference material, so the
+    /// other three presets are validated with synthetic level-sensor data.
+    ///
+    /// The sensor frame is the reported 1.6x anamorphic one (3840x3456), so the
+    /// 90/270 rows also assert the portrait target the real clip produced.
+    #[test]
+    fn senseflow_mounting_presets_drive_segment_rotation_and_output_dimensions() {
+        const SENSOR: (usize, usize) = (3840, 3456);
+        const PORTRAIT: (usize, usize) = (3456, 3840);
+
+        // Top mounting reaches the resolver as `None`, matching what
+        // `set_imu_rotation(0,0,0)` actually stores.
+        let cases = [
+            ("top", None, 0, SENSOR),
+            ("right", Some([0.0, -90.0, 0.0]), 90, PORTRAIT),
+            ("left", Some([0.0, 90.0, 0.0]), 270, PORTRAIT),
+            ("bottom", Some([0.0, 180.0, 0.0]), 180, SENSOR),
+        ];
+
+        for (label, job_mounting, expected_rotation, expected_dim) in cases {
+            // Gravity on +Z: the camera is level, so any non-zero result comes
+            // from the mounting correction rather than the sensor attitude.
+            let raw_imu = (0..=1200)
+                .map(|timestamp_ms| imu_sample(timestamp_ms as f64, [0.0, 0.0, 9.80665]))
+                .collect::<Vec<_>>();
+            // A fresh state per preset: the real pre-pass carries state across
+            // segments of one gyro file, not across unrelated mountings.
+            let mut state = SenseFlowAutoRotationState::default();
+
+            let rotation = compute_auto_rotation_for_segment_with_state(
+                &mut state,
+                &raw_imu,
+                None,
+                job_mounting,
+                label,
+            );
+            assert_eq!(rotation, Some(expected_rotation), "mounting={label}");
+
+            assert_eq!(
+                crate::rotated_output_dim(SENSOR, expected_rotation as f64),
+                expected_dim,
+                "mounting={label}"
+            );
+        }
+    }
+
+    #[test]
+    fn senseflow_segment_auto_rotation_consumes_right_job_mounting() {
+        let raw_imu = (0..=1200)
+            .map(|timestamp_ms| imu_sample(timestamp_ms as f64, [0.0, 0.0, 9.80665]))
+            .collect::<Vec<_>>();
+        let mut state = SenseFlowAutoRotationState::default();
+
+        let result = compute_auto_rotation_for_segment_with_state(
+            &mut state,
+            &raw_imu,
+            None,
+            Some([0.0, -90.0, 0.0]),
+            "right-mount",
+        );
+
+        assert_eq!(result, Some(90));
+    }
+
+    #[test]
     fn load_from_telemetry_duration_mismatch_warning_removed() {
         let source = include_str!("mod.rs");
         let needle = concat!(
@@ -2548,6 +2767,7 @@ mod tests {
                 &mut state,
                 &raw_imu,
                 Some(&additional_data),
+                None,
                 &fname,
             );
             let exp = expected.get(i).copied().unwrap_or(-1);
@@ -2627,6 +2847,7 @@ mod tests {
                 &mut state2,
                 &sliced,
                 Some(&mix_additional),
+                None,
                 &fname,
             );
             let exp = expected.get(i).copied().unwrap_or(-1);
