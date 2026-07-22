@@ -411,18 +411,17 @@ Column {
     // ── AI SYNC (NeuFlow v2 Burn) ──
     // Persisted to QSettings (key: simpleAiSync). When checked, batch sync uses
     // of_method=4 (NeuFlow Burn) instead of the default of_method=2 (DIS).
-    // simple-mode-ux-overhaul: visibility no longer gated on Burn support —
-    // checkbox is always visible; effective method falls back automatically when
-    // the platform lacks Burn (see Synchronization.qml::aiSyncOn && has_neuflow_support).
     // The switch is one-way QML→render_queue; loading a .gyroflow project
     // does NOT modify this UI preference.
     CheckBox {
         id: aiSyncCb;
         text: qsTr("AI SYNC");
-        // Hidden on mobile: NeuFlow Burn has no mobile support, so AI sync can
-        // never take effect there (has_neuflow_support() fallback already keeps
-        // the behavior correct; hiding avoids offering a dead toggle).
-        visible: !isMobile;
+        // Visibility follows the `neuflow-burn` cargo feature via
+        // has_neuflow_support(), so builds without Burn never offer a toggle
+        // that cannot take effect. Re-enabling the feature brings the checkbox
+        // back with no QML change. Also hidden on mobile, which has no Burn
+        // support of its own.
+        visible: !isMobile && controller.has_neuflow_support();
         checked: settings.value("simpleAiSync", false) === true || settings.value("simpleAiSync", false) === "true";
         onCheckedChanged: {
             settings.setValue("simpleAiSync", checked);

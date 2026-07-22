@@ -125,13 +125,13 @@ features = [ "Win32_System_Com", "Win32_System_Console", "Win32_System_SystemSer
              "Win32_Storage_Packaging_Appx", "Win32_Storage_FileSystem" ]
 
 [features]
-default = ["cache-gyro-metadata", "neuflow-burn"]
+default = ["cache-gyro-metadata"]
 use-opencl = ["ocl", "ocl-interop"]
 use-opencv = ["opencv"]
 bundle-lens-profiles = []
 cache-gyro-metadata = []
 neuflow-ort = ["dep:ort"]
-neuflow-burn = ["dep:burn", "dep:burn-store", "dep:cubecl-runtime"]
+neuflow-burn = ["dep:burn", "dep:burn-store", "dep:cubecl-runtime", "dep:burn-onnx"]
 neuflow = ["neuflow-ort", "neuflow-burn"]
 # Dev-only: enables the sync_replay offline decision-replay bin.
 sync-replay = []
@@ -151,7 +151,7 @@ which = "6"
 ureq = "3.3"
 flate2 = "1.1"
 tar = "0.4"
-# Used by build.rs only when feature `neuflow-burn` is enabled (gated via
-# CARGO_FEATURE_NEUFLOW_BURN env var). Generates Rust + .bpk artifacts from the
-# bundled NeuFlow v2 ONNX file into $OUT_DIR/burn_onnx/.
-burn-onnx = { git = "https://github.com/tracel-ai/burn-onnx", rev = "8f578180c025a702ec902c9fdec8133db2daec90" }
+# Used by build.rs only when feature `neuflow-burn` is enabled. Optional so a
+# default build neither downloads nor compiles it. Generates Rust + .bpk
+# artifacts from the bundled NeuFlow v2 ONNX file into $OUT_DIR/burn_onnx/.
+burn-onnx = { git = "https://github.com/tracel-ai/burn-onnx", rev = "8f578180c025a702ec902c9fdec8133db2daec90", optional = true }

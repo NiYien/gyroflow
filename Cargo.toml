@@ -12,7 +12,7 @@ members = ["src/core"]
 version = "1.6.3"
 
 [features]
-default = ["opencv", "niyien-serialport", "neuflow-burn"]
+default = ["opencv", "niyien-serialport"]
 opencl = ["gyroflow-core/use-opencl"]
 opencv = ["gyroflow-core/use-opencv"]
 niyien-serialport = ["dep:serialport"]

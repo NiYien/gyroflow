@@ -388,18 +388,6 @@ deploy:
     mkdir "$TargetDir\camera_db\" -Force
     xcopy /Y /E "$ProjectDir\resources\camera_db\*" "$TargetDir\camera_db\"
 
-    # NeuFlow v2 Burn weights (.bpk). find_weight_file() resolves
-    # generated_iter5/ relative to gyroflow.exe (see src/core/neuflow_burn/mod.rs).
-    # Hard-fail if the source .bpk is missing: it means cargo build did NOT run
-    # with neuflow_burn_enabled and the shipped zip would silently fail at runtime.
-    $BpkSrc = "$ProjectDir\src\core\neuflow_burn\generated_iter5\neuflow_v2_iter5_768x432.bpk"
-    $BpkDstDir = "$TargetDir\generated_iter5"
-    mkdir $BpkDstDir -Force
-    echo F | xcopy /Y "$BpkSrc" "$BpkDstDir\"
-    if (-not (Test-Path "$BpkDstDir\neuflow_v2_iter5_768x432.bpk")) {
-        throw "ERROR: NeuFlow .bpk missing after copy ($BpkSrc -> $BpkDstDir)"
-    }
-
     # Other
     xcopy /Y "$QtDir\bin\d3dcompiler_47.dll"                             "$TargetDir\"
     if ("{{Arch}}" -eq "aarch64") {
@@ -443,6 +431,12 @@ deploy:
 
     $PackageName = "{{ArtifactPrefix}}-{{NameSuffix}}.zip"
     $PackagePath = "$ProjectDir\_deployment\_binaries\$PackageName"
+    # Rebuild the archive from scratch. `7z a` only adds and updates entries; it
+    # never drops ones whose source file has gone away, so without this an old
+    # archive keeps shipping files that are no longer part of the build. The
+    # macOS side already gets this for free (it wipes _binaries/mac and creates
+    # the dmg with `hdiutil -ov`).
+    Remove-Item $PackagePath -Force -ErrorAction SilentlyContinue
     7z a $PackagePath $TargetDir\*
 
     if ("{{Arch}}" -eq "x86_64") {

@@ -63,13 +63,18 @@ fn main() {
     generate_builtin_preset_table(&project_dir);
 
     // 4. Regenerate NeuFlow v2 model bindings from bundled ONNX (only when
-    //    feature `neuflow-burn` is enabled AND target supports burn; pulled in
-    //    as build-dep regardless but ModelGen is skipped to keep default-build
-    //    cost down). On Linux/iOS/Android the feature is a no-op and we don't
-    //    spend time regenerating the model.
+    //    feature `neuflow-burn` is enabled AND target supports burn). The
+    //    burn-onnx build-dep is optional and pulled in by that feature alone,
+    //    so a default build neither downloads nor compiles it. On
+    //    Linux/iOS/Android the feature is a no-op and we don't spend time
+    //    regenerating the model.
+    //    The `#[cfg]` below mirrors `feature_on`: cargo passes feature cfgs to
+    //    build scripts alongside the CARGO_FEATURE_* env vars, so the gated
+    //    call is compiled exactly when the env check can be true.
     let feature_on = std::env::var_os("CARGO_FEATURE_NEUFLOW_BURN").is_some();
     if feature_on && neuflow_burn_supported {
         println!("cargo:rustc-cfg=neuflow_burn_enabled");
+        #[cfg(feature = "neuflow-burn")]
         generate_neuflow_burn_model(&project_dir);
     } else if feature_on {
         let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
@@ -84,6 +89,7 @@ fn neuflow_burn_target_supported() -> bool {
     target_os == "windows" || target_os == "macos"
 }
 
+#[cfg(feature = "neuflow-burn")]
 fn generate_neuflow_burn_model(project_dir: &str) {
     use burn_onnx::ModelGen;
 
@@ -145,6 +151,7 @@ fn generate_neuflow_burn_model(project_dir: &str) {
     }
 }
 
+#[cfg(feature = "neuflow-burn")]
 fn post_process_neuflow_model_for_f32_casts(out_dir: &str) {
     let path = format!("{out_dir}/burn_onnx/neuflow_v2_iter5_768x432.rs");
     let content = match std::fs::read_to_string(&path) {
