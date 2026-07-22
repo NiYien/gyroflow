@@ -413,6 +413,15 @@ Column {
     // of_method=4 (NeuFlow Burn) instead of the default of_method=2 (DIS).
     // The switch is one-way QML→render_queue; loading a .gyroflow project
     // does NOT modify this UI preference.
+    //
+    // Every consumer of this preference must AND it with has_neuflow_support().
+    // Hiding the checkbox is NOT a guard: `visible: false` only affects painting,
+    // so the element is still instantiated, `checked` is still evaluated from the
+    // persisted setting, and Component.onCompleted still runs. A stale
+    // simpleAiSync=true therefore keeps driving downstream writes on builds where
+    // the toggle is invisible and the user has no way to turn it off. The value
+    // itself is deliberately left on disk so the preference comes back when the
+    // `neuflow-burn` feature is re-enabled.
     CheckBox {
         id: aiSyncCb;
         text: qsTr("AI SYNC");
@@ -425,20 +434,20 @@ Column {
         checked: settings.value("simpleAiSync", false) === true || settings.value("simpleAiSync", false) === "true";
         onCheckedChanged: {
             settings.setValue("simpleAiSync", checked);
-            render_queue.batch_sync_ai_method = checked;
+            render_queue.batch_sync_ai_method = checked && controller.has_neuflow_support();
             // The AI sync toggle changes the optical-flow method consumed by sync, so any
             // prior batch sync is now stale and must re-run on the next sync action.
             window.syncDirty = true;
             // Drive the live preview OF method in Simple mode so unchecking AI returns
             // to DIS and clears the stale NeuFlow pose/flow overlay. set_of_method()
             // already clears the pose estimator unconditionally, so this also wipes
-            // the previous method's displayed results. Batch sync still resolves its
-            // method from the toggle at sync time via getSettings(); Full mode lets
-            // the optical-flow dropdown own the live method.
+            // the previous method's displayed results. Batch sync does not read this
+            // value — it resolves its own method from batch_sync_ai_method above; Full
+            // mode lets the optical-flow dropdown own the live method.
             if (window.isSimpleMode)
                 controller.set_of_method(checked && controller.has_neuflow_support() ? 4 : 2);
         }
-        Component.onCompleted: render_queue.batch_sync_ai_method = checked;
+        Component.onCompleted: render_queue.batch_sync_ai_method = checked && controller.has_neuflow_support();
     }
 
     // ── Sync with Full mode ──

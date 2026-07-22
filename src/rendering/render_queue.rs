@@ -16329,6 +16329,44 @@ mod tests {
     }
 
     #[test]
+    fn ai_sync_writes_to_batch_sync_ai_method_are_guarded_by_neuflow_support() {
+        // Hiding the AI SYNC checkbox is not a guard. `visible: false` only affects
+        // painting: the element is still instantiated, `checked` is still evaluated
+        // from the persisted `simpleAiSync` setting, and Component.onCompleted still
+        // runs. A stale simpleAiSync=true therefore keeps driving batch sync to
+        // of_method=4 on builds without the `neuflow-burn` feature, which decodes
+        // NV12 and clones a full frame per frame before falling back to DIS in
+        // OpticalFlowMethod::detect_features. Every write site must AND the checkbox
+        // state with has_neuflow_support().
+        let qml = include_str!("../ui/menu/SimpleStabilization.qml");
+
+        let write_sites: Vec<&str> = qml
+            .lines()
+            .filter(|line| line.contains("batch_sync_ai_method ="))
+            .collect();
+
+        assert!(
+            write_sites.len() >= 2,
+            "expected at least the onCheckedChanged and Component.onCompleted write \
+             sites for batch_sync_ai_method, found {}. Was the property renamed, or did \
+             a write site get split across lines? This test only sees single-line writes.",
+            write_sites.len()
+        );
+
+        for line in write_sites {
+            assert!(
+                line.contains("has_neuflow_support"),
+                "unguarded write to batch_sync_ai_method: `{}`\n\
+                 The AI SYNC preference outlives the feature that backs it: simpleAiSync \
+                 stays in settings.json when `neuflow-burn` is disabled, and hiding the \
+                 checkbox does not stop it from being read. Write \
+                 `checked && controller.has_neuflow_support()`, not a bare `checked`.",
+                line.trim()
+            );
+        }
+    }
+
+    #[test]
     fn batch_motion_ready_accepts_finished_sync_only_jobs() {
         let queue = queue_with_autosync_project(JobStatus::Finished, true, Some(2));
 
