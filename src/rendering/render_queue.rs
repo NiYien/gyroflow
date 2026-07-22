@@ -9764,6 +9764,14 @@ impl RenderQueue {
                                     gyro.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
                                 }
                             }
+                            if let Some(cam_id) = camera_id.as_ref() {
+                                // Batch path: users who only drop files into the
+                                // queue never hit the main-preview report site.
+                                crate::distribution::report_camera_open_event(
+                                    &cam_id.brand,
+                                    &cam_id.model,
+                                );
+                            }
                             *item.stab.camera_id.write() = camera_id;
                         }
                         match item.stab.autoload_lens_from_camera_id() {

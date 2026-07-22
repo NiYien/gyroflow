@@ -1946,6 +1946,10 @@ impl Controller {
                     }
 
                     if let Some(cam_id) = camera_id.as_ref() {
+                        crate::distribution::report_camera_open_event(
+                            &cam_id.brand,
+                            &cam_id.model,
+                        );
                         additional_obj.insert(
                             "camera_identifier".to_owned(),
                             serde_json::to_value(cam_id).unwrap(),

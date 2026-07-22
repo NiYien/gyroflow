@@ -164,6 +164,17 @@ struct TelemetryEvent<'a> {
     duration_ms: u128,
     bytes: u64,
     error_code: &'a str,
+    identity_origin: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    identity_age_days: Option<u64>,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    language: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    os: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    camera_brand: &'a str,
+    #[serde(skip_serializing_if = "str::is_empty")]
+    camera_model: &'a str,
 }
 
 pub struct DataSyncResult {
@@ -177,6 +188,12 @@ const LOCAL_COUNTRY_CHECKED_AT_KEY: &str = "distributionCountryCheckedAt";
 const LOCAL_COUNTRY_FAILED_AT_KEY: &str = "distributionCountryLookupFailedAt";
 
 lazy_static::lazy_static! {
+    // Cameras already reported by this process, keyed by (brand, model).
+    // Per-process is enough: the dashboard counts unique users per day, so a
+    // repeat report within one session carries no new information.
+    static ref REPORTED_CAMERAS: Mutex<std::collections::HashSet<(String, String)>> =
+        Mutex::new(std::collections::HashSet::new());
+
     static ref MANIFEST_CACHE: RwLock<Option<CachedManifest>> = RwLock::new(None);
     // Single-flight lock: at startup multiple modules concurrently call
     // fetch_manifest before any thread has populated the cache, which
@@ -448,10 +465,36 @@ fn decode_bundle(bytes: &[u8]) -> Result<DataBundle, String> {
     ciborium::from_reader(decoder).map_err(|err| err.to_string())
 }
 
+/// How this installation's anonymous id came to be. Reported with every event
+/// so migrated users can be told apart from genuinely new ones.
+const IDENTITY_ORIGIN_GENERATED: &str = "generated";
+const IDENTITY_ORIGIN_ADOPTED: &str = "adopted_from_tool";
+
 fn telemetry_anon_id() -> String {
     let existing = gyroflow_core::settings::get_str("telemetryAnonId", "");
     if !existing.trim().is_empty() {
         return existing;
+    }
+
+    // First run on this machine. Before minting a fresh identity, adopt the one
+    // NiYien Tool already uses if it is installed here: both products report the
+    // same product_id, so an adopted id lets the server recognize a migrating
+    // user as returning rather than counting them as a new customer.
+    //
+    // Only ever done at first generation — an install that already has an id
+    // keeps it, since re-pointing would sever its history and report one person
+    // under two identities across the switchover.
+    if let Some(adopted) = legacy_tool_anon_id() {
+        ::log::info!(
+            target: "update",
+            "telemetry identity adopted from NiYien Tool"
+        );
+        gyroflow_core::settings::set("telemetryAnonId", adopted.clone().into());
+        gyroflow_core::settings::set(
+            "telemetryIdentityOrigin",
+            IDENTITY_ORIGIN_ADOPTED.into(),
+        );
+        return adopted;
     }
 
     let now_ms = SystemTime::now()
@@ -464,7 +507,155 @@ fn telemetry_anon_id() -> String {
         fastrand::u64(..)
     );
     gyroflow_core::settings::set("telemetryAnonId", generated.clone().into());
+    gyroflow_core::settings::set(
+        "telemetryIdentityOrigin",
+        IDENTITY_ORIGIN_GENERATED.into(),
+    );
+    gyroflow_core::settings::set(
+        "telemetryAnonIdCreatedAt",
+        (now_ms as u64 / 1000).into(),
+    );
     generated
+}
+
+/// Origin of the current identity. Installations that predate this recording
+/// report `generated` — they are not backdated, but they also predate adoption,
+/// so `generated` is accurate for them.
+fn telemetry_identity_origin() -> String {
+    let stored = gyroflow_core::settings::get_str("telemetryIdentityOrigin", "");
+    if stored.trim().is_empty() {
+        IDENTITY_ORIGIN_GENERATED.to_owned()
+    } else {
+        stored
+    }
+}
+
+/// Age of this installation's identity in whole days, or `None` when the id
+/// predates creation-time recording. Never inferred as "created now" — that
+/// would make every established install look brand new on release day.
+fn telemetry_identity_age_days() -> Option<u64> {
+    let created_at = gyroflow_core::settings::get_u64("telemetryAnonIdCreatedAt", 0);
+    if created_at == 0 {
+        return None;
+    }
+
+    let now_s = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    Some(now_s.saturating_sub(created_at) / 86400)
+}
+
+/// OS description, matching the shape already used by the feedback payload
+/// (`src/feedback/meta.rs`). Cached — probing the OS on every event is wasteful
+/// and the answer cannot change while the process runs.
+fn os_description() -> String {
+    static CACHED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    CACHED
+        .get_or_init(|| {
+            let info = os_info::get();
+            format!("{} {} ({})", info.os_type(), info.version(), info.bitness())
+        })
+        .clone()
+}
+
+/// NiYien Tool's anonymous id, if that product is installed on this machine.
+///
+/// Read-only: the Tool's file is never written, modified, or deleted. Path per
+/// NiYien_Tool `mainwindow.cpp` (`get_local_path() + "/NiYien_Tool/telemetry.ini"`).
+/// Returns `None` when absent, unreadable, or malformed, so the caller falls
+/// through to generating a fresh id.
+fn legacy_tool_anon_id() -> Option<String> {
+    let path = legacy_tool_telemetry_ini()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    parse_legacy_tool_anon_id(&contents)
+}
+
+fn legacy_tool_telemetry_ini() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        let local = std::env::var_os("LOCALAPPDATA")?;
+        Some(
+            std::path::PathBuf::from(local)
+                .join("NiYien_Tool")
+                .join("telemetry.ini"),
+        )
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var_os("HOME")?;
+        Some(
+            std::path::PathBuf::from(home)
+                .join("Library")
+                .join("Application Support")
+                .join("NiYien_Tool")
+                .join("telemetry.ini"),
+        )
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        None
+    }
+}
+
+/// Minimal INI lookup for the Tool's `[telemetry] anon_id=...` entry. Written by
+/// QSettings, so the file is plain `key=value` under a section header.
+fn parse_legacy_tool_anon_id(contents: &str) -> Option<String> {
+    let mut in_telemetry_section = false;
+
+    for line in contents.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with(';') || line.starts_with('#') {
+            continue;
+        }
+
+        if line.starts_with('[') && line.ends_with(']') {
+            in_telemetry_section = line[1..line.len() - 1].trim().eq_ignore_ascii_case("telemetry");
+            continue;
+        }
+
+        if !in_telemetry_section {
+            continue;
+        }
+
+        if let Some((key, value)) = line.split_once('=') {
+            if key.trim().eq_ignore_ascii_case("anon_id") {
+                let value = value.trim().trim_matches('"').trim();
+                if !value.is_empty() && value.len() <= 128 {
+                    return Some(value.to_owned());
+                }
+                return None;
+            }
+        }
+    }
+
+    None
+}
+
+/// Report that this installation encountered a camera, mirroring NiYien Tool's
+/// `open` event so the two products' camera and language breakdowns describe the
+/// same thing and can be read side by side.
+///
+/// Deduplicated per process by `(brand, model)`. The dashboard counts unique
+/// users per day, never `open` event volume, so re-reporting the same camera
+/// within a session would add nothing — which is also why this needs no
+/// persisted queue or cooldown.
+pub fn report_camera_open_event(brand: &str, model: &str) {
+    let brand = brand.trim();
+    let model = model.trim();
+    if brand.is_empty() && model.is_empty() {
+        return;
+    }
+
+    {
+        let mut seen = REPORTED_CAMERAS.lock();
+        if !seen.insert((brand.to_owned(), model.to_owned())) {
+            return;
+        }
+    }
+
+    ::log::debug!(target: "update", "telemetry open event: brand={brand} model={model}");
+    report_event_internal("open", "", "", "", "", 0, 0, "", brand, model);
 }
 
 pub fn report_download_event(
@@ -477,11 +668,41 @@ pub fn report_download_event(
     bytes: u64,
     error_code: &str,
 ) {
+    report_event_internal(
+        event,
+        artifact_type,
+        artifact_version,
+        selected_source,
+        status,
+        duration_ms,
+        bytes,
+        error_code,
+        "",
+        "",
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn report_event_internal(
+    event: &str,
+    artifact_type: &str,
+    artifact_version: &str,
+    selected_source: &str,
+    status: &str,
+    duration_ms: u128,
+    bytes: u64,
+    error_code: &str,
+    camera_brand: &str,
+    camera_model: &str,
+) {
     let endpoint = gyroflow_core::distribution::telemetry_api().to_owned();
     if endpoint.is_empty() {
         return;
     }
     let anon_id = telemetry_anon_id();
+    let identity_origin = telemetry_identity_origin();
+    let language = crate::util::system_locale_name();
+    let os = os_description();
 
     let payload = TelemetryEvent {
         anon_id: &anon_id,
@@ -498,6 +719,12 @@ pub fn report_download_event(
         duration_ms,
         bytes,
         error_code,
+        identity_origin: &identity_origin,
+        identity_age_days: telemetry_identity_age_days(),
+        language: &language,
+        os: &os,
+        camera_brand,
+        camera_model,
     };
     let body = match serde_json::to_string(&payload) {
         Ok(body) => body,

@@ -125,6 +125,7 @@ cpp! {{
     #   include <QJniObject>
     #endif
     #include <QDesktopServices>
+    #include <QLocale>
     #include <QStandardPaths>
     #include <QBuffer>
     #include <QImage>
@@ -336,6 +337,20 @@ pub fn open_file_externally(url: QUrl) {
 pub fn get_data_location() -> String {
     cpp!(unsafe [] -> QString as "QString" {
         return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    })
+    .into()
+}
+
+/// System locale name in Qt's form (`zh_CN`, `en_US`, `ru_RU`, ...).
+///
+/// This is deliberately NOT the selected UI translation (`settings["lang"]`),
+/// which holds a translation *file name* constrained to the shipped `.qm` set.
+/// NiYien Tool reports `QLocale::system().name()`, so matching it keeps the two
+/// products' language breakdowns comparable — mixing the two would produce
+/// values that look alike while describing a different population.
+pub fn system_locale_name() -> String {
+    cpp!(unsafe [] -> QString as "QString" {
+        return QLocale::system().name();
     })
     .into()
 }
