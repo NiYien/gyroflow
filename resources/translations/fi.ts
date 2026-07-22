@@ -4718,6 +4718,16 @@ Jos tarvitset lisää tarkkuutta, lisää iteraatioiden määrää alla olevassa
         <translation>Automaattinen synkronointi</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>IMU-tietoja ei ole ladattu. Lataa gyrodata ennen synkronointia.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Ei liike dataa ladattu, ei voida synkronoida.</translation>

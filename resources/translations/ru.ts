@@ -4719,6 +4719,16 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <translation>Автосинхронизация</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Данные IMU не загружены. Загрузите данные гироскопа перед синхронизацией.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ок</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Данные о движении не загружены, синхронизация невозможна.</translation>

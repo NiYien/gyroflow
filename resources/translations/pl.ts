@@ -4719,6 +4719,16 @@ Jeśli potrzebujesz większej dokładności, zwiększ liczbę iteracji w &quot;Z
         <translation>Synchronizuj automatycznie</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Nie wczytano danych IMU. Wczytaj dane żyroskopu przed synchronizacją.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Brak danych o ruchu, nie można synchronizować.</translation>

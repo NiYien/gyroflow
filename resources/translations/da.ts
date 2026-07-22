@@ -4719,6 +4719,16 @@ Hvis du har brug for mere nøjagtighed, skal du øge antallet af iterationer i &
         <translation>Automatisk synkronisering</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Ingen IMU-data er indlæst. Indlæs gyrodata før synkronisering.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Ingen bevægelsesdata indlæst, kan ikke synkroniseres.</translation>

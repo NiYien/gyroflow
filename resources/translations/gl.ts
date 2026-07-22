@@ -4718,6 +4718,16 @@ O &quot;filtro gaussiano&quot; pode crear bordos negros na imaxe.</translation>
         <translation>Sincronización automática</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Non hai datos IMU cargados. Cargue os datos do xiroscopio antes de sincronizar.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Non hai datos de movemento cargados, non se pode sincronizar.</translation>

@@ -4719,6 +4719,16 @@ Pokud potřebujete větší přesnost, zvyšte počet iterací v části „Pokr
         <translation>Automatická synchronizace</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Nejsou načtena žádná data IMU. Před synchronizací načtěte data gyroskopu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Žádná pohybová data nenačtena, nelze synchronizovat.</translation>

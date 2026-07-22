@@ -4715,6 +4715,16 @@ Jika Anda memerlukan akurasi lebih, tingkatkan jumlah iterasi di &quot;Advanced&
         <translation>Sinkronisasi otomatis</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Tidak ada data IMU yang dimuat. Muat data giroskop sebelum menyinkronkan.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Tidak ada data motion yang dimuat, tidak dapat disinkronkan.</translation>

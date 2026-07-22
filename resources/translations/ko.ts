@@ -4718,6 +4718,16 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <translation>자동 동기화</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>IMU 데이터가 로드되지 않았습니다. 동기화하기 전에 자이로 데이터를 로드하세요.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>확인</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>로드된 흔들림 데이터 없음, 동기화 불가.</translation>

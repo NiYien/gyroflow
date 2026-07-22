@@ -1078,6 +1078,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn autosync_can_run_requires_motion_only_for_synchronize() {
+        // Synchronizing against a gyro stream is meaningless without motion, so
+        // that combination is the only one rejected.
+        assert!(!autosync_can_run("synchronize", false));
+        assert!(autosync_can_run("synchronize", true));
+
+        // The other modes never relied on the removed no-motion fallback, so
+        // they stay reachable regardless of motion.
+        assert!(autosync_can_run("estimate_rolling_shutter", false));
+        assert!(autosync_can_run("estimate_rolling_shutter", true));
+        assert!(autosync_can_run("guess_imu_orientation", false));
+        assert!(autosync_can_run("guess_imu_orientation", true));
+    }
+
+    #[test]
     fn synchronize_mode_rejects_motionless_runs_before_decoding() {
         let source = include_str!("autosync.rs");
         let implementation = source

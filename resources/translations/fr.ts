@@ -4718,6 +4718,16 @@ Si vous avez besoin de plus de précision, augmentez le nombre d&apos;itération
         <translation>Synchronization auto</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Aucune donnée IMU n'est chargée. Chargez les données gyroscopiques avant la synchronisation.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Aucune donnée de déplacement chargée, impossible de synchroniser.</translation>

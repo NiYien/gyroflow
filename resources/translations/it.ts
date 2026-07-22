@@ -4716,6 +4716,16 @@ Per una maggiore precisione, aumenta il numero di iterazioni in &quot;Avanzate&q
         <translation>Sincronizzazione automatica</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>Nessun dato IMU caricato. Carica i dati del giroscopio prima di sincronizzare.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>Ok</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Nessun dato di movimento caricato, impossibile sincronizzare.</translation>

@@ -4720,6 +4720,16 @@ If you need more accuracy, increase the number of iterations in &quot;Advanced&q
         <translation>自動同期</translation>
     </message>
     <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
+        <translation>IMU データが読み込まれていません。同期する前にジャイロデータを読み込んでください。</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <source>Ok</source>
+        <translation>OK</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>モーションデータが読み込まれていないため、同期できません。</translation>
