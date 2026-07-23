@@ -4,9 +4,9 @@
 use std::{
     io,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, Ordering::SeqCst},
-        mpsc::{self, Receiver, RecvTimeoutError, Sender},
+        mpsc::{self, Receiver, RecvTimeoutError, Sender, TryRecvError},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -37,6 +37,9 @@ use update_checker::FirmwareUpdateInfo;
 
 const SERIAL_LOOP_TICK: Duration = Duration::from_millis(50);
 const NETWORK_LOOP_TICK: Duration = Duration::from_millis(100);
+// Bounds the OTA fast-pump loop rate on backends whose read returns
+// immediately with no data instead of blocking on a timeout.
+const OTA_PUMP_IDLE_SLEEP: Duration = Duration::from_millis(1);
 const A1_DEVICE_PRODUCT_ID: u8 = 0xA1;
 // The device firmware may leave its CDC TX dead for the first serial session
 // opened after a powered USB re-enumeration; closing and reopening the port
@@ -171,8 +174,16 @@ impl DeviceManager {
             let running = Arc::clone(&running);
             let event_tx = event_tx.clone();
             let shared_state = Arc::clone(&shared_state);
+            let fast_pump = ota_fast_pump_enabled();
             thread::spawn(move || {
-                run_transport_thread(backend, running, transport_rx, event_tx, shared_state)
+                run_transport_thread(
+                    backend,
+                    running,
+                    transport_rx,
+                    event_tx,
+                    shared_state,
+                    fast_pump,
+                )
             })
         };
 
@@ -273,6 +284,7 @@ fn run_transport_thread<B: DeviceTransportBackend>(
     transport_rx: Receiver<TransportCommand>,
     event_tx: Sender<DeviceEvent>,
     shared_state: Arc<Mutex<DeviceSharedState>>,
+    fast_pump_enabled: bool,
 ) {
     let config = DeviceConnectionConfig::default();
     let mut scan_tracker = ScanTracker::default();
@@ -309,7 +321,9 @@ fn run_transport_thread<B: DeviceTransportBackend>(
                 if let Some(active) = session.as_mut() {
                     let mut should_disconnect = false;
                     let mut handshake_given_up = false;
-                    if !poll_device_session(active, &event_tx, &shared_state, now) {
+                    if poll_device_session(active, &event_tx, &shared_state, now)
+                        == SessionPoll::Lost
+                    {
                         should_disconnect = true;
                     } else if active.version_info.is_none() {
                         if now.saturating_duration_since(active.last_version_probe)
@@ -367,6 +381,21 @@ fn run_transport_thread<B: DeviceTransportBackend>(
                             backoff.record_failure(now);
                             reopen_not_before = Some(now + HANDSHAKE_REOPEN_COOLDOWN);
                         }
+                    } else if fast_pump_enabled
+                        && session
+                            .as_ref()
+                            .is_some_and(|active| active.version_info.is_some())
+                        && ota_transfer_pending(&shared_state)
+                        && run_ota_pump_loop(
+                            &mut backend,
+                            &running,
+                            &transport_rx,
+                            &mut session,
+                            &event_tx,
+                            &shared_state,
+                        ) == OtaPumpExit::Stop
+                    {
+                        break;
                     }
                     continue;
                 }
@@ -561,30 +590,38 @@ fn try_open_candidate<B: DeviceTransportBackend>(
     })
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionPoll {
+    // No bytes arrived this pass; the fast pump uses this to pace itself.
+    Idle,
+    Activity,
+    Lost,
+}
+
 fn poll_device_session<P: DeviceTransportStream>(
     session: &mut DeviceSession<P>,
     event_tx: &Sender<DeviceEvent>,
     shared_state: &Arc<Mutex<DeviceSharedState>>,
     now: Instant,
-) -> bool {
+) -> SessionPoll {
     let mut buf = [0u8; 512];
     match session.stream.read(&mut buf) {
         Ok(read) => {
             if read == 0 {
                 session.parser.clear_if_timed_out_at(now);
-                return true;
+                return SessionPoll::Idle;
             }
 
             for frame in session.parser.feed_at(&buf[..read], now) {
                 if !handle_device_frame(session, frame, event_tx, shared_state, now) {
-                    return false;
+                    return SessionPoll::Lost;
                 }
             }
-            true
+            SessionPoll::Activity
         }
         Err(err) if is_timeout_error(&err) => {
             session.parser.clear_if_timed_out_at(now);
-            true
+            SessionPoll::Idle
         }
         Err(err) => {
             if is_detach_error(&err) {
@@ -592,7 +629,7 @@ fn poll_device_session<P: DeviceTransportStream>(
             } else {
                 log::warn!("Serial read failed on {}: {}", session.port_name, err);
             }
-            false
+            SessionPoll::Lost
         }
     }
 }
@@ -647,11 +684,22 @@ fn disconnect_session<P: DeviceTransportStream>(
             .is_some_and(|manager| manager.state() == OtaState::WaitingReconnect)
     };
 
-    if session
-        .take()
-        .is_some_and(|active| active.connected_emitted)
-        && !waiting_reconnect
-    {
+    let Some(active) = session.take() else {
+        return;
+    };
+
+    // Losing the session mid-transfer strands the OTA state machine: no ACK
+    // can ever arrive, so fail it now instead of letting the per-state
+    // timeout fire seconds later (during which the still-live progress
+    // heartbeat would flip the UI back to "updating").
+    if ota_transfer_pending(shared_state) {
+        clear_ota_state(shared_state);
+        let _ = event_tx.send(DeviceEvent::OtaFailed(
+            "The device was disconnected during OTA transfer".to_owned(),
+        ));
+    }
+
+    if active.connected_emitted && !waiting_reconnect {
         let _ = event_tx.send(DeviceEvent::Disconnected);
     }
 }
@@ -901,6 +949,121 @@ fn maybe_emit_ota_progress_force(
     }
 }
 
+// Fast-pump eligibility: only the active transfer states benefit from the
+// read-driven inner loop. WaitingReconnect must stay on the slow outer loop
+// so the port rescan keeps its normal cadence while the device reboots.
+fn is_ota_transfer_state(state: OtaState) -> bool {
+    matches!(
+        state,
+        OtaState::Version
+            | OtaState::VersionWait
+            | OtaState::Begin
+            | OtaState::BeginWait
+            | OtaState::BinInfo
+            | OtaState::BinInfoWait
+            | OtaState::Trans
+            | OtaState::TransWait
+            | OtaState::Verify
+            | OtaState::VerifyWait
+    )
+}
+
+fn ota_transfer_pending(shared_state: &Arc<Mutex<DeviceSharedState>>) -> bool {
+    let shared = shared_state.lock();
+    shared
+        .ota_manager
+        .as_ref()
+        .is_some_and(|manager| is_ota_transfer_state(manager.state()))
+}
+
+fn parse_fast_pump_flag(raw: Option<&str>) -> (bool, &'static str) {
+    match raw.map(|value| value.trim().to_ascii_lowercase()) {
+        None => (true, "default"),
+        Some(value) if matches!(value.as_str(), "0" | "off" | "false" | "no") => (false, "env"),
+        Some(value) if matches!(value.as_str(), "1" | "on" | "true" | "yes") => (true, "env"),
+        Some(_) => (true, "default_invalid"),
+    }
+}
+
+fn ota_fast_pump_enabled() -> bool {
+    static RESOLVED: OnceLock<bool> = OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_NIYIEN_OTA_FAST_PUMP").ok();
+        let (enabled, source) = parse_fast_pump_flag(raw.as_deref());
+        log::info!(target: "update", "ota fast pump resolved: enabled={enabled} source={source}");
+        enabled
+    })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OtaPumpExit {
+    Continue,
+    Stop,
+}
+
+// Read-driven inner loop for active OTA transfers. The outer loop paces every
+// step on SERIAL_LOOP_TICK, which caps the stop-and-wait 128-byte chunks at
+// one per tick (~2.5 KB/s). While a transfer is in flight this loop blocks
+// directly on the serial read (bounded by the port read timeout) so the next
+// chunk goes out as soon as the ACK arrives.
+fn run_ota_pump_loop<B: DeviceTransportBackend>(
+    backend: &mut B,
+    running: &AtomicBool,
+    transport_rx: &Receiver<TransportCommand>,
+    session: &mut Option<DeviceSession<B::Stream>>,
+    event_tx: &Sender<DeviceEvent>,
+    shared_state: &Arc<Mutex<DeviceSharedState>>,
+) -> OtaPumpExit {
+    while running.load(SeqCst) {
+        match transport_rx.try_recv() {
+            Ok(TransportCommand::Stop) => return OtaPumpExit::Stop,
+            Ok(TransportCommand::SyncTime(tz_offset_minutes)) => {
+                // Same semantics as the outer loop: a user-triggered time
+                // sync interleaves with the OTA byte stream.
+                if let Some(active) = session.as_mut() {
+                    if let Err(err) = send_current_time(active, tz_offset_minutes) {
+                        log::warn!("Failed to send SyncTime to {}: {}", active.port_name, err);
+                        disconnect_session(session, event_tx, shared_state);
+                        let _ = event_tx.send(DeviceEvent::TimeSyncResult(false));
+                        return OtaPumpExit::Continue;
+                    }
+                } else {
+                    let _ = event_tx.send(DeviceEvent::TimeSyncResult(false));
+                }
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => return OtaPumpExit::Stop,
+        }
+
+        while let Some(event) = backend.poll_event() {
+            handle_transport_event(event, session, event_tx, shared_state);
+        }
+
+        let now = Instant::now();
+        if !drive_ota_timeout(session, event_tx, shared_state, now) {
+            disconnect_session(session, event_tx, shared_state);
+            return OtaPumpExit::Continue;
+        }
+
+        if !ota_transfer_pending(shared_state) {
+            return OtaPumpExit::Continue;
+        }
+        let Some(active) = session.as_mut() else {
+            return OtaPumpExit::Continue;
+        };
+
+        match poll_device_session(active, event_tx, shared_state, now) {
+            SessionPoll::Lost => {
+                disconnect_session(session, event_tx, shared_state);
+                return OtaPumpExit::Continue;
+            }
+            SessionPoll::Idle => thread::sleep(OTA_PUMP_IDLE_SLEEP),
+            SessionPoll::Activity => {}
+        }
+    }
+    OtaPumpExit::Continue
+}
+
 fn clear_ota_state(shared_state: &Arc<Mutex<DeviceSharedState>>) {
     let mut shared = shared_state.lock();
     shared.prepared_firmware = None;
@@ -922,7 +1085,7 @@ mod tests {
         io,
         sync::{
             Arc,
-            atomic::{AtomicBool, Ordering::SeqCst},
+            atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst},
             mpsc,
         },
         thread,
@@ -1046,14 +1209,18 @@ mod tests {
         }
     }
 
-    fn version_frame() -> Vec<u8> {
+    fn version_frame_with(soft: &str) -> Vec<u8> {
         let mut payload = vec![0xA1];
-        payload.extend_from_slice(b"V1.2.3");
+        payload.extend_from_slice(soft.as_bytes());
         payload.push(0);
         payload.extend_from_slice(b"HW1");
         payload.push(0);
         payload.extend_from_slice(b"SN0000000001");
         protocol::encode(commands::MSG_CMD_VERSION, &payload)
+    }
+
+    fn version_frame() -> Vec<u8> {
+        version_frame_with("V1.2.3")
     }
 
     fn time_frame() -> Vec<u8> {
@@ -1081,7 +1248,7 @@ mod tests {
         let handle = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
             })
         };
 
@@ -1129,7 +1296,7 @@ mod tests {
         let handle = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
             })
         };
 
@@ -1178,7 +1345,7 @@ mod tests {
         let handle = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
             })
         };
 
@@ -1219,7 +1386,7 @@ mod tests {
         let handle = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
             })
         };
 
@@ -1258,7 +1425,7 @@ mod tests {
         let handle = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
             })
         };
 
@@ -1336,7 +1503,7 @@ mod tests {
         let handle = {
             let running = Arc::clone(&running);
             thread::spawn(move || {
-                run_transport_thread(backend, running, command_rx, event_tx, shared_state);
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
             })
         };
 
@@ -1351,5 +1518,410 @@ mod tests {
         running.store(false, SeqCst);
         command_tx.send(TransportCommand::Stop).unwrap();
         handle.join().unwrap();
+    }
+
+    fn ota_version_reply() -> Vec<u8> {
+        // OTA version replies carry no serial bytes (require_serial=false).
+        let mut payload = vec![0xA1];
+        payload.extend_from_slice(b"V1.2.3");
+        payload.push(0);
+        payload.extend_from_slice(b"HW1");
+        payload.push(0);
+        protocol::encode(commands::MSG_CMD_OTA_VERSION, &payload)
+    }
+
+    fn ota_ack_reply(cmd: u8) -> Vec<u8> {
+        protocol::encode(cmd, &[0])
+    }
+
+    fn ota_trans_ack_reply(index: u32) -> Vec<u8> {
+        let mut payload = vec![0u8];
+        payload.extend_from_slice(&index.to_le_bytes());
+        protocol::encode(commands::MSG_CMD_OTA_TRANS, &payload)
+    }
+
+    fn test_firmware(bin_len: usize) -> ota::FirmwarePackage {
+        ota::FirmwarePackage {
+            company_name: "NiYien".into(),
+            product_name: "A1".into(),
+            version: "V1.4.0".into(),
+            magic_num: 0x1234ABCD,
+            crc: 0x89ABCDEF,
+            bin_data: (0..bin_len).map(|i| (i % 251) as u8).collect(),
+            changelog_en: String::new(),
+            changelog_zh: String::new(),
+        }
+    }
+
+    fn armed_ota_shared_state(bin_len: usize) -> Arc<parking_lot::Mutex<DeviceSharedState>> {
+        let firmware = test_firmware(bin_len);
+        Arc::new(parking_lot::Mutex::new(DeviceSharedState {
+            latest_update: None,
+            prepared_firmware: Some(firmware.clone()),
+            ota_manager: Some(OtaManager::new(firmware)),
+            ota_start_pending: true,
+            ota_last_progress_percent: -1,
+            ota_last_progress_at: None,
+        }))
+    }
+
+    fn ota_success_script(chunks: u32) -> Vec<ReadStep> {
+        let mut reads = vec![
+            ReadStep::Data(version_frame()),
+            ReadStep::Data(ota_version_reply()),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_BEGIN)),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_INFO)),
+        ];
+        for index in 0..chunks {
+            reads.push(ReadStep::Data(ota_trans_ack_reply(index)));
+        }
+        reads.push(ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_VERIFY)));
+        // The "rebooted" device reports the freshly flashed version.
+        reads.push(ReadStep::Data(version_frame_with("V1.4.0")));
+        reads
+    }
+
+    fn wait_for_event(
+        event_rx: &mpsc::Receiver<DeviceEvent>,
+        deadline: Duration,
+        mut predicate: impl FnMut(&DeviceEvent) -> bool,
+    ) -> Option<DeviceEvent> {
+        let start = Instant::now();
+        while start.elapsed() < deadline {
+            match event_rx.recv_timeout(Duration::from_millis(100)) {
+                Ok(event) => {
+                    if predicate(&event) {
+                        return Some(event);
+                    }
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => return None,
+            }
+        }
+        None
+    }
+
+    struct CountingBackend {
+        inner: ScriptedBackend,
+        list_calls: Arc<AtomicUsize>,
+    }
+
+    impl DeviceTransportBackend for CountingBackend {
+        type Stream = ScriptedStream;
+
+        fn list_ports(&mut self) -> Result<Vec<DevicePortCandidate>, DeviceTransportError> {
+            self.list_calls.fetch_add(1, SeqCst);
+            self.inner.list_ports()
+        }
+
+        fn open(
+            &mut self,
+            port_name: &str,
+            config: &DeviceConnectionConfig,
+        ) -> Result<Self::Stream, DeviceTransportError> {
+            self.inner.open(port_name, config)
+        }
+    }
+
+    #[test]
+    fn fast_pump_completes_ota_without_tick_pacing() {
+        let chunks = 100u32;
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(
+                ota_success_script(chunks),
+                Arc::clone(&writes),
+            )]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = armed_ota_shared_state(chunks as usize * 128);
+
+        let started = Instant::now();
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
+            })
+        };
+
+        assert!(
+            wait_for_event(&event_rx, Duration::from_secs(10), |event| matches!(
+                event,
+                DeviceEvent::OtaComplete
+            ))
+            .is_some(),
+            "OTA did not complete"
+        );
+        let elapsed = started.elapsed();
+        // Tick-paced transfer would need >= (chunks + protocol steps) * 50ms
+        // (~5.6s here); the read-driven pump must finish far below that.
+        assert!(
+            elapsed < Duration::from_secs(2),
+            "OTA took {elapsed:?}, transfer still tick-paced"
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn fast_pump_stop_command_exits_promptly() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        // ACK only the first chunk, then go silent: the pump idles in
+        // TransWait when the stop command arrives.
+        let reads = vec![
+            ReadStep::Data(version_frame()),
+            ReadStep::Data(ota_version_reply()),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_BEGIN)),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_INFO)),
+            ReadStep::Data(ota_trans_ack_reply(0)),
+        ];
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(reads, Arc::clone(&writes))]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = armed_ota_shared_state(16 * 128);
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
+            })
+        };
+
+        assert!(
+            wait_for_event(&event_rx, Duration::from_secs(5), |event| {
+                matches!(event, DeviceEvent::OtaProgress(p) if *p > 0.0)
+            })
+            .is_some(),
+            "transfer never reported progress"
+        );
+
+        let stop_sent = Instant::now();
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+        assert!(
+            stop_sent.elapsed() < Duration::from_secs(2),
+            "transport thread took {:?} to honor stop during OTA",
+            stop_sent.elapsed()
+        );
+    }
+
+    #[test]
+    fn fast_pump_exits_to_slow_scan_during_waiting_reconnect() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        // Single-chunk firmware: verify + reboot right after the first ACK,
+        // then the stream dies like a real reboot.
+        let reads = vec![
+            ReadStep::Data(version_frame()),
+            ReadStep::Data(ota_version_reply()),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_BEGIN)),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_INFO)),
+            ReadStep::Data(ota_trans_ack_reply(0)),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_VERIFY)),
+            ReadStep::Error(io::ErrorKind::BrokenPipe),
+        ];
+        let list_calls = Arc::new(AtomicUsize::new(0));
+        let backend = CountingBackend {
+            inner: ScriptedBackend {
+                streams: VecDeque::from([ScriptedStream::new(reads, Arc::clone(&writes))]),
+            },
+            list_calls: Arc::clone(&list_calls),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, _event_rx) = mpsc::channel();
+        let shared_state = armed_ota_shared_state(128);
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
+            })
+        };
+
+        // Give the thread time to finish the transfer and sit in
+        // WaitingReconnect with the session gone.
+        thread::sleep(Duration::from_millis(800));
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+
+        let calls = list_calls.load(SeqCst);
+        // Scan cadence is one list_ports per 50ms tick; a hot loop would rack
+        // up hundreds of calls within the sleep window.
+        assert!(calls <= 30, "list_ports called {calls} times, scan loop running hot");
+        assert!(calls >= 2, "scan never resumed after the device rebooted");
+    }
+
+    #[test]
+    fn fast_pump_detach_mid_transfer_converges_to_failure() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        // The device vanishes mid-transfer (detach-class read error while a
+        // chunk is awaiting its ACK). The session must drop immediately and
+        // the stranded OTA must still fail via the TransWait timeout.
+        let reads = vec![
+            ReadStep::Data(version_frame()),
+            ReadStep::Data(ota_version_reply()),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_BEGIN)),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_INFO)),
+            ReadStep::Data(ota_trans_ack_reply(0)),
+            ReadStep::Error(io::ErrorKind::BrokenPipe),
+        ];
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(reads, Arc::clone(&writes))]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = armed_ota_shared_state(16 * 128);
+
+        let started = Instant::now();
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
+            })
+        };
+
+        // Fail-fast: the stranded OTA must fail the moment the session drops,
+        // not seconds later via the TransWait timeout (which would need >3s).
+        let event = wait_for_event(&event_rx, Duration::from_secs(5), |event| {
+            matches!(event, DeviceEvent::OtaFailed(_))
+        });
+        let Some(DeviceEvent::OtaFailed(message)) = event else {
+            panic!("stranded OTA never converged to OtaFailed");
+        };
+        assert!(
+            message.contains("disconnected"),
+            "unexpected failure message: {message}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(2500),
+            "OtaFailed took {:?}, fail-fast on disconnect not working",
+            started.elapsed()
+        );
+        assert!(
+            wait_for_event(&event_rx, Duration::from_secs(2), |event| matches!(
+                event,
+                DeviceEvent::Disconnected
+            ))
+            .is_some(),
+            "mid-transfer detach did not emit Disconnected"
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn fast_pump_trans_timeout_still_fails() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        // Device goes silent after the INFO ack: the first chunk is sent but
+        // never ACKed, so the 3s TransWait timeout must fire from inside the
+        // pump loop.
+        let reads = vec![
+            ReadStep::Data(version_frame()),
+            ReadStep::Data(ota_version_reply()),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_BEGIN)),
+            ReadStep::Data(ota_ack_reply(commands::MSG_CMD_OTA_INFO)),
+        ];
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(reads, Arc::clone(&writes))]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = armed_ota_shared_state(16 * 128);
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
+            })
+        };
+
+        let event = wait_for_event(&event_rx, Duration::from_secs(8), |event| {
+            matches!(event, DeviceEvent::OtaFailed(_))
+        });
+        let Some(DeviceEvent::OtaFailed(message)) = event else {
+            panic!("expected OtaFailed after silent TransWait");
+        };
+        assert!(
+            message.contains("timed out"),
+            "unexpected failure message: {message}"
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn disabled_fast_pump_still_completes_ota_on_tick_path() {
+        let chunks = 2u32;
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(
+                ota_success_script(chunks),
+                Arc::clone(&writes),
+            )]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = armed_ota_shared_state(chunks as usize * 128);
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, false);
+            })
+        };
+
+        assert!(
+            wait_for_event(&event_rx, Duration::from_secs(10), |event| matches!(
+                event,
+                DeviceEvent::OtaComplete
+            ))
+            .is_some(),
+            "tick-driven OTA path did not complete"
+        );
+
+        running.store(false, SeqCst);
+        command_tx.send(TransportCommand::Stop).unwrap();
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn fast_pump_state_gate_covers_transfer_states_only() {
+        use OtaState::*;
+        for state in [
+            Version, VersionWait, Begin, BeginWait, BinInfo, BinInfoWait, Trans, TransWait,
+            Verify, VerifyWait,
+        ] {
+            assert!(is_ota_transfer_state(state), "{state:?} should be pump-eligible");
+        }
+        for state in [Idle, Reboot, WaitingReconnect, Success, Failed] {
+            assert!(!is_ota_transfer_state(state), "{state:?} must stay on the slow loop");
+        }
+    }
+
+    #[test]
+    fn parses_fast_pump_flag() {
+        assert_eq!(parse_fast_pump_flag(None), (true, "default"));
+        for disable in ["0", "off", "false", "no", " OFF ", "No"] {
+            assert_eq!(parse_fast_pump_flag(Some(disable)), (false, "env"), "{disable}");
+        }
+        for enable in ["1", "on", "true", "YES"] {
+            assert_eq!(parse_fast_pump_flag(Some(enable)), (true, "env"), "{enable}");
+        }
+        assert_eq!(parse_fast_pump_flag(Some("weird")), (true, "default_invalid"));
     }
 }
