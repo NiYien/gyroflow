@@ -8335,9 +8335,11 @@ impl RenderQueue {
                 if let Some(stab) = &job.stab {
                     let (
                         created_at,
-                        duration_ms,
+                        resolved,
                         playback_duration_ms,
                         playback_fps,
+                        effective_fps,
+                        fps_scale,
                         frame_count,
                         record_frame_rate,
                     ) = {
@@ -8350,22 +8352,29 @@ impl RenderQueue {
                             // after a finished render) reports None here — fall back to the
                             // Job-level cache like the stab-released branch below does.
                             params.video_created_at.or(job.video_created_at),
-                            video_match_duration_ms(&params, &md),
+                            video_match_duration(&params, &md),
                             params.duration_ms,
                             params.fps,
+                            params.get_scaled_fps(),
+                            params.fps_scale,
                             params.frame_count,
                             md.record_frame_rate,
                         )
                     };
+                    let duration_ms = resolved.duration_ms;
                     ::log::info!(
-                        "[batch_match T20] video[{}] job_id={}, created_at={:?}, playback_duration={:.1}ms, match_duration={:.1}ms, playback_fps={:.3}, record_fps={:?}, frames={}, file={}",
+                        "[batch_match T20] video[{}] job_id={}, created_at={:?}, playback_duration={:.1}ms, match_duration={:.1}ms, duration_source={}, playback_fps={:.3}, effective_fps={:.3}, fps_scale={:?}, record_fps={:?}, metadata_would_differ={}, frames={}, file={}",
                         vi,
                         job_id,
                         created_at,
                         playback_duration_ms,
                         duration_ms,
+                        resolved.source.as_str(),
                         playback_fps,
+                        effective_fps,
+                        fps_scale,
                         record_frame_rate,
+                        resolved.metadata_would_differ,
                         frame_count,
                         filesystem::get_filename(&stab.input_file.read().url)
                     );
@@ -9987,9 +9996,21 @@ impl RenderQueue {
 
             let t_sync = std::time::Instant::now();
             apply_items.par_iter().for_each(|item| {
-                let (duration_s, fps) = {
+                let (duration_s, playback_fps, effective_fps, fps_scale, every_nth_frame) = {
                     let params = item.stab.params.read();
-                    (params.duration_ms / 1000.0, params.fps)
+                    (
+                        // max_sync_points intentionally stays on the UNSCALED
+                        // playback duration while the stride below moves to the
+                        // effective rate. Do not "unify" the two: playback
+                        // duration hands overcranked clips *more* sync points,
+                        // which is the conservative direction; switching it to
+                        // the physical duration would only shrink them.
+                        params.duration_ms / 1000.0,
+                        params.fps,
+                        params.get_scaled_fps(),
+                        params.fps_scale,
+                        batch_sync_every_nth_frame(&params),
+                    )
                 };
                 let max_sync_points = if duration_s > 30.0 * 60.0 {
                     5
@@ -9998,7 +10019,6 @@ impl RenderQueue {
                 } else {
                     2
                 };
-                let every_nth_frame = ((fps / 49.0).floor() as i64).max(1);
 
                 item.stab.gyro.write().integration_method = 1; // Complementary
 
@@ -10010,7 +10030,7 @@ impl RenderQueue {
                 let (init_offset_s, search_size_s) =
                     batch_match_sync_overrides(item.init_offset_ms);
                 ::log::info!(
-                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} duration_s={:.3} fps={:.3} max_sync_points={} every_nth_frame={}",
+                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} duration_s={:.3} playback_fps={:.3} effective_fps={:.3} fps_scale={:?} max_sync_points={} every_nth_frame={}",
                     item.job_id,
                     item.render_options.input_filename,
                     filesystem::get_filename(&item.gyro_path),
@@ -10020,7 +10040,9 @@ impl RenderQueue {
                     init_offset_s,
                     search_size_s,
                     duration_s,
-                    fps,
+                    playback_fps,
+                    effective_fps,
+                    fps_scale,
                     max_sync_points,
                     every_nth_frame
                 );
@@ -10083,34 +10105,15 @@ impl RenderQueue {
                     // overwrite lens.sync_settings via update_sync_settings.
                     let (init_offset_s, search_size_s) =
                         batch_match_sync_overrides(item.init_offset_ms);
-                    if let Ok(serde_json::Value::Object(mut ad_obj)) =
-                        serde_json::from_str::<serde_json::Value>(&item.additional_data)
-                    {
-                        let sync_entry = ad_obj
-                            .entry("synchronization".to_string())
-                            .or_insert_with(|| serde_json::json!({}));
-                        if let Some(sync_obj) = sync_entry.as_object_mut() {
-                            sync_obj.insert(
-                                "initial_offset".into(),
-                                serde_json::json!(init_offset_s),
-                            );
-                            sync_obj.insert(
-                                "search_size".into(),
-                                serde_json::json!(search_size_s),
-                            );
-                            sync_obj.insert(
-                                "offset_is_anchor".into(),
-                                serde_json::json!(true),
-                            );
-                            sync_obj.insert(
-                                "calc_initial_fast".into(),
-                                serde_json::json!(false),
-                            );
-                        }
-                        if let Ok(s) = serde_json::to_string(&serde_json::Value::Object(ad_obj))
-                        {
-                            item.additional_data = s;
-                        }
+                    let every_nth_frame =
+                        batch_sync_every_nth_frame(&item.stab.params.read());
+                    if let Some(patched) = patch_additional_data_sync_block(
+                        &item.additional_data,
+                        init_offset_s,
+                        search_size_s,
+                        every_nth_frame,
+                    ) {
+                        item.additional_data = patched;
                     }
 
                     let additional_data =
@@ -11229,10 +11232,19 @@ impl RenderQueue {
                 // batch-match-shaped block (render_queue.rs:8317 region) —
                 // this is the store the later batch-sync refine parses, and
                 // the restored original may lack max_sync_points/do_autosync.
+                // The resolved stride is carried over to the additional_data
+                // mirror below so the two can never disagree.
+                let mut deep_match_every_nth_frame = 1i64;
                 if let Some(ref stab) = stab {
-                    let (duration_s, fps) = {
+                    // Same split as the initial-apply site: max_sync_points on
+                    // the unscaled playback duration, stride on the effective
+                    // recording rate via the shared helper.
+                    let (duration_s, every_nth_frame) = {
                         let params = stab.params.read();
-                        (params.duration_ms / 1000.0, params.fps)
+                        (
+                            params.duration_ms / 1000.0,
+                            batch_sync_every_nth_frame(&params),
+                        )
                     };
                     let max_sync_points = if duration_s > 30.0 * 60.0 {
                         5
@@ -11241,7 +11253,7 @@ impl RenderQueue {
                     } else {
                         2
                     };
-                    let every_nth_frame = ((fps / 49.0).floor() as i64).max(1);
+                    deep_match_every_nth_frame = every_nth_frame;
                     stab.lens.write().sync_settings = Some(serde_json::json!({
                         "do_autosync": true,
                         "max_sync_points": max_sync_points,
@@ -11261,26 +11273,13 @@ impl RenderQueue {
                 // batch-match injection at render_queue.rs:8371-8395) so the
                 // exported .gyroflow stays consistent with sync_settings.
                 if let Some(job) = self.jobs.get_mut(&job_id) {
-                    if let Ok(serde_json::Value::Object(mut ad_obj)) =
-                        serde_json::from_str::<serde_json::Value>(&job.additional_data)
-                    {
-                        let sync_entry = ad_obj
-                            .entry("synchronization".to_string())
-                            .or_insert_with(|| serde_json::json!({}));
-                        if let Some(sync_obj) = sync_entry.as_object_mut() {
-                            sync_obj.insert(
-                                "initial_offset".into(),
-                                serde_json::json!(offset_ms / 1000.0),
-                            );
-                            sync_obj.insert("search_size".into(), serde_json::json!(3.0));
-                            sync_obj.insert("offset_is_anchor".into(), serde_json::json!(true));
-                            sync_obj
-                                .insert("calc_initial_fast".into(), serde_json::json!(false));
-                        }
-                        if let Ok(s) = serde_json::to_string(&serde_json::Value::Object(ad_obj))
-                        {
-                            job.additional_data = s;
-                        }
+                    if let Some(patched) = patch_additional_data_sync_block(
+                        &job.additional_data,
+                        offset_ms / 1000.0,
+                        3.0,
+                        deep_match_every_nth_frame,
+                    ) {
+                        job.additional_data = patched;
                     }
                 }
                 // Learn the pool-wide clock shift (gyro clock minus video
@@ -12101,35 +12100,191 @@ fn sync_readout_params_from_lens(stab: &StabilizationManager) {
     }
 }
 
-fn video_match_duration_ms(
+// [batch-match-high-fps-duration-precedence] Where the physical recording
+// duration came from. The labels are grep-stable: they appear verbatim as
+// `duration_source=` in the `[batch_match T20]` line and feedback triage
+// greps for them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DurationSource {
+    EffectiveFpsScale,
+    RecordFrameRate,
+    PlaybackFallback,
+}
+
+impl DurationSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            DurationSource::EffectiveFpsScale => "effective_fps_scale",
+            DurationSource::RecordFrameRate => "record_frame_rate",
+            DurationSource::PlaybackFallback => "playback_fallback",
+        }
+    }
+}
+
+struct MatchDuration {
+    duration_ms: f64,
+    source: DurationSource,
+    /// Diagnostic only — never gates anything.
+    ///
+    /// True when the metadata-derived duration and the unscaled playback
+    /// duration disagree by more than 1ms. That difference *is* the known
+    /// residual: a job without a usable `fps_scale` resolves through
+    /// `record_frame_rate` before it is matched and through the playback
+    /// fallback afterwards (apply_match replaces `gyro.file_metadata` with the
+    /// external .bin's), so this flag measures exactly how far rematching such
+    /// a job would move its duration. Lets a feedback bundle settle whether
+    /// that material class exists at all before anyone pays for a snapshot.
+    metadata_would_differ: bool,
+}
+
+/// Duration implied by `record_frame_rate`, or `None` when that rate or the
+/// derived value is unusable.
+fn metadata_derived_duration_ms(
+    params: &core::stabilization_params::StabilizationParams,
+    record_fps: f64,
+) -> Option<f64> {
+    if !record_fps.is_finite() || record_fps <= 0.0 {
+        return None;
+    }
+    let duration_ms = if params.frame_count > 0 {
+        params.frame_count as f64 * 1000.0 / record_fps
+    } else if params.duration_ms.is_finite()
+        && params.duration_ms > 0.0
+        && params.fps.is_finite()
+        && params.fps > 0.0
+    {
+        params.duration_ms * params.fps / record_fps
+    } else {
+        return None;
+    };
+
+    (duration_ms.is_finite() && duration_ms > 0.0).then_some(duration_ms)
+}
+
+/// Resolve a video's physical recording duration for batch gyro matching.
+///
+/// Priority is fixed: an effective `fps_scale` wins over
+/// `FileMetadata::record_frame_rate`, which wins over the raw playback
+/// duration. The scale is the timebase the rest of the pipeline already runs
+/// on (sync, stabilization, keyframes), whereas `record_frame_rate` is gyro
+/// state that `apply_match` swaps for the external .bin's metadata — letting
+/// the latter win made "already matched" and "not yet matched" jobs in one
+/// queue disagree about the same clip's length.
+///
+/// The metadata tier is kept, not deleted: `apply_effective_frame_rate`'s 1.3
+/// gate deliberately leaves `fps_scale` unset for mild overcrank (e.g. 30->24),
+/// where `record_frame_rate` is the only physical-duration source there is.
+fn video_match_duration(
     params: &core::stabilization_params::StabilizationParams,
     md: &core::gyro_source::FileMetadata,
-) -> f64 {
-    let fallback_duration_ms = params.get_scaled_duration_ms();
+) -> MatchDuration {
+    let metadata_ms = md
+        .record_frame_rate
+        .and_then(|record_fps| metadata_derived_duration_ms(params, record_fps));
 
-    if let Some(record_fps) = md.record_frame_rate {
-        if record_fps.is_finite() && record_fps > 0.0 {
-            let duration_ms = if params.frame_count > 0 {
-                Some(params.frame_count as f64 * 1000.0 / record_fps)
-            } else if params.duration_ms.is_finite()
-                && params.duration_ms > 0.0
-                && params.fps.is_finite()
-                && params.fps > 0.0
-            {
-                Some(params.duration_ms * params.fps / record_fps)
-            } else {
-                None
-            };
+    let metadata_would_differ = metadata_ms
+        .map(|ms| (ms - params.duration_ms).abs() > 1.0)
+        .unwrap_or(false);
 
-            if let Some(duration_ms) = duration_ms {
-                if duration_ms.is_finite() && duration_ms > 0.0 {
-                    return duration_ms;
-                }
+    // Tier 1 — the job's effective timebase.
+    if let Some(scale) = params.fps_scale {
+        if scale.is_finite() && scale > 0.0 {
+            let duration_ms = params.get_scaled_duration_ms();
+            if duration_ms.is_finite() && duration_ms > 0.0 {
+                return MatchDuration {
+                    duration_ms,
+                    source: DurationSource::EffectiveFpsScale,
+                    metadata_would_differ,
+                };
             }
         }
     }
 
-    fallback_duration_ms
+    // Tier 2 — camera-declared recording rate (mild overcrank below the gate).
+    if let Some(duration_ms) = metadata_ms {
+        return MatchDuration {
+            duration_ms,
+            source: DurationSource::RecordFrameRate,
+            metadata_would_differ,
+        };
+    }
+
+    // Tier 3 — unscaled playback duration. Deliberately not
+    // `get_scaled_duration_ms()`: an invalid scale must never reach a division.
+    MatchDuration {
+        duration_ms: params.duration_ms,
+        source: DurationSource::PlaybackFallback,
+        metadata_would_differ,
+    }
+}
+
+// [batch-match-high-fps-duration-precedence] Optical-flow stride for
+// batch-generated sync params. The ~49fps sampling policy itself is unchanged;
+// only its input is corrected.
+//
+// `every_nth_frame` counts *file* frames, and the consumer converts it back to
+// time using the effective recording rate — `synchronization/mod.rs` computes
+// `rotvec = rot.scaled_axis() * (scaled_fps / every_nth_frame)`, i.e. adjacent
+// sampled frames are `every_nth / (fps * fps_scale)` seconds apart. So the rate
+// that belongs in the policy is the effective one, not the container's. A
+// native 100fps clip already resolved to 2 (`floor(100/49)`); a 100->25
+// transcoded overcrank resolved to 1 despite being physically identical. This
+// makes them agree.
+//
+// Downstream MUST NOT reapply `fps_scale` to the result — this is the final
+// stride, consumed as-is by decoder sampling and progress budgeting.
+fn batch_sync_every_nth_frame(
+    params: &core::stabilization_params::StabilizationParams,
+) -> i64 {
+    let effective_fps = params.get_scaled_fps();
+    let fps = if effective_fps.is_finite() && effective_fps > 0.0 {
+        effective_fps
+    } else if params.fps.is_finite() && params.fps > 0.0 {
+        // Historic/edge jobs with a broken scale still get the pre-change
+        // policy rather than a nonsensical stride.
+        params.fps
+    } else {
+        return 1;
+    };
+    ((fps / 49.0).floor() as i64).max(1)
+}
+
+// [batch-match-high-fps-duration-precedence] Merge the per-clip batch-sync
+// block into a job's `additional_data` JSON. Both write paths (initial batch
+// apply and deep-match acceptance) go through here so the persisted block can
+// never drift from `lens.sync_settings`.
+//
+// `every_nth_frame` matters here as much as the offset does: `export_gyroflow_data`
+// does not emit a `synchronization` block of its own, it merges this one
+// (`core/lib.rs` -> `merge_json(additional_data)`), and reload merges the
+// project block back over `lens.sync_settings` with overwrite semantics. Leave
+// the key out and the UI-global value (typically 1) silently replaces the
+// resolved stride on the first project round-trip.
+//
+// Returns `None` when `additional_data` is not a JSON object; callers keep
+// their existing value in that case, as before.
+fn patch_additional_data_sync_block(
+    additional_data: &str,
+    initial_offset_s: f64,
+    search_size_s: f64,
+    every_nth_frame: i64,
+) -> Option<String> {
+    let Ok(serde_json::Value::Object(mut ad_obj)) =
+        serde_json::from_str::<serde_json::Value>(additional_data)
+    else {
+        return None;
+    };
+    let sync_entry = ad_obj
+        .entry("synchronization".to_string())
+        .or_insert_with(|| serde_json::json!({}));
+    if let Some(sync_obj) = sync_entry.as_object_mut() {
+        sync_obj.insert("initial_offset".into(), serde_json::json!(initial_offset_s));
+        sync_obj.insert("search_size".into(), serde_json::json!(search_size_s));
+        sync_obj.insert("offset_is_anchor".into(), serde_json::json!(true));
+        sync_obj.insert("calc_initial_fast".into(), serde_json::json!(false));
+        sync_obj.insert("every_nth_frame".into(), serde_json::json!(every_nth_frame));
+    }
+    serde_json::to_string(&serde_json::Value::Object(ad_obj)).ok()
 }
 
 fn normalize_time_range_ms(range: Option<(f64, f64)>) -> Option<(f64, f64)> {
@@ -13555,6 +13710,406 @@ fn saf_crm_candidate_keep(filename_lower: &str, exts_lower: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // batch-match-high-fps-duration-precedence: physical recording duration.
+    // `fps_scale` is the timeline truth the rest of the pipeline already runs
+    // on; `FileMetadata::record_frame_rate` is gyro state that apply_match
+    // replaces with the external .bin's (-> None). Resolution must therefore
+    // prefer the scale, or "already matched" and "not yet matched" jobs in the
+    // same queue disagree about how long the same clip is.
+    fn duration_params(
+        duration_ms: f64,
+        fps: f64,
+        frame_count: usize,
+        fps_scale: Option<f64>,
+    ) -> core::stabilization_params::StabilizationParams {
+        let mut params = core::stabilization_params::StabilizationParams::default();
+        params.duration_ms = duration_ms;
+        params.fps = fps;
+        params.frame_count = frame_count;
+        params.fps_scale = fps_scale;
+        params
+    }
+
+    fn md_with_record_fps(record_fps: Option<f64>) -> FileMetadata {
+        FileMetadata {
+            record_frame_rate: record_fps,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn match_duration_prefers_effective_scale_over_playback_rate_metadata() {
+        // Feedback 20260725-2875acbf: the camera wrote record_frame_rate=25,
+        // identical to the playback rate (it never declared the overcrank);
+        // 100fps was typed into the batch panel and became fps_scale=4. The
+        // metadata branch resolves 3972 * 1000 / 25 = 158880ms, i.e. exactly
+        // the playback duration - a zero-information value overwriting the
+        // only meaningful one.
+        let params = duration_params(158_880.0, 25.0, 3972, Some(4.0));
+        let resolved = video_match_duration(&params, &md_with_record_fps(Some(25.0)));
+        assert_eq!(resolved.duration_ms, 39_720.0);
+        assert_eq!(resolved.source, DurationSource::EffectiveFpsScale);
+
+        let params = duration_params(199_480.0, 25.0, 4987, Some(4.0));
+        let resolved = video_match_duration(&params, &md_with_record_fps(Some(25.0)));
+        assert_eq!(resolved.duration_ms, 49_870.0);
+        assert_eq!(resolved.source, DurationSource::EffectiveFpsScale);
+    }
+
+    #[test]
+    fn match_duration_is_invariant_across_gyro_metadata_replacement() {
+        // apply_match does `gyro.file_metadata = Default::default()` then
+        // load_from_telemetry(.bin) (render_queue.rs ~9756), so record_frame_rate
+        // disappears after the first successful match. With a valid fps_scale the
+        // resolved duration must not notice.
+        let params = duration_params(158_880.0, 25.0, 3972, Some(4.0));
+        let before = video_match_duration(&params, &md_with_record_fps(Some(25.0)));
+        let after = video_match_duration(&params, &md_with_record_fps(None));
+        assert_eq!(before.duration_ms, after.duration_ms);
+        assert_eq!(before.source, after.source);
+        assert_eq!(after.source, DurationSource::EffectiveFpsScale);
+    }
+
+    #[test]
+    fn match_duration_keeps_metadata_fallback_without_a_scale() {
+        // 30fps recorded / 24fps container: apply_effective_frame_rate's 1.3
+        // gate deliberately leaves fps_scale None, so record_frame_rate is the
+        // only source of the physical duration here.
+        let params = duration_params(50_000.0, 24.0, 1200, None);
+        let resolved = video_match_duration(&params, &md_with_record_fps(Some(30.0)));
+        assert_eq!(resolved.duration_ms, 40_000.0);
+        assert_eq!(resolved.source, DurationSource::RecordFrameRate);
+    }
+
+    #[test]
+    fn match_duration_metadata_branch_uses_playback_rate_when_frame_count_is_zero() {
+        let params = duration_params(50_000.0, 24.0, 0, None);
+        let resolved = video_match_duration(&params, &md_with_record_fps(Some(30.0)));
+        assert_eq!(resolved.duration_ms, 40_000.0);
+        assert_eq!(resolved.source, DurationSource::RecordFrameRate);
+    }
+
+    #[test]
+    fn match_duration_falls_back_to_playback_duration() {
+        let params = duration_params(50_000.0, 24.0, 1200, None);
+        let resolved = video_match_duration(&params, &md_with_record_fps(None));
+        assert_eq!(resolved.duration_ms, 50_000.0);
+        assert_eq!(resolved.source, DurationSource::PlaybackFallback);
+    }
+
+    #[test]
+    fn match_duration_never_divides_by_an_invalid_scale() {
+        // A non-finite or non-positive scale must not reach the division; the
+        // resolver sinks to the metadata tier (or the playback tier) instead.
+        for bad_scale in [0.0, -4.0, f64::NAN, f64::INFINITY] {
+            let params = duration_params(50_000.0, 24.0, 1200, Some(bad_scale));
+
+            let with_md = video_match_duration(&params, &md_with_record_fps(Some(30.0)));
+            assert_eq!(with_md.duration_ms, 40_000.0, "scale {bad_scale}");
+            assert_eq!(with_md.source, DurationSource::RecordFrameRate, "scale {bad_scale}");
+
+            let without_md = video_match_duration(&params, &md_with_record_fps(None));
+            assert_eq!(without_md.duration_ms, 50_000.0, "scale {bad_scale}");
+            assert_eq!(
+                without_md.source,
+                DurationSource::PlaybackFallback,
+                "scale {bad_scale}"
+            );
+        }
+    }
+
+    #[test]
+    fn match_duration_ignores_an_invalid_record_frame_rate() {
+        for bad_fps in [0.0, -30.0, f64::NAN, f64::INFINITY] {
+            let params = duration_params(50_000.0, 24.0, 1200, None);
+            let resolved = video_match_duration(&params, &md_with_record_fps(Some(bad_fps)));
+            assert_eq!(resolved.duration_ms, 50_000.0, "record_fps {bad_fps}");
+            assert_eq!(
+                resolved.source,
+                DurationSource::PlaybackFallback,
+                "record_fps {bad_fps}"
+            );
+        }
+    }
+
+    #[test]
+    fn metadata_would_differ_flags_only_the_residual_material_class() {
+        // Diagnostic probe. It measures the residual itself: how far a job
+        // *without* a usable fps_scale would drift once apply_match drops
+        // record_frame_rate. Camera reporting the playback rate (the feedback
+        // case) is not part of that class, regardless of fps_scale.
+        let feedback = duration_params(158_880.0, 25.0, 3972, Some(4.0));
+        assert!(!video_match_duration(&feedback, &md_with_record_fps(Some(25.0))).metadata_would_differ);
+
+        // 30 -> 24: metadata says 40000ms, playback says 50000ms. Rematching
+        // this job after a successful match would stretch it by 25%.
+        let overcrank_below_gate = duration_params(50_000.0, 24.0, 1200, None);
+        assert!(
+            video_match_duration(&overcrank_below_gate, &md_with_record_fps(Some(30.0)))
+                .metadata_would_differ
+        );
+
+        // No metadata at all -> nothing to disagree with.
+        assert!(!video_match_duration(&overcrank_below_gate, &md_with_record_fps(None)).metadata_would_differ);
+    }
+
+    #[test]
+    fn batch_sync_stride_uses_the_effective_recording_rate() {
+        // 25fps container carrying 100fps of real motion: adjacent file frames
+        // are 10ms apart, so the ~49fps policy wants every 2nd frame.
+        let overcranked = duration_params(158_880.0, 25.0, 3972, Some(4.0));
+        assert_eq!(batch_sync_every_nth_frame(&overcranked), 2);
+
+        // Ordinary 25fps material is untouched.
+        let ordinary = duration_params(158_880.0, 25.0, 3972, None);
+        assert_eq!(batch_sync_every_nth_frame(&ordinary), 1);
+    }
+
+    #[test]
+    fn batch_sync_stride_agrees_between_native_and_transcoded_high_fps() {
+        // Physically identical material, two containers. Before the fix the
+        // native clip resolved to 2 and the transcoded overcrank to 1.
+        let native = duration_params(39_720.0, 100.0, 3972, None);
+        let transcoded = duration_params(158_880.0, 25.0, 3972, Some(4.0));
+        assert_eq!(
+            batch_sync_every_nth_frame(&native),
+            batch_sync_every_nth_frame(&transcoded)
+        );
+        assert_eq!(batch_sync_every_nth_frame(&native), 2);
+    }
+
+    #[test]
+    fn batch_sync_stride_falls_back_safely() {
+        // Broken scale -> fall back to the playback rate (pre-change policy).
+        for bad_scale in [0.0, -4.0, f64::NAN, f64::INFINITY] {
+            let params = duration_params(158_880.0, 245.0, 3972, Some(bad_scale));
+            assert_eq!(
+                batch_sync_every_nth_frame(&params),
+                5,
+                "scale {bad_scale} should fall back to the 245fps playback rate"
+            );
+        }
+
+        // Both rates unusable -> stride 1, never 0 or negative.
+        for bad_fps in [0.0, -25.0, f64::NAN] {
+            let params = duration_params(158_880.0, bad_fps, 3972, None);
+            assert_eq!(batch_sync_every_nth_frame(&params), 1, "fps {bad_fps}");
+        }
+    }
+
+    #[test]
+    fn batch_sync_stride_is_never_below_one() {
+        // floor(25/49) == 0; the policy must clamp.
+        let slow = duration_params(158_880.0, 25.0, 3972, Some(1.5));
+        assert_eq!(batch_sync_every_nth_frame(&slow), 1);
+    }
+
+    #[test]
+    fn additional_data_sync_patch_carries_the_resolved_stride() {
+        // Both write paths share this helper, so the persisted block cannot
+        // drift from lens.sync_settings.
+        let patched = patch_additional_data_sync_block("{}", -12.5, 3.0, 2).expect("patched");
+        let v: serde_json::Value = serde_json::from_str(&patched).unwrap();
+        assert_eq!(v["synchronization"]["every_nth_frame"].as_i64(), Some(2));
+        assert_eq!(v["synchronization"]["initial_offset"].as_f64(), Some(-12.5));
+        assert_eq!(v["synchronization"]["search_size"].as_f64(), Some(3.0));
+        assert_eq!(v["synchronization"]["offset_is_anchor"].as_bool(), Some(true));
+        assert_eq!(
+            v["synchronization"]["calc_initial_fast"].as_bool(),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn additional_data_sync_patch_overwrites_a_stale_ui_global_stride() {
+        // This is the round-trip guard: export merges this block over the
+        // UI-global synchronization, and reload merges the project block back
+        // over lens.sync_settings. A stale every_nth_frame=1 sitting in
+        // additional_data would silently undo the resolved stride.
+        let existing = serde_json::json!({
+            "synchronization": { "every_nth_frame": 1, "do_autosync": true },
+            "output": { "codec": "H.264" }
+        })
+        .to_string();
+        let patched = patch_additional_data_sync_block(&existing, -12.5, 3.0, 2).expect("patched");
+        let v: serde_json::Value = serde_json::from_str(&patched).unwrap();
+        assert_eq!(v["synchronization"]["every_nth_frame"].as_i64(), Some(2));
+        // Untouched neighbours survive.
+        assert_eq!(v["synchronization"]["do_autosync"].as_bool(), Some(true));
+        assert_eq!(v["output"]["codec"].as_str(), Some("H.264"));
+    }
+
+    #[test]
+    fn stride_survives_the_export_merge() {
+        // export_gyroflow_data emits no `synchronization` block of its own —
+        // the block in the exported project comes from
+        // merge_json(additional_data), and merge_json overwrites scalars. This
+        // pins the leg of the round-trip that used to drop the stride: the UI
+        // global (every_nth_frame=1, from Synchronization.qml's getSettings)
+        // must not survive into the exported project.
+        let ui_global = serde_json::json!({
+            "synchronization": { "every_nth_frame": 1, "initial_offset": -1.0 }
+        })
+        .to_string();
+        let patched = patch_additional_data_sync_block(&ui_global, -12.5, 3.0, 2).expect("patched");
+
+        let mut exported = serde_json::json!({ "stabilization": {}, "video_info": {} });
+        core::util::merge_json(
+            &mut exported,
+            &serde_json::from_str::<serde_json::Value>(&patched).unwrap(),
+        );
+
+        assert_eq!(
+            exported["synchronization"]["every_nth_frame"].as_i64(),
+            Some(2)
+        );
+        assert_eq!(
+            exported["synchronization"]["initial_offset"].as_f64(),
+            Some(-12.5)
+        );
+    }
+
+    #[test]
+    fn additional_data_sync_patch_rejects_non_objects() {
+        assert!(patch_additional_data_sync_block("[]", 0.0, 3.0, 1).is_none());
+        assert!(patch_additional_data_sync_block("not json", 0.0, 3.0, 1).is_none());
+    }
+
+    #[test]
+    fn batch_sync_max_sync_points_stays_on_playback_duration() {
+        // Deliberate asymmetry (design Decision 6): duration_s and the stride
+        // are read from the same params, but only the stride moves to the
+        // effective timebase. A 12-minute playback / fps_scale=4 job (3 physical
+        // minutes) must keep 4 sync points, not drop to 2.
+        let params = duration_params(720_000.0, 25.0, 18_000, Some(4.0));
+        let duration_s = params.duration_ms / 1000.0;
+        let max_sync_points = if duration_s > 30.0 * 60.0 {
+            5
+        } else if duration_s > 10.0 * 60.0 {
+            4
+        } else {
+            2
+        };
+        assert_eq!(max_sync_points, 4);
+
+        // Had it been switched to the physical duration it would have been 2 —
+        // this asserts the direction of the regression we are guarding against.
+        let physical_s = params.get_scaled_duration_ms() / 1000.0;
+        assert!(physical_s <= 10.0 * 60.0);
+
+        // The stride, by contrast, does follow the effective rate.
+        assert_eq!(batch_sync_every_nth_frame(&params), 2);
+    }
+
+    #[test]
+    fn batch_match_diagnostic_schema_is_stable() {
+        // Feedback triage greps these verbatim; a rename silently breaks the
+        // ability to replay a bundle's coverage-gate and stride decisions.
+        assert_eq!(
+            DurationSource::EffectiveFpsScale.as_str(),
+            "effective_fps_scale"
+        );
+        assert_eq!(DurationSource::RecordFrameRate.as_str(), "record_frame_rate");
+        assert_eq!(DurationSource::PlaybackFallback.as_str(), "playback_fallback");
+
+        let src = include_str!("render_queue.rs");
+        for field in [
+            "duration_source={}",
+            "effective_fps={:.3}",
+            "metadata_would_differ={}",
+        ] {
+            assert!(
+                src.contains(field),
+                "[batch_match T20] lost the `{field}` field"
+            );
+        }
+        for field in ["playback_fps={:.3}", "every_nth_frame={}"] {
+            assert!(
+                src.contains(field),
+                "sync_override diagnostic lost the `{field}` field"
+            );
+        }
+    }
+
+    fn stab_for_stride_budget(
+        fps_scale: Option<f64>,
+        every_nth_frame: i64,
+    ) -> Arc<StabilizationManager> {
+        let stab = Arc::new(StabilizationManager::default());
+        {
+            let mut params = stab.params.write();
+            params.frame_count = 3972;
+            params.duration_ms = 158_880.0;
+            params.fps = 25.0;
+            params.fps_scale = fps_scale;
+        }
+        stab.input_file.write().url = "file:///stride-budget.mp4".to_owned();
+        stab.lens.write().sync_settings = Some(serde_json::json!({
+            "do_autosync": true,
+            "max_sync_points": 2,
+            "search_size": 5.0,
+            "time_per_syncpoint": 2.5,
+            "every_nth_frame": every_nth_frame,
+            "initial_offset": 0.0,
+            "pose_method": 0,
+            "of_method": 2,
+            "offset_method": 2
+        }));
+        stab
+    }
+
+    #[test]
+    fn progress_budget_consumes_the_final_stride_exactly_once() {
+        // time_per_syncpoint is already scaled by fps_scale upstream, so the
+        // per-syncpoint window is 2.5s * 4 = 10s of playback = 250 frames;
+        // 2 syncpoints = 500 decoded frames. The stride must divide that once.
+        let stride_one = RenderQueue::estimated_sync_frames_for_stab(&stab_for_stride_budget(
+            Some(4.0),
+            1,
+        ));
+        assert_eq!(stride_one, 500);
+
+        let stride_two = RenderQueue::estimated_sync_frames_for_stab(&stab_for_stride_budget(
+            Some(4.0),
+            2,
+        ));
+        assert_eq!(
+            stride_two, 250,
+            "budget must divide by the stride once — not by fps_scale again (125) \
+             nor by stride*fps_scale (62)"
+        );
+        assert_eq!(stride_two * 2, stride_one);
+    }
+
+    #[test]
+    fn decoder_sampling_rule_consumes_the_final_stride_exactly_once() {
+        // The real sampling gate lives inside an ffmpeg on_frame closure and
+        // cannot be unit-tested end-to-end; this pins the rule it applies
+        // (`abs_frame_no % every_nth_frame == 0`). fps_scale must not appear.
+        let every_nth_frame: usize = 2;
+        let sampled: Vec<usize> = (0..10usize)
+            .filter(|abs_frame_no| abs_frame_no % every_nth_frame == 0)
+            .collect();
+        assert_eq!(sampled, vec![0, 2, 4, 6, 8]);
+        assert_eq!(sampled.len(), 10 / every_nth_frame);
+    }
+
+    #[test]
+    fn batch_sync_stride_formula_has_a_single_source() {
+        // Path-consistency guard: the initial-apply and deep-match-accepted
+        // write sites must both call the shared helper. If someone re-inlines
+        // the sampling-rate divisor at a write site, the two paths can drift
+        // apart again. The needle is built at runtime so this test does not
+        // match its own source text.
+        let src = include_str!("render_queue.rs");
+        let needle = format!("/ {:.1}", 49.0);
+        let inline_uses = src.matches(needle.as_str()).count();
+        assert_eq!(
+            inline_uses, 1,
+            "the sampling-rate divisor must live only in batch_sync_every_nth_frame"
+        );
+    }
 
     // android-saf-folder-import: SAF walker traversal + filename predicates.
     fn saf_entry(filename: &str, url: &str, is_dir: bool) -> SafFolderEntry {
