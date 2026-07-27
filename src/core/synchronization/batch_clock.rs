@@ -62,6 +62,41 @@ pub const DRIFT_TOL_MS: f64 = 1500.0;
 
 const DAY_MS: f64 = 86_400_000.0;
 
+// ─── frontier recovery (batch-sync-frontier-recovery) ──────────────────────
+
+/// Re-cut trigger: a completed job whose slice was cut with a shift further
+/// than this from its window's confirmed value has physically lost gyro data
+/// — the dynamic slice carries COMP_TIME_MS of margin per side, so within it
+/// the slice already covers everything and a re-run would change nothing.
+pub const RECUT_TRIGGER_MS: f64 = crate::gyro_match::COMP_TIME_MS;
+
+/// Completed borrowed-value jobs a window needs before it can be declared
+/// bootstrap-failed (= MIN_SUPPORT_VIDEOS — with fewer, the window could
+/// still confirm naturally once more of them finish).
+pub const PROBE_TRIGGER_FAILED_JOBS: usize = MIN_SUPPORT_VIDEOS;
+
+/// Failure ladder: how many different clips one window's auto probe may try.
+pub const PROBE_MAX_CLIPS: usize = 2;
+
+/// Auto-probe budget per batch run, counted in windows.
+pub const PROBE_MAX_PER_RUN: usize = 3;
+
+/// One-step widening factor for the focused probe window on the ladder's
+/// last rung (per-clip attempts first, then widen once, then give up).
+pub const PROBE_WIDEN_FACTOR: f64 = 4.0;
+
+/// One completed job's slice context, as the re-cut trigger sees it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RecutJobInfo {
+    pub job_id: u32,
+    pub video_created_at_ms: f64,
+    pub session_id: u64,
+    /// Wall-clock shift the job's gyro slice was ACTUALLY cut with — the
+    /// dynamic override when one applied, the baseline session offset
+    /// otherwise.
+    pub used_shift_ms: f64,
+}
+
 // ─── normalization (slice ↔ wall-clock domain) ─────────────────────────────
 
 /// Convert a slice-relative sync offset into the wall-clock clock-shift domain
@@ -580,6 +615,112 @@ impl BatchClockState {
             rejected: rejected_all,
             generation: self.generation,
         }
+    }
+
+    // ─── frontier recovery ─────────────────────────────────────────────────
+
+    /// Completed jobs whose slice must be re-cut now that confirmed values
+    /// moved: `|used_shift − nearest confirmed| > RECUT_TRIGGER_MS`.
+    ///
+    /// The comparison target is each job's nearest confirmed value — the same
+    /// selection its re-cut assignment will use — which is exactly "该窗确认值"
+    /// while the window's value exists (it is the nearest by construction) and
+    /// degrades to "no trigger" when a job's window never confirmed (its
+    /// nearest is then the far value it borrowed from, delta ≈ 0). Runs after
+    /// every consensus change; `recut_done` caps each job at one re-cut per
+    /// batch run, `pinned` excludes deep-anchor pinned jobs (spec: they keep
+    /// their pin unconditionally).
+    pub fn recut_candidates(
+        &self,
+        completed: &[RecutJobInfo],
+        recut_done: &BTreeSet<u32>,
+        pinned: &BTreeSet<u32>,
+    ) -> Vec<u32> {
+        completed
+            .iter()
+            .filter(|j| !recut_done.contains(&j.job_id) && !pinned.contains(&j.job_id))
+            .filter(|j| j.used_shift_ms.is_finite() && j.video_created_at_ms.is_finite())
+            .filter(|j| {
+                self.nearest_confirmed(j.video_created_at_ms, j.session_id)
+                    .map_or(false, |c| {
+                        (j.used_shift_ms - c.wall_clock_offset_ms).abs() > RECUT_TRIGGER_MS
+                    })
+            })
+            .map(|j| j.job_id)
+            .collect()
+    }
+
+    /// Bootstrap-failure verdict for the local window containing `at_ms`
+    /// (capture time of a just-completed job): at least
+    /// `PROBE_TRIGGER_FAILED_JOBS` borrowed-value jobs finished there, no
+    /// confirmed value sits within window reach, and no pending candidate
+    /// band reaches the support threshold. `relay_gap` warnings are
+    /// deliberately NOT an input — they fire on successful batches too (the
+    /// worst-case budget over-estimates; measured live 12105ms > 5000ms on a
+    /// batch that learned fine).
+    pub fn window_bootstrap_failed(
+        &self,
+        session_id: u64,
+        completed_times_ms: &[f64],
+        at_ms: f64,
+    ) -> bool {
+        let mut times: Vec<f64> = completed_times_ms
+            .iter()
+            .copied()
+            .filter(|t| t.is_finite())
+            .collect();
+        times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        // The window under judgement: the largest maximal run bracketing at_ms.
+        let Some(window) = local_windows(&times)
+            .into_iter()
+            .filter(|w| times[w.start] <= at_ms && at_ms <= times[w.end - 1])
+            .max_by_key(|w| w.len())
+        else {
+            return false;
+        };
+        if window.len() < PROBE_TRIGGER_FAILED_JOBS {
+            return false;
+        }
+        let members = &times[window];
+        // Any confirmed value within window reach of a member bootstraps the
+        // window — those jobs borrowed across a small gap, their slices are
+        // fine, and the natural consensus path is still open.
+        if self.confirmed().any(|c| {
+            c.session_id == session_id
+                && members
+                    .iter()
+                    .any(|t| (c.created_at_ms - t).abs() <= LOCAL_WINDOW_MS)
+        }) {
+            return false;
+        }
+        // A pending band at the support threshold still has a natural path
+        // to confirmation (or was drift-rejected — a different failure with
+        // its own logging); the probe stays out of its way.
+        let session_evidence: Vec<&BatchClockEvidence> = self
+            .evidence
+            .iter()
+            .filter(|e| e.session_id == session_id)
+            .collect();
+        let required = required_support_videos(session_evidence.len());
+        let (lo, hi) = (members[0], members[members.len() - 1]);
+        let points: Vec<BatchSyncPoint> = session_evidence
+            .iter()
+            .filter(|e| e.video_created_at_ms >= lo && e.video_created_at_ms <= hi)
+            .enumerate()
+            .map(|(i, e)| BatchSyncPoint {
+                id: i,
+                job_id: e.job_id,
+                timestamp_ms: e.video_created_at_ms,
+                offset_ms: e.wall_clock_offset_ms,
+                cost: 0.0,
+                confidence: e.confidence,
+                rank: 100.0,
+                ..Default::default()
+            })
+            .collect();
+        !coarse_consistency_bands(&points)
+            .into_iter()
+            .any(|band| band.job_ids.len() >= required)
     }
 }
 
@@ -1163,5 +1304,163 @@ mod tests {
         state.clear();
         assert!(state.is_empty());
         assert_eq!(state.confirmed().count(), 0);
+    }
+
+    // ── frontier recovery: re-cut trigger (sid 51c17637 live fixture) ──────
+    //
+    // Anchor DSC_1430 (11-21) at −196640ms; the 11-19 window sits 48.4h
+    // earlier. Four vanguard jobs were sliced with the borrowed 11-21
+    // baseline (2.5-3.0s off the window truth — ~1.4s of gyro physically
+    // missing per tail); two post-learning jobs used the window's confirmed
+    // value and lost nothing.
+
+    const FAR_H: f64 = -48.4;
+    const MIN: f64 = 60_000.0;
+
+    fn rj(job_id: u32, t_ms: f64, used_shift_ms: f64) -> RecutJobInfo {
+        RecutJobInfo { job_id, video_created_at_ms: t_ms, session_id: 0, used_shift_ms }
+    }
+
+    /// Anchor on the 11-21 day plus a confirmed local value on the 11-19
+    /// window at −193849.9 (the value the first post-learning job used).
+    fn recut_state_with_far_window() -> BatchClockState {
+        let mut state = BatchClockState::new();
+        state.register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, -196640.0);
+        let far = FAR_H * H;
+        state.submit_evidence(ev(901, far + 1.0 * MIN, -193849.9));
+        state.submit_evidence(ev(902, far + 2.0 * MIN, -193850.0));
+        state.submit_evidence(ev(903, far + 3.0 * MIN, -193849.8));
+        let near = state.nearest_confirmed(far, 0).unwrap();
+        assert_eq!(near.source, ConfirmedOffsetSource::Local);
+        assert!((near.wall_clock_offset_ms - -193849.9).abs() <= 0.2);
+        state
+    }
+
+    #[test]
+    fn vanguard_jobs_cut_with_borrowed_values_enter_the_recut_set() {
+        let state = recut_state_with_far_window();
+        let far = FAR_H * H;
+        let completed = vec![
+            rj(1457907267, far + 1.0 * MIN, -196769.6), // Δ 2919.7ms
+            rj(1399783331, far + 2.0 * MIN, -196741.5), // Δ 2891.6ms
+            rj(2009830288, far + 3.0 * MIN, -196741.5),
+            rj(2104496894, far + 4.0 * MIN, -196741.5),
+            rj(3799402, far + 5.0 * MIN, -193849.9),    // Δ 0 — learned
+            rj(2034189308, far + 6.0 * MIN, -193936.3), // Δ 86.4ms — learned
+            rj(777, far + 7.0 * MIN, -196741.5),        // deep-pinned
+        ];
+        let pinned: BTreeSet<u32> = [777].into_iter().collect();
+        let set = state.recut_candidates(&completed, &BTreeSet::new(), &pinned);
+        assert_eq!(set, vec![1457907267, 1399783331, 2009830288, 2104496894]);
+    }
+
+    #[test]
+    fn jobs_without_a_confirmed_reference_never_recut() {
+        let state = recut_state_with_far_window();
+        // Session 5 has no confirmed values: nothing to compare against, so
+        // nothing to re-cut (borrowed-and-never-learned windows stay put).
+        let completed = vec![RecutJobInfo {
+            job_id: 1,
+            video_created_at_ms: FAR_H * H,
+            session_id: 5,
+            used_shift_ms: -196741.5,
+        }];
+        assert!(state
+            .recut_candidates(&completed, &BTreeSet::new(), &BTreeSet::new())
+            .is_empty());
+    }
+
+    #[test]
+    fn a_job_recuts_at_most_once_across_confirmed_micro_adjustments() {
+        // Live sequence: the confirmed value micro-adjusted −193849.9 →
+        // −193936.3 → −193885.6 as evidence accumulated. The vanguard job
+        // enters the set once and the ledger keeps it out afterwards; a job
+        // that used the first confirmed value never enters (86.4ms / 35.7ms
+        // are far inside the 1500ms slice margin).
+        let mut state = recut_state_with_far_window();
+        let far = FAR_H * H;
+        let completed = vec![
+            rj(11, far + 1.0 * MIN, -196741.5),
+            rj(12, far + 2.0 * MIN, -193849.9),
+        ];
+
+        let mut recut_done = BTreeSet::new();
+        assert_eq!(
+            state.recut_candidates(&completed, &recut_done, &BTreeSet::new()),
+            vec![11]
+        );
+        recut_done.insert(11);
+
+        for (adjusted, spread) in [(-193936.3, 0.1), (-193885.6, 0.1)] {
+            for (i, job) in [901u32, 902, 903].into_iter().enumerate() {
+                let t = far + (i as f64 + 1.0) * MIN;
+                state.submit_evidence(ev(job, t, adjusted + i as f64 * spread));
+            }
+            // Without the ledger job 11 would re-enter (Δ still ≈ 2.8s);
+            // with it the set stays empty — micro-adjustments cannot loop.
+            assert!(state
+                .recut_candidates(&completed, &recut_done, &BTreeSet::new())
+                .is_empty());
+        }
+    }
+
+    // ── frontier recovery: window bootstrap failure ────────────────────────
+
+    #[test]
+    fn window_with_three_dead_vanguards_and_nothing_else_is_bootstrap_failed() {
+        // Borrowed values fell outside the search domain: three vanguard jobs
+        // finished producing no evidence, no confirmed value within window
+        // reach — the window can never bootstrap on its own.
+        let mut state = BatchClockState::new();
+        state.register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, -196640.0);
+        let far = FAR_H * H;
+        let completed = [far, far + MIN, far + 2.0 * MIN];
+        assert!(state.window_bootstrap_failed(0, &completed, far + MIN));
+    }
+
+    #[test]
+    fn two_completed_jobs_do_not_trigger_the_probe() {
+        let mut state = BatchClockState::new();
+        state.register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, -196640.0);
+        let far = FAR_H * H;
+        let completed = [far, far + MIN];
+        assert!(!state.window_bootstrap_failed(0, &completed, far));
+    }
+
+    #[test]
+    fn a_confirmed_value_within_window_reach_suppresses_the_probe() {
+        // (a) The learned window: its jobs all fired relay_gap warnings at
+        // start (48.4h gap, worst-case budget over-estimates), yet the window
+        // confirmed — the post-hoc trigger must stay silent. This is the
+        // "relay_gap alone does not trigger" scenario.
+        let state = recut_state_with_far_window();
+        let far = FAR_H * H;
+        let completed = [far + 1.0 * MIN, far + 2.0 * MIN, far + 3.0 * MIN];
+        assert!(!state.window_bootstrap_failed(0, &completed, far + 1.0 * MIN));
+
+        // (b) An anchor inside the window: jobs borrowed across a small gap,
+        // slices are fine, consensus path still open.
+        let mut near = BatchClockState::new();
+        near.register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, -196640.0);
+        let completed = [0.5 * H, 0.5 * H + MIN, 0.5 * H + 2.0 * MIN];
+        assert!(!near.window_bootstrap_failed(0, &completed, 0.5 * H));
+    }
+
+    #[test]
+    fn a_pending_band_at_threshold_suppresses_the_probe() {
+        // Three consistent votes 48h out that the drift gate rejected
+        // (physically unreachable): no confirmed value, but a band at the
+        // support threshold exists — that is drift-rejection's failure mode
+        // with its own logging, not bootstrap failure; the probe stays out.
+        let mut state = BatchClockState::new();
+        state.register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, 0.0);
+        let t = 48.0 * H;
+        state.submit_evidence(ev(1, t, 50_000.0));
+        state.submit_evidence(ev(2, t + MIN, 50_010.0));
+        let out = state.submit_evidence(ev(3, t + 2.0 * MIN, 49_990.0));
+        assert!(out.confirmed_local.is_empty());
+        assert!(!out.rejected.is_empty());
+        let completed = [t, t + MIN, t + 2.0 * MIN];
+        assert!(!state.window_bootstrap_failed(0, &completed, t));
     }
 }

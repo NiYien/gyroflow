@@ -14,7 +14,7 @@ use parking_lot::{Mutex as ParkingMutex, RwLock};
 use rayon::prelude::*;
 use regex::Regex;
 use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{
     Arc, OnceLock,
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::SeqCst},
@@ -694,6 +694,27 @@ struct DeepMatchResult {
     offset_ms: f64,
 }
 
+// Bootstrap auto-probe (batch-sync-frontier-recovery): one focused deep-match
+// probe over a bootstrap-failed local window, run headless inside the active
+// batch run. Single-flight with every other deep match through
+// deep_match_pending; the failure ladder is clip changes first, then one
+// window widening, then give-up.
+#[derive(Clone)]
+struct AutoProbeState {
+    // Current probe clip — a completed borrowed-value job of the window.
+    job_id: u32,
+    // Ladder clips, longest video first, capped at PROBE_MAX_CLIPS.
+    candidates: Vec<u32>,
+    clip_ord: usize,
+    widened: bool,
+    // Capture-time span whose Queued in-set jobs the scheduler withholds
+    // while the probe runs (window member span padded by LOCAL_WINDOW_MS);
+    // other windows keep their normal parallelism.
+    hold_range_ms: (f64, f64),
+    // Window centre — logs and the attempted ledger key off it.
+    window_center_ms: f64,
+}
+
 // Direction plan for one batch-autosync dispatch pass
 // (batch-sync-dynamic-local-offset §8): capture times of the in-set rows and
 // whether the anchor's pre side still has Queued/Rendering work. Jobs absent
@@ -1364,6 +1385,19 @@ pub struct RenderQueue {
     // tick while a sync drains, so only the first tick of a blockade warns
     // (later ticks log at debug). Reset whenever a job is actually selected.
     barrier_block_warned: bool,
+    // Frontier recovery (batch-sync-frontier-recovery): jobs re-queued for a
+    // re-cut round — their slice was cut with a shift a later confirmed value
+    // proved off by more than the slice margin. Pending marks the in-flight
+    // re-cut (exempts the job from the repair-round assignment early-exit);
+    // done is the once-per-run ledger (one re-cut per job, ever).
+    batch_sync_recut_pending: BTreeSet<u32>,
+    batch_sync_recut_done: BTreeSet<u32>,
+    // Bootstrap auto-probe state: the in-flight probe (None = idle), the
+    // per-run window budget spent, and the windows already probed (their
+    // centre times — a window never triggers twice, hit or miss).
+    auto_probe: Option<AutoProbeState>,
+    auto_probe_windows_done: usize,
+    auto_probe_attempted_ms: Vec<f64>,
 
     // batch-params-gyroflow-writeback: jobs whose batch parameter edits await
     // the debounced disk write-back, with the per-job merged params (later
@@ -1853,6 +1887,11 @@ impl RenderQueue {
 
     fn clear_all_batch_sync_state(&mut self) {
         self.dynamic_clock_shift_by_job.clear();
+        self.batch_sync_recut_pending.clear();
+        self.batch_sync_recut_done.clear();
+        self.auto_probe = None;
+        self.auto_probe_windows_done = 0;
+        self.auto_probe_attempted_ms.clear();
         self.batch_sync_job_ids.clear();
         self.expected_batch_sync_job_ids.clear();
         self.completed_batch_sync_job_ids.clear();
@@ -2131,16 +2170,524 @@ impl RenderQueue {
         });
         self.batch_sync_points.extend(points);
         self.completed_batch_sync_job_ids.insert(job_id);
+        // A completing re-cut job used up its single re-cut round (success or
+        // not — the once-per-run ledger keeps a second one from ever firing).
+        if self.batch_sync_recut_pending.remove(&job_id) {
+            ::log::info!(target: "sync", "[batch-clock] recut completed job={}", job_id);
+        }
         // Relay evidence: one drift-gated vote per fully finished video into
         // the local clock consensus. Cancelled/failed runs never get here with
         // points, and gate-failing points are filtered inside.
         self.submit_batch_clock_evidence(job_id, assumed_shift_ms);
-        if self
-            .expected_batch_sync_job_ids
-            .iter()
-            .all(|id| self.completed_batch_sync_job_ids.contains(id))
+        // Frontier recovery: re-queue completed jobs whose slice the freshly
+        // moved consensus proved mis-cut. Must run BEFORE the all-completed
+        // check — re-queued jobs leave the completed set, deferring the
+        // whole-batch confirmation until their re-cut runs land. The
+        // bootstrap-failure scan follows (post-hoc trigger, Decision 4).
+        self.queue_recuts_after_confirmation();
+        self.scan_auto_probe_triggers();
+        if self.auto_probe.is_none()
+            && self
+                .expected_batch_sync_job_ids
+                .iter()
+                .all(|id| self.completed_batch_sync_job_ids.contains(id))
         {
             self.update_batch_sync_confirmation_from_points();
+        }
+    }
+
+    // Frontier recovery (batch-sync-frontier-recovery): after every consensus
+    // change, completed jobs whose slice was cut with a shift now known to be
+    // off by more than the slice margin (physical gyro data loss in the slice
+    // tail) are re-queued for one re-cut round: fresh dynamic slice, fresh
+    // initial_offset/search_size, full re-sync. Runs on every completion —
+    // the candidate scan is cheap and self-quiets (recut_done ledger, and a
+    // re-cut job's new shift matches the confirmed value it was cut with).
+    fn queue_recuts_after_confirmation(&mut self) {
+        use gyroflow_core::synchronization::batch_clock::RecutJobInfo;
+        if self.completed_batch_sync_job_ids.is_empty() {
+            return;
+        }
+        let mut completed: Vec<RecutJobInfo> = Vec::new();
+        for &job_id in &self.completed_batch_sync_job_ids {
+            let Some(job) = self.jobs.get(&job_id) else { continue };
+            let Some(created_at) = job
+                .stab
+                .as_ref()
+                .and_then(|s| s.params.read().video_created_at)
+                .or(job.video_created_at)
+            else {
+                continue;
+            };
+            // Shift the slice was ACTUALLY cut with — same source as the
+            // evidence normalization (dynamic override, else baseline).
+            let Some(used_shift_ms) = self
+                .dynamic_clock_shift_by_job
+                .get(&job_id)
+                .copied()
+                .or_else(|| {
+                    self.match_results
+                        .as_ref()
+                        .and_then(|mr| {
+                            mr.results
+                                .iter()
+                                .find(|r| r.job_id == Some(job_id))
+                                .and_then(|r| r.global_offset_ms)
+                        })
+                        .map(|v| v as f64)
+                })
+            else {
+                continue;
+            };
+            completed.push(RecutJobInfo {
+                job_id,
+                video_created_at_ms: created_at as f64,
+                session_id: 0,
+                used_shift_ms,
+            });
+        }
+        let pinned: BTreeSet<u32> = self.deep_match_results.keys().copied().collect();
+        let recuts =
+            self.batch_clock
+                .recut_candidates(&completed, &self.batch_sync_recut_done, &pinned);
+        if recuts.is_empty() {
+            return;
+        }
+        for job_id in recuts {
+            let info = completed.iter().find(|j| j.job_id == job_id);
+            let (used, confirmed) = info
+                .map(|j| {
+                    let c = self
+                        .batch_clock
+                        .nearest_confirmed(j.video_created_at_ms, j.session_id)
+                        .map(|c| c.wall_clock_offset_ms)
+                        .unwrap_or(f64::NAN);
+                    (j.used_shift_ms, c)
+                })
+                .unwrap_or((f64::NAN, f64::NAN));
+            ::log::info!(
+                target: "sync",
+                "[batch-clock] recut queued job={} used={:.1}ms confirmed={:.1}ms delta={:.1}ms",
+                job_id,
+                used,
+                confirmed,
+                (used - confirmed).abs()
+            );
+            self.batch_sync_recut_done.insert(job_id);
+            self.batch_sync_recut_pending.insert(job_id);
+            self.completed_batch_sync_job_ids.remove(&job_id);
+            // Mixed-domain defence: the confirmation layer must never see
+            // this job's old-slice points (any round). The batch_clock
+            // evidence vote is deliberately KEPT — it lives in the wall-clock
+            // domain (slice-independent) and carries the very confirmed value
+            // driving this re-cut; the re-run replaces it through
+            // submit_evidence's same-job swap (user decision 2026-07-27).
+            self.batch_sync_points.retain(|p| p.job_id != job_id);
+            self.batch_sync_confirmed_points.remove(&job_id);
+            self.batch_sync_attempted_timestamps_ms.remove(&job_id);
+            self.dynamic_clock_shift_by_job.remove(&job_id);
+            if let Some(job) = self.jobs.get_mut(&job_id) {
+                // Kill the finishing run's trailing callbacks: the job being
+                // re-queued is often the very one whose completion confirmed
+                // the value, and its finished tick would otherwise flip the
+                // row we just set to Queued back to Finished.
+                job.render_epoch.fetch_add(1, SeqCst);
+                // Drop the old run's T1 snapshot so the re-cut run's T2 pass
+                // always rewrites the .gyroflow (the old slice's offsets on
+                // disk must never survive on a stale-snapshot comparison).
+                job.last_written_offsets = None;
+            }
+            update_model!(self, job_id, itm {
+                itm.status = JobStatus::Queued;
+                itm.sync_status = QString::from(serde_json::json!({
+                    "color": "pending",
+                    "confirmed_points": 0,
+                    "discarded_points": 0,
+                    "repair_round": self.batch_sync_repair_round,
+                    "message": "",
+                }).to_string());
+                itm.processing_progress = 0.0;
+                itm.current_frame = 0;
+            });
+        }
+        self.batch_sync_status_changed();
+        // The epoch bump suppressed the finishing job's own "start the next
+        // one" tick when it re-queued itself; dispatch here instead (live
+        // batch runs only — the guard keeps unit-test replays inert).
+        if self.status.to_string() == "active" {
+            self.start();
+        }
+    }
+
+    // ─── bootstrap auto-probe (batch-sync-frontier-recovery, mechanism 2) ───
+
+    fn is_auto_probe_run(&self, job_id: u32) -> bool {
+        self.auto_probe.as_ref().map_or(false, |p| p.job_id == job_id)
+    }
+
+    // Terminal funnel for every deep-match outcome signal: manual runs
+    // forward to the QML signal; auto-probe runs are headless — the modal's
+    // state machine must never react to them (its stale jobId can coincide
+    // with the probe clip), the outcome feeds the probe ladder instead.
+    fn finish_deep_match_run(&mut self, job_id: u32, success: bool, reason: QString, offset_ms: f64) {
+        if self.is_auto_probe_run(job_id) {
+            // Accepted verdicts terminate through terminate_auto_probe and
+            // never reach this funnel; everything arriving here is a miss.
+            debug_assert!(!success);
+            self.advance_auto_probe_ladder(&reason.to_string());
+        } else {
+            self.deep_match_finished(job_id, success, reason, offset_ms);
+        }
+    }
+
+    // Post-hoc bootstrap-failure scan (design Decision 4): runs after every
+    // completion and after every probe resolution. relay_gap warnings are
+    // deliberately NOT a trigger — they fire on healthy batches too.
+    fn scan_auto_probe_triggers(&mut self) {
+        use gyroflow_core::synchronization::batch_clock;
+        if self.auto_probe.is_some() || !self.deep_match_pending.is_empty() {
+            return;
+        }
+        if self.auto_probe_windows_done >= batch_clock::PROBE_MAX_PER_RUN {
+            return;
+        }
+        if self.status.to_string() != "active" || self.export_project != 2 {
+            return;
+        }
+        let timed: Vec<(u32, f64)> = self
+            .completed_batch_sync_job_ids
+            .iter()
+            .filter_map(|&id| {
+                let job = self.jobs.get(&id)?;
+                let t = job
+                    .stab
+                    .as_ref()
+                    .and_then(|s| s.params.read().video_created_at)
+                    .or(job.video_created_at)?;
+                Some((id, t as f64))
+            })
+            .collect();
+        let times: Vec<f64> = timed.iter().map(|(_, t)| *t).collect();
+        for &(_job_id, t) in &timed {
+            if self
+                .auto_probe_attempted_ms
+                .iter()
+                .any(|a| (a - t).abs() <= batch_clock::LOCAL_WINDOW_MS)
+            {
+                continue;
+            }
+            // No confirmed reference in reach = nothing to predict a focused
+            // window from; the exhaustive search is the manual entry's job.
+            if self.batch_clock.nearest_confirmed(t, 0).is_none() {
+                continue;
+            }
+            if !self.batch_clock.window_bootstrap_failed(0, &times, t) {
+                continue;
+            }
+            self.launch_auto_probe(t, &timed);
+            return;
+        }
+    }
+
+    // Start the auto-probe for the bootstrap-failed window containing
+    // `at_ms`. The window consumes budget at launch, hit or miss, and never
+    // triggers twice.
+    fn launch_auto_probe(&mut self, at_ms: f64, timed_completed: &[(u32, f64)]) {
+        use gyroflow_core::synchronization::batch_clock;
+        let members: Vec<(u32, f64)> = timed_completed
+            .iter()
+            .copied()
+            .filter(|(_, t)| (t - at_ms).abs() <= batch_clock::LOCAL_WINDOW_MS)
+            .collect();
+        // Ladder clips: longest video first (most sync evidence per probe;
+        // per-window motion data of failed runs is not retained, duration is
+        // the honest fallback), capped by the ladder budget.
+        let mut candidates: Vec<(u32, f64)> = members
+            .iter()
+            .filter_map(|&(id, _)| {
+                let dur = self.jobs.get(&id)?.stab.as_ref()?.params.read().duration_ms;
+                (dur.is_finite() && dur > 0.0).then_some((id, dur))
+            })
+            .collect();
+        candidates.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        candidates.truncate(batch_clock::PROBE_MAX_CLIPS);
+        let lo = members.iter().map(|(_, t)| *t).fold(f64::INFINITY, f64::min);
+        let hi = members.iter().map(|(_, t)| *t).fold(f64::NEG_INFINITY, f64::max);
+        self.auto_probe_attempted_ms.push(at_ms);
+        self.auto_probe_windows_done += 1;
+        ::log::warn!(
+            target: "sync",
+            "[batch-clock] bootstrap failed window={:.0} failed_jobs={} — starting auto-probe (budget {}/{})",
+            at_ms,
+            members.len(),
+            self.auto_probe_windows_done,
+            batch_clock::PROBE_MAX_PER_RUN
+        );
+        if candidates.is_empty() {
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] auto-probe gave up window={:.0} (no viable clip)",
+                at_ms
+            );
+            return;
+        }
+        self.auto_probe = Some(AutoProbeState {
+            job_id: candidates[0].0,
+            candidates: candidates.iter().map(|(id, _)| *id).collect(),
+            clip_ord: 0,
+            widened: false,
+            hold_range_ms: (
+                lo - batch_clock::LOCAL_WINDOW_MS,
+                hi + batch_clock::LOCAL_WINDOW_MS,
+            ),
+            window_center_ms: at_ms,
+        });
+        if !self.launch_auto_probe_attempt() {
+            self.advance_auto_probe_ladder("launch_failed");
+        }
+    }
+
+    // Launch the current ladder rung: focused window at the nearest confirmed
+    // value's predicted position (±max(2×expected drift, 30s), ×4 when
+    // widened), chunked through the shared probe machinery. False = this rung
+    // cannot launch; the caller walks the ladder.
+    fn launch_auto_probe_attempt(&mut self) -> bool {
+        use gyroflow_core::synchronization::{batch_clock, deep_match};
+        let Some(probe) = self.auto_probe.clone() else { return false };
+        let job_id = probe.job_id;
+        let Some(job) = self.jobs.get(&job_id) else { return false };
+        let Some(stab) = job.stab.clone() else { return false };
+        let (video_created, video_duration_ms) = {
+            let p = stab.params.read();
+            (p.video_created_at.or(job.video_created_at), p.duration_ms)
+        };
+        let Some(vc) = video_created else { return false };
+        let Some(gyro_index) = self.match_results.as_ref().and_then(|mr| {
+            mr.results
+                .iter()
+                .find(|r| r.job_id == Some(job_id))
+                .and_then(|r| r.gyro_index)
+        }) else {
+            return false;
+        };
+        let Some((gyro_filename, gc, gd)) = self.gyro_files.get(gyro_index).and_then(|g| {
+            Some((g.filename.clone(), g.created_at_ms?, g.duration_ms?))
+        }) else {
+            return false;
+        };
+        let Some((ref_t, ref_offset)) = self
+            .batch_clock
+            .nearest_confirmed(vc as f64, 0)
+            .map(|c| (c.created_at_ms, c.wall_clock_offset_ms))
+        else {
+            return false;
+        };
+        let drift = batch_clock::relay_gap_expected_drift_ms(vc as f64 - ref_t);
+        let widen = if probe.widened { batch_clock::PROBE_WIDEN_FACTOR } else { 1.0 };
+        let tol = deep_match::auto_probe_tol_ms(drift, widen);
+        let shift = ref_offset.round() as i64;
+        let Some(window) = deep_match::focused_window(vc, video_duration_ms, gc, gd, shift, tol)
+        else {
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] auto-probe window empty job={} shift={}ms tol={:.0}ms — skipping clip",
+                job_id,
+                shift,
+                tol
+            );
+            return false;
+        };
+        ::log::info!(
+            target: "sync",
+            "[batch-clock] auto-probe start job={} clip={}/{} widened={} gyro='{}' window=[{:.0},{:.0}]ms shift={}ms tol={:.0}ms budget={}/{}",
+            job_id,
+            probe.clip_ord + 1,
+            probe.candidates.len(),
+            probe.widened,
+            gyro_filename,
+            window.0,
+            window.1,
+            shift,
+            tol,
+            self.auto_probe_windows_done,
+            batch_clock::PROBE_MAX_PER_RUN
+        );
+        let plan = vec![deep_match::ProbeTask { gyro_index, tier: 0, window_ms: Some(window) }];
+        self.start_deep_match_with_plan(job_id, plan, -1, false) == QString::from("ok")
+    }
+
+    // Walk the failure ladder after a miss: next clip (≤ PROBE_MAX_CLIPS) →
+    // widen the window once (back on the best clip) → give up, window stays
+    // as it is (yellow), with the reason on record.
+    fn advance_auto_probe_ladder(&mut self, reason: &str) {
+        use gyroflow_core::synchronization::batch_clock;
+        let Some(probe) = self.auto_probe.clone() else { return };
+        ::log::info!(
+            target: "sync",
+            "[batch-clock] auto-probe miss job={} reason={} clip={}/{} widened={}",
+            probe.job_id,
+            reason,
+            probe.clip_ord + 1,
+            probe.candidates.len(),
+            probe.widened
+        );
+        if reason == "cancelled" {
+            // User stop: the run's cancel rollback owns the cleanup; no
+            // ladder, no rescan against the user's intent.
+            ::log::info!(
+                target: "sync",
+                "[batch-clock] auto-probe cancelled window={:.0}",
+                probe.window_center_ms
+            );
+            self.auto_probe = None;
+            return;
+        }
+        // Clip changes happen on the base window only; the widened rung is a
+        // single attempt on the best clip (design ladder: clips → widen once
+        // → give up).
+        if !probe.widened {
+            if probe.clip_ord + 1 < probe.candidates.len() {
+                if let Some(p) = self.auto_probe.as_mut() {
+                    p.clip_ord += 1;
+                    p.job_id = p.candidates[p.clip_ord];
+                }
+                if self.launch_auto_probe_attempt() {
+                    return;
+                }
+            }
+            if let Some(p) = self.auto_probe.as_mut() {
+                p.widened = true;
+                p.clip_ord = 0;
+                p.job_id = p.candidates[0];
+            }
+            if self.launch_auto_probe_attempt() {
+                return;
+            }
+        }
+        ::log::warn!(
+            target: "sync",
+            "[batch-clock] auto-probe gave up window={:.0} clips_tried={} budget={}/{}",
+            probe.window_center_ms,
+            probe.candidates.len(),
+            self.auto_probe_windows_done,
+            batch_clock::PROBE_MAX_PER_RUN
+        );
+        self.auto_probe = None;
+        self.maybe_confirm_after_auto_probe();
+        self.scan_auto_probe_triggers();
+    }
+
+    // Whole-batch confirmation is held back while a probe is engaged (its
+    // re-cuts would immediately invalidate the verdict, and the yellow-repair
+    // prompt must not pop mid-probe); run it here when the probe resolved
+    // with everything already completed.
+    fn maybe_confirm_after_auto_probe(&mut self) {
+        if self.auto_probe.is_none()
+            && !self.expected_batch_sync_job_ids.is_empty()
+            && self
+                .expected_batch_sync_job_ids
+                .iter()
+                .all(|id| self.completed_batch_sync_job_ids.contains(id))
+        {
+            self.update_batch_sync_confirmation_from_points();
+        }
+    }
+
+    // Headless terminal resolution of an auto-probe run: full snapshot
+    // restore (the probe leaves zero trace on the job), then window anchor +
+    // re-cut on a hit, ladder on a miss. The manual Accepted write-back
+    // (sync_settings block, learned clock shift, direction centre,
+    // deep_match_results pin) is deliberately skipped — the window anchor
+    // plus the re-cut round carry the whole result.
+    fn terminate_auto_probe(
+        &mut self,
+        job_id: u32,
+        stab: Option<Arc<StabilizationManager>>,
+        verdict: gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let Some(state) = self.deep_match_pending.remove(&job_id) else {
+            return;
+        };
+        if let Some(job) = self.jobs.get_mut(&job_id) {
+            job.additional_data = state.original_additional_data.clone();
+        }
+        if let Some(ref stab) = stab {
+            {
+                let mut lens = stab.lens.write();
+                *lens = (*state.original_lens).clone();
+                lens.sync_settings = state.original_sync_settings.clone();
+            }
+            Self::restore_deep_match_gyro(stab, &state);
+        }
+        match verdict {
+            deep_match::DeepMatchVerdict::Accepted { offset_ms } => {
+                // Chunk-local → file-relative (same absolutization contract
+                // as the manual path).
+                let chunk_base_ms = state
+                    .chunk_plan
+                    .get(state.current_chunk)
+                    .map(|(start, _)| *start)
+                    .unwrap_or(0.0);
+                let offset_ms = offset_ms - chunk_base_ms;
+                let gyro_created = self
+                    .gyro_files
+                    .get(state.gyro_index)
+                    .and_then(|g| g.created_at_ms);
+                let video_created = stab
+                    .as_ref()
+                    .and_then(|s| s.params.read().video_created_at)
+                    .or_else(|| self.jobs.get(&job_id).and_then(|j| j.video_created_at));
+                let (Some(gc), Some(vc)) = (gyro_created, video_created) else {
+                    ::log::warn!(
+                        target: "sync",
+                        "[batch-clock] auto-probe hit but timestamps missing job={} — cannot register a window anchor",
+                        job_id
+                    );
+                    self.auto_probe = None;
+                    self.maybe_confirm_after_auto_probe();
+                    self.scan_auto_probe_triggers();
+                    return;
+                };
+                let shift =
+                    core::gyro_match::derive_session_offset_from_deep_match(gc, vc, offset_ms);
+                // Window-local anchor only: learned_clock_shift_ms and the
+                // direction scheduling centre stay untouched (spec — moving
+                // the centre mid-run would reorder the whole barrier).
+                self.batch_clock.register_initial(
+                    gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+                    0,
+                    vc as f64,
+                    shift as f64,
+                );
+                ::log::info!(
+                    target: "sync",
+                    "[batch-clock] auto-probe hit job={} offset={:.1}ms → window anchor t={} shift={}ms gen={} (learned shift & direction centre untouched)",
+                    job_id,
+                    offset_ms,
+                    vc,
+                    shift,
+                    self.batch_clock.generation()
+                );
+                self.auto_probe = None;
+                // The anchor is a fresh confirmed value: re-cut the window's
+                // damaged jobs (usually including the probe clip itself).
+                self.queue_recuts_after_confirmation();
+                self.maybe_confirm_after_auto_probe();
+                self.scan_auto_probe_triggers();
+            }
+            other => {
+                let reason = match other {
+                    deep_match::DeepMatchVerdict::ProbeNotRun => "probe_not_run",
+                    deep_match::DeepMatchVerdict::TooFewWindows => "low_motion",
+                    _ => "not_in_range",
+                };
+                self.advance_auto_probe_ladder(reason);
+            }
         }
     }
 
@@ -2266,9 +2813,14 @@ impl RenderQueue {
     // parsing and reslicing happen on the worker. None = keep baseline.
     fn batch_sync_dynamic_assignment_input(&self, job_id: u32) -> Option<DynamicAssignInput> {
         use gyroflow_core::synchronization::batch_clock;
-        // Repair rounds reuse their previous assignment context (§7); deep-
-        // anchor pinned jobs keep their pin (§6).
-        if self.batch_sync_repair_round != 0 || self.deep_match_results.contains_key(&job_id) {
+        // Repair rounds reuse their previous assignment context (§7) — but a
+        // re-cut round is the opposite by definition (frontier recovery): the
+        // re-queued job rebuilds its whole assignment context even when it
+        // lands mid-repair. Deep-anchor pinned jobs keep their pin (§6).
+        let is_recut = self.batch_sync_recut_pending.contains(&job_id);
+        if (self.batch_sync_repair_round != 0 && !is_recut)
+            || self.deep_match_results.contains_key(&job_id)
+        {
             return None;
         }
         let job = self.jobs.get(&job_id)?;
@@ -2311,18 +2863,22 @@ impl RenderQueue {
         let delta = nearest.wall_clock_offset_ms - baseline_shift_ms as f64;
         ::log::info!(
             target: "sync",
-            "[batch-clock] task start job={} t={} selected_offset={:.1}ms source={} gen={} baseline_shift={}ms delta={:.1}ms",
+            "[batch-clock] task start job={} t={} selected_offset={:.1}ms source={} gen={} baseline_shift={}ms delta={:.1}ms recut={}",
             job_id,
             created_at,
             nearest.wall_clock_offset_ms,
             source,
             nearest.generation,
             baseline_shift_ms,
-            delta
+            delta,
+            is_recut
         );
-        if delta.abs() < 1.0 {
+        if delta.abs() < 1.0 && !is_recut {
             // Nearest confirmed value equals the baked assumption — baseline
-            // assignment already is the dynamic assignment.
+            // assignment already is the dynamic assignment. A re-cut job must
+            // never take this shortcut: its CURRENT slice/sync_settings hold
+            // the mis-cut values, only a full reslice restores baseline-or-
+            // better state.
             return None;
         }
 
@@ -3464,6 +4020,8 @@ impl RenderQueue {
         // Removing a job also removes its vote from the local clock consensus.
         self.batch_clock.remove_job(job_id);
         self.dynamic_clock_shift_by_job.remove(&job_id);
+        self.batch_sync_recut_pending.remove(&job_id);
+        self.batch_sync_recut_done.remove(&job_id);
         self.update_queue_indices();
 
         if self.status.to_string() == "active" {
@@ -3619,7 +4177,15 @@ impl RenderQueue {
                 }
                 break;
             } else {
-                if self.get_active_render_count() == 0 {
+                if self.auto_probe.is_some() {
+                    // An auto-probe (or its pending resolution) still owns
+                    // the run — completion would fire post_render_action
+                    // (possibly shutting the machine down) under it.
+                    ::log::debug!(
+                        target: "sync",
+                        "[batch-clock] auto-probe engaged — refusing queue completion"
+                    );
+                } else if self.get_active_render_count() == 0 {
                     self.post_render_action();
                     self.queue_finished();
 
@@ -3661,12 +4227,23 @@ impl RenderQueue {
     // the barrier closed.
     fn select_next_queued_job(&self) -> (Option<u32>, bool) {
         let direction = self.batch_sync_direction_plan();
+        // Auto-probe hold (batch-sync-frontier-recovery): while a probe runs,
+        // its window's Queued jobs wait for the verdict (their assignment
+        // depends on it); other windows keep their normal parallelism, and
+        // untimed / out-of-set rows are untouched.
+        let hold = self.auto_probe.as_ref().map(|p| p.hold_range_ms);
         let mut best_batch: Option<(u32, f64)> = None;
         let mut barrier_blocked = false;
         for v in self.queue.borrow().iter() {
             if v.total_frames > 0 && v.status == JobStatus::Queued {
                 match direction.as_ref().and_then(|d| d.times.get(&v.job_id).copied()) {
                     Some(t) => {
+                        if let Some((lo, hi)) = hold {
+                            if t >= lo && t <= hi {
+                                barrier_blocked = true;
+                                continue;
+                            }
+                        }
                         let d = direction.as_ref().unwrap();
                         if t <= d.center_ms || !d.pre_side_pending {
                             let dist = (t - d.center_ms).abs();
@@ -5261,7 +5838,9 @@ impl RenderQueue {
                             this.start_frame = 0;
                             this.start_queue_work_units = 0.0;
                             this.update_status();
-                            if is_queue_active {
+                            // Never fire the when-done action while an
+                            // auto-probe still owns the run.
+                            if is_queue_active && this.auto_probe.is_none() {
                                 this.post_render_action();
                             }
                         }
@@ -5292,10 +5871,13 @@ impl RenderQueue {
                         .get(&job_id)
                         .map(|s| (s.current_probe, s.probe_plan.len(), s.current_chunk, s.chunk_plan.len()))
                     {
-                        let within_probe = (chunk as f64 + progress.clamp(0.0, 1.0))
-                            / n.max(1) as f64;
-                        let composed = (probe as f64 + within_probe) / probe_n.max(1) as f64;
-                        this.deep_match_progress(job_id, composed);
+                        // Auto-probe runs are headless — no modal to feed.
+                        if !this.is_auto_probe_run(job_id) {
+                            let within_probe = (chunk as f64 + progress.clamp(0.0, 1.0))
+                                / n.max(1) as f64;
+                            let composed = (probe as f64 + within_probe) / probe_n.max(1) as f64;
+                            this.deep_match_progress(job_id, composed);
+                        }
                     }
                     this.progress_changed();
                 },
@@ -11584,7 +12166,7 @@ impl RenderQueue {
             .and_then(|j| j.stab.clone().map(|s| (s, j.cancel_flag.clone())));
         let (Some(gyro_url), Some((stab, cancel_flag))) = (gyro_url, job_handles) else {
             self.deep_match_pending.remove(&job_id);
-            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            self.finish_deep_match_run(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         };
         let on_loaded = util::qt_queued_callback_mut(
@@ -11657,23 +12239,26 @@ impl RenderQueue {
         else {
             return;
         };
+        let is_auto_probe = self.is_auto_probe_run(job_id);
         let (stab, cancelled) = match self.jobs.get(&job_id) {
             Some(job) => (job.stab.clone(), job.cancel_flag.load(SeqCst)),
             None => (None, false),
         };
         let Some(stab) = stab else {
             self.deep_match_pending.remove(&job_id);
-            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            self.finish_deep_match_run(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         };
         // Cancelled mid-load, or the queue went active while loading (the
         // export_project flip below would corrupt active renders) — roll
-        // back silently to the pre-probe snapshot.
-        if cancelled || self.status.to_string() == "active" {
+        // back silently to the pre-probe snapshot. The auto-probe runs
+        // INSIDE the active batch by design (queue_active waiver): only a
+        // real cancel stops it.
+        if cancelled || (!is_auto_probe && self.status.to_string() == "active") {
             if let Some(state) = self.deep_match_pending.remove(&job_id) {
                 Self::restore_deep_match_gyro(&stab, &state);
             }
-            self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
+            self.finish_deep_match_run(job_id, false, QString::from("cancelled"), 0.0);
             return;
         }
         if !loaded {
@@ -11696,7 +12281,7 @@ impl RenderQueue {
             if let Some(state) = self.deep_match_pending.remove(&job_id) {
                 Self::restore_deep_match_gyro(&stab, &state);
             }
-            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            self.finish_deep_match_run(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         }
         let gyro_span = {
@@ -11739,7 +12324,7 @@ impl RenderQueue {
             if let Some(state) = self.deep_match_pending.remove(&job_id) {
                 Self::restore_deep_match_gyro(&stab, &state);
             }
-            self.deep_match_finished(job_id, false, QString::from("gyro_load_failed"), 0.0);
+            self.finish_deep_match_run(job_id, false, QString::from("gyro_load_failed"), 0.0);
             return;
         };
 
@@ -11769,7 +12354,7 @@ impl RenderQueue {
                 if let Some(state) = self.deep_match_pending.remove(&job_id) {
                     Self::restore_deep_match_gyro(&stab, &state);
                 }
-                self.deep_match_finished(job_id, false, QString::from("low_motion"), 0.0);
+                self.finish_deep_match_run(job_id, false, QString::from("low_motion"), 0.0);
                 return;
             }
             (cands, k)
@@ -11880,28 +12465,36 @@ impl RenderQueue {
         // export_project=2 + expected membership routes the worker into the
         // defer branch (sync, then stop — no encode); batch_sync_job_ids
         // membership keeps the stab (and thus the loaded gyro) alive on the
-        // finished tick.
-        self.export_project = 2;
-        self.batch_sync_job_ids.insert(job_id);
-        self.expected_batch_sync_job_ids = std::iter::once(job_id).collect();
-        self.completed_batch_sync_job_ids.clear();
+        // finished tick. The auto-probe already runs inside a live batch —
+        // its job is in every set and clobbering expected/completed here
+        // would destroy the run's bookkeeping, so it skips the block.
+        if !is_auto_probe {
+            self.export_project = 2;
+            self.batch_sync_job_ids.insert(job_id);
+            self.expected_batch_sync_job_ids = std::iter::once(job_id).collect();
+            self.completed_batch_sync_job_ids.clear();
+        }
         // Launch this job only — start() would pick up every Queued job in
         // the queue, but deep match must act on the clicked job alone.
         self.render_job(job_id);
-        self.deep_match_probe_changed(
-            job_id,
-            (current_probe + 1) as u32,
-            probe_count as u32,
-            probe_tier as u32,
-            QString::from(gyro_filename.as_str()),
-        );
-        self.deep_match_chunk_changed(job_id, (current_chunk + 1) as u32, chunk_count as u32);
-        // Progress composes across probes and chunks; probe 0 chunk 0 starts at 0.
-        let within_probe = current_chunk as f64 / chunk_count.max(1) as f64;
-        self.deep_match_progress(
-            job_id,
-            (current_probe as f64 + within_probe) / probe_count.max(1) as f64,
-        );
+        // Headless auto-probe: the modal signals stay silent (a stale modal
+        // jobId could coincide with the probe clip); progress lives in logs.
+        if !is_auto_probe {
+            self.deep_match_probe_changed(
+                job_id,
+                (current_probe + 1) as u32,
+                probe_count as u32,
+                probe_tier as u32,
+                QString::from(gyro_filename.as_str()),
+            );
+            self.deep_match_chunk_changed(job_id, (current_chunk + 1) as u32, chunk_count as u32);
+            // Progress composes across probes and chunks; probe 0 chunk 0 starts at 0.
+            let within_probe = current_chunk as f64 / chunk_count.max(1) as f64;
+            self.deep_match_progress(
+                job_id,
+                (current_probe as f64 + within_probe) / probe_count.max(1) as f64,
+            );
+        }
     }
 
     // Advances the chunked scan to the next planned chunk and spawns its
@@ -11927,7 +12520,7 @@ impl RenderQueue {
                     Self::restore_deep_match_gyro(&stab, &state);
                 }
             }
-            self.deep_match_finished(job_id, false, QString::from("not_in_range"), 0.0);
+            self.finish_deep_match_run(job_id, false, QString::from("not_in_range"), 0.0);
             return;
         };
         self.spawn_deep_match_gyro_load(job_id, range);
@@ -12087,21 +12680,25 @@ impl RenderQueue {
             if advanceable {
                 if current_chunk + 1 < chunk_count {
                     // Freeze the bar at the next chunk's base while it loads.
-                    let within_probe = (current_chunk + 1) as f64 / chunk_count.max(1) as f64;
-                    self.deep_match_progress(
-                        job_id,
-                        (current_probe as f64 + within_probe) / probe_count as f64,
-                    );
+                    if !self.is_auto_probe_run(job_id) {
+                        let within_probe = (current_chunk + 1) as f64 / chunk_count.max(1) as f64;
+                        self.deep_match_progress(
+                            job_id,
+                            (current_probe as f64 + within_probe) / probe_count as f64,
+                        );
+                    }
                     self.advance_deep_match_chunk(job_id);
                     return;
                 }
                 if current_probe + 1 < probe_count {
                     // Probe exhausted — freeze at the next probe's base and
                     // move on to the next candidate.
-                    self.deep_match_progress(
-                        job_id,
-                        (current_probe + 1) as f64 / probe_count as f64,
-                    );
+                    if !self.is_auto_probe_run(job_id) {
+                        self.deep_match_progress(
+                            job_id,
+                            (current_probe + 1) as f64 / probe_count as f64,
+                        );
+                    }
                     if self.advance_deep_match_probe(job_id) {
                         return;
                     }
@@ -12127,7 +12724,7 @@ impl RenderQueue {
             Self::restore_deep_match_gyro(stab, &state);
         }
         ::log::info!(target: "sync", "[deep-match] cancelled: job={}", job_id);
-        self.deep_match_finished(job_id, false, QString::from("cancelled"), 0.0);
+        self.finish_deep_match_run(job_id, false, QString::from("cancelled"), 0.0);
     }
 
     // Terminal resolution of a deep match run: restores the snapshotted
@@ -12139,6 +12736,11 @@ impl RenderQueue {
         verdict: gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
     ) {
         use gyroflow_core::synchronization::deep_match;
+        // Auto-probe runs resolve headless: full restore, window anchor +
+        // re-cut on a hit, ladder on a miss — never the manual write-back.
+        if self.is_auto_probe_run(job_id) {
+            return self.terminate_auto_probe(job_id, stab, verdict);
+        }
         let Some(state) = self.deep_match_pending.remove(&job_id) else {
             return;
         };
@@ -12303,7 +12905,7 @@ impl RenderQueue {
                     },
                 );
                 self.match_results_changed();
-                self.deep_match_finished(job_id, true, QString::default(), offset_ms);
+                self.finish_deep_match_run(job_id, true, QString::default(), offset_ms);
             }
             deep_match::DeepMatchVerdict::ProbeNotRun => {
                 // The probe never produced a window (assembly/arbitration
@@ -12311,20 +12913,20 @@ impl RenderQueue {
                 if let Some(ref stab) = stab {
                     Self::restore_deep_match_gyro(stab, &state);
                 }
-                self.deep_match_finished(job_id, false, QString::from("probe_not_run"), 0.0);
+                self.finish_deep_match_run(job_id, false, QString::from("probe_not_run"), 0.0);
             }
             deep_match::DeepMatchVerdict::TooFewWindows => {
                 if let Some(ref stab) = stab {
                     Self::restore_deep_match_gyro(stab, &state);
                 }
-                self.deep_match_finished(job_id, false, QString::from("low_motion"), 0.0);
+                self.finish_deep_match_run(job_id, false, QString::from("low_motion"), 0.0);
             }
             deep_match::DeepMatchVerdict::Inconsistent { .. }
             | deep_match::DeepMatchVerdict::WeakValley { .. } => {
                 if let Some(ref stab) = stab {
                     Self::restore_deep_match_gyro(stab, &state);
                 }
-                self.deep_match_finished(job_id, false, QString::from("not_in_range"), 0.0);
+                self.finish_deep_match_run(job_id, false, QString::from("not_in_range"), 0.0);
             }
         }
     }
@@ -12480,6 +13082,11 @@ impl RenderQueue {
             ::log::info!(target: "sync", "[batch-clock] state cleared ({source})");
         }
         self.batch_clock_center_ms = None;
+        self.batch_sync_recut_pending.clear();
+        self.batch_sync_recut_done.clear();
+        self.auto_probe = None;
+        self.auto_probe_windows_done = 0;
+        self.auto_probe_attempted_ms.clear();
     }
 
     // Local calendar day for an epoch-ms wall-clock timestamp. `single()`
@@ -15987,6 +16594,536 @@ mod tests {
         queue.deep_match_results.clear();
         queue.batch_sync_repair_round = 1;
         assert!(queue.batch_sync_dynamic_assignment_input(1).is_none());
+    }
+
+    // ── frontier recovery: re-cut round (batch-sync-frontier-recovery) ──────
+    //
+    // Live shape (sid 51c17637): far-day vanguard jobs sliced with the
+    // borrowed anchor baseline −196640 while their own window's truth is
+    // −193849.9 — Δ≈2.8s over the 1500ms slice margin, ~1.3s of gyro
+    // physically missing per slice tail.
+
+    fn recut_queue() -> RenderQueue {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        queue.register_batch_sync_jobs([1, 2]);
+        queue.export_project = 2;
+        set_created_at(&queue, 1, H);
+        set_created_at(&queue, 2, H + 60_000);
+        // Deep anchor 48.4h later — the source of the borrowed baseline.
+        let anchor_t = H as f64 + 48.4 * H as f64;
+        queue.batch_clock.register_initial(
+            gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+            0,
+            anchor_t,
+            -196640.0,
+        );
+        queue.batch_clock_center_ms = Some(anchor_t);
+        let mut results = Vec::new();
+        for (i, job_id) in [1u32, 2].into_iter().enumerate() {
+            results.push(core::gyro_match::MatchResult {
+                video_index: i,
+                job_id: Some(job_id),
+                gyro_index: Some(0),
+                status: core::gyro_match::MatchStatus::Matched,
+                global_offset_ms: Some(-196640),
+                gyro_start_ms: Some(0.0),
+                gyro_end_ms: Some(13_000.0),
+                init_offset_ms: Some(-1500.0),
+            });
+        }
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results,
+            global_offset_ms: Some(-196640),
+            error: None,
+        });
+        queue.gyro_files.push(GyroFileInfo {
+            id: 0,
+            path: "g.bin".into(),
+            filename: "g.bin".into(),
+            created_at_ms: Some(0),
+            duration_ms: Some(200.0 * H as f64),
+            detected_source: None,
+            parsed: true,
+            error: None,
+            cached_metadata: None,
+            cached_metadata_ranges: Vec::new(),
+        });
+        queue
+    }
+
+    // A borrowed-baseline run: the slice was cut with −196640, the truth is
+    // −193849.85, so the measured residual (sync − init) is ≈ −2790.15 and
+    // the wall normalization recovers the truth.
+    fn borrowed_recut_points(
+        job_id: u32,
+        t_video_ms: f64,
+    ) -> Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate> {
+        [-2790.1f64, -2790.2]
+            .into_iter()
+            .enumerate()
+            .map(|(i, residual)| {
+                gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+                    video_created_at_ms: Some(t_video_ms),
+                    wall_clock_offset_ms: Some(residual),
+                    ..sync_candidate(job_id, 1000.0 + i as f64 * 1000.0, -1500.0 + residual, 0.9)
+                }
+            })
+            .collect()
+    }
+
+    fn corrected_recut_points(
+        job_id: u32,
+        t_video_ms: f64,
+    ) -> Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate> {
+        [-0.1f64, 0.1]
+            .into_iter()
+            .enumerate()
+            .map(|(i, residual)| {
+                gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+                    video_created_at_ms: Some(t_video_ms),
+                    wall_clock_offset_ms: Some(residual),
+                    ..sync_candidate(job_id, 1000.0 + i as f64 * 1000.0, -1500.0 + residual, 0.9)
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn recut_requeues_borrowed_slice_jobs_and_keeps_the_confirmed_value() {
+        const H: i64 = 3_600_000;
+        let mut queue = recut_queue();
+        queue.record_batch_sync_points(1, borrowed_recut_points(1, H as f64));
+        // One vote cannot confirm — nothing to re-cut yet.
+        assert!(queue.batch_sync_recut_pending.is_empty());
+        assert!(queue.completed_batch_sync_job_ids.contains(&1));
+
+        // Simulate the first run's T1 write so the re-queue can prove it
+        // drops the stale snapshot (T2 must rewrite unconditionally).
+        queue.jobs.get_mut(&1).unwrap().last_written_offsets =
+            Some(BTreeMap::from([(0i64, -1500.0f64)]));
+
+        queue.record_batch_sync_points(2, borrowed_recut_points(2, (H + 60_000) as f64));
+
+        // Two votes confirmed the window truth → both borrowed jobs re-queue.
+        let expected: BTreeSet<u32> = [1, 2].into_iter().collect();
+        assert_eq!(queue.batch_sync_recut_pending, expected);
+        assert_eq!(queue.batch_sync_recut_done, expected);
+        assert!(
+            queue.completed_batch_sync_job_ids.is_empty(),
+            "re-queued jobs must leave the completed set (defers batch confirmation)"
+        );
+        for job_id in [1u32, 2] {
+            let idx = queue.jobs[&job_id].queue_index;
+            assert_eq!(queue.queue.borrow()[idx].status, JobStatus::Queued);
+            assert!(
+                queue.batch_sync_points.iter().all(|p| p.job_id != job_id),
+                "old-slice sync points must be purged (mixed-domain defence)"
+            );
+            assert!(
+                queue.jobs[&job_id].render_epoch.load(SeqCst) >= 1,
+                "trailing callbacks of the finishing run must be killed"
+            );
+            assert!(!queue.dynamic_clock_shift_by_job.contains_key(&job_id));
+            assert!(
+                queue.jobs[&job_id].last_written_offsets.is_none(),
+                "stale T1 snapshot must not suppress the re-cut run's T2 rewrite"
+            );
+        }
+        // The evidence votes stay: the confirmed value that drove the re-cut
+        // must survive the cycle — re-cut assignment and straggler triggers
+        // both read it (user decision 2026-07-27).
+        let near = queue
+            .batch_clock
+            .nearest_confirmed(H as f64, 0)
+            .expect("confirmed value must survive the re-queue");
+        assert_eq!(
+            near.source,
+            gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Local
+        );
+        assert!((near.wall_clock_offset_ms - -193849.85).abs() < 1.0);
+        // Scheduler still has selectable work — the completion flow stays shut.
+        let (selected, _) = queue.select_next_queued_job();
+        assert!(selected.is_some(), "re-cut jobs must be selectable");
+    }
+
+    #[test]
+    fn recut_jobs_bypass_repair_round_and_the_delta_shortcut() {
+        const H: i64 = 3_600_000;
+        let mut queue = recut_queue();
+        queue.record_batch_sync_points(1, borrowed_recut_points(1, H as f64));
+        queue.record_batch_sync_points(2, borrowed_recut_points(2, (H + 60_000) as f64));
+        assert!(queue.batch_sync_recut_pending.contains(&1));
+
+        // Mid-repair a normal job gets no dynamic assignment; a re-cut job
+        // rebuilds its full context (Decision 2: opposite semantics).
+        queue.batch_sync_repair_round = 1;
+        let input = queue
+            .batch_sync_dynamic_assignment_input(1)
+            .expect("re-cut job must be exempt from the repair-round early-exit");
+        assert_eq!(input.source, "local");
+        assert!((input.wall_clock_offset_ms - -193849.85).abs() < 1.0);
+        queue.batch_sync_repair_round = 0;
+
+        // Never the "baseline already equals the target" shortcut either: the
+        // job's CURRENT slice is the mis-cut one, only a full reslice heals.
+        queue.match_results.as_mut().unwrap().results[0].global_offset_ms = Some(-193850);
+        assert!(
+            queue.batch_sync_dynamic_assignment_input(1).is_some(),
+            "re-cut job must reslice even when baseline ≈ confirmed"
+        );
+        // A non-re-cut job in the same position takes the shortcut (baseline
+        // assignment is already the dynamic assignment).
+        queue.batch_sync_recut_pending.remove(&1);
+        assert!(queue.batch_sync_dynamic_assignment_input(1).is_none());
+    }
+
+    #[test]
+    fn recut_reslice_covers_the_true_content_position() {
+        // Task 2.2 boundary check: the re-cut assignment computed from the
+        // window's confirmed value must place the slice so the video content
+        // (truth position ± full video duration) is entirely inside it —
+        // that coverage is the whole point of the re-cut.
+        const H: i64 = 3_600_000;
+        let mut queue = recut_queue();
+        queue.record_batch_sync_points(1, borrowed_recut_points(1, H as f64));
+        queue.record_batch_sync_points(2, borrowed_recut_points(2, (H + 60_000) as f64));
+        let input = queue
+            .batch_sync_dynamic_assignment_input(1)
+            .expect("re-cut assignment input");
+        let a = core::gyro_match::assign_video_with_wall_clock_offset(
+            &input.video,
+            std::slice::from_ref(&input.gyro),
+            &[0],
+            input.wall_clock_offset_ms.round() as i64,
+            &[],
+            std::slice::from_ref(&input.video),
+        )
+        .expect("reslice must succeed inside the gyro file");
+        // Content start in gyro file-relative time: (video_created −
+        // gyro_created) + confirmed shift = 3_600_000 − 193_850 ≈ 3_406_150.
+        let placement = H as f64 + input.wall_clock_offset_ms;
+        assert!(
+            a.gyro_start_ms <= placement && a.gyro_end_ms >= placement + input.video.duration_ms,
+            "slice [{:.0},{:.0}] must cover content [{placement:.0},{:.0}]",
+            a.gyro_start_ms,
+            a.gyro_end_ms,
+            placement + input.video.duration_ms
+        );
+    }
+
+    // ── frontier recovery: bootstrap auto-probe (mechanism 2) ───────────────
+    //
+    // A window whose borrowed values fell outside the search domain: three
+    // vanguard jobs completed with no usable points, no confirmed value in
+    // reach — the window can never bootstrap without a probe.
+
+    fn bootstrap_failed_queue() -> RenderQueue {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        for (i, job_id) in [1u32, 2, 3].into_iter().enumerate() {
+            add_eta_job(&mut queue, job_id, i);
+        }
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.export_project = 2;
+        queue.status = QString::from("active");
+        set_created_at(&queue, 1, H);
+        set_created_at(&queue, 2, H + 60_000);
+        set_created_at(&queue, 3, H + 120_000);
+        let anchor_t = H as f64 + 48.4 * H as f64;
+        queue.batch_clock.register_initial(
+            gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+            0,
+            anchor_t,
+            -196640.0,
+        );
+        queue.batch_clock_center_ms = Some(anchor_t);
+        let mut results = Vec::new();
+        for (i, job_id) in [1u32, 2, 3].into_iter().enumerate() {
+            results.push(core::gyro_match::MatchResult {
+                video_index: i,
+                job_id: Some(job_id),
+                gyro_index: Some(0),
+                status: core::gyro_match::MatchStatus::Matched,
+                global_offset_ms: Some(-196640),
+                gyro_start_ms: Some(0.0),
+                gyro_end_ms: Some(13_000.0),
+                init_offset_ms: Some(-1500.0),
+            });
+        }
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results,
+            global_offset_ms: Some(-196640),
+            error: None,
+        });
+        queue.gyro_files.push(GyroFileInfo {
+            id: 0,
+            path: "g.bin".into(),
+            filename: "g.bin".into(),
+            created_at_ms: Some(0),
+            duration_ms: Some(200.0 * H as f64),
+            detected_source: None,
+            parsed: true,
+            error: None,
+            cached_metadata: None,
+            cached_metadata_ranges: Vec::new(),
+        });
+        queue
+    }
+
+    #[test]
+    fn bootstrap_failure_triggers_one_focused_auto_probe() {
+        use gyroflow_core::synchronization::batch_clock;
+        const H: i64 = 3_600_000;
+        let mut queue = bootstrap_failed_queue();
+        // First two dead vanguards: below the trigger threshold.
+        queue.record_batch_sync_points(1, Vec::new());
+        queue.record_batch_sync_points(2, Vec::new());
+        assert!(queue.auto_probe.is_none());
+        // Third one completes → window declared bootstrap-failed → probe.
+        queue.record_batch_sync_points(3, Vec::new());
+        let probe = queue.auto_probe.as_ref().expect("auto-probe must launch");
+        assert_eq!(probe.job_id, 1, "longest-first tie-breaks on job id");
+        assert_eq!(probe.candidates, vec![1, 2], "ladder capped at PROBE_MAX_CLIPS");
+        assert!(!probe.widened);
+        assert!(probe.hold_range_ms.0 <= H as f64 && probe.hold_range_ms.1 >= (H + 120_000) as f64);
+        assert_eq!(queue.auto_probe_windows_done, 1);
+        assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
+        // The probe run is registered through the shared single-flight state
+        // with a focused (windowed) chunk plan around the predicted position.
+        let state = queue.deep_match_pending.get(&1).expect("probe pending");
+        let predicted = H as f64 - 196_640.0;
+        assert!(
+            state.chunk_plan[0].0 <= predicted && state.chunk_plan[0].1 >= predicted,
+            "focused chunk {:?} must bracket the predicted position {predicted:.0}",
+            state.chunk_plan[0]
+        );
+        // Manual deep-match entry is single-flight-blocked while it runs.
+        assert_eq!(
+            queue.start_deep_gyro_match(2, 0, -1).to_string(),
+            "deep_match_in_flight"
+        );
+        // A repeated scan neither stacks probes nor spends budget again.
+        queue.scan_auto_probe_triggers();
+        assert_eq!(queue.auto_probe_windows_done, 1);
+        assert!(
+            queue
+                .auto_probe_attempted_ms
+                .iter()
+                .all(|a| (a - H as f64).abs() <= batch_clock::LOCAL_WINDOW_MS),
+            "one attempted entry for this window only"
+        );
+        assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
+    }
+
+    #[test]
+    fn auto_probe_ladder_walks_clips_then_widens_then_gives_up() {
+        let mut queue = bootstrap_failed_queue();
+        queue.record_batch_sync_points(1, Vec::new());
+        queue.record_batch_sync_points(2, Vec::new());
+        queue.record_batch_sync_points(3, Vec::new());
+        assert_eq!(queue.auto_probe.as_ref().unwrap().job_id, 1);
+
+        // Rung 1: miss on clip 1 → clip 2, same window.
+        queue.deep_match_pending.remove(&1);
+        queue.advance_auto_probe_ladder("not_in_range");
+        let p = queue.auto_probe.as_ref().expect("ladder continues");
+        assert_eq!((p.job_id, p.clip_ord, p.widened), (2, 1, false));
+        assert!(queue.deep_match_pending.contains_key(&2));
+
+        // Rung 2: clips exhausted → widen once, back on the best clip.
+        queue.deep_match_pending.remove(&2);
+        queue.advance_auto_probe_ladder("low_motion");
+        let p = queue.auto_probe.as_ref().expect("widened rung");
+        assert_eq!((p.job_id, p.clip_ord, p.widened), (1, 0, true));
+
+        // Rung 3: widened miss → give up; window stays as it is, budget
+        // spent, the attempted ledger keeps it from re-triggering.
+        queue.deep_match_pending.remove(&1);
+        queue.advance_auto_probe_ladder("not_in_range");
+        assert!(queue.auto_probe.is_none(), "ladder exhausted → give up");
+        assert!(queue.deep_match_pending.is_empty());
+        assert_eq!(queue.auto_probe_windows_done, 1);
+        // The give-up rescan must not restart the same window.
+        queue.scan_auto_probe_triggers();
+        assert!(queue.auto_probe.is_none());
+    }
+
+    #[test]
+    fn auto_probe_hit_registers_window_anchor_and_recuts() {
+        use gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource;
+        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+        const H: i64 = 3_600_000;
+        let mut queue = bootstrap_failed_queue();
+        queue.record_batch_sync_points(1, Vec::new());
+        queue.record_batch_sync_points(2, Vec::new());
+        queue.record_batch_sync_points(3, Vec::new());
+        let chunk_base = queue.deep_match_pending[&1].chunk_plan[0].0;
+        let anchor_center = queue.batch_clock_center_ms;
+
+        // The probe finds the truth: content start at file-relative
+        // 3_600_000 − 193_850 (true shift −193850 vs borrowed −196640).
+        // Park the queue first so the re-cut requeue's dispatch stays inert
+        // and the row assertions below are deterministic (live runs dispatch
+        // immediately — covered by the scheduling assertions elsewhere).
+        queue.status = QString::from("stopped");
+        let file_offset = -(H as f64 - 193_850.0);
+        let stab = queue.jobs[&1].stab.clone();
+        queue.terminate_deep_match(
+            1,
+            stab,
+            DeepMatchVerdict::Accepted { offset_ms: file_offset + chunk_base },
+        );
+
+        // Window anchor registered at the probe clip's capture time…
+        let near = queue
+            .batch_clock
+            .nearest_confirmed(H as f64, 0)
+            .expect("window anchor");
+        assert_eq!(near.source, ConfirmedOffsetSource::Anchor);
+        assert_eq!(near.created_at_ms, H as f64);
+        assert!((near.wall_clock_offset_ms - -193_850.0).abs() <= 1.0);
+        // …without touching the learned shift, the direction centre or the
+        // deep-match pin registry.
+        assert_eq!(queue.learned_clock_shift_ms, None);
+        assert_eq!(queue.batch_clock_center_ms, anchor_center);
+        assert!(queue.deep_match_results.is_empty());
+        // Probe resolved; the window's damaged jobs re-cut against the anchor.
+        assert!(queue.auto_probe.is_none());
+        let recut: BTreeSet<u32> = [1, 2, 3].into_iter().collect();
+        assert_eq!(queue.batch_sync_recut_pending, recut);
+        assert!(queue.completed_batch_sync_job_ids.is_empty());
+        for job_id in [1u32, 2, 3] {
+            let idx = queue.jobs[&job_id].queue_index;
+            assert_eq!(queue.queue.borrow()[idx].status, JobStatus::Queued);
+        }
+    }
+
+    #[test]
+    fn auto_probe_holds_same_window_jobs_and_releases_on_resolution() {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0); // in the probed window
+        add_eta_job(&mut queue, 2, 1); // another window
+        queue.register_batch_sync_jobs([1, 2]);
+        queue.export_project = 2;
+        set_created_at(&queue, 1, H);
+        set_created_at(&queue, 2, 40 * H);
+        queue.batch_clock_center_ms = Some(49.4 * H as f64);
+        queue.auto_probe = Some(AutoProbeState {
+            job_id: 99,
+            candidates: vec![99],
+            clip_ord: 0,
+            widened: false,
+            hold_range_ms: (0.0, 7.0 * H as f64),
+            window_center_ms: H as f64,
+        });
+
+        // Same-window job 1 is withheld (and reported blocked so the
+        // completion flow stays shut); the other window runs normally.
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(2), "other windows keep their parallelism");
+        assert!(blocked, "withheld job must keep the completion flow shut");
+
+        set_row_status(&queue, 2, JobStatus::Finished);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, None);
+        assert!(blocked);
+
+        // Probe resolves → hold releases.
+        queue.auto_probe = None;
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(1));
+        assert!(!blocked);
+    }
+
+    #[test]
+    fn frontier_recovery_log_events_are_greppable() {
+        // Task 4.1: the structured `target=sync` event names diagnostics and
+        // feedback-bundle replays grep for. Renaming one must fail here.
+        let src = include_str!("render_queue.rs");
+        for needle in [
+            "[batch-clock] recut queued job=",
+            "[batch-clock] recut completed job=",
+            "[batch-clock] bootstrap failed window=",
+            "[batch-clock] auto-probe start job=",
+            "[batch-clock] auto-probe miss job=",
+            "[batch-clock] auto-probe hit job=",
+            "[batch-clock] auto-probe gave up window=",
+            "[batch-clock] auto-probe cancelled window=",
+        ] {
+            assert!(src.contains(needle), "missing log event: {needle}");
+        }
+    }
+
+    #[test]
+    fn auto_probe_state_clears_on_batch_reregistration_and_cancel() {
+        let mut queue = bootstrap_failed_queue();
+        queue.record_batch_sync_points(1, Vec::new());
+        queue.record_batch_sync_points(2, Vec::new());
+        queue.record_batch_sync_points(3, Vec::new());
+        assert!(queue.auto_probe.is_some());
+
+        // User cancel: the ladder stops dead — no next rung, no rescan.
+        queue.deep_match_pending.remove(&1);
+        queue.advance_auto_probe_ladder("cancelled");
+        assert!(queue.auto_probe.is_none());
+        assert!(queue.deep_match_pending.is_empty(), "no relaunch after cancel");
+
+        // Budget/ledger survive the cancel within the run…
+        assert_eq!(queue.auto_probe_windows_done, 1);
+        assert_eq!(queue.auto_probe_attempted_ms.len(), 1);
+        // …and a batch re-registration wipes every probe trace (stop→start
+        // is a fresh run).
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        assert!(queue.auto_probe.is_none());
+        assert_eq!(queue.auto_probe_windows_done, 0);
+        assert!(queue.auto_probe_attempted_ms.is_empty());
+    }
+
+    #[test]
+    fn recut_round_completes_once_and_failure_never_recuts_twice() {
+        const H: i64 = 3_600_000;
+        let mut queue = recut_queue();
+        queue.record_batch_sync_points(1, borrowed_recut_points(1, H as f64));
+        queue.record_batch_sync_points(2, borrowed_recut_points(2, (H + 60_000) as f64));
+        assert_eq!(queue.batch_sync_recut_pending.len(), 2);
+
+        // Job 1's re-cut run succeeds with the corrected slice: the worker
+        // recorded the wall shift it was actually cut with, the fresh points
+        // land in the current round, and the pending marker clears.
+        set_row_status(&queue, 1, JobStatus::Rendering);
+        queue.dynamic_clock_shift_by_job.insert(1, -193849.85);
+        queue.record_batch_sync_points(1, corrected_recut_points(1, H as f64));
+        assert!(!queue.batch_sync_recut_pending.contains(&1));
+        assert!(queue.completed_batch_sync_job_ids.contains(&1));
+        assert!(
+            queue
+                .batch_sync_points
+                .iter()
+                .filter(|p| p.job_id == 1)
+                .all(|p| p.wall_clock_offset_ms.map_or(false, |w| (w - -193849.85).abs() < 1.0)),
+            "the re-cut run's points must normalize against the corrected shift"
+        );
+        // No self-retrigger: its new shift matches the confirmed value.
+        assert!(queue.batch_sync_recut_pending.is_empty() || !queue.batch_sync_recut_pending.contains(&1));
+
+        // Job 2's re-cut run fails (no usable points): it completes, keeps
+        // its old evidence vote, stays eligible for yellow — and the
+        // once-per-run ledger blocks a second re-cut even though its used
+        // shift still reads as borrowed baseline.
+        set_row_status(&queue, 2, JobStatus::Rendering);
+        queue.record_batch_sync_points(2, Vec::new());
+        assert!(!queue.batch_sync_recut_pending.contains(&2));
+        assert!(queue.completed_batch_sync_job_ids.contains(&2));
+        let idx = queue.jobs[&2].queue_index;
+        assert_ne!(
+            queue.queue.borrow()[idx].status,
+            JobStatus::Queued,
+            "a failed re-cut must not re-queue a second time"
+        );
     }
 
     // Design Decision 14, live regression (sid 36f327ae run 2): a learned

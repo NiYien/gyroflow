@@ -1802,8 +1802,10 @@ fn assign_fallback(
 
 // Compensation time margin (ms). Base buffer added to both ends of every clip's
 // gyro window. Sized to absorb typical external-IMU/camera clock offsets so the
-// sync search has a consistent margin on both sides.
-const COMP_TIME_MS: f64 = 1500.0;
+// sync search has a consistent margin on both sides. Public because
+// batch_clock's re-cut trigger is defined as "the used shift is off by more
+// than the slice margin" and must never diverge from the margin itself.
+pub const COMP_TIME_MS: f64 = 1500.0;
 // Maximum per-day drift compensation (ms).
 const MAX_DAILY_DRIFT_MS: f64 = 1000.0;
 // Milliseconds in a day.

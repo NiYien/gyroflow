@@ -480,6 +480,23 @@ pub fn prelocate_tol_ms() -> f64 {
     })
 }
 
+/// Floor of the bootstrap auto-probe's focused-window half-width
+/// (batch-sync-frontier-recovery): even a near-zero drift estimate keeps a
+/// ±30s window so second-level file-timestamp quantisation cannot starve it.
+pub const AUTO_PROBE_TOL_FLOOR_MS: f64 = 30_000.0;
+
+/// Half-width of the auto-probe's focused window: twice the expected relay
+/// drift over the gap to the nearest confirmed value, floored at 30s. The
+/// ladder's last rung widens the same window by `widen_factor` (×1 = base).
+/// Compose with [`focused_window`] for the actual clamped file window —
+/// far tighter than the pool search's ±2h prelocate tolerance, one probe
+/// runs in ~10-20s.
+pub fn auto_probe_tol_ms(expected_drift_ms: f64, widen_factor: f64) -> f64 {
+    let drift = if expected_drift_ms.is_finite() { expected_drift_ms.abs() } else { 0.0 };
+    let widen = if widen_factor.is_finite() { widen_factor.max(1.0) } else { 1.0 };
+    (2.0 * drift).max(AUTO_PROBE_TOL_FLOOR_MS) * widen
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeepMatchVerdict {
     /// median of per-window offsets
@@ -1290,6 +1307,30 @@ mod tests {
         // Guards.
         assert!(focused_window(0, 1000.0, 0, 0.0, 0, TOL).is_none());
         assert!(focused_window(0, 1000.0, 0, 1000.0, 0, 0.0).is_none());
+    }
+
+    #[test]
+    fn auto_probe_tol_floors_scales_and_widens() {
+        // Small drift estimates keep the 30s floor; large ones take 2×drift;
+        // the ladder's widen rung multiplies the same tolerance once.
+        assert_eq!(auto_probe_tol_ms(0.0, 1.0), 30_000.0);
+        assert_eq!(auto_probe_tol_ms(5_000.0, 1.0), 30_000.0); // 2×5s < floor
+        // 48.4h out at the observed drift (~12.1s expected): 2×12105 = 24.2s
+        // still sits under the 30s floor…
+        assert_eq!(auto_probe_tol_ms(12_105.0, 1.0), 30_000.0);
+        // …but a wider gap (2×18000 = 36s) exceeds it.
+        assert_eq!(auto_probe_tol_ms(18_000.0, 1.0), 36_000.0);
+        assert_eq!(auto_probe_tol_ms(18_000.0, 4.0), 144_000.0);
+        // Guards: non-finite inputs degrade to the floor / no widening.
+        assert_eq!(auto_probe_tol_ms(f64::NAN, 1.0), 30_000.0);
+        assert_eq!(auto_probe_tol_ms(1_000.0, f64::NAN), 30_000.0);
+        assert_eq!(auto_probe_tol_ms(1_000.0, 0.5), 30_000.0);
+        // Composes with focused_window: predicted centre ± tol, clamped.
+        let tol = auto_probe_tol_ms(18_000.0, 1.0);
+        let w = focused_window(10 * HOUR, 60_000.0, 9 * HOUR, 2.0 * HOUR as f64, 0, tol)
+            .expect("window");
+        assert_eq!(w.0, HOUR as f64 - tol);
+        assert_eq!(w.1, HOUR as f64 + 60_000.0 + tol);
     }
 
     #[test]
