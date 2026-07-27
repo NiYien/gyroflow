@@ -38,6 +38,23 @@ MenuItem {
         function propChanged() { settings.propChanged(sett); }
     }
 
+    // [sync-overlay-visibility] Simple mode only masks the sync overlays, it does not
+    // discard the user's choice. App.qml::applySimpleModeDefaults() switches the controller
+    // flags off on the way into Simple mode without touching these checkboxes (the panel is
+    // hidden there, so their visual state is irrelevant while it lasts). Coming back to Full
+    // mode therefore has to re-apply whatever they still hold — otherwise a ticked checkbox
+    // would sit above a preview that draws nothing, with no way to recover short of
+    // unticking and re-ticking it.
+    Connections {
+        target: window;
+        function onIsSimpleModeChanged(): void {
+            if (!window.isSimpleMode) {
+                controller.show_detected_features = showFeatures.checked;
+                controller.show_optical_flow      = showOF.checked;
+            }
+        }
+    }
+
     property alias timePerSyncpoint: timePerSyncpoint;
     property alias everyNthFrame: everyNthFrame;
     property alias poseMethod: poseMethod;
