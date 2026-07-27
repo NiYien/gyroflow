@@ -26,8 +26,11 @@ MenuItem {
         // property alias syncMethod: syncMethod.currentIndex;
         // property alias offsetMethod: offsetMethod.currentIndex;
         // property alias poseMethod: poseMethod.currentIndex;
-        property alias showFeatures: showFeatures.checked;
-        property alias showOF: showOF.checked;
+        // showFeatures / showOF are intentionally not persisted: the sync overlays start
+        // off at every app launch and Full mode can only turn them on for the current
+        // session. Adding an alias back here would restore the old QSettings memory and
+        // re-open the bug where a stale `true` is written back into the controller during
+        // startup. See StabilizationParams::default().
         // This is a specific use case and I don't think we should remember that setting, especially that it's hidden under "Advanced"
         //property alias everyNthFrame: everyNthFrame.value;
 
@@ -454,16 +457,22 @@ MenuItem {
                 }
             }
         }
+        // `checked: false` matches QQC.CheckBox's own default, so constructing this
+        // component does not fire onCheckedChanged and never writes to the controller.
+        // This panel is loaded even in Simple mode (its ItemLoader is asynchronous and
+        // stays active, only the wrapping Item is hidden), so an initial `true` here
+        // used to land in the controller after App.qml's Component.onCompleted had
+        // already run — turning the overlays back on behind the user's back.
         CheckBox {
             id: showFeatures;
             text: qsTr("Show detected features");
-            checked: true;
+            checked: false;
             onCheckedChanged: controller.show_detected_features = checked;
         }
         CheckBox {
             id: showOF;
             text: qsTr("Show optical flow");
-            checked: true;
+            checked: false;
             onCheckedChanged: controller.show_optical_flow = checked;
         }
     }

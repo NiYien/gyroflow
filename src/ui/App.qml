@@ -49,7 +49,12 @@ Rectangle {
     // Index 1 in smoothingAlgorithms corresponds to DefaultAlgo (see src/core/smoothing/mod.rs).
     readonly property int defaultSmoothingIndex: 1;
     function applySimpleModeDefaults(): void {
-        // Hide sync-time feature/flow overlays in the video preview.
+        // Force the sync overlays off when returning from Full mode. Cold start no
+        // longer relies on this: StabilizationParams::default() has both off, and the
+        // Synchronization.qml checkboxes no longer write `true` on construction. What
+        // remains is the Full -> Simple transition, where a checkbox the user ticked in
+        // Full mode must not follow them into Simple mode (the panel holding it is
+        // hidden there, so they would have no way to turn it back off).
         controller.show_detected_features = false;
         controller.show_optical_flow = false;
         // Force smoothing method back to "Default" so Simple mode never inherits a
@@ -2750,10 +2755,16 @@ Rectangle {
         render_queue.parallel_renders = isSimpleMode ? 3 : +settings.value("parallelRenders_v2", 3);
         // [simple-overwrite] Initialize overwrite mode per current mode — Simple forces silent overwrite
         render_queue.overwrite_mode = isSimpleMode ? 1 : +settings.value("defaultOverwriteAction", 0);
-        // NOTE: do NOT call applySimpleModeDefaults() at startup. The controller defaults are already
-        // Simple-friendly (smoothing index 1 = DefaultAlgo, feature/flow overlays are only drawn while
-        // sync runs). Invoking set_smoothing_method here races with queue-edit reload and blanks the
-        // gyro chart on the main canvas. The reset only matters when the user actively flips
+        // NOTE: do NOT call applySimpleModeDefaults() at startup — the reason is the smoothing
+        // reset it performs: invoking set_smoothing_method here races with queue-edit reload and
+        // blanks the gyro chart on the main canvas. The controller default (smoothing index 1 =
+        // DefaultAlgo) is already Simple-friendly, so nothing is lost.
+        // The sync overlays are handled entirely by defaults now: StabilizationParams::default()
+        // has both off and Synchronization.qml's checkboxes no longer write `true` on construction.
+        // (An earlier version of this note claimed the overlays "are only drawn while sync runs" —
+        // they are not. draw_overlays() keeps painting whatever pose_estimator.sync_results holds,
+        // long after the sync finished, which is how they leaked into Simple mode.)
+        // applySimpleModeDefaults() therefore only matters when the user actively flips
         // Full → Simple, which is handled in onIsSimpleModeChanged above.
 
         QT_TRANSLATE_NOOP("App", "An error occured: %1");

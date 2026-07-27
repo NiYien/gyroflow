@@ -138,8 +138,15 @@ impl Default for StabilizationParams {
             fovs: vec![],
             minimal_fovs: vec![],
             stab_enabled: true,
-            show_detected_features: true,
-            show_optical_flow: true,
+            // [sync-overlay-visibility] Intentional divergence from upstream Gyroflow,
+            // which defaults both sync overlays to on. NiYien keeps them off at every
+            // process start and never persists their state; Full mode can turn them on
+            // per session (the checkboxes in Synchronization.qml are deliberately kept
+            // out of the persisted `sett` object). Do NOT silently restore `true` when
+            // merging upstream — the flip is a semantic reversal on the same line and
+            // will not surface as a conflict.
+            show_detected_features: false,
+            show_optical_flow: false,
             frame_readout_time: 0.0,
             frame_readout_direction: ReadoutDirection::TopToBottom,
             adaptive_zoom_window: 4.0,
