@@ -674,6 +674,42 @@ struct DeepMatchResult {
     offset_ms: f64,
 }
 
+// Direction plan for one batch-autosync dispatch pass
+// (batch-sync-dynamic-local-offset §8): capture times of the in-set rows and
+// whether the anchor's pre side still has Queued/Rendering work. Jobs absent
+// from `times` (outside the set, no capture time, zero frames) follow baseline
+// scheduling and never hold the barrier closed.
+struct BatchSyncDirectionPlan {
+    center_ms: f64,
+    times: HashMap<u32, f64>,
+    pre_side_pending: bool,
+}
+
+// Everything the worker-side dynamic local-offset assignment needs, snapshotted
+// atomically on the UI thread at task start (batch-sync-dynamic-local-offset
+// §7). Only the offset choice + generation are decisions; the rest is cheap
+// context (cached metadata entries hold Arc'd payloads). v1 scope: same gyro
+// FILE range-only reslice — a dynamic offset that moves coverage to another
+// file keeps the baseline assignment (the full lens re-flow a file change
+// needs is out of scope; the spec's "dynamic assignment failure keeps
+// baseline" contract covers it).
+struct DynamicAssignInput {
+    wall_clock_offset_ms: f64,
+    source: &'static str,
+    generation: u64,
+    // Snapshot audit trail: the baseline the override replaced. Consumed by
+    // tests only (the task-start log prints it before this struct is built).
+    #[cfg_attr(not(test), allow(dead_code))]
+    baseline_shift_ms: i64,
+    video: core::gyro_match::VideoMatchInfo,
+    gyro: core::gyro_match::GyroMatchInfo,
+    gyro_path: String,
+    cached_ranges: Vec<CachedGyroMetadataRange>,
+    video_size: (usize, usize),
+    video_fps: f64,
+    every_nth_frame: i64,
+}
+
 fn denormalize_video_rotation_metadata(normalized_rotation: f64) -> i32 {
     let normalized = normalized_rotation.round() as i32;
     (360 - normalized).rem_euclid(360)
@@ -1286,6 +1322,29 @@ pub struct RenderQueue {
     // same clearing points).
     learned_clock_shift_day: Option<chrono::NaiveDate>,
 
+    // Local clock consensus for the current batch run (change
+    // batch-sync-dynamic-local-offset): deep-search anchors / session offsets
+    // register initial confirmed values, finished sync tasks submit per-video
+    // evidence, and local windows confirm drift-gated offsets that both the
+    // confirmation layer (as references) and the relay assignment read.
+    // In-memory only — cleared with the learned clock shift, invalidated on
+    // batch re-registration, never persisted.
+    batch_clock: gyroflow_core::synchronization::batch_clock::BatchClockState,
+    // Capture time of the most recent deep-search anchor — the direction
+    // scheduling centre when several anchors exist (§6). None = no anchor;
+    // the barrier then falls back to baseline ordering.
+    batch_clock_center_ms: Option<f64>,
+    // Wall-clock shift each job's slice was ACTUALLY cut with when the
+    // dynamic override applied (evidence normalization must use it instead of
+    // the baseline session offset). Absent = baseline. Lives within one batch
+    // registration; repair rounds inherit it (§7 context reuse).
+    dynamic_clock_shift_by_job: HashMap<u32, f64>,
+    // De-dupe latch for the direction-barrier "refusing queue completion"
+    // warning: the blocked state is re-entered on every completion callback
+    // tick while a sync drains, so only the first tick of a blockade warns
+    // (later ticks log at debug). Reset whenever a job is actually selected.
+    barrier_block_warned: bool,
+
     // batch-params-gyroflow-writeback: jobs whose batch parameter edits await
     // the debounced disk write-back, with the per-job merged params (later
     // edits overwrite the same keys within one debounce window). Flushed by
@@ -1773,6 +1832,7 @@ impl RenderQueue {
     }
 
     fn clear_all_batch_sync_state(&mut self) {
+        self.dynamic_clock_shift_by_job.clear();
         self.batch_sync_job_ids.clear();
         self.expected_batch_sync_job_ids.clear();
         self.completed_batch_sync_job_ids.clear();
@@ -1797,6 +1857,13 @@ impl RenderQueue {
         I: IntoIterator<Item = u32>,
     {
         self.clear_all_batch_sync_state();
+        // Re-registering the batch (stop → start again) drops every
+        // locally-confirmed value and all evidence from the previous round —
+        // keeping them alongside cleared sync points would be the mixed state
+        // the spec forbids. Anchor/session initial registrations survive:
+        // their sources of truth (learned clock shift, match results) are
+        // still valid and the first tasks of the new round need a reference.
+        self.batch_clock.invalidate_local();
         self.batch_sync_job_ids = job_ids
             .into_iter()
             .filter(|job_id| self.jobs.contains_key(job_id))
@@ -2006,15 +2073,48 @@ impl RenderQueue {
                     .into_iter()
                     .filter(|timestamp| timestamp.is_finite()),
             );
+        // Shift the job's slice was ACTUALLY cut with — the dynamic override's
+        // wall-clock value when one applied, the baseline session offset
+        // otherwise. Completes the normalization started in do_autosync
+        // (which only knows the slice residual sync − init).
+        let assumed_shift_ms = self
+            .dynamic_clock_shift_by_job
+            .get(&job_id)
+            .copied()
+            .or_else(|| {
+                self.match_results
+                    .as_ref()
+                    .and_then(|mr| {
+                        mr.results
+                            .iter()
+                            .find(|r| r.job_id == Some(job_id))
+                            .and_then(|r| r.global_offset_ms)
+                    })
+                    .map(|v| v as f64)
+            });
         for point in &mut points {
             point.job_id = job_id;
             point.repair_round = self.batch_sync_repair_round;
+            point.wall_clock_offset_ms = match (point.wall_clock_offset_ms, assumed_shift_ms) {
+                // Shared sign convention (batch_clock, design Decision 13):
+                // the residual enters negated, `wall = shift − residual`.
+                (Some(residual), Some(shift)) => Some(
+                    gyroflow_core::synchronization::batch_clock::wall_clock_offset_ms(
+                        residual, 0.0, shift,
+                    ),
+                ),
+                _ => None,
+            };
         }
         self.batch_sync_points.retain(|point| {
             point.job_id != job_id || point.repair_round != self.batch_sync_repair_round
         });
         self.batch_sync_points.extend(points);
         self.completed_batch_sync_job_ids.insert(job_id);
+        // Relay evidence: one drift-gated vote per fully finished video into
+        // the local clock consensus. Cancelled/failed runs never get here with
+        // points, and gate-failing points are filtered inside.
+        self.submit_batch_clock_evidence(job_id, assumed_shift_ms);
         if self
             .expected_batch_sync_job_ids
             .iter()
@@ -2031,6 +2131,377 @@ impl RenderQueue {
         points: Vec<gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate>,
     ) {
         self.record_batch_sync_result(job_id, points, Vec::new());
+    }
+
+    // Build and submit one video's relay evidence (batch-sync-dynamic-local-offset
+    // §"已完成视频 SHALL 生成按视频去重的可靠证据"). Points must have completed
+    // wall-clock normalization; the vote is the median of the video's largest
+    // consistent subset, filtered through the same finite/rank/confidence
+    // gates confirmation votes with.
+    fn submit_batch_clock_evidence(&mut self, job_id: u32, assumed_shift_ms: Option<f64>) {
+        use gyroflow_core::synchronization::{batch_clock, sync_repair};
+        let Some(assumed_shift_ms) = assumed_shift_ms else {
+            return;
+        };
+        let Some(created_at) = self.jobs.get(&job_id).and_then(|job| {
+            job.stab
+                .as_ref()
+                .and_then(|s| s.params.read().video_created_at)
+                .or(job.video_created_at)
+        }) else {
+            // Videos without capture time never contribute evidence (spec:
+            // baseline assignment, no direction scheduling, no votes).
+            return;
+        };
+        let gyro_id = self
+            .match_results
+            .as_ref()
+            .and_then(|mr| {
+                mr.results
+                    .iter()
+                    .find(|r| r.job_id == Some(job_id))
+                    .and_then(|r| r.gyro_index)
+            })
+            .map(|g| g as u64)
+            .unwrap_or(u64::MAX);
+        // Evidence points carry the residual (sync − init) as their offset so
+        // `video_evidence` records |sync − init| as the prior displacement and
+        // normalizes with the session shift itself. The back-projection MUST
+        // be the shared inverse (`slice_offset_ms`) so it stays consistent
+        // with whatever sign convention `video_evidence` composes with —
+        // hand-rolling `wall − shift` here would silently cancel the
+        // Decision-13 sign fix (double flip).
+        let points: Vec<sync_repair::BatchSyncPoint> = self
+            .batch_sync_points
+            .iter()
+            .filter(|p| p.job_id == job_id && p.repair_round == self.batch_sync_repair_round)
+            .filter(|p| {
+                p.confidence >= sync_repair::MIN_BATCH_SYNC_POINT_CONFIDENCE
+                    && p.rank >= sync_repair::MIN_BATCH_SYNC_POINT_RANK
+            })
+            .filter_map(|p| {
+                p.wall_clock_offset_ms.filter(|w| w.is_finite()).map(|wall| {
+                    let mut q = p.clone();
+                    q.offset_ms = batch_clock::slice_offset_ms(wall, 0.0, assumed_shift_ms);
+                    q
+                })
+            })
+            .enumerate()
+            .map(|(i, candidate)| candidate.with_id(i))
+            .filter(|p| sync_repair::is_point_numeric_valid(p))
+            .collect();
+        let generation = self.batch_clock.generation();
+        let Some(evidence) = batch_clock::video_evidence(
+            job_id,
+            created_at as f64,
+            gyro_id,
+            0,
+            &points,
+            0.0,
+            assumed_shift_ms,
+            generation,
+        ) else {
+            return;
+        };
+        ::log::info!(
+            target: "sync",
+            "[batch-clock] evidence job={} t={:.0} wall={:.1}ms prior_disp={:.1}ms conf={:.3} gen={}",
+            job_id,
+            evidence.video_created_at_ms,
+            evidence.wall_clock_offset_ms,
+            evidence.prior_displacement_ms,
+            evidence.confidence,
+            generation
+        );
+        let outcome = self.batch_clock.submit_evidence(evidence);
+        for confirmed in &outcome.confirmed_local {
+            ::log::info!(
+                target: "sync",
+                "[batch-clock] confirmed local offset t={:.0} offset={:.1}ms support={} gen={}",
+                confirmed.created_at_ms,
+                confirmed.wall_clock_offset_ms,
+                confirmed.support_videos,
+                confirmed.generation
+            );
+        }
+        for rejected in &outcome.rejected {
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] rejected reason=drift_rate t={:.0} offset={:.1}ms support={:?} ref_t={:.0} ref_offset={:.1}ms budget={:.1}ms actual={:.1}ms",
+                rejected.created_at_ms,
+                rejected.wall_clock_offset_ms,
+                rejected.support_job_ids,
+                rejected.rejection.ref_created_at_ms,
+                rejected.rejection.ref_offset_ms,
+                rejected.rejection.budget_ms,
+                rejected.rejection.actual_ms
+            );
+        }
+    }
+
+    // UI-thread snapshot for the dynamic local-offset override
+    // (batch-sync-dynamic-local-offset §7): decides whether this task should
+    // be re-cut against a nearer confirmed value and captures the worker's
+    // inputs. Only the offset choice + generation are decisions taken here;
+    // parsing and reslicing happen on the worker. None = keep baseline.
+    fn batch_sync_dynamic_assignment_input(&self, job_id: u32) -> Option<DynamicAssignInput> {
+        use gyroflow_core::synchronization::batch_clock;
+        // Repair rounds reuse their previous assignment context (§7); deep-
+        // anchor pinned jobs keep their pin (§6).
+        if self.batch_sync_repair_round != 0 || self.deep_match_results.contains_key(&job_id) {
+            return None;
+        }
+        let job = self.jobs.get(&job_id)?;
+        let stab = job.stab.as_ref()?;
+        let created_at = stab
+            .params
+            .read()
+            .video_created_at
+            .or(job.video_created_at)?;
+        let result = self
+            .match_results
+            .as_ref()?
+            .results
+            .iter()
+            .find(|r| r.job_id == Some(job_id))?;
+        let baseline_shift_ms = result.global_offset_ms?;
+        let gyro_files_idx = result.gyro_index?;
+        let gyro_info = self.gyro_files.get(gyro_files_idx)?;
+        let gyro_created = gyro_info.created_at_ms?;
+        let gyro_duration = gyro_info.duration_ms?;
+        let nearest = self.batch_clock.nearest_confirmed(created_at as f64, 0)?;
+
+        // relay_gap warning: the time distance to the reference implies more
+        // expected drift than 60% of the batch search_size (5s floor).
+        let gap_ms = (created_at as f64 - nearest.created_at_ms).abs();
+        if batch_clock::relay_gap_warning(gap_ms, 5_000.0) {
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] relay_gap job={} gap_h={:.1} expected_drift={:.0}ms search_size=5000ms",
+                job_id,
+                gap_ms / 3_600_000.0,
+                batch_clock::relay_gap_expected_drift_ms(gap_ms)
+            );
+        }
+        let source = match nearest.source {
+            batch_clock::ConfirmedOffsetSource::Anchor => "anchor",
+            batch_clock::ConfirmedOffsetSource::Session => "session",
+            batch_clock::ConfirmedOffsetSource::Local => "local",
+        };
+        let delta = nearest.wall_clock_offset_ms - baseline_shift_ms as f64;
+        ::log::info!(
+            target: "sync",
+            "[batch-clock] task start job={} t={} selected_offset={:.1}ms source={} gen={} baseline_shift={}ms delta={:.1}ms",
+            job_id,
+            created_at,
+            nearest.wall_clock_offset_ms,
+            source,
+            nearest.generation,
+            baseline_shift_ms,
+            delta
+        );
+        if delta.abs() < 1.0 {
+            // Nearest confirmed value equals the baked assumption — baseline
+            // assignment already is the dynamic assignment.
+            return None;
+        }
+
+        // Effective match duration exactly as the baseline used it, recovered
+        // from the baseline window: duration = (end − start) − 2 × front,
+        // front = −init_offset. Avoids re-deriving the effective-timebase
+        // duration here.
+        let front = -result.init_offset_ms?;
+        let eff_duration_ms = (result.gyro_end_ms? - result.gyro_start_ms?) - 2.0 * front;
+        if !eff_duration_ms.is_finite() || eff_duration_ms <= 0.0 {
+            return None;
+        }
+        let every_nth_frame = stab
+            .lens
+            .read()
+            .sync_settings
+            .as_ref()
+            .and_then(|ss| ss.get("every_nth_frame"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(1);
+        let (size, fps) = {
+            let p = stab.params.read();
+            (p.size, p.fps)
+        };
+        Some(DynamicAssignInput {
+            wall_clock_offset_ms: nearest.wall_clock_offset_ms,
+            source,
+            generation: nearest.generation,
+            baseline_shift_ms,
+            video: core::gyro_match::VideoMatchInfo {
+                path: job.render_options.input_filename.clone(),
+                duration_ms: eff_duration_ms,
+                created_at_ms: Some(created_at),
+                pre_recording_ms: 0.0,
+            },
+            gyro: core::gyro_match::GyroMatchInfo {
+                path: gyro_info.path.clone(),
+                duration_ms: gyro_duration,
+                created_at_ms: gyro_created,
+            },
+            gyro_path: gyro_info.path.clone(),
+            cached_ranges: gyro_info.cached_metadata_ranges.clone(),
+            video_size: size,
+            video_fps: fps,
+            every_nth_frame,
+        })
+    }
+
+    // Worker-side dynamic assignment (§7): same-file range reslice driven by
+    // the UI-thread snapshot. Returns Some((init_offset_ms, search_size_s))
+    // when applied so the caller mirrors the values into additional_data;
+    // None keeps the baseline — every failure path logs and falls through,
+    // never fabricating gyro samples.
+    fn apply_dynamic_local_offset(
+        stab: &Arc<StabilizationManager>,
+        job_id: u32,
+        input: &DynamicAssignInput,
+    ) -> Option<(f64, f64)> {
+        let assignment = match core::gyro_match::assign_video_with_wall_clock_offset(
+            &input.video,
+            std::slice::from_ref(&input.gyro),
+            &[0],
+            input.wall_clock_offset_ms.round() as i64,
+            &[],
+            std::slice::from_ref(&input.video),
+        ) {
+            Ok(a) => a,
+            Err(e) => {
+                // The candidate set holds only the baseline gyro file: a
+                // coverage/bounds failure here also covers the "dynamic
+                // offset wants a different file" case — v1 keeps baseline.
+                ::log::warn!(
+                    target: "sync",
+                    "[batch-clock] dynamic assignment failed job={} gyro='{}' reason={:?} — baseline kept",
+                    job_id,
+                    filesystem::get_filename(&input.gyro_path),
+                    e
+                );
+                return None;
+            }
+        };
+
+        let requested =
+            normalize_time_range_ms(Some((assignment.gyro_start_ms, assignment.gyro_end_ms)));
+        // Slice source: a cached range covering the request (adjustment is
+        // cache-range-relative, so truncated metadata is never re-cropped),
+        // else a fresh ranged parse of the ORIGINAL file.
+        let mut slice_source = "cached";
+        let md = if let Some(entry) = select_best_cached_metadata(&input.cached_ranges, requested)
+        {
+            let adjusted = get_adjusted_match_range_ms(
+                entry.range_ms,
+                Some(assignment.gyro_start_ms),
+                Some(assignment.gyro_end_ms),
+            );
+            clone_metadata_for_job(entry.metadata.as_ref(), adjusted)
+        } else {
+            slice_source = "parsed";
+            let mut file = match filesystem::open_file(&input.gyro_path, false, false) {
+                Ok(f) => f,
+                Err(e) => {
+                    ::log::warn!(
+                        target: "sync",
+                        "[batch-clock] dynamic assignment failed job={} open '{}': {} — baseline kept",
+                        job_id,
+                        filesystem::get_filename(&input.gyro_path),
+                        e
+                    );
+                    return None;
+                }
+            };
+            let filesize = file.size;
+            let load_options = core::gyro_source::FileLoadOptions {
+                time_range_ms: requested,
+                ..Default::default()
+            };
+            match GyroSource::parse_telemetry_file(
+                file.get_file(),
+                filesize,
+                &input.gyro_path,
+                &load_options,
+                input.video_size,
+                input.video_fps,
+                |_| {},
+                Arc::new(AtomicBool::new(false)),
+            ) {
+                Ok(md) => md,
+                Err(e) => {
+                    ::log::warn!(
+                        target: "sync",
+                        "[batch-clock] dynamic assignment failed job={} parse '{}': {} — baseline kept",
+                        job_id,
+                        filesystem::get_filename(&input.gyro_path),
+                        e
+                    );
+                    return None;
+                }
+            }
+        };
+        if md.raw_imu.is_empty() && md.quaternions.is_empty() {
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] dynamic assignment failed job={} empty slice range={:?} — baseline kept",
+                job_id,
+                requested
+            );
+            return None;
+        }
+
+        // Gyro injection — the exact non-keep recipe the batch apply uses.
+        {
+            let params = stab.params.read();
+            let mut gyro = stab.gyro.write();
+            if gyro.file_metadata.read().keep_video_gyro {
+                // Trusted built-in gyro is never overwritten.
+                return None;
+            }
+            let preserved_imu_rotation = gyro.imu_transforms.imu_rotation_angles;
+            let preserved_acc_rotation = gyro.imu_transforms.acc_rotation_angles;
+            gyro.init_from_params(&params);
+            gyro.clear();
+            gyro.file_url = String::new();
+            gyro.file_metadata = Default::default();
+            drop(params);
+            gyro.load_from_telemetry(md);
+            gyro.file_load_options = Default::default();
+            if let Some(v) = preserved_imu_rotation {
+                gyro.imu_transforms.set_imu_rotation(v[0], v[1], v[2]);
+            }
+            if let Some(v) = preserved_acc_rotation {
+                gyro.imu_transforms.set_acc_rotation(v[0], v[1], v[2]);
+            }
+        }
+
+        // sync_settings updated in the same breath as the slice (three-point
+        // atomic sync, part 2; the additional_data mirror is part 3 and is
+        // patched by the caller from the returned values).
+        let (init_s, search_s) = batch_match_sync_overrides(Some(assignment.init_offset_ms));
+        {
+            let mut lens = stab.lens.write();
+            if let Some(ss) = lens.sync_settings.as_mut().and_then(|v| v.as_object_mut()) {
+                ss.insert("initial_offset".into(), serde_json::json!(init_s));
+                ss.insert("search_size".into(), serde_json::json!(search_s));
+            }
+        }
+        ::log::info!(
+            target: "sync",
+            "[batch-clock] dynamic assignment applied job={} source={} gen={} offset={:.1}ms init={:.1}ms search={:.1}s range=[{:.1},{:.1}] slice={}",
+            job_id,
+            input.source,
+            input.generation,
+            input.wall_clock_offset_ms,
+            assignment.init_offset_ms,
+            search_s,
+            assignment.gyro_start_ms,
+            assignment.gyro_end_ms,
+            slice_source
+        );
+        Some((assignment.init_offset_ms, search_s))
     }
 
     fn batch_sync_confirmation_points(
@@ -2067,6 +2538,12 @@ impl RenderQueue {
                 confidence: point.confidence,
                 rank: point.rank,
                 repair_round: point.repair_round,
+                // Round-trip the local-window context — dropping these would
+                // strip repair rounds of their windows and normalization
+                // (batch-sync-dynamic-local-offset).
+                video_created_at_ms: point.video_created_at_ms,
+                session_id: point.session_id,
+                wall_clock_offset_ms: point.wall_clock_offset_ms,
                 diagnostic: point.diagnostic.clone(),
             })
             .collect()
@@ -2074,13 +2551,54 @@ impl RenderQueue {
 
     fn update_batch_sync_confirmation_from_points(&mut self) {
         use gyroflow_core::synchronization::sync_repair::{
-            BatchSyncBatchStatus, BatchSyncVideoColor, confirm_batch_sync_points_for_jobs,
+            BatchSyncBatchStatus, BatchSyncVideoColor, confirm_batch_sync_points_for_jobs_with_refs,
         };
 
-        let result = confirm_batch_sync_points_for_jobs(
-            self.batch_sync_confirmation_points(),
-            self.batch_sync_job_ids.iter().copied(),
+        let candidates = self.batch_sync_confirmation_points();
+        // Anchor/session/local references gate the first window bands — but
+        // only when every candidate carries a completed wall-clock
+        // normalization; the references live in that domain and comparing a
+        // raw slice offset against them would mis-fire the drift gate.
+        let refs: Vec<gyroflow_core::synchronization::batch_clock::ConfirmedLocalOffset> =
+            if candidates.iter().all(|c| c.wall_clock_offset_ms.is_some()) {
+                self.batch_clock.confirmed().cloned().collect()
+            } else {
+                Vec::new()
+            };
+        ::log::info!(
+            target: "sync",
+            "[batch-clock] confirmation start candidates={} refs={} gen={}",
+            candidates.len(),
+            refs.len(),
+            self.batch_clock.generation()
         );
+        let result = confirm_batch_sync_points_for_jobs_with_refs(
+            candidates,
+            self.batch_sync_job_ids.iter().copied(),
+            &refs,
+        );
+        for band in &result.accepted_bands {
+            ::log::info!(
+                target: "sync",
+                "[batch-clock] accepted band session={} center={:?} offset={:.1}ms support={} span={:.1}ms",
+                band.session_id,
+                band.center_created_at_ms,
+                band.offset_ms,
+                band.band.job_ids.len(),
+                band.band.offset_span_ms
+            );
+        }
+        for band in &result.rejected_bands {
+            ::log::warn!(
+                target: "sync",
+                "[batch-clock] confirmation rejected reason=drift_rate center={:.0} offset={:.1}ms support={:?} budget={:.1}ms actual={:.1}ms",
+                band.center_created_at_ms,
+                band.offset_ms,
+                band.support_job_ids,
+                band.budget_ms,
+                band.actual_ms
+            );
+        }
 
         for video in &result.videos {
             let job_id = video.job_id;
@@ -2860,6 +3378,9 @@ impl RenderQueue {
         self.batch_sync_confirmed_points.remove(&job_id);
         self.batch_sync_attempted_timestamps_ms.remove(&job_id);
         self.batch_sync_points.retain(|point| point.job_id != job_id);
+        // Removing a job also removes its vote from the local clock consensus.
+        self.batch_clock.remove_job(job_id);
+        self.dynamic_clock_shift_by_job.remove(&job_id);
         self.update_queue_indices();
 
         if self.status.to_string() == "active" {
@@ -2987,21 +3508,33 @@ impl RenderQueue {
                 break;
             }
 
-            let mut job_id = None;
-            for v in self.queue.borrow().iter() {
-                // [stop-restart] Queue selection only needs status==Queued + known frame count.
-                // Previous tighter predicate (current_frame==0 && processing_progress∈{0,1}) was
-                // necessary when Rendering→Queued reset also wiped those counters; now that reset
-                // preserves them (see reset_rendering_jobs_to_queued), a Stopped job still has
-                // current_frame>0 and must remain selectable. render_job has its own entry guard
-                // against double-scheduling (status == Rendering/Finished/Skipped → return).
-                if v.total_frames > 0 && v.status == JobStatus::Queued {
-                    job_id = Some(v.job_id);
-                    break;
-                }
-            }
+            let (job_id, barrier_blocked) = self.select_next_queued_job();
             if let Some(job_id) = job_id {
+                self.barrier_block_warned = false;
                 self.render_job(job_id);
+            } else if barrier_blocked {
+                // Safety net (batch-sync-dynamic-local-offset §8): never fall
+                // through into the completion flow (post_render_action can
+                // shut the machine down) while the direction barrier holds
+                // anyone back. Benign transient (verified live 2026-07-27,
+                // sid 36f327ae): between a pre-side job's completion callback
+                // and its evidence/terminal-state bookkeeping the scheduler
+                // sees "blocked + zero active" for one tick, then the next
+                // callback re-enters start() and proceeds — so only the first
+                // tick of a blockade warns, later ticks log at debug.
+                if !self.barrier_block_warned {
+                    self.barrier_block_warned = true;
+                    ::log::warn!(
+                        target: "sync",
+                        "[batch-clock] direction barrier blocked with no selectable/active job — refusing queue completion"
+                    );
+                } else {
+                    ::log::debug!(
+                        target: "sync",
+                        "[batch-clock] direction barrier still blocked — refusing queue completion"
+                    );
+                }
+                break;
             } else {
                 if self.get_active_render_count() == 0 {
                     self.post_render_action();
@@ -3019,6 +3552,106 @@ impl RenderQueue {
             }
         }
     }
+    // (struct lives right above its builder below)
+    //
+    // Pick the next Queued job for start()'s dispatch loop. Returns
+    // (selected job, barrier_blocked): barrier_blocked is true when at least
+    // one in-set job was withheld by the direction barrier this pass.
+    //
+    // [stop-restart] Queue selection only needs status==Queued + known frame
+    // count. The previous tighter predicate (current_frame==0 &&
+    // processing_progress∈{0,1}) was necessary when Rendering→Queued reset
+    // also wiped those counters; now that reset preserves them (see
+    // reset_rendering_jobs_to_queued), a Stopped job still has
+    // current_frame>0 and must remain selectable. render_job has its own
+    // entry guard against double-scheduling (status == Rendering/Finished/
+    // Skipped → return).
+    //
+    // Direction scheduling (batch-sync-dynamic-local-offset §8): during a
+    // batch autosync run with a deep-search anchor, in-set jobs with capture
+    // times start nearest-to-the-anchor first, and the anchor's post side
+    // waits until the pre side fully leaves Queued/Rendering. The barrier
+    // lives HERE, in the selection predicate — a blocked job is simply never
+    // selected, so the dispatch loop cannot spin on it and render_job needs
+    // no early-return. Rows outside the set, without capture time, or with
+    // total_frames == 0 keep baseline queue-order scheduling and never hold
+    // the barrier closed.
+    fn select_next_queued_job(&self) -> (Option<u32>, bool) {
+        let direction = self.batch_sync_direction_plan();
+        let mut best_batch: Option<(u32, f64)> = None;
+        let mut barrier_blocked = false;
+        for v in self.queue.borrow().iter() {
+            if v.total_frames > 0 && v.status == JobStatus::Queued {
+                match direction.as_ref().and_then(|d| d.times.get(&v.job_id).copied()) {
+                    Some(t) => {
+                        let d = direction.as_ref().unwrap();
+                        if t <= d.center_ms || !d.pre_side_pending {
+                            let dist = (t - d.center_ms).abs();
+                            if best_batch.is_none_or(|(_, bd)| dist < bd) {
+                                best_batch = Some((v.job_id, dist));
+                            }
+                        } else {
+                            barrier_blocked = true;
+                        }
+                    }
+                    None => {
+                        // Not in the batch set or no capture time: baseline
+                        // queue-order pick wins immediately.
+                        return (Some(v.job_id), barrier_blocked);
+                    }
+                }
+            }
+        }
+        (best_batch.map(|(id, _)| id), barrier_blocked)
+    }
+
+    // Direction plan for the current batch autosync pass (§8): capture times
+    // of in-set rows and whether the anchor's pre side still has pending
+    // work. None when this is not a batch autosync run or no deep-search
+    // anchor exists — scheduling then stays baseline.
+    fn batch_sync_direction_plan(&self) -> Option<BatchSyncDirectionPlan> {
+        if self.export_project != 2 || self.batch_sync_job_ids.is_empty() {
+            return None;
+        }
+        let center_ms = self.batch_clock_center_ms?;
+        let mut times = HashMap::new();
+        let mut pre_side_pending = false;
+        let q = self.queue.borrow();
+        for item in q.iter() {
+            if item.total_frames == 0 || !self.batch_sync_job_ids.contains(&item.job_id) {
+                continue;
+            }
+            let created = self.jobs.get(&item.job_id).and_then(|job| {
+                job.stab
+                    .as_ref()
+                    .and_then(|s| s.params.read().video_created_at)
+                    .or(job.video_created_at)
+            });
+            let Some(t) = created else { continue };
+            let t = t as f64;
+            times.insert(item.job_id, t);
+            // Terminal for the barrier = left Queued/Rendering OR completed
+            // its sync. The second clause is load-bearing: in batch sync mode
+            // a finished job's row stays `Rendering` (done_pending) until the
+            // WHOLE batch confirmation flips it to Finished — which only runs
+            // once every expected job completed. Without it the pre side
+            // never reads as done, the post side never starts, and the run
+            // deadlocks (observed live 2026-07-27, sid=9d850eb3: the §8
+            // completion safety net fired repeatedly).
+            if t <= center_ms
+                && matches!(item.status, JobStatus::Queued | JobStatus::Rendering)
+                && !self.completed_batch_sync_job_ids.contains(&item.job_id)
+            {
+                pre_side_pending = true;
+            }
+        }
+        Some(BatchSyncDirectionPlan {
+            center_ms,
+            times,
+            pre_side_pending,
+        })
+    }
+
     pub fn resume(&mut self) {
         // Explicit Resume: clear pause_flag, adjust timestamps, reset each
         // job's cancel_flag, then let start() schedule pending jobs normally.
@@ -4761,6 +5394,42 @@ impl RenderQueue {
             let sync_cancel_flag = cancel_flag.clone();
             let defer_batch_sync_confirmation =
                 self.expected_batch_sync_job_ids.contains(&job_id) && export_project == 2;
+            // Dynamic local-offset snapshot (batch-sync-dynamic-local-offset
+            // §7): taken atomically here on the UI thread; the reslice itself
+            // runs on the worker right before do_autosync.
+            let dynamic_assign = if defer_batch_sync_confirmation && !job_is_deep_match {
+                self.batch_sync_dynamic_assignment_input(job_id)
+            } else {
+                None
+            };
+            let dynamic_ad_applied = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, (job_id, init_ms, search_s, every_nth, wall_shift_ms): (
+                    u32,
+                    f64,
+                    f64,
+                    i64,
+                    f64,
+                )| {
+                    // Keep the job's stored additional_data in step with the
+                    // dynamic assignment so the T2 rewrite and project reload
+                    // cannot resurrect the old initial_offset (three-point
+                    // atomic sync, part 3), and remember which wall-clock
+                    // shift this slice was actually cut with (evidence
+                    // normalization reads it).
+                    this.dynamic_clock_shift_by_job.insert(job_id, wall_shift_ms);
+                    if let Some(job) = this.jobs.get_mut(&job_id) {
+                        if let Some(patched) = patch_additional_data_sync_block(
+                            &job.additional_data,
+                            init_ms / 1000.0,
+                            search_s,
+                            every_nth,
+                        ) {
+                            job.additional_data = patched;
+                        }
+                    }
+                },
+            );
             // Deep match runs must leave no .gyroflow residue on disk — the
             // per-window offsets are search probes, not sync points.
             // (job_is_deep_match is captured above, next to job_is_batch_sync.)
@@ -4795,6 +5464,31 @@ impl RenderQueue {
                 // recompute, encoding — all heavy shared-state work that must
                 // gate concurrent project-load.
                 let _g = crate::core::OpGuard::enter(&in_flight_count);
+                // Apply the dynamic local offset before sync: same-file range
+                // reslice + sync_settings + additional_data mirror (worker
+                // thread — parses can take seconds on big files). Failure
+                // keeps the baseline assignment untouched.
+                if let Some(ref dyn_input) = dynamic_assign {
+                    if let Some((init_ms, search_s)) =
+                        Self::apply_dynamic_local_offset(&stab, job_id, dyn_input)
+                    {
+                        if let Some(patched) = patch_additional_data_sync_block(
+                            &additional_data,
+                            init_ms / 1000.0,
+                            search_s,
+                            dyn_input.every_nth_frame,
+                        ) {
+                            additional_data = patched;
+                        }
+                        dynamic_ad_applied((
+                            job_id,
+                            init_ms,
+                            search_s,
+                            dyn_input.every_nth_frame,
+                            dyn_input.wall_clock_offset_ms,
+                        ));
+                    }
+                }
                 let sync_start = std::time::Instant::now();
                 let sync_stats = Self::do_autosync(
                     stab.clone(),
@@ -6605,8 +7299,26 @@ impl RenderQueue {
                                         cost: x.2,
                                         confidence,
                                         rank,
-                                        repair_round: 0,
-                                        diagnostic: Default::default(),
+                                        // Capture time drives the local-window
+                                        // confirmation (batch-sync-dynamic-local-offset);
+                                        // None falls back to the untimed bucket.
+                                        video_created_at_ms: stab2
+                                            .params
+                                            .read()
+                                            .video_created_at
+                                            .map(|t| t as f64),
+                                        // Slice residual (sync − init). This is
+                                        // HALF a normalization: the UI-thread
+                                        // receiver (record_batch_sync_result)
+                                        // composes it with the shift the slice
+                                        // was cut with (wall = shift − residual,
+                                        // design Decision 13) to land in the
+                                        // wall-clock domain, or clears the
+                                        // field when the shift is unknown.
+                                        wall_clock_offset_ms: Some(
+                                            x.1 - sync_initial_offset_ms,
+                                        ),
+                                        ..Default::default()
                                     });
                                     if collect_batch_points {
                                         continue;
@@ -8562,6 +9274,81 @@ impl RenderQueue {
     // Runs heavy gyro parsing on a background thread to avoid blocking the UI.
     fn apply_match_results(&mut self) {
         self.apply_match_results_filtered(None);
+        self.register_session_clock_offsets();
+    }
+
+    // Re-derive `source=Session` initial confirmed values from the freshly
+    // applied match results (batch-sync-dynamic-local-offset §6): batches
+    // without a deep search still need a first relay reference, taken from the
+    // wall-clock session offset. Rerun on every batch match — previous Session
+    // registrations are dropped first (their offsets may have changed), Anchor
+    // registrations stay (they live with the learned clock shift).
+    //
+    // Design Decision 14: when an Anchor initial exists the Session
+    // registration is skipped entirely — the spec's session fallback is for
+    // batches WITHOUT a deep search. Registering the anchor's offset again at
+    // some other capture time would pin a zero-drift claim there (live case:
+    // a learned shift shared across a two-day batch put the 11-19 anchor
+    // value at an 11-21 median time, giving the legitimate 11-21 band a 25s
+    // drift budget and rejecting all of it). Grouping is per (gyro file,
+    // offset) so a median never spans sessions or days.
+    fn register_session_clock_offsets(&mut self) {
+        use gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource;
+        self.batch_clock
+            .unregister_initial_source(ConfirmedOffsetSource::Session);
+        if self
+            .batch_clock
+            .confirmed()
+            .any(|c| matches!(c.source, ConfirmedOffsetSource::Anchor))
+        {
+            ::log::info!(
+                target: "sync",
+                "[batch-clock] session initial skipped (anchor present) gen={}",
+                self.batch_clock.generation()
+            );
+            return;
+        }
+        let Some(ref match_results) = self.match_results else {
+            return;
+        };
+        let mut by_session: BTreeMap<(u64, i64), Vec<f64>> = BTreeMap::new();
+        for result in &match_results.results {
+            let Some(offset) = result.global_offset_ms else {
+                continue;
+            };
+            let gyro_id = result.gyro_index.map(|g| g as u64).unwrap_or(u64::MAX);
+            let created = result
+                .job_id
+                .and_then(|job_id| self.jobs.get(&job_id))
+                .and_then(|job| {
+                    job.stab
+                        .as_ref()
+                        .and_then(|s| s.params.read().video_created_at)
+                        .or(job.video_created_at)
+                });
+            if let Some(t) = created {
+                by_session.entry((gyro_id, offset)).or_default().push(t as f64);
+            }
+        }
+        for ((gyro_id, offset), mut times) in by_session {
+            times.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let center = times[times.len() / 2];
+            self.batch_clock.register_initial(
+                ConfirmedOffsetSource::Session,
+                0,
+                center,
+                offset as f64,
+            );
+            ::log::info!(
+                target: "sync",
+                "[batch-clock] initial confirmed registered source=session t={:.0} offset={}ms gyro={} videos={} gen={}",
+                center,
+                offset,
+                gyro_id,
+                times.len(),
+                self.batch_clock.generation()
+            );
+        }
     }
 
     fn reapply_batch_auto_rotate(&mut self, job_ids_json: String) {
@@ -11298,6 +12085,26 @@ impl RenderQueue {
                         core::gyro_match::derive_session_offset_from_deep_match(gc, vc, offset_ms);
                     self.learned_clock_shift_ms = Some(shift);
                     self.learned_clock_shift_day = Self::local_day_from_ms(vc);
+                    // Register the anchor as the initial confirmed local
+                    // offset (batch-sync-dynamic-local-offset §6): reliability
+                    // is vouched by the deep search itself, no support gate.
+                    // A later deep search registers another anchor; the most
+                    // recent one is the scheduling centre, all of them compete
+                    // on distance in nearest-confirmed selection.
+                    self.batch_clock.register_initial(
+                        gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+                        0,
+                        vc as f64,
+                        shift as f64,
+                    );
+                    self.batch_clock_center_ms = Some(vc as f64);
+                    ::log::info!(
+                        target: "sync",
+                        "[batch-clock] initial confirmed registered source=anchor t={} offset={}ms gen={}",
+                        vc,
+                        shift,
+                        self.batch_clock.generation()
+                    );
                     ::log::info!(
                         target: "sync",
                         "[deep-match] hit at probe {}/{} tier={} → learned_clock_shift={}ms (gyro_created={} video_created={} offset={:.1}ms)",
@@ -11486,6 +12293,14 @@ impl RenderQueue {
         if self.learned_clock_shift_ms.take().is_some() {
             ::log::info!(target: "sync", "[deep-match] learned clock shift cleared ({source})");
         }
+        // The local clock consensus lives and dies with the learned shift:
+        // unpair / reset-all / clear-queue all invalidate the pairings its
+        // anchors and evidence were built on.
+        if !self.batch_clock.is_empty() {
+            self.batch_clock.clear();
+            ::log::info!(target: "sync", "[batch-clock] state cleared ({source})");
+        }
+        self.batch_clock_center_ms = None;
     }
 
     // Local calendar day for an epoch-ms wall-clock timestamp. `single()`
@@ -14661,8 +15476,7 @@ mod tests {
             cost: 1.0,
             confidence,
             rank: 100.0,
-            repair_round: 0,
-            diagnostic: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -14677,6 +15491,365 @@ mod tests {
             rank,
             ..sync_candidate(job_id, timestamp_ms, offset_ms, confidence)
         }
+    }
+
+    // ── direction barrier (batch-sync-dynamic-local-offset §8) ──────────────
+
+    fn set_created_at(queue: &RenderQueue, job_id: u32, t_ms: i64) {
+        queue.jobs[&job_id]
+            .stab
+            .as_ref()
+            .unwrap()
+            .params
+            .write()
+            .video_created_at = Some(t_ms);
+    }
+
+    fn set_row_status(queue: &RenderQueue, job_id: u32, status: JobStatus) {
+        let idx = queue.jobs[&job_id].queue_index;
+        let mut itm = queue.queue.borrow()[idx].clone();
+        itm.status = status;
+        queue.queue.borrow_mut().change_line(idx, itm);
+    }
+
+    #[test]
+    fn direction_barrier_orders_pre_side_first_nearest_to_anchor() {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0); // pre side, far from anchor
+        add_eta_job(&mut queue, 2, 1); // pre side, near
+        add_eta_job(&mut queue, 3, 2); // post side
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.export_project = 2;
+        set_created_at(&queue, 1, 0);
+        set_created_at(&queue, 2, 9 * H);
+        set_created_at(&queue, 3, 11 * H);
+        queue.batch_clock_center_ms = Some(10.0 * H as f64);
+
+        // Pre side pending → post side blocked; nearest pre job starts first.
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(2));
+        assert!(blocked, "post-side job 3 must be reported blocked");
+
+        // Terminal-state check is "not Queued/Rendering": a Rendering pre job
+        // still holds the barrier…
+        set_row_status(&queue, 2, JobStatus::Rendering);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(1));
+        assert!(blocked);
+
+        // …and while the last pre job renders, nothing is selectable but the
+        // barrier reports blocked — start() must NOT enter the completion
+        // flow (post_render_action / queue_finished) in this state.
+        set_row_status(&queue, 1, JobStatus::Finished);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, None);
+        assert!(blocked, "blocked flag is what keeps the completion flow shut");
+
+        // Pre side fully terminal (Finished/Error both qualify) → post opens.
+        set_row_status(&queue, 2, JobStatus::Error);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(3));
+        assert!(!blocked);
+    }
+
+    #[test]
+    fn direction_barrier_treats_done_pending_sync_jobs_as_terminal() {
+        // Live-observed deadlock (2026-07-27, sid=9d850eb3): in batch sync
+        // mode a job that finished ITS sync keeps row status Rendering
+        // (done_pending) until the batch-wide confirmation — which only runs
+        // after every expected job completes. The barrier must read such jobs
+        // as terminal or the post side never starts.
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0); // pre side
+        add_eta_job(&mut queue, 2, 1); // post side
+        queue.register_batch_sync_jobs([1, 2]);
+        queue.export_project = 2;
+        set_created_at(&queue, 1, 0);
+        set_created_at(&queue, 2, 2 * H);
+        queue.batch_clock_center_ms = Some(1.0 * H as f64);
+
+        set_row_status(&queue, 1, JobStatus::Rendering);
+        queue.completed_batch_sync_job_ids.insert(1);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(2), "done_pending pre side must open the barrier");
+        assert!(!blocked);
+    }
+
+    #[test]
+    fn direction_barrier_ignores_untimed_and_out_of_set_rows() {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0); // in set, pre side
+        add_eta_job(&mut queue, 2, 1); // in set, NO capture time
+        add_eta_job(&mut queue, 3, 2); // in set, post side
+        add_eta_job(&mut queue, 4, 3); // out of set
+        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.export_project = 2;
+        set_created_at(&queue, 1, 0);
+        set_created_at(&queue, 3, 2 * H);
+        queue.batch_clock_center_ms = Some(1.0 * H as f64);
+
+        let plan = queue.batch_sync_direction_plan().unwrap();
+        assert!(!plan.times.contains_key(&2), "untimed row is not direction-scheduled");
+        assert!(!plan.times.contains_key(&4), "out-of-set row is not direction-scheduled");
+
+        // Pre side finished; the untimed and out-of-set rows are still Queued
+        // — they must NOT keep the barrier closed for the post side. Baseline
+        // queue-order picks the untimed row first (it comes earlier).
+        set_row_status(&queue, 1, JobStatus::Finished);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(2));
+        assert!(!blocked);
+
+        // Once the baseline rows are done, the post side runs.
+        set_row_status(&queue, 2, JobStatus::Finished);
+        set_row_status(&queue, 4, JobStatus::Finished);
+        let (selected, blocked) = queue.select_next_queued_job();
+        assert_eq!(selected, Some(3));
+        assert!(!blocked);
+    }
+
+    #[test]
+    fn no_anchor_or_non_batch_run_keeps_baseline_queue_order() {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        add_eta_job(&mut queue, 2, 1);
+        queue.register_batch_sync_jobs([1, 2]);
+        set_created_at(&queue, 1, 5 * H);
+        set_created_at(&queue, 2, 0);
+
+        // Batch run but no deep-search anchor → no plan, first row wins.
+        queue.export_project = 2;
+        assert!(queue.batch_sync_direction_plan().is_none());
+        assert_eq!(queue.select_next_queued_job(), (Some(1), false));
+
+        // Anchor set but not a batch-sync run → still baseline.
+        queue.batch_clock_center_ms = Some(0.0);
+        queue.export_project = 0;
+        assert!(queue.batch_sync_direction_plan().is_none());
+        assert_eq!(queue.select_next_queued_job(), (Some(1), false));
+    }
+
+    #[test]
+    fn first_task_snapshot_reads_the_initial_confirmed_value() {
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        queue.register_batch_sync_jobs([1]);
+        set_created_at(&queue, 1, 10 * H);
+        // Anchor registered from a deep search at t=0, shift −6265ms.
+        queue.batch_clock.register_initial(
+            gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+            0,
+            0.0,
+            -6265.0,
+        );
+        // Baseline match assumed −5000ms for this job.
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results: vec![core::gyro_match::MatchResult {
+                video_index: 0,
+                job_id: Some(1),
+                gyro_index: Some(0),
+                status: core::gyro_match::MatchStatus::Matched,
+                global_offset_ms: Some(-5000),
+                gyro_start_ms: Some(0.0),
+                gyro_end_ms: Some(13_000.0),
+                init_offset_ms: Some(-1500.0),
+            }],
+            global_offset_ms: Some(-5000),
+            error: None,
+        });
+        queue.gyro_files.push(GyroFileInfo {
+            id: 0,
+            path: "g.bin".into(),
+            filename: "g.bin".into(),
+            created_at_ms: Some(0),
+            duration_ms: Some(3_600_000.0),
+            detected_source: None,
+            parsed: true,
+            error: None,
+            cached_metadata: None,
+            cached_metadata_ranges: Vec::new(),
+        });
+
+        let input = queue
+            .batch_sync_dynamic_assignment_input(1)
+            .expect("first task must see the anchor's initial confirmed value");
+        assert_eq!(input.source, "anchor");
+        assert_eq!(input.wall_clock_offset_ms, -6265.0);
+        assert_eq!(input.baseline_shift_ms, -5000);
+
+        // Deep-pinned jobs never take a dynamic override (§6)…
+        queue
+            .deep_match_results
+            .insert(1, DeepMatchResult { gyro_index: 0, offset_ms: 0.0 });
+        assert!(queue.batch_sync_dynamic_assignment_input(1).is_none());
+
+        // …and repair rounds reuse their previous assignment context (§7).
+        queue.deep_match_results.clear();
+        queue.batch_sync_repair_round = 1;
+        assert!(queue.batch_sync_dynamic_assignment_input(1).is_none());
+    }
+
+    // Design Decision 14, live regression (sid 36f327ae run 2): a learned
+    // shift shared by a two-day batch must not be re-registered as a Session
+    // initial at a far-day median time — that pins a zero-drift claim there
+    // and the drift gate then rejects the far day's legitimate band with a
+    // seconds-scale budget.
+    #[test]
+    fn anchor_batches_do_not_pin_session_initials_at_far_times() {
+        use gyroflow_core::synchronization::batch_clock::{
+            BatchClockEvidence, ConfirmedOffsetSource,
+        };
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        // Deep anchor on the 11-19 video at t=0, learned shift −193850.
+        queue
+            .batch_clock
+            .register_initial(ConfirmedOffsetSource::Anchor, 0, 0.0, -193850.0);
+        // Four videos across two days, all matched with the single learned
+        // shift (this is exactly what apply_match_results sees after a deep
+        // search on a multi-day batch).
+        let times: [(u32, i64); 4] = [(1, 0), (2, 60_000), (3, 48 * H), (4, 48 * H + 60_000)];
+        let mut results = Vec::new();
+        for (i, (job_id, t)) in times.iter().enumerate() {
+            add_eta_job(&mut queue, *job_id, i);
+            set_created_at(&queue, *job_id, *t);
+            results.push(core::gyro_match::MatchResult {
+                video_index: i,
+                job_id: Some(*job_id),
+                gyro_index: Some(0),
+                status: core::gyro_match::MatchStatus::Matched,
+                global_offset_ms: Some(-193850),
+                gyro_start_ms: Some(0.0),
+                gyro_end_ms: Some(13_000.0),
+                init_offset_ms: Some(-1500.0),
+            });
+        }
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results,
+            global_offset_ms: Some(-193850),
+            error: None,
+        });
+
+        queue.register_session_clock_offsets();
+        assert!(
+            queue
+                .batch_clock
+                .confirmed()
+                .all(|c| matches!(c.source, ConfirmedOffsetSource::Anchor)),
+            "with an anchor present no Session initial may be registered"
+        );
+
+        // The far day's true value (−196890, i.e. 48h × ~1.5s/day of drift
+        // away) must clear the drift gate against the 48h-distant anchor.
+        // Pre-fix, the Session pin at a day-two median time gave it a 25s
+        // budget and rejected the whole band.
+        for job_id in [10u32, 11, 12] {
+            queue.batch_clock.submit_evidence(BatchClockEvidence {
+                job_id,
+                video_created_at_ms: (48 * H + (job_id as i64) * 60_000) as f64,
+                gyro_id: 0,
+                session_id: 0,
+                wall_clock_offset_ms: -196890.0,
+                prior_displacement_ms: 3040.0,
+                confidence: 0.85,
+                generation: 0,
+            });
+        }
+        assert!(
+            queue
+                .batch_clock
+                .confirmed()
+                .any(|c| (c.wall_clock_offset_ms - -196890.0).abs() < 1.0),
+            "far-day band must confirm against the anchor's day-scale budget"
+        );
+    }
+
+    // No-anchor path: session initials group per gyro file, so one shared
+    // offset value can never produce a median spanning sessions or days.
+    #[test]
+    fn session_initials_group_per_gyro_file() {
+        use gyroflow_core::synchronization::batch_clock::ConfirmedOffsetSource;
+        const H: i64 = 3_600_000;
+        let mut queue = RenderQueue::default();
+        let times: [(u32, i64, usize); 4] =
+            [(1, 0, 0), (2, 60_000, 0), (3, 48 * H, 1), (4, 48 * H + 60_000, 1)];
+        let mut results = Vec::new();
+        for (i, (job_id, t, gyro)) in times.iter().enumerate() {
+            add_eta_job(&mut queue, *job_id, i);
+            set_created_at(&queue, *job_id, *t);
+            results.push(core::gyro_match::MatchResult {
+                video_index: i,
+                job_id: Some(*job_id),
+                gyro_index: Some(*gyro),
+                status: core::gyro_match::MatchStatus::Matched,
+                global_offset_ms: Some(-5000),
+                gyro_start_ms: Some(0.0),
+                gyro_end_ms: Some(13_000.0),
+                init_offset_ms: Some(-1500.0),
+            });
+        }
+        queue.match_results = Some(core::gyro_match::BatchMatchResult {
+            results,
+            global_offset_ms: Some(-5000),
+            error: None,
+        });
+
+        queue.register_session_clock_offsets();
+        let sessions: Vec<f64> = queue
+            .batch_clock
+            .confirmed()
+            .filter(|c| matches!(c.source, ConfirmedOffsetSource::Session))
+            .map(|c| c.created_at_ms)
+            .collect();
+        assert_eq!(sessions.len(), 2, "one registration per gyro file");
+        assert!(
+            sessions.iter().any(|t| *t < H as f64)
+                && sessions.iter().any(|t| *t > 47.0 * H as f64),
+            "each registration sits inside its own session's day, got {sessions:?}"
+        );
+    }
+
+    #[test]
+    fn dynamic_patch_round_trips_the_project_sync_block() {
+        // Three-point sync, part 3: the additional_data mirror must carry the
+        // dynamic initial_offset so a reloaded project cannot resurrect the
+        // old one.
+        let ad = serde_json::json!({
+            "synchronization": {
+                "initial_offset": -1.5,
+                "search_size": 5.0,
+                "do_autosync": true,
+                "every_nth_frame": 1
+            }
+        })
+        .to_string();
+        let patched = patch_additional_data_sync_block(&ad, -1.83, 5.0, 1).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&patched).unwrap();
+        assert_eq!(v["synchronization"]["initial_offset"].as_f64(), Some(-1.83));
+        assert_eq!(v["synchronization"]["search_size"].as_f64(), Some(5.0));
+        assert_eq!(v["synchronization"]["do_autosync"].as_bool(), Some(true));
+    }
+
+    #[test]
+    fn confirmed_point_to_candidate_rebuild_keeps_local_window_context() {
+        // Repair rounds rebuild candidates from the previous round's confirmed
+        // points; the local-window fields must survive the trip both ways
+        // (batch-sync-dynamic-local-offset task 3.2).
+        let candidate = gyroflow_core::synchronization::sync_repair::BatchSyncPointCandidate {
+            video_created_at_ms: Some(1_783_646_846_000.0),
+            session_id: 3,
+            wall_clock_offset_ms: Some(-6265.0),
+            ..sync_candidate(7, 1000.0, -1500.0, 0.9)
+        };
+        let point = candidate.clone().with_id(0);
+        let rebuilt = RenderQueue::batch_sync_candidates_from_confirmed_points(&[point]);
+        assert_eq!(rebuilt.len(), 1);
+        assert_eq!(rebuilt[0], candidate);
     }
 
     fn seed_batch_sync_repair_rank(queue: &RenderQueue, job_id: u32, duration_ms: f64) {
@@ -14694,18 +15867,24 @@ mod tests {
 
     #[test]
     fn render_queue_batch_sync_confirms_supported_low_confidence_points() {
+        // Support threshold is clamp(n, 2, 3) since
+        // batch-sync-dynamic-local-offset, so three agreeing videos are needed
+        // next to the outlier (the old strict majority confirmed 2 of 3).
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        add_eta_job(&mut queue, 4, 3);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
 
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.2)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.8)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.8)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
 
         assert_eq!(batch_status(&queue, 1)["color"], "green");
         assert_eq!(batch_status(&queue, 2)["color"], "green");
+        assert_eq!(batch_status(&queue, 4)["color"], "green");
         assert_eq!(batch_status(&queue, 3)["color"], "yellow");
         assert_eq!(
             queue.jobs[&1]
@@ -15022,13 +16201,17 @@ mod tests {
 
     #[test]
     fn render_queue_skip_batch_sync_repair_clears_prompt_without_finished_warning() {
+        // Threshold is clamp(n, 2, 3) — three agreeing videos beside the
+        // outlier keep this batch Mixed (repair prompt), not AllYellow.
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        add_eta_job(&mut queue, 4, 3);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
 
         assert_eq!(queue.batch_sync_prompt_kind.to_string(), "repair");
@@ -15081,14 +16264,18 @@ mod tests {
 
     #[test]
     fn render_queue_batch_sync_status_lookup_uses_job_id_when_cached_queue_index_is_stale() {
+        // Threshold is clamp(n, 2, 3) — three agreeing videos beside the
+        // outlier (see render_queue_batch_sync_confirms_supported_low_confidence_points).
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        add_eta_job(&mut queue, 4, 3);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
 
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
         assert_eq!(batch_status(&queue, 1)["color"], "green");
         assert_eq!(batch_status(&queue, 3)["color"], "yellow");
@@ -16169,14 +17356,19 @@ mod tests {
 
     #[test]
     fn render_queue_repair_avoids_attempted_ranges_when_no_points_returned() {
+        // Support threshold is clamp(n, 2, 3) since
+        // batch-sync-dynamic-local-offset: three agreeing videos next to the
+        // outlier keep the repair flow under test.
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
+        add_eta_job(&mut queue, 4, 3);
         seed_batch_sync_repair_rank(&queue, 3, 180_000.0);
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
 
         queue.pause_flag.store(true, SeqCst);
@@ -16220,14 +17412,18 @@ mod tests {
 
     #[test]
     fn render_queue_repair_requeues_only_yellow_jobs_for_two_rounds() {
+        // Three agreeing videos (clamp(n, 2, 3) support threshold) plus the
+        // yellow outlier under repair.
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
+        add_eta_job(&mut queue, 4, 3);
         seed_batch_sync_repair_rank(&queue, 3, 120_000.0);
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
 
         queue.pause_flag.store(true, SeqCst);
@@ -16236,6 +17432,7 @@ mod tests {
         assert_eq!(queue.batch_sync_repair_round, 1);
         assert!(!queue.expected_batch_sync_job_ids.contains(&1));
         assert!(!queue.expected_batch_sync_job_ids.contains(&2));
+        assert!(!queue.expected_batch_sync_job_ids.contains(&4));
         assert!(queue.expected_batch_sync_job_ids.contains(&3));
         assert_eq!(queue.queue.borrow()[2].get_status(), &JobStatus::Queued);
         assert_eq!(batch_status(&queue, 1)["color"], "green");
@@ -16243,14 +17440,18 @@ mod tests {
 
     #[test]
     fn render_queue_repair_confirms_yellow_against_original_green_jobs() {
+        // Three agreeing videos (clamp(n, 2, 3) support threshold) plus the
+        // yellow outlier under repair.
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
+        add_eta_job(&mut queue, 4, 3);
         seed_batch_sync_repair_rank(&queue, 3, 120_000.0);
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
 
         queue.pause_flag.store(true, SeqCst);
@@ -16265,10 +17466,13 @@ mod tests {
 
     #[test]
     fn render_queue_repair_stops_with_yellow_when_next_range_is_missing() {
+        // Three agreeing videos (clamp(n, 2, 3) support threshold) plus the
+        // yellow outlier under repair.
         let mut queue = RenderQueue::default();
         add_eta_job(&mut queue, 1, 0);
         add_eta_job(&mut queue, 2, 1);
         add_eta_job(&mut queue, 3, 2);
+        add_eta_job(&mut queue, 4, 3);
         queue.jobs[&3]
             .stab
             .as_ref()
@@ -16276,9 +17480,10 @@ mod tests {
             .params
             .write()
             .duration_ms = 60_000.0;
-        queue.register_batch_sync_jobs([1, 2, 3]);
+        queue.register_batch_sync_jobs([1, 2, 3, 4]);
         queue.record_batch_sync_points(1, vec![sync_candidate(1, 1000.0, 1000.0, 0.9)]);
         queue.record_batch_sync_points(2, vec![sync_candidate(2, 1000.0, 1100.0, 0.9)]);
+        queue.record_batch_sync_points(4, vec![sync_candidate(4, 1000.0, 1050.0, 0.9)]);
         queue.record_batch_sync_points(3, vec![sync_candidate(3, 1000.0, 5000.0, 0.9)]);
 
         queue.pause_flag.store(true, SeqCst);

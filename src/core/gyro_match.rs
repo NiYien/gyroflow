@@ -1165,6 +1165,120 @@ fn clip_bounds_coverage(
     (covered_ms, required)
 }
 
+/// The deepest gyro among `candidates` whose projected window covers
+/// `v_created` (within `COVERAGE_TOLERANCE_MS`). Returns (gyro_index, depth).
+/// On equal depth the earliest candidate wins — same tie-break as the previous
+/// stable sort-based reduction in `assign_videos_by_coverage`.
+fn deepest_covering_gyro(
+    v_created: i64,
+    gyros: &[GyroMatchInfo],
+    candidates: &[usize],
+    video_offset: i64,
+) -> Option<(usize, i64)> {
+    let mut best: Option<(usize, i64)> = None;
+    for &gi in candidates {
+        let Some(g) = gyros.get(gi) else { continue };
+        let video_start = g.created_at_ms - video_offset;
+        let video_end = video_start + (g.duration_ms as i64);
+        if v_created >= video_start - COVERAGE_TOLERANCE_MS
+            && v_created <= video_end + COVERAGE_TOLERANCE_MS
+        {
+            let depth = (v_created - video_start).min(video_end - v_created);
+            if best.is_none_or(|(_, d)| depth > d) {
+                best = Some((gi, depth));
+            }
+        }
+    }
+    best
+}
+
+/// A fully-resolved single-video assignment produced by
+/// `assign_video_with_wall_clock_offset`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SingleVideoAssignment {
+    pub gyro_index: usize,
+    pub gyro_start_ms: f64,
+    pub gyro_end_ms: f64,
+    pub front_comp: f64,
+    /// Per-clip sync initial offset (= `-front_comp`), same convention as
+    /// `MatchResult.init_offset_ms`.
+    pub init_offset_ms: f64,
+    pub calib_anchor_ms: i64,
+    pub depth_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SingleAssignError {
+    NoCreationTime,
+    NoCoveringGyro,
+    /// The clip window failed the 70%/3s coverage gate. Carries the numbers
+    /// the reject log prints.
+    ClipBounds {
+        gyro_index: usize,
+        covered_ms: f64,
+        required_ms: f64,
+    },
+}
+
+/// Single-video assignment entry: given one wall-clock offset (in the
+/// `Session.offset - Session.delay` domain), pick the deepest covering gyro
+/// among `candidate_gyros`, compute the padded clip window from the ORIGINAL
+/// gyro file duration, and apply the existing clip-bounds gate.
+///
+/// This is the exact logic the batch coverage path runs for its winning
+/// session (which calls this same function), so a dynamic local offset flows
+/// through identical gyro selection, `COMP_TIME_MS`/`drift_comp` padding and
+/// insufficient-data semantics. It never fabricates samples: on any error the
+/// caller keeps its baseline assignment.
+pub fn assign_video_with_wall_clock_offset(
+    v: &VideoMatchInfo,
+    gyros: &[GyroMatchInfo],
+    candidate_gyros: &[usize],
+    video_offset: i64,
+    session_calib_indices: &[usize],
+    videos: &[VideoMatchInfo],
+) -> Result<SingleVideoAssignment, SingleAssignError> {
+    let v_created = v.created_at_ms.ok_or(SingleAssignError::NoCreationTime)?;
+    let (gyro_index, depth_ms) =
+        deepest_covering_gyro(v_created, gyros, candidate_gyros, video_offset)
+            .ok_or(SingleAssignError::NoCoveringGyro)?;
+    let g = &gyros[gyro_index];
+    let (gyro_start_ms, gyro_end_ms, front_comp, calib_anchor_ms) =
+        compute_clip_window(v, g, v_created, video_offset, session_calib_indices, videos);
+    let back_comp = front_comp; // compute_clip_window: front_comp == back_comp
+    if !clip_bounds_ok(
+        gyro_start_ms,
+        gyro_end_ms,
+        front_comp,
+        back_comp,
+        v.duration_ms,
+        g.duration_ms,
+    ) {
+        let (covered_ms, required_ms) = clip_bounds_coverage(
+            gyro_start_ms,
+            gyro_end_ms,
+            front_comp,
+            back_comp,
+            v.duration_ms,
+            g.duration_ms,
+        );
+        return Err(SingleAssignError::ClipBounds {
+            gyro_index,
+            covered_ms,
+            required_ms,
+        });
+    }
+    Ok(SingleVideoAssignment {
+        gyro_index,
+        gyro_start_ms,
+        gyro_end_ms,
+        front_comp,
+        init_offset_ms: -front_comp,
+        calib_anchor_ms,
+        depth_ms,
+    })
+}
+
 /// For every gyro, assign it to the reliable session whose anchor is closest.
 /// This partitions the gyro pool so each session's coverage check only sees
 /// gyros that physically belong to its shooting day - even when sessions are
@@ -1335,36 +1449,21 @@ fn assign_videos_by_coverage(
             continue;
         }
 
-        // Find every reliable session that covers this video; record
-        // (session_id, gyro_id, depth). Coverage is restricted to gyros that
-        // this session OWNS (nearest-anchor partitioning), so two sessions on
-        // adjacent days don't both claim the same wall-clock coordinate.
-        let mut hits: Vec<(usize, usize, i64)> = Vec::new();
+        // Find every reliable session that covers this video; record the
+        // per-session best hit (session_id, gyro_id, depth). Coverage is
+        // restricted to gyros that this session OWNS (nearest-anchor
+        // partitioning), so two sessions on adjacent days don't both claim the
+        // same wall-clock coordinate.
+        let mut per_session_best: Vec<(usize, usize, i64)> = Vec::new();
         for (sid, s) in sessions.iter().enumerate() {
             if !s.reliable {
                 continue;
             }
             let video_offset = s.offset - s.delay;
-            for &gi in &owned_gyros[sid] {
-                let g = &gyros[gi];
-                let video_start = g.created_at_ms - video_offset;
-                let video_end = video_start + (g.duration_ms as i64);
-                if v_created >= video_start - COVERAGE_TOLERANCE_MS
-                    && v_created <= video_end + COVERAGE_TOLERANCE_MS
-                {
-                    let depth =
-                        (v_created - video_start).min(video_end - v_created);
-                    hits.push((sid, gi, depth));
-                }
-            }
-        }
-
-        // Reduce hits down to per-session best (the deepest gyro hit in each session).
-        hits.sort_by(|a, b| a.0.cmp(&b.0).then(b.2.cmp(&a.2)));
-        let mut per_session_best: Vec<(usize, usize, i64)> = Vec::new();
-        for h in hits {
-            if per_session_best.last().map(|p| p.0) != Some(h.0) {
-                per_session_best.push(h);
+            if let Some((gi, depth)) =
+                deepest_covering_gyro(v_created, gyros, &owned_gyros[sid], video_offset)
+            {
+                per_session_best.push((sid, gi, depth));
             }
         }
 
@@ -1423,57 +1522,67 @@ fn assign_videos_by_coverage(
 
         let s = &sessions[sid];
         let video_offset = s.offset - s.delay;
-        let g = &gyros[gi];
-        let (gyro_start_ms, gyro_end_ms, front_comp, calib_anchor_ms) =
-            compute_clip_window(v, g, v_created, video_offset, &s.cal_video_indices, videos);
 
-        // Layer-3 clip bounds gate. Even though the session's offset passed
-        // anchor-pool consistency, the per-video clip window may still fall
-        // outside [0, gyro_duration_ms] when the session was a false-positive
-        // pair (e.g. anchor-pool seeded by mis-pair before the cross-day
-        // outlier was discovered, or a legit session whose gyro just doesn't
-        // cover this particular video). Reject -> push to pending so the
-        // fallback path gets a chance to find a different gyro.
-        let back_comp = front_comp; // compute_clip_window: front_comp == back_comp
-        if !clip_bounds_ok(
+        // Shared single-video entry: same deepest-covering pick over this
+        // session's gyros (identical winner to the competition above), clip
+        // window from the original gyro duration, then the layer-3 clip
+        // bounds gate. Even though the session's offset passed anchor-pool
+        // consistency, the per-video clip window may still fall outside
+        // [0, gyro_duration_ms] when the session was a false-positive pair
+        // (e.g. anchor-pool seeded by mis-pair before the cross-day outlier
+        // was discovered, or a legit session whose gyro just doesn't cover
+        // this particular video). Reject -> push to pending so the fallback
+        // path gets a chance to find a different gyro.
+        let assignment = match assign_video_with_wall_clock_offset(
+            v,
+            gyros,
+            &owned_gyros[sid],
+            video_offset,
+            &s.cal_video_indices,
+            videos,
+        ) {
+            Ok(assignment) => assignment,
+            Err(err) => {
+                if let SingleAssignError::ClipBounds {
+                    gyro_index,
+                    covered_ms,
+                    required_ms,
+                } = err
+                {
+                    log::info!(
+                        "[batch_match_diag] clip_bounds_reject vi={} sid={} gi={} video_dur={:.1} gyro_dur={:.1} covered_ms={:.1} required_ms={:.1} path=coverage reason=below_threshold",
+                        vi,
+                        sid,
+                        gyro_index,
+                        v.duration_ms,
+                        gyros[gyro_index].duration_ms,
+                        covered_ms,
+                        required_ms
+                    );
+                }
+                results.push(MatchResult {
+                    video_index: vi,
+                    job_id: None,
+                    gyro_index: None,
+                    status: MatchStatus::Unmatched,
+                    global_offset_ms: None,
+                    gyro_start_ms: None,
+                    gyro_end_ms: None,
+                    init_offset_ms: None,
+                });
+                pending.push(vi);
+                continue;
+            }
+        };
+        let SingleVideoAssignment {
+            gyro_index: gi,
             gyro_start_ms,
             gyro_end_ms,
             front_comp,
-            back_comp,
-            v.duration_ms,
-            g.duration_ms,
-        ) {
-            let (covered_ms, required_ms) = clip_bounds_coverage(
-                gyro_start_ms,
-                gyro_end_ms,
-                front_comp,
-                back_comp,
-                v.duration_ms,
-                g.duration_ms,
-            );
-            log::info!(
-                "[batch_match_diag] clip_bounds_reject vi={} sid={} gi={} video_dur={:.1} gyro_dur={:.1} covered_ms={:.1} required_ms={:.1} path=coverage reason=below_threshold",
-                vi,
-                sid,
-                gi,
-                v.duration_ms,
-                g.duration_ms,
-                covered_ms,
-                required_ms
-            );
-            results.push(MatchResult {
-                video_index: vi,
-                job_id: None,
-                gyro_index: None,
-                status: MatchStatus::Unmatched,
-                global_offset_ms: None,
-                gyro_start_ms: None,
-                gyro_end_ms: None,
-                init_offset_ms: None,
-            });
-            pending.push(vi);
-            continue;
-        }
+            calib_anchor_ms,
+            ..
+        } = assignment;
+        let g = &gyros[gi];
 
         // A video is treated as a calibration pair only if it actually
         // contributed to the winning offset bucket (i.e. appeared in a
@@ -2875,6 +2984,193 @@ mod tests {
         let owned = assign_gyro_ownership(&gyros, &sessions);
         let (_results, pending) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
         assert_eq!(pending, vec![0]);
+    }
+
+    // --- batch-sync-dynamic-local-offset: baseline entry (tasks 2.1-2.4) ---
+
+    #[test]
+    fn default_assignment_locks_every_field() {
+        // Field-by-field regression for the default coverage assignment. The
+        // expected values are the formulas themselves (COMP_TIME_MS +
+        // drift_comp padding, init_offset = -front_comp), so any drift in the
+        // shared entry shows up as a concrete numeric diff here.
+        let videos = vec![
+            v(0, 5_000.0, Some(1_000)),  // cal
+            v(1, 5_000.0, Some(31_000)), // cal
+            v(2, 6_000.0, Some(5_000)),  // content video
+            v(3, 6_000.0, Some(50_000_000)), // nothing covers this one
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 2_000),
+            g(1, 5_500.0, 32_000),
+            g(2, 20_000.0, 2_000), // deepest for v2
+        ];
+        let sessions = vec![make_session(1_000, 1_000, vec![0, 1], vec![0, 1])];
+        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let (results, pending) =
+            assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
+
+        let r2 = &results[2];
+        assert_eq!(r2.status, MatchStatus::Matched);
+        assert_eq!(r2.gyro_index, Some(2), "deepest covering gyro wins");
+        assert_eq!(r2.global_offset_ms, Some(1_000));
+
+        // Expected window, from the formulas: video_offset = offset - delay =
+        // 1000; projected gyro window start = 2000 - 1000 = 1000; calibration
+        // anchor = v0@1000 (v1@31000 is outside the projected window);
+        // drift_comp = |5000-1000| * MAX_DAILY_DRIFT_MS / MS_PER_DAY.
+        let drift_comp = 4_000.0 * MAX_DAILY_DRIFT_MS / MS_PER_DAY;
+        let front = COMP_TIME_MS + drift_comp;
+        let start = (5_000.0 - 1_000.0) - front;
+        let end = start + 6_000.0 + 2.0 * front;
+        assert!((r2.gyro_start_ms.unwrap() - start).abs() < 1e-9);
+        assert!((r2.gyro_end_ms.unwrap() - end).abs() < 1e-9);
+        assert!((r2.init_offset_ms.unwrap() - (-front)).abs() < 1e-9);
+
+        // Insufficient data: v3 has no covering gyro -> Unmatched + pending,
+        // with no fabricated window fields.
+        let r3 = &results[3];
+        assert_eq!(r3.status, MatchStatus::Unmatched);
+        assert!(r3.gyro_index.is_none());
+        assert!(r3.gyro_start_ms.is_none());
+        assert!(pending.contains(&3));
+    }
+
+    #[test]
+    fn dynamic_entry_matches_the_batch_default() {
+        // The shared entry called with the session's own offset must reproduce
+        // the batch assignment field for field.
+        let videos = vec![
+            v(0, 5_000.0, Some(1_000)),
+            v(1, 5_000.0, Some(31_000)),
+            v(2, 6_000.0, Some(5_000)),
+        ];
+        let gyros = vec![
+            g(0, 5_500.0, 2_000),
+            g(1, 5_500.0, 32_000),
+            g(2, 20_000.0, 2_000),
+        ];
+        let sessions = vec![make_session(1_000, 1_000, vec![0, 1], vec![0, 1])];
+        let owned = assign_gyro_ownership(&gyros, &sessions);
+        let (results, _) = assign_videos_by_coverage(&videos, &gyros, &sessions, &owned, &[]);
+        let r2 = &results[2];
+
+        let a = assign_video_with_wall_clock_offset(
+            &videos[2],
+            &gyros,
+            &owned[0],
+            1_000,
+            &[0, 1],
+            &videos,
+        )
+        .unwrap();
+        assert_eq!(Some(a.gyro_index), r2.gyro_index);
+        assert_eq!(Some(a.gyro_start_ms), r2.gyro_start_ms);
+        assert_eq!(Some(a.gyro_end_ms), r2.gyro_end_ms);
+        assert_eq!(Some(a.init_offset_ms), r2.init_offset_ms);
+    }
+
+    #[test]
+    fn dynamic_offset_can_select_a_different_gyro_file() {
+        // With the baseline offset the first gyro covers the video; a local
+        // offset of +7s projects both files 7s earlier (video_start =
+        // g.created − offset) and moves real coverage to the second file. The
+        // entry must re-select, not stick to the baseline file.
+        let videos = vec![v(0, 2_000.0, Some(5_000))];
+        let gyros = vec![g(0, 10_000.0, 1_000), g(1, 10_000.0, 11_000)];
+
+        let base = assign_video_with_wall_clock_offset(&videos[0], &gyros, &[0, 1], 0, &[], &videos)
+            .unwrap();
+        assert_eq!(base.gyro_index, 0);
+
+        let shifted =
+            assign_video_with_wall_clock_offset(&videos[0], &gyros, &[0, 1], 7_000, &[], &videos)
+                .unwrap();
+        assert_eq!(shifted.gyro_index, 1, "coverage re-selects the covering file");
+    }
+
+    #[test]
+    fn dynamic_entry_rejects_insufficient_coverage_without_fabricating() {
+        // Video parked over the tail of the gyro: the content window sticks
+        // out past the file end, coverage falls below the 70%/3s requirement,
+        // and the entry reports the numbers instead of inventing samples.
+        let videos = vec![v(0, 6_000.0, Some(9_000))];
+        let gyros = vec![g(0, 10_000.0, 1_000)];
+
+        match assign_video_with_wall_clock_offset(&videos[0], &gyros, &[0], 1_000, &[], &videos) {
+            Err(SingleAssignError::ClipBounds {
+                gyro_index,
+                covered_ms,
+                required_ms,
+            }) => {
+                assert_eq!(gyro_index, 0);
+                assert!(covered_ms < required_ms);
+            }
+            other => panic!("expected ClipBounds rejection, got {other:?}"),
+        }
+
+        // No covering gyro at all -> NoCoveringGyro.
+        assert_eq!(
+            assign_video_with_wall_clock_offset(&videos[0], &gyros, &[0], 500_000, &[], &videos),
+            Err(SingleAssignError::NoCoveringGyro)
+        );
+
+        // No creation time -> NoCreationTime.
+        let untimed = vec![v(0, 6_000.0, None)];
+        assert_eq!(
+            assign_video_with_wall_clock_offset(&untimed[0], &gyros, &[0], 0, &[], &untimed),
+            Err(SingleAssignError::NoCreationTime)
+        );
+    }
+
+    #[test]
+    fn short_clip_overlap_collapses_past_comp_time_and_the_gate_cannot_see_it() {
+        // The real tight constraint is slice margin, not search_size: the
+        // padded slice covers content ±(COMP_TIME_MS + drift_comp). When the
+        // coarse offset errs by X, the true content shifts by X inside a long
+        // gyro file, the window still lands inside [0, duration] — so
+        // clip_bounds_ok stays green — while the usable overlap of a ~1.8s
+        // clip melts at (X − front_comp) per the design formula.
+        let gyro_dur = 3_600_000.0; // 1h — windows always inside bounds
+        let videos = vec![v(0, 1_800.0, Some(1_800_000))]; // mid-file
+        let gyros = vec![g(0, gyro_dur, 0)];
+
+        let overlap_for = |offset_err: i64| -> (f64, bool) {
+            // The projection uses (true_offset + err); content truth stays put.
+            let a = assign_video_with_wall_clock_offset(
+                &videos[0],
+                &gyros,
+                &[0],
+                offset_err,
+                &[],
+                &videos,
+            )
+            .expect("mid-file window always passes clip bounds");
+            // True content interval in gyro-file time (err shifts the slice,
+            // not the truth): [v_created, v_created + dur] at err = 0.
+            let truth_start = 1_800_000.0;
+            let truth_end = truth_start + 1_800.0;
+            let overlap =
+                (a.gyro_end_ms.min(truth_end) - a.gyro_start_ms.max(truth_start)).max(0.0);
+            (overlap, true)
+        };
+
+        let (full, _) = overlap_for(0);
+        assert!((full - 1_800.0).abs() < 1.0, "zero error keeps the whole clip");
+
+        // Error at COMP_TIME_MS: padding still covers everything.
+        let (at_comp, _) = overlap_for(1_500);
+        assert!((at_comp - 1_800.0).abs() < 1.0);
+
+        // Error 2500ms: overlap ≈ dur − (err − front_comp) ≈ 800ms.
+        let (at_2500, _) = overlap_for(2_500);
+        assert!(at_2500 < 900.0, "overlap {at_2500} should have collapsed");
+
+        // Error 3300ms+: nothing of the true content remains in the slice —
+        // and clip_bounds_ok still passed (the window sits fine in [0, dur]).
+        let (gone, gate_passed) = overlap_for(3_400);
+        assert_eq!(gone, 0.0);
+        assert!(gate_passed, "the bounds gate is blind to content correctness");
     }
 
     // --- Phase 5 tests ---

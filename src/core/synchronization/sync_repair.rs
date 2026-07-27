@@ -5,11 +5,11 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 // NiYien tuning for external-IMU low-motion batches (e.g. S1H + SenseFlow):
-// widen the cross-video consensus band to ±1.8s and raise the per-point
-// confidence floor to 0.18. The consensus band (offset span ≤ this value, see
-// `coarse_consistency_bands`) is what gates each clip green/yellow; raising the
-// floor only drops points strictly below 0.18.
-const CROSS_VIDEO_SUPPORT_MS: f64 = 3000.0;
+// the cross-video consensus band admits a full offset span of 3000ms — i.e. a
+// band center ±1.5s, NOT ±1.8s (the constant is compared against the sorted
+// span in `coarse_consistency_bands`). That band is what gates each clip
+// green/yellow. The per-point confidence floor is 0.15 and was never raised.
+pub const CROSS_VIDEO_SUPPORT_MS: f64 = 3000.0;
 pub const MIN_BATCH_SYNC_POINT_RANK: f32 = 12.0;
 pub const MIN_BATCH_SYNC_POINT_CONFIDENCE: f64 = 0.15;
 
@@ -64,15 +64,30 @@ pub struct BatchSyncPointDiagnostic {
     pub rescued_by_consensus: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct BatchSyncPointCandidate {
     pub job_id: u32,
     pub timestamp_ms: f64,
+    /// Slice-relative sync offset. This is what gets applied to the gyro and
+    /// written into `.gyroflow` — it MUST keep its slice-relative semantics.
     pub offset_ms: f64,
     pub cost: f64,
     pub confidence: f64,
     pub rank: f32,
     pub repair_round: u8,
+    /// Video capture time, epoch ms. `None` = no capture time; such videos
+    /// share one "untimed" bucket that behaves like the pre-change global
+    /// band (change batch-sync-dynamic-local-offset).
+    pub video_created_at_ms: Option<f64>,
+    /// IMU session identity. Local consensus never crosses sessions.
+    pub session_id: u64,
+    /// Offset normalized to the wall-clock clock-shift domain
+    /// (`batch_clock::wall_clock_offset_ms`), kept in a SEPARATE field so the
+    /// apply/write paths can never confuse it with the slice-relative value.
+    /// `None` = not normalized; band membership then falls back to
+    /// `offset_ms`, which is the same domain up to a constant while every
+    /// slice is cut with one shared session offset.
+    pub wall_clock_offset_ms: Option<f64>,
     pub diagnostic: BatchSyncPointDiagnostic,
 }
 
@@ -87,22 +102,40 @@ impl BatchSyncPointCandidate {
             confidence: self.confidence,
             rank: self.rank,
             repair_round: self.repair_round,
+            video_created_at_ms: self.video_created_at_ms,
+            session_id: self.session_id,
+            wall_clock_offset_ms: self.wall_clock_offset_ms,
             diagnostic: self.diagnostic,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct BatchSyncPoint {
     pub id: usize,
     pub job_id: u32,
     pub timestamp_ms: f64,
+    /// Slice-relative sync offset — see `BatchSyncPointCandidate::offset_ms`.
     pub offset_ms: f64,
     pub cost: f64,
     pub confidence: f64,
     pub rank: f32,
     pub repair_round: u8,
+    pub video_created_at_ms: Option<f64>,
+    pub session_id: u64,
+    pub wall_clock_offset_ms: Option<f64>,
     pub diagnostic: BatchSyncPointDiagnostic,
+}
+
+impl BatchSyncPoint {
+    /// The value local consensus bands are built on: the normalized wall-clock
+    /// offset when present, the slice-relative offset otherwise (identical
+    /// domain up to a constant while all slices share one cut).
+    pub fn band_offset_ms(&self) -> f64 {
+        self.wall_clock_offset_ms
+            .filter(|v| v.is_finite())
+            .unwrap_or(self.offset_ms)
+    }
 }
 
 impl BatchSyncPoint {
@@ -181,13 +214,13 @@ impl CoarseConsistencyBand {
     /// rejected for `insufficient_cross_video_support` can come back in here —
     /// only points that never got to vote at all: conf-suppressed by the arbiter,
     /// or dropped by the within-video subset search.
-    fn accepts_offset(&self, offset_ms: f64) -> bool {
+    pub fn accepts_offset(&self, offset_ms: f64) -> bool {
         let lo = self.offset_min_ms.min(offset_ms);
         let hi = self.offset_max_ms.max(offset_ms);
         hi - lo <= CROSS_VIDEO_SUPPORT_MS
     }
 
-    fn rank_cmp(&self, other: &Self) -> Ordering {
+    pub fn rank_cmp(&self, other: &Self) -> Ordering {
         self.job_ids
             .len()
             .cmp(&other.job_ids.len())
@@ -196,12 +229,46 @@ impl CoarseConsistencyBand {
     }
 }
 
+/// One locally-elected consistency band (change batch-sync-dynamic-local-offset):
+/// the single best band of one local capture-time window.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AcceptedLocalBand {
+    pub band: CoarseConsistencyBand,
+    pub session_id: u64,
+    /// (min, max) capture time of the window's qualified jobs; `None` for the
+    /// untimed bucket (videos without capture time).
+    pub window_range_ms: Option<(f64, f64)>,
+    /// Median capture time of the band's jobs; `None` for the untimed bucket.
+    pub center_created_at_ms: Option<f64>,
+    /// Band value in the band-offset domain (normalized wall-clock when the
+    /// candidates carry it, slice-relative otherwise).
+    pub offset_ms: f64,
+}
+
+/// A window band that met the support threshold but failed the physical
+/// drift-rate gate. Kept for `target="sync"` logging.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RejectedLocalBand {
+    pub session_id: u64,
+    pub center_created_at_ms: f64,
+    pub offset_ms: f64,
+    pub support_job_ids: BTreeSet<u32>,
+    pub ref_created_at_ms: f64,
+    pub ref_offset_ms: f64,
+    pub budget_ms: f64,
+    pub actual_ms: f64,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct BatchSyncConfirmationResult {
     pub videos: Vec<BatchSyncVideoState>,
     pub batch_status: BatchSyncBatchStatus,
     pub support_by_point_id: HashMap<usize, usize>,
+    /// Top-ranked accepted band (kept for logs and older call sites; the full
+    /// per-window picture lives in `accepted_bands`).
     pub best_band: Option<CoarseConsistencyBand>,
+    pub accepted_bands: Vec<AcceptedLocalBand>,
+    pub rejected_bands: Vec<RejectedLocalBand>,
 }
 
 impl BatchSyncConfirmationResult {
@@ -250,18 +317,32 @@ pub fn dynamic_video_tolerance_ms(delta_t_ms: f64) -> f64 {
     (25.0 * (delta_t_ms / ten_minutes_ms).max(1.0)).min(80.0)
 }
 
+/// Enumerate maximal consistency bands: after sorting by offset, each start
+/// index keeps only the largest end still within `CROSS_VIDEO_SUPPORT_MS`,
+/// yielding O(n) candidate bands instead of the previous O(n²) subwindows
+/// (whose materialisation was O(n³) total and blew up exactly when every
+/// offset agreed — the target state of relay propagation).
+///
+/// Equivalent for best-band selection: every voting point has confidence > 0,
+/// so a strict sub-band of a maximal band has a subset of its jobs and a
+/// strictly smaller confidence sum — `rank_cmp` can never rank it above its
+/// maximal superset.
 pub fn coarse_consistency_bands(points: &[BatchSyncPoint]) -> Vec<CoarseConsistencyBand> {
     let mut sorted = points.to_vec();
     sorted.sort_by(|a, b| cmp_f64(a.offset_ms, b.offset_ms));
 
     let mut bands = Vec::new();
+    let mut end = 0usize;
     for start in 0..sorted.len() {
-        for end in start..sorted.len() {
-            if sorted[end].offset_ms - sorted[start].offset_ms > CROSS_VIDEO_SUPPORT_MS {
-                break;
-            }
-            bands.push(CoarseConsistencyBand::from_points(&sorted[start..=end]));
+        if end < start {
+            end = start;
         }
+        while end + 1 < sorted.len()
+            && sorted[end + 1].offset_ms - sorted[start].offset_ms <= CROSS_VIDEO_SUPPORT_MS
+        {
+            end += 1;
+        }
+        bands.push(CoarseConsistencyBand::from_points(&sorted[start..=end]));
     }
     bands
 }
@@ -269,7 +350,7 @@ pub fn coarse_consistency_bands(points: &[BatchSyncPoint]) -> Vec<CoarseConsiste
 pub fn confirm_batch_sync_points(
     candidates: Vec<BatchSyncPointCandidate>,
 ) -> BatchSyncConfirmationResult {
-    confirm_batch_sync_points_internal(candidates, None)
+    confirm_batch_sync_points_internal(candidates, None, &[])
 }
 
 pub fn confirm_batch_sync_points_for_jobs<I>(
@@ -279,17 +360,33 @@ pub fn confirm_batch_sync_points_for_jobs<I>(
 where
     I: IntoIterator<Item = u32>,
 {
+    confirm_batch_sync_points_for_jobs_with_refs(candidates, expected_job_ids, &[])
+}
+
+/// Confirmation with external initial references (deep-search anchor / session
+/// registrations from `batch_clock::BatchClockState`). The references are what
+/// the first local window bands are drift-gated against; without them the most
+/// supported band seeds the chain ungated.
+pub fn confirm_batch_sync_points_for_jobs_with_refs<I>(
+    candidates: Vec<BatchSyncPointCandidate>,
+    expected_job_ids: I,
+    initial_refs: &[super::batch_clock::ConfirmedLocalOffset],
+) -> BatchSyncConfirmationResult
+where
+    I: IntoIterator<Item = u32>,
+{
     let expected_job_ids = expected_job_ids.into_iter().collect::<BTreeSet<_>>();
     let candidates = candidates
         .into_iter()
         .filter(|candidate| expected_job_ids.contains(&candidate.job_id))
         .collect();
-    confirm_batch_sync_points_internal(candidates, Some(expected_job_ids))
+    confirm_batch_sync_points_internal(candidates, Some(expected_job_ids), initial_refs)
 }
 
 fn confirm_batch_sync_points_internal(
     candidates: Vec<BatchSyncPointCandidate>,
     expected_job_ids: Option<BTreeSet<u32>>,
+    initial_refs: &[super::batch_clock::ConfirmedLocalOffset],
 ) -> BatchSyncConfirmationResult {
     let mut grouped = BTreeMap::<u32, Vec<BatchSyncPoint>>::new();
     for (id, candidate) in candidates.into_iter().enumerate() {
@@ -343,25 +440,226 @@ fn confirm_batch_sync_points_internal(
     }
 
     let support_by_point_id = cross_video_support_counts(&valid_subset_points);
-    let best_band = coarse_consistency_bands(&valid_subset_points)
-        .into_iter()
-        .filter(|band| band.job_ids.len() >= 2)
-        .max_by(|a, b| a.rank_cmp(b));
     let eligible_job_count = subset_by_job.len();
-    let confirmation_job_count = if job_count <= 1 {
-        job_count
-    } else {
-        eligible_job_count
-    };
-    let required_band_job_count = required_batch_support_jobs(confirmation_job_count);
-    let band_supported = best_band
-        .as_ref()
-        .is_some_and(|band| band.job_ids.len() >= required_band_job_count);
-    let best_band_points = best_band
-        .as_ref()
-        .filter(|band| band.job_ids.len() >= required_band_job_count)
-        .map(|band| band.point_ids.iter().copied().collect::<HashSet<_>>())
-        .unwrap_or_default();
+    let required_band_job_count = super::batch_clock::required_support_videos(eligible_job_count);
+
+    // ── local-window band election (change batch-sync-dynamic-local-offset) ──
+    //
+    // Multi-day batches drift too far for one global raw-offset band (measured
+    // 6578ms true span vs the 3000ms band on feedback 20260724-da416882), so
+    // every local capture-time window elects its own single best band, the
+    // adaptive support threshold applies per band, and a physical drift-rate
+    // gate chains accepted values together. Videos without capture time share
+    // one untimed bucket that reproduces the pre-change global-band behaviour.
+    let mut accepted_bands: Vec<AcceptedLocalBand> = Vec::new();
+    let mut rejected_bands: Vec<RejectedLocalBand> = Vec::new();
+
+    if job_count > 1 {
+        let mut sessions: BTreeSet<u64> = BTreeSet::new();
+        let mut job_time: BTreeMap<u32, Option<f64>> = BTreeMap::new();
+        let mut job_session: BTreeMap<u32, u64> = BTreeMap::new();
+        for (job_id, points) in &subset_by_job {
+            let session = points.first().map(|p| p.session_id).unwrap_or_default();
+            let time = points
+                .iter()
+                .find_map(|p| p.video_created_at_ms)
+                .filter(|t| t.is_finite());
+            sessions.insert(session);
+            job_session.insert(*job_id, session);
+            job_time.insert(*job_id, time);
+        }
+
+        for &session_id in &sessions {
+            let mut timed: Vec<(u32, f64)> = job_session
+                .iter()
+                .filter(|(_, s)| **s == session_id)
+                .filter_map(|(j, _)| job_time[j].map(|t| (*j, t)))
+                .collect();
+            timed.sort_by(|a, b| cmp_f64(a.1, b.1).then_with(|| a.0.cmp(&b.0)));
+            let untimed: Vec<u32> = job_session
+                .iter()
+                .filter(|(j, s)| **s == session_id && job_time[*j].is_none())
+                .map(|(j, _)| *j)
+                .collect();
+
+            // Window list: maximal 6h runs over timed jobs + one untimed bucket.
+            let times: Vec<f64> = timed.iter().map(|(_, t)| *t).collect();
+            let mut windows: Vec<(Option<(f64, f64)>, Vec<u32>)> = Vec::new();
+            for w in super::batch_clock::local_windows(&times) {
+                let range = (times[w.start], times[w.end - 1]);
+                windows.push((Some(range), timed[w].iter().map(|(j, _)| *j).collect()));
+            }
+            if !untimed.is_empty() {
+                windows.push((None, untimed));
+            }
+
+            // One best band per window (existing enumeration + rank_cmp over
+            // band-space offsets), deduped by support set across overlapping
+            // windows.
+            struct WindowBand {
+                range: Option<(f64, f64)>,
+                band: CoarseConsistencyBand,
+                offset_ms: f64,
+                center_ms: Option<f64>,
+            }
+            let mut window_bands: Vec<WindowBand> = Vec::new();
+            let mut seen_support: BTreeSet<Vec<u32>> = BTreeSet::new();
+            for (range, jobs) in windows {
+                let mut band_points: Vec<BatchSyncPoint> = Vec::new();
+                for job_id in &jobs {
+                    for p in subset_by_job.get(job_id).into_iter().flatten() {
+                        let mut q = p.clone();
+                        q.offset_ms = p.band_offset_ms();
+                        band_points.push(q);
+                    }
+                }
+                let best = coarse_consistency_bands(&band_points)
+                    .into_iter()
+                    .filter(|band| band.job_ids.len() >= required_band_job_count)
+                    .max_by(|a, b| a.rank_cmp(b));
+                let Some(band) = best else { continue };
+                if !seen_support.insert(band.job_ids.iter().copied().collect()) {
+                    continue;
+                }
+                // Band value: per-job median of in-band offsets, then the
+                // median across jobs (one vote per video — the same merge
+                // operator the relay consensus uses). Center: median capture
+                // time of the band's jobs.
+                let in_band: HashSet<usize> = band.point_ids.iter().copied().collect();
+                let mut job_offsets: Vec<f64> = Vec::new();
+                let mut job_times: Vec<f64> = Vec::new();
+                for job_id in &band.job_ids {
+                    let mut offs: Vec<f64> = subset_by_job[job_id]
+                        .iter()
+                        .filter(|p| in_band.contains(&p.id))
+                        .map(|p| p.band_offset_ms())
+                        .collect();
+                    if offs.is_empty() {
+                        continue;
+                    }
+                    offs.sort_by(|a, b| cmp_f64(*a, *b));
+                    job_offsets.push(median_of_sorted(&offs));
+                    if let Some(t) = job_time[job_id] {
+                        job_times.push(t);
+                    }
+                }
+                job_offsets.sort_by(|a, b| cmp_f64(*a, *b));
+                job_times.sort_by(|a, b| cmp_f64(*a, *b));
+                let offset_ms = median_of_sorted(&job_offsets);
+                let center_ms = range.map(|_| median_of_sorted(&job_times));
+                window_bands.push(WindowBand { range, band, offset_ms, center_ms });
+            }
+
+            // Untimed bucket: accepted unconditionally (legacy behaviour — no
+            // time axis to gate on). Timed windows: greedy nearest-first chain
+            // against the initial refs plus already-accepted bands, each step
+            // drift-gated on the physical budget.
+            let mut chain_refs: Vec<(f64, f64)> = initial_refs
+                .iter()
+                .filter(|r| r.session_id == session_id)
+                .map(|r| (r.created_at_ms, r.wall_clock_offset_ms))
+                .collect();
+            let mut waiting: Vec<WindowBand> = Vec::new();
+            for wb in window_bands {
+                match wb.center_ms {
+                    None => accepted_bands.push(AcceptedLocalBand {
+                        band: wb.band,
+                        session_id,
+                        window_range_ms: None,
+                        center_created_at_ms: None,
+                        offset_ms: wb.offset_ms,
+                    }),
+                    Some(_) => waiting.push(wb),
+                }
+            }
+            while !waiting.is_empty() {
+                let pick = if chain_refs.is_empty() {
+                    // No reference at all: seed the chain with the most
+                    // supported band (ties: earliest window), ungated.
+                    waiting
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| {
+                            a.band
+                                .job_ids
+                                .len()
+                                .cmp(&b.band.job_ids.len())
+                                .then_with(|| {
+                                    cmp_f64(
+                                        b.center_ms.unwrap_or(0.0),
+                                        a.center_ms.unwrap_or(0.0),
+                                    )
+                                })
+                        })
+                        .map(|(i, _)| i)
+                        .unwrap()
+                } else {
+                    waiting
+                        .iter()
+                        .enumerate()
+                        .min_by(|(_, a), (_, b)| {
+                            let da = nearest_ref_dist(a.center_ms.unwrap_or(0.0), &chain_refs);
+                            let db = nearest_ref_dist(b.center_ms.unwrap_or(0.0), &chain_refs);
+                            cmp_f64(da, db)
+                        })
+                        .map(|(i, _)| i)
+                        .unwrap()
+                };
+                let wb = waiting.swap_remove(pick);
+                let center = wb.center_ms.unwrap_or(0.0);
+                let nearest = chain_refs
+                    .iter()
+                    .copied()
+                    .min_by(|a, b| cmp_f64((a.0 - center).abs(), (b.0 - center).abs()));
+                match nearest {
+                    Some((ref_t, ref_v)) => {
+                        let budget = super::batch_clock::drift_budget_ms(center - ref_t);
+                        let actual = (wb.offset_ms - ref_v).abs();
+                        if actual <= budget {
+                            chain_refs.push((center, wb.offset_ms));
+                            accepted_bands.push(AcceptedLocalBand {
+                                band: wb.band,
+                                session_id,
+                                window_range_ms: wb.range,
+                                center_created_at_ms: Some(center),
+                                offset_ms: wb.offset_ms,
+                            });
+                        } else {
+                            rejected_bands.push(RejectedLocalBand {
+                                session_id,
+                                center_created_at_ms: center,
+                                offset_ms: wb.offset_ms,
+                                support_job_ids: wb.band.job_ids.clone(),
+                                ref_created_at_ms: ref_t,
+                                ref_offset_ms: ref_v,
+                                budget_ms: budget,
+                                actual_ms: actual,
+                            });
+                        }
+                    }
+                    None => {
+                        chain_refs.push((center, wb.offset_ms));
+                        accepted_bands.push(AcceptedLocalBand {
+                            band: wb.band,
+                            session_id,
+                            window_range_ms: wb.range,
+                            center_created_at_ms: Some(center),
+                            offset_ms: wb.offset_ms,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let best_band = accepted_bands
+        .iter()
+        .map(|a| a.band.clone())
+        .max_by(|a, b| a.rank_cmp(b));
+    let confirmed_point_ids: HashSet<usize> = accepted_bands
+        .iter()
+        .flat_map(|a| a.band.point_ids.iter().copied())
+        .collect();
 
     let mut videos = Vec::new();
     for job_id in grouped.keys().copied() {
@@ -371,8 +669,12 @@ fn confirm_batch_sync_points_internal(
         for point in subset_by_job.remove(&job_id).unwrap_or_default() {
             let confirmed = match job_count {
                 0 => false,
+                // A batch of one expected video keeps the long-standing rule:
+                // within-video consistency only, no band involved (main spec
+                // "单视频批次只看视频内一致性"). Bands themselves can never be
+                // formed by fewer than two videos.
                 1 => true,
-                _ => best_band_points.contains(&point.id),
+                _ => confirmed_point_ids.contains(&point.id),
             };
 
             if confirmed {
@@ -405,7 +707,7 @@ fn confirm_batch_sync_points_internal(
         });
     }
 
-    rescue_yellow_videos(&mut videos, best_band.as_ref(), band_supported);
+    rescue_yellow_videos(&mut videos, &accepted_bands);
 
     let green_count = videos
         .iter()
@@ -418,6 +720,8 @@ fn confirm_batch_sync_points_internal(
         batch_status,
         support_by_point_id,
         best_band,
+        accepted_bands,
+        rejected_bands,
     };
 
     if let Some(expected_job_ids) = expected_job_ids {
@@ -443,20 +747,21 @@ fn confirm_batch_sync_points_internal(
 /// seconds away from that band and stays discarded.
 ///
 /// This is the whole reason the pass is safe: it reads only `Yellow` videos and
-/// never touches `best_band`, the green set, or the eligible-job count. A green
-/// video cannot be demoted, and the band cannot be re-chosen around a rescued
-/// point. Yellow → Green is the only transition it can produce.
-fn rescue_yellow_videos(
-    videos: &mut [BatchSyncVideoState],
-    best_band: Option<&CoarseConsistencyBand>,
-    band_supported: bool,
-) {
-    if !band_supported || !yellow_rescue_enabled() {
+/// never touches the accepted bands, the green set, or the eligible-job count.
+/// A green video cannot be demoted, and no band can be re-chosen or widened
+/// around a rescued point. Yellow → Green is the only transition it can
+/// produce.
+///
+/// Local-window adaptation (change batch-sync-dynamic-local-offset): a yellow
+/// video may only ride a band from its OWN local window — the band's session
+/// must match and the video's capture time must be pairwise within
+/// `LOCAL_WINDOW_MS` of every window member; untimed videos only ride the
+/// untimed bucket band. Bands are tried best-rank first; the first band that
+/// vouches for at least one point wins.
+fn rescue_yellow_videos(videos: &mut [BatchSyncVideoState], accepted_bands: &[AcceptedLocalBand]) {
+    if accepted_bands.is_empty() || !yellow_rescue_enabled() {
         return;
     }
-    let Some(band) = best_band else {
-        return;
-    };
 
     for video in videos.iter_mut() {
         // Only videos the batch failed to confirm. Never re-open a green one.
@@ -464,73 +769,113 @@ fn rescue_yellow_videos(
             continue;
         }
 
-        let eligible = video
+        let v_session = video
+            .discarded_points
+            .first()
+            .map(|p| p.session_id)
+            .unwrap_or_default();
+        let v_time = video
             .discarded_points
             .iter()
-            .filter(|point| {
-                // Only points the arbiter itself corroborated. `low_confidence`
-                // plus a confidence at or above the ride-along floor is exactly
-                // the window the both-weak agree-rescue emits into, and that
-                // corroboration — posterior and fusion landing within a frame of
-                // each other — is the signal doing the real work here.
-                //
-                // Deliberately NOT extended to points that cleared the voting
-                // floor and were then dropped by the within-video subset search.
-                // Those are the ones a false-peak fusion offset produces, and the
-                // band is not a safe enough oracle to readmit them: its own edges
-                // can BE false peaks (a fusion-win offset carries a confidence
-                // well above the floor, so a wrong one gets confirmed and widens
-                // the band it would later be judged against). Rescuing them needs
-                // the false-peak problem fixed first; until then they stay yellow,
-                // which is at least honest.
-                point.diagnostic.low_confidence
-                    && is_point_numeric_valid(point)
-                    && point.rank >= MIN_BATCH_SYNC_POINT_RANK
-                    && point.confidence >= RIDE_ALONG_CONFIDENCE_FLOOR
-                    && band.accepts_offset(point.offset_ms)
+            .find_map(|p| p.video_created_at_ms)
+            .filter(|t| t.is_finite());
+        let mut bands: Vec<&AcceptedLocalBand> = accepted_bands
+            .iter()
+            .filter(|a| a.session_id == v_session)
+            .filter(|a| match (v_time, a.window_range_ms) {
+                // Pairwise window criterion vs every window member:
+                // t ∈ [max − 6h, min + 6h].
+                (Some(t), Some((lo, hi))) => {
+                    t >= hi - super::batch_clock::LOCAL_WINDOW_MS
+                        && t <= lo + super::batch_clock::LOCAL_WINDOW_MS
+                }
+                (None, None) => true,
+                _ => false,
             })
-            .cloned()
-            .collect::<Vec<_>>();
-        if eligible.is_empty() {
-            continue;
-        }
+            .collect();
+        bands.sort_by(|a, b| b.band.rank_cmp(&a.band));
 
-        // Keep the rescued points mutually consistent, same rule the main path
-        // uses within a video — two offsets that disagree would make
-        // `offset_at_timestamp` interpolate across the clip.
-        let keep = largest_video_consistent_subset_ids(&eligible)
-            .into_iter()
-            .collect::<HashSet<_>>();
-        if keep.is_empty() {
-            continue;
-        }
+        for accepted in bands {
+            let band = &accepted.band;
+            let eligible = video
+                .discarded_points
+                .iter()
+                .filter(|point| {
+                    // Band membership is tested in band space (normalized
+                    // wall-clock when available); the point itself keeps its
+                    // slice-relative offset.
+                    let mut band_space = (*point).clone();
+                    band_space.offset_ms = point.band_offset_ms();
+                    ride_along_eligible(&band_space, band)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            if eligible.is_empty() {
+                continue;
+            }
 
-        let mut still_discarded = Vec::with_capacity(video.discarded_points.len());
-        for mut point in std::mem::take(&mut video.discarded_points) {
-            if keep.contains(&point.id) {
-                point.diagnostic.rescued_by_consensus = true;
-                ::log::debug!(
-                    target: "sync",
-                    "[batch_sync] rescued job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} band=[{:.1},{:.1}]",
-                    point.job_id,
-                    point.timestamp_ms,
-                    point.offset_ms,
-                    point.confidence,
-                    point.rank,
-                    band.offset_min_ms,
-                    band.offset_max_ms
-                );
-                video.confirmed_points.push(point);
-            } else {
-                still_discarded.push(point);
+            // Keep the rescued points mutually consistent, same rule the main
+            // path uses within a video — two offsets that disagree would make
+            // `offset_at_timestamp` interpolate across the clip.
+            let keep = largest_video_consistent_subset_ids(&eligible)
+                .into_iter()
+                .collect::<HashSet<_>>();
+            if keep.is_empty() {
+                continue;
+            }
+
+            let mut still_discarded = Vec::with_capacity(video.discarded_points.len());
+            for mut point in std::mem::take(&mut video.discarded_points) {
+                if keep.contains(&point.id) {
+                    point.diagnostic.rescued_by_consensus = true;
+                    ::log::debug!(
+                        target: "sync",
+                        "[batch_sync] rescued job={} ts={:.4} offset={:.4} conf={:.3} rank={:.1} band=[{:.1},{:.1}]",
+                        point.job_id,
+                        point.timestamp_ms,
+                        point.offset_ms,
+                        point.confidence,
+                        point.rank,
+                        band.offset_min_ms,
+                        band.offset_max_ms
+                    );
+                    video.confirmed_points.push(point);
+                } else {
+                    still_discarded.push(point);
+                }
+            }
+            video.discarded_points = still_discarded;
+
+            if !video.confirmed_points.is_empty() {
+                video.color = BatchSyncVideoColor::Green;
+                break;
             }
         }
-        video.discarded_points = still_discarded;
-
-        if !video.confirmed_points.is_empty() {
-            video.color = BatchSyncVideoColor::Green;
-        }
     }
+}
+
+/// The ride-along rescue gate, shared so no second path can fork thresholds.
+///
+/// Only points the arbiter itself corroborated: `low_confidence` plus a
+/// confidence at or above the ride-along floor is exactly the window the
+/// both-weak agree-rescue emits into, and that corroboration — posterior and
+/// fusion landing within a frame of each other — is the signal doing the real
+/// work here.
+///
+/// Deliberately NOT extended to points that cleared the voting floor and were
+/// then dropped by the within-video subset search. Those are the ones a
+/// false-peak fusion offset produces, and the band is not a safe enough oracle
+/// to readmit them: its own edges can BE false peaks (a fusion-win offset
+/// carries a confidence well above the floor, so a wrong one gets confirmed
+/// and widens the band it would later be judged against). Rescuing them needs
+/// the false-peak problem fixed first; until then they stay yellow, which is
+/// at least honest.
+pub fn ride_along_eligible(point: &BatchSyncPoint, band: &CoarseConsistencyBand) -> bool {
+    point.diagnostic.low_confidence
+        && is_point_numeric_valid(point)
+        && point.rank >= MIN_BATCH_SYNC_POINT_RANK
+        && point.confidence >= RIDE_ALONG_CONFIDENCE_FLOOR
+        && band.accepts_offset(point.offset_ms)
 }
 
 fn batch_status_for_counts(green_count: usize, total: usize) -> BatchSyncBatchStatus {
@@ -542,16 +887,25 @@ fn batch_status_for_counts(green_count: usize, total: usize) -> BatchSyncBatchSt
     }
 }
 
-fn required_batch_support_jobs(job_count: usize) -> usize {
-    match job_count {
-        0 => usize::MAX,
-        1 => 1,
-        2 => 2,
-        _ => (job_count / 2 + 1).max(2),
+fn median_of_sorted(sorted: &[f64]) -> f64 {
+    let n = sorted.len();
+    if n == 0 {
+        return 0.0;
+    }
+    if n % 2 == 1 {
+        sorted[n / 2]
+    } else {
+        (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     }
 }
 
-fn is_point_numeric_valid(point: &BatchSyncPoint) -> bool {
+fn nearest_ref_dist(t: f64, refs: &[(f64, f64)]) -> f64 {
+    refs.iter()
+        .map(|(rt, _)| (rt - t).abs())
+        .fold(f64::INFINITY, f64::min)
+}
+
+pub fn is_point_numeric_valid(point: &BatchSyncPoint) -> bool {
     point.timestamp_ms.is_finite()
         && point.offset_ms.is_finite()
         && point.cost.is_finite()
@@ -577,7 +931,7 @@ fn cross_video_support_counts(points: &[BatchSyncPoint]) -> HashMap<usize, usize
         .collect()
 }
 
-fn largest_video_consistent_subset_ids(points: &[BatchSyncPoint]) -> Vec<usize> {
+pub fn largest_video_consistent_subset_ids(points: &[BatchSyncPoint]) -> Vec<usize> {
     let mut candidates = points.to_vec();
     candidates.sort_by(|a, b| {
         b.confidence
@@ -661,8 +1015,20 @@ mod tests {
             cost: 1.0,
             confidence,
             rank: 100.0,
-            repair_round: 0,
-            diagnostic: BatchSyncPointDiagnostic::default(),
+            ..Default::default()
+        }
+    }
+
+    /// A candidate with a capture time, for the local-window tests.
+    fn timed_point(
+        job_id: u32,
+        created_at_h: f64,
+        offset_ms: f64,
+        confidence: f64,
+    ) -> BatchSyncPointCandidate {
+        BatchSyncPointCandidate {
+            video_created_at_ms: Some(created_at_h * 3_600_000.0),
+            ..point(job_id, 1000.0, offset_ms, confidence)
         }
     }
 
@@ -750,25 +1116,88 @@ mod tests {
     }
 
     #[test]
-    fn coarse_bands_do_not_chain_offsets_beyond_1800ms_span() {
-        // Consensus band widened to 1800ms span. Adjacent pair 1700..3500
-        // (span exactly 1800) stays in a band, but 0..3500 must not chain.
+    fn coarse_bands_do_not_chain_offsets_beyond_3000ms_span() {
+        // The consensus band admits a full span of 3000ms. Adjacent pairs
+        // 0..1700 and 1700..3500 each fit inside a band, but 0..3500 (span
+        // 3500) must not chain into a single band through the middle point.
         let bands = coarse_consistency_bands(&[
             point(1, 1000.0, 0.0, 0.9).with_id(0),
             point(2, 1000.0, 1700.0, 0.9).with_id(1),
             point(3, 1000.0, 3500.0, 0.9).with_id(2),
         ]);
 
-        assert!(bands.iter().all(|band| band.offset_span_ms <= 1800.0));
+        assert!(bands.iter().all(|band| band.offset_span_ms <= CROSS_VIDEO_SUPPORT_MS));
         assert!(!bands.iter().any(|band| band.point_ids.len() == 3));
     }
 
     #[test]
+    fn band_enumeration_stays_linear_when_all_points_agree() {
+        // The worst case of the old O(n²) enumeration: every offset inside one
+        // 3000ms band (the target state of relay propagation). Maximal-band
+        // enumeration must emit exactly one band per start index.
+        let points: Vec<BatchSyncPoint> = (0..500)
+            .map(|i| point(i as u32, 1000.0, (i % 50) as f64, 0.9).with_id(i as usize))
+            .collect();
+        let bands = coarse_consistency_bands(&points);
+        assert_eq!(bands.len(), 500);
+        // And the best band still covers everyone.
+        let best = bands.iter().max_by(|a, b| a.rank_cmp(b)).unwrap();
+        assert_eq!(best.point_ids.len(), 500);
+    }
+
+    #[test]
+    fn maximal_band_selection_matches_the_exhaustive_enumeration() {
+        // Reference implementation: the pre-change exhaustive subwindow scan.
+        // The winning band under `rank_cmp` must be identical.
+        fn exhaustive(points: &[BatchSyncPoint]) -> Vec<CoarseConsistencyBand> {
+            let mut sorted = points.to_vec();
+            sorted.sort_by(|a, b| a.offset_ms.partial_cmp(&b.offset_ms).unwrap());
+            let mut bands = Vec::new();
+            for start in 0..sorted.len() {
+                for end in start..sorted.len() {
+                    if sorted[end].offset_ms - sorted[start].offset_ms > CROSS_VIDEO_SUPPORT_MS {
+                        break;
+                    }
+                    bands.push(CoarseConsistencyBand::from_points(&sorted[start..=end]));
+                }
+            }
+            bands
+        }
+
+        // Mixed clusters, overlaps, and a lone outlier.
+        let pts: Vec<BatchSyncPoint> = [
+            (1u32, -1500.0, 0.9), (2, -1510.0, 0.8), (3, -1505.0, 0.7),
+            (4, 1200.0, 0.9), (5, 1400.0, 0.6), (6, 2500.0, 0.95),
+            (7, 4100.0, 0.5), (8, 9000.0, 0.9), (9, -400.0, 0.4), (10, 800.0, 0.3),
+        ]
+        .iter()
+        .enumerate()
+        .map(|(i, &(job, off, conf))| point(job, 1000.0, off, conf).with_id(i))
+        .collect();
+
+        let best_old = exhaustive(&pts)
+            .into_iter()
+            .filter(|b| b.job_ids.len() >= 2)
+            .max_by(|a, b| a.rank_cmp(b))
+            .unwrap();
+        let best_new = coarse_consistency_bands(&pts)
+            .into_iter()
+            .filter(|b| b.job_ids.len() >= 2)
+            .max_by(|a, b| a.rank_cmp(b))
+            .unwrap();
+        assert_eq!(best_old, best_new);
+    }
+
+    #[test]
     fn isolated_bands_do_not_confirm_points_and_batch_is_all_yellow() {
+        // Three mutually distant offsets must not co-sign each other. Spacing
+        // is 3500ms so no pair fits the 3000ms full-width band; the previous
+        // 0/3000/6000 data sat exactly on the boundary and started banding when
+        // the span widened from 1500 to 3000.
         let result = confirm_batch_sync_points(vec![
             point(1, 1000.0, 0.0, 0.9),
-            point(2, 1000.0, 3000.0, 0.9),
-            point(3, 1000.0, 6000.0, 0.9),
+            point(2, 1000.0, 3500.0, 0.9),
+            point(3, 1000.0, 7000.0, 0.9),
         ]);
 
         assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
@@ -793,19 +1222,54 @@ mod tests {
 
     #[test]
     fn video_state_is_green_with_one_confirmed_point_otherwise_yellow() {
+        // Three agreeing videos meet the support threshold (3); the outlier
+        // stays yellow. (Under the pre-change majority rule two agreeing out
+        // of three sufficed; the local-offset change fixed the threshold at
+        // clamp(n, 2, 3), so a 2-video band in a ≥3 batch no longer confirms —
+        // see two_video_band_in_a_three_video_batch_stays_pending.)
+        let result = confirm_batch_sync_points(vec![
+            point(1, 1000.0, 1000.0, 0.7),
+            point(2, 1000.0, 1100.0, 0.8),
+            point(4, 1000.0, 1050.0, 0.8),
+            point(3, 1000.0, 5000.0, 0.9),
+        ]);
+
+        assert_eq!(result.video_state(1).unwrap().color, BatchSyncVideoColor::Green);
+        assert_eq!(result.video_state(2).unwrap().color, BatchSyncVideoColor::Green);
+        assert_eq!(result.video_state(4).unwrap().color, BatchSyncVideoColor::Green);
+        assert_eq!(result.video_state(3).unwrap().color, BatchSyncVideoColor::Yellow);
+    }
+
+    #[test]
+    fn two_video_band_in_a_three_video_batch_stays_pending() {
+        // Spec "一个或两个视频不能确认": with at least three qualified videos
+        // in the batch the threshold is 3, and a band backed by only two of
+        // them must not confirm (the old strict-majority rule allowed 2/3).
         let result = confirm_batch_sync_points(vec![
             point(1, 1000.0, 1000.0, 0.7),
             point(2, 1000.0, 1100.0, 0.8),
             point(3, 1000.0, 5000.0, 0.9),
         ]);
 
-        assert_eq!(result.video_state(1).unwrap().color, BatchSyncVideoColor::Green);
-        assert_eq!(result.video_state(2).unwrap().color, BatchSyncVideoColor::Green);
-        assert_eq!(result.video_state(3).unwrap().color, BatchSyncVideoColor::Yellow);
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
     }
 
     #[test]
-    fn competing_actual_wrong_offset_bands_are_not_confirmed() {
+    fn competing_actual_wrong_offset_bands_document_the_untimed_residual() {
+        // KNOWN RESIDUAL (design "已知残留"), recorded on real data: this
+        // corpus is a set of genuinely wrong offsets, and after the band span
+        // widened to 3000ms five of them share one 2905ms band. Capture times
+        // for these clips are not recoverable (the originating feedback
+        // package is no longer in the repo), so they land in the untimed
+        // bucket — which deliberately keeps the pre-change global-band
+        // behaviour and is exempt from the drift-rate gate (no time axis).
+        // The band therefore still confirms and the batch stays Mixed.
+        //
+        // In production these clips would carry capture times, the band would
+        // be gated against the session/anchor reference, and the drift gate
+        // blocks it (see three_adjacent_false_peaks_are_stopped_by_the_drift_gate).
+        // If this test starts reporting AllYellow, untimed handling got
+        // stricter — update this documentation either way.
         let result = confirm_batch_sync_points_for_jobs(
             vec![
                 point(554879608, 742.4085, -449.8757, 0.513),
@@ -838,8 +1302,14 @@ mod tests {
             ],
         );
 
-        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
-        assert!(result.videos.iter().all(|video| video.color == BatchSyncVideoColor::Yellow));
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::Mixed);
+        let confirmed_jobs: Vec<u32> = result
+            .videos
+            .iter()
+            .filter(|video| video.color == BatchSyncVideoColor::Green)
+            .map(|video| video.job_id)
+            .collect();
+        assert!(!confirmed_jobs.is_empty(), "the residual documents wrong greens");
     }
 
     #[test]
@@ -884,19 +1354,21 @@ mod tests {
         );
 
         assert_eq!(result.batch_status, BatchSyncBatchStatus::Mixed);
-        // conf floor raised to 0.18: job 826836314 (conf 0.160) now falls below
-        // the floor and is discarded as low_confidence, so it is no longer green.
-        // The remaining eligible band still confirms despite the missing jobs.
-        for job_id in [2033394524, 1217710009, 845094404] {
+        // The eligible band still confirms despite the five expected jobs that
+        // produced no points at all. Job 826836314 (conf 0.160) clears the 0.15
+        // voting floor and votes green like the others.
+        for job_id in [2033394524, 826836314, 1217710009, 845094404] {
             assert_eq!(result.video_state(job_id).unwrap().color, BatchSyncVideoColor::Green);
         }
         assert_eq!(result.video_state(845094404).unwrap().confirmed_points.len(), 2);
-        for job_id in [826836314, 45336309] {
-            assert_eq!(result.video_state(job_id).unwrap().color, BatchSyncVideoColor::Yellow);
-            assert!(result.video_state(job_id).unwrap().discarded_points[0]
-                .diagnostic
-                .low_confidence);
-        }
+        // Job 45336309 (conf 0.106) sits in the ride-along window
+        // [RIDE_ALONG_CONFIDENCE_FLOOR, MIN_BATCH_SYNC_POINT_CONFIDENCE): it
+        // never votes, but the band the voters chose vouches for its offset
+        // (~10ms away), so the yellow-only rescue pass reinstates it.
+        let rescued = result.video_state(45336309).unwrap();
+        assert_eq!(rescued.color, BatchSyncVideoColor::Green);
+        assert!(rescued.confirmed_points[0].diagnostic.rescued_by_consensus);
+        assert!(rescued.confirmed_points[0].diagnostic.low_confidence);
     }
 
     #[test]
@@ -1156,6 +1628,159 @@ mod tests {
         );
     }
 
+    // ── local-window confirmation (change batch-sync-dynamic-local-offset) ──
+
+    #[test]
+    fn multi_day_clusters_confirm_independently() {
+        // The motivating shape (feedback 20260724-da416882): three same-day
+        // clusters whose true offsets span ~5360ms — impossible for a single
+        // 3000ms band, natural for per-window bands. Everything confirms.
+        let mut pts = Vec::new();
+        for (i, (day_h, off)) in [(0.0, -3810.0), (24.0, -900.0), (48.0, 1550.0)]
+            .into_iter()
+            .enumerate()
+        {
+            for k in 0..3u32 {
+                pts.push(timed_point(
+                    (i as u32) * 10 + k + 1,
+                    day_h + f64::from(k) * 0.5,
+                    off + f64::from(k) * 30.0,
+                    0.9,
+                ));
+            }
+        }
+        let result = confirm_batch_sync_points(pts);
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllGreen);
+        assert_eq!(result.accepted_bands.len(), 3);
+    }
+
+    #[test]
+    fn three_adjacent_false_peaks_are_stopped_by_the_drift_gate() {
+        // Task 3.6: three neighbouring clips agreeing on the same false peak
+        // (systematically consistent — same scene, same repeated action) meet
+        // the support threshold, but their band sits 8s from the anchored
+        // reference two hours earlier. Physically unreachable → pending.
+        let refs = [crate::synchronization::batch_clock::ConfirmedLocalOffset {
+            source: crate::synchronization::batch_clock::ConfirmedOffsetSource::Anchor,
+            session_id: 0,
+            created_at_ms: 0.0,
+            wall_clock_offset_ms: -1500.0,
+            support_videos: 0,
+            generation: 1,
+        }];
+        let result = confirm_batch_sync_points_for_jobs_with_refs(
+            vec![
+                timed_point(1, 2.0, 6500.0, 0.9),
+                timed_point(2, 2.1, 6510.0, 0.9),
+                timed_point(3, 2.2, 6490.0, 0.9),
+            ],
+            [1, 2, 3],
+            &refs,
+        );
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllYellow);
+        assert_eq!(result.rejected_bands.len(), 1);
+        let rejected = &result.rejected_bands[0];
+        assert!(rejected.actual_ms > rejected.budget_ms);
+        assert_eq!(rejected.ref_offset_ms, -1500.0);
+    }
+
+    #[test]
+    fn isolated_window_videos_stay_yellow_without_global_ride() {
+        // Task 3.7 (known residual): a video time-isolated from every cluster
+        // stays yellow even though its offset matches the cluster — there is
+        // no batch-global band left to ride.
+        let result = confirm_batch_sync_points(vec![
+            timed_point(1, 0.0, -1500.0, 0.9),
+            timed_point(2, 0.2, -1510.0, 0.9),
+            timed_point(3, 0.4, -1505.0, 0.9),
+            timed_point(4, 30.0, -1502.0, 0.9),
+        ]);
+        for job_id in [1, 2, 3] {
+            assert_eq!(result.video_state(job_id).unwrap().color, BatchSyncVideoColor::Green);
+        }
+        let isolated = result.video_state(4).unwrap();
+        assert_eq!(isolated.color, BatchSyncVideoColor::Yellow);
+        assert!(
+            isolated.discarded_points[0]
+                .diagnostic
+                .insufficient_cross_video_support
+        );
+    }
+
+    #[test]
+    fn round_trip_preserves_new_candidate_fields() {
+        // Task 3.2 (core side): candidate → point keeps capture time, session
+        // and the normalized offset. Repair rounds rebuild candidates from
+        // confirmed points; silently dropping these would strip the second
+        // round of its windows.
+        let candidate = BatchSyncPointCandidate {
+            video_created_at_ms: Some(123.0),
+            session_id: 7,
+            wall_clock_offset_ms: Some(-6265.0),
+            ..point(1, 1000.0, -1500.0, 0.9)
+        };
+        let as_point = candidate.with_id(42);
+        assert_eq!(as_point.video_created_at_ms, Some(123.0));
+        assert_eq!(as_point.session_id, 7);
+        assert_eq!(as_point.wall_clock_offset_ms, Some(-6265.0));
+    }
+
+    #[test]
+    fn confirmed_points_keep_slice_relative_offsets() {
+        // Task 3.3 (core side): banding runs in the wall-clock domain, but a
+        // confirmed point hands back its untouched slice-relative offset —
+        // that value is what gets applied to the gyro and written to disk.
+        // Slice offsets here are deliberately far apart (differently-cut
+        // slices); only the wall-clock values agree.
+        let mk = |job: u32, t_h: f64, slice: f64, wall: f64| BatchSyncPointCandidate {
+            wall_clock_offset_ms: Some(wall),
+            video_created_at_ms: Some(t_h * 3_600_000.0),
+            ..point(job, 1000.0, slice, 0.9)
+        };
+        let result = confirm_batch_sync_points(vec![
+            mk(1, 0.0, -1500.0, -6265.0),
+            mk(2, 0.2, 800.0, -6260.0),
+            mk(3, 0.4, -3100.0, -6270.0),
+        ]);
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllGreen);
+        assert_eq!(result.video_state(1).unwrap().confirmed_points[0].offset_ms, -1500.0);
+        assert_eq!(result.video_state(2).unwrap().confirmed_points[0].offset_ms, 800.0);
+        assert_eq!(result.video_state(3).unwrap().confirmed_points[0].offset_ms, -3100.0);
+        // The accepted band itself lives in the wall-clock domain.
+        assert!((result.accepted_bands[0].offset_ms - (-6265.0)).abs() < 1.0);
+    }
+
+    #[test]
+    fn rescue_rides_only_the_local_window_band() {
+        // A low-confidence point 30h from the cluster must not be rescued by
+        // the cluster's band even when its offset matches (rescue never uses
+        // another window's band)…
+        let far = confirm_batch_sync_points_for_jobs(
+            vec![
+                timed_point(1, 0.0, -1500.0, 0.9),
+                timed_point(2, 0.2, -1510.0, 0.9),
+                timed_point(3, 0.4, -1505.0, 0.9),
+                timed_point(4, 30.0, -1495.0, 0.12),
+            ],
+            [1, 2, 3, 4],
+        );
+        assert_eq!(far.video_state(4).unwrap().color, BatchSyncVideoColor::Yellow);
+
+        // …while the same point inside the window is rescued as before.
+        let near = confirm_batch_sync_points_for_jobs(
+            vec![
+                timed_point(1, 0.0, -1500.0, 0.9),
+                timed_point(2, 0.2, -1510.0, 0.9),
+                timed_point(3, 0.4, -1505.0, 0.9),
+                timed_point(4, 0.6, -1495.0, 0.12),
+            ],
+            [1, 2, 3, 4],
+        );
+        let video = near.video_state(4).unwrap();
+        assert_eq!(video.color, BatchSyncVideoColor::Green);
+        assert!(video.confirmed_points[0].diagnostic.rescued_by_consensus);
+    }
+
     // ── field corpus: user report 20260712-226ab84d ────────────────────────────
     //
     // The batch that motivated this change: 90 Canon clips at 60fps sharing one
@@ -1169,7 +1794,11 @@ mod tests {
     // flow, so it is independent of everything the sync pipeline does. Across
     // all 90 clips it spans -1734..-1500 ms.
     //
-    // Columns: job ts offset cost conf rank arb_branch arb_delta wall_clock
+    // Columns: job ts offset cost conf rank arb_branch arb_delta wall_clock created_at
+    //
+    // `created_at` is the clip's capture time in epoch ms, recovered from the
+    // feedback package's `[queue_add:get_video_info]` lines. It is what the
+    // local-window consensus groups by.
 
     const FIELD_CORPUS: &str = include_str!("testdata/batch_sync_20260712_226ab84d.txt");
 
@@ -1183,15 +1812,19 @@ mod tests {
         branch: String,
         delta: f64,
         wall_clock_ms: f64,
+        created_at_ms: f64,
     }
 
     fn field_corpus() -> Vec<CorpusRow> {
-        FIELD_CORPUS
-            .lines()
+        parse_corpus(FIELD_CORPUS)
+    }
+
+    fn parse_corpus(text: &str) -> Vec<CorpusRow> {
+        text.lines()
             .filter(|line| !line.trim().is_empty())
             .map(|line| {
                 let f = line.split_whitespace().collect::<Vec<_>>();
-                assert_eq!(f.len(), 9, "malformed corpus row: {line}");
+                assert_eq!(f.len(), 10, "malformed corpus row: {line}");
                 CorpusRow {
                     candidate: BatchSyncPointCandidate {
                         job_id: f[0].parse().unwrap(),
@@ -1200,12 +1833,13 @@ mod tests {
                         cost: f[3].parse().unwrap(),
                         confidence: f[4].parse().unwrap(),
                         rank: f[5].parse().unwrap(),
-                        repair_round: 0,
-                        diagnostic: BatchSyncPointDiagnostic::default(),
+                        video_created_at_ms: Some(f[9].parse().unwrap()),
+                        ..Default::default()
                     },
                     branch: f[6].to_string(),
                     delta: f[7].parse().unwrap(),
                     wall_clock_ms: f[8].parse().unwrap(),
+                    created_at_ms: f[9].parse().unwrap(),
                 }
             })
             .collect()
@@ -1240,6 +1874,76 @@ mod tests {
         ids.sort_unstable();
         ids.dedup();
         ids
+    }
+
+    // ── field corpus: user report 20260724-da416882 ────────────────────────────
+    //
+    // The batch that motivated change batch-sync-dynamic-local-offset: 65
+    // Nikon ZR clips over 3 days sharing one SenseFlow logger, camera↔IMU
+    // clock drifting 105.1 ms/h (2521 ms/day). All 65 synced correctly, but
+    // the true offsets span 6578ms — mathematically impossible for one 3000ms
+    // band — so the old single-band confirmation yellowed 16 correct clips
+    // (their `.gyroflow` offsets were cleared on disk). Same 10-column layout;
+    // branch column is "field" (no arbiter data in this corpus), wall_clock is
+    // each clip's batch_match init_offset.
+    //
+    // Sign-fix note (design Decision 13, 2026-07-27): candidates here carry
+    // slice-domain offsets only (no wall_clock_offset_ms field), so this
+    // replay never crosses the residual→wall composition and is orthogonal to
+    // the sign flip. The 2521 ms/day figure above was measured on a pre-fix
+    // relay chain (hops amplified baseline errors ×2); the true rate for this
+    // batch may be up to half that. Window/band/support expectations are
+    // unaffected.
+
+    const FIELD_CORPUS_20260724: &str = include_str!("testdata/batch_sync_20260724_da416882.txt");
+
+    /// The 16 clips the field run actually yellowed (`[batch-sync-write T2
+    /// yellow] cleared offsets`), recovered from the feedback log.
+    const CORPUS_20260724_FIELD_YELLOW: [u32; 16] = [
+        207415398, 420571087, 439901863, 447502131, 628001721, 640045657, 674882071, 884249728,
+        893294350, 1104226035, 1202004183, 1209332033, 1715932804, 1907237257, 1980663005,
+        2144639010,
+    ];
+
+    fn corpus_20260724_job_ids() -> Vec<u32> {
+        let mut ids = parse_corpus(FIELD_CORPUS_20260724)
+            .iter()
+            .map(|row| row.candidate.job_id)
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
+    #[test]
+    fn field_corpus_20260724_multi_day_batch_goes_all_green() {
+        let job_ids = corpus_20260724_job_ids();
+        assert_eq!(job_ids.len(), 65);
+        let candidates = parse_corpus(FIELD_CORPUS_20260724)
+            .into_iter()
+            .map(|row| row.candidate)
+            .collect::<Vec<_>>();
+        let result = confirm_batch_sync_points_for_jobs(candidates, job_ids.clone());
+
+        // The user-visible acceptance: every clip the old single-band rule
+        // yellowed (offsets cleared on disk) confirms under local windows…
+        for job_id in CORPUS_20260724_FIELD_YELLOW {
+            assert_eq!(
+                result.video_state(job_id).unwrap().color,
+                BatchSyncVideoColor::Green,
+                "job {job_id} was wrongly yellowed in the field and must now confirm"
+            );
+        }
+        // …and nobody who was green regressed: the whole batch is green.
+        assert_eq!(result.batch_status, BatchSyncBatchStatus::AllGreen);
+        // The three shooting days form independent local bands (7.1h capture
+        // span on day 2 can split into overlapping windows, so ≥ 3).
+        assert!(
+            result.accepted_bands.len() >= 3,
+            "expected per-day bands, got {}",
+            result.accepted_bands.len()
+        );
+        assert!(result.rejected_bands.is_empty());
     }
 
     #[test]

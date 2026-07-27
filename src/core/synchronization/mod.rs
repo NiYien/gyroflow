@@ -29,6 +29,7 @@ use super::gyro_source::TimeIMU;
 mod autosync;
 pub mod optimsync;
 pub mod sync_repair;
+pub mod batch_clock;
 pub mod sync_diag;
 pub mod deep_match;
 pub mod sync_metric;
