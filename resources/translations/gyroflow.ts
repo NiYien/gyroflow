@@ -775,6 +775,12 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2203"/>
+        <source>Your GPU&apos;s hardware encoder rejected these export settings.
+This usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.
+Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation type="unfinished"></translation>
     </message>

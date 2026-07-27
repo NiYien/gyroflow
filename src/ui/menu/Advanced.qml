@@ -276,6 +276,9 @@ MenuItem {
             id: gpuencodeMirror;
             text: qsTr("Use GPU encoding");
             width: (parent.width - parent.spacing) / 2;
+            // Follow the export panel's capability constraint so this mirror
+            // cannot offer GPU encoding for a combination that cannot use it.
+            enabled: window.exportSettings ? window.exportSettings.outGpuEnabled : true;
             checked: window.exportSettings ? window.exportSettings.outGpu : true;
             onCheckedChanged: {
                 if (window.exportSettings) window.exportSettings.outGpu = checked;

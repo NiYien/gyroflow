@@ -876,6 +876,14 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2203"/>
+        <source>Your GPU&apos;s hardware encoder rejected these export settings.
+This usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.
+Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.</source>
+        <translation>GPU&apos;nuzun donanım kodlayıcısı bu dışa aktarma ayarlarını reddetti.
+Bu genellikle seçilen kodek, çözünürlük veya bit hızının bu GPU&apos;nun kodlayabileceğinin ötesinde olduğu anlamına gelir.
+Farklı bir çıkış kodeki deneyin (H.265/HEVC, H.264/AVC&apos;den daha fazla durumu destekler), bit hızını düşürün veya Dışa Aktarma ayarlarında GPU kodlamayı devre dışı bırakın.</translation>
+    </message>
+    <message>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation>GPU decoder&apos;i çözümleme işinde başarısız oldu. GPU decoding özelliğini &quot;Gelişmiş&quot; üzerinden kapatın ve yeniden deneyin.</translation>
     </message>

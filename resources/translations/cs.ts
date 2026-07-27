@@ -880,6 +880,14 @@ Pokud máte moderní zařízení, nejnovější GPU ovladače a myslíte, že se
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2203"/>
+        <source>Your GPU&apos;s hardware encoder rejected these export settings.
+This usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.
+Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.</source>
+        <translation>Hardwarový kodér vaší grafické karty odmítl tato nastavení exportu.
+Obvykle to znamená, že zvolený kodek, rozlišení nebo datový tok přesahuje možnosti kódování této karty.
+Zkuste jiný výstupní kodek (H.265/HEVC zvládne více případů než H.264/AVC), snižte datový tok nebo v nastavení exportu vypněte kódování na GPU.</translation>
+    </message>
+    <message>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation>GPU dekodéru se nepodařilo dekódovat tento soubor. Zakažte GPU dekódování v &quot;Pokročilé&quot; a zkuste to znovu.</translation>
     </message>

@@ -879,6 +879,14 @@ If you have a modern device, latest GPU drivers and you think this shouldn&apos;
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2203"/>
+        <source>Your GPU&apos;s hardware encoder rejected these export settings.
+This usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.
+Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.</source>
+        <translation>GPU의 하드웨어 인코더가 이 내보내기 설정을 거부했습니다.
+일반적으로 선택한 코덱, 해상도 또는 비트레이트가 이 GPU가 인코딩할 수 있는 범위를 넘었다는 뜻입니다.
+다른 출력 코덱을 사용해 보거나(H.265/HEVC는 H.264/AVC보다 더 많은 경우를 지원합니다), 비트레이트를 낮추거나, 내보내기 설정에서 GPU 인코딩을 비활성화하세요.</translation>
+    </message>
+    <message>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation>GPU 디코더가 이 파일의 디코딩에 실패했습니다. &quot;고급&quot;에서 GPU 디코딩을 비활성화 후 다시 시도해 주세요.</translation>
     </message>

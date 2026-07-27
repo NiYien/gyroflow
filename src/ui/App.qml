@@ -2845,6 +2845,14 @@ Rectangle {
         if (text.includes("hevc") && text.includes("-12912")) {
             return qsTr("Your GPU doesn't support H.265/HEVC encoding, try to use H.264/AVC or disable GPU encoding in Export settings.");
         }
+        // Hardware encoder refused the session and the automatic codec switch either
+        // didn't apply or didn't help. AMD's AMF wrapper collapses every cause into
+        // AVERROR_BUG (558323010), so the message must not name one specific cause:
+        // bit depth, bitrate, resolution and "this GPU has no encoder for that codec
+        // at all" (e.g. AV1 on RDNA2) all arrive here identically.
+        if (text.includes("encoder->Init() failed") || text.includes("558323010")) {
+            return qsTr("Your GPU's hardware encoder rejected these export settings.\nThis usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.\nTry a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.") + "\n\n" + text;
+        }
         if (text.includes("failed to decode picture") && text.includes("-12909")) {
             return qsTr("GPU decoder failed to decode this file. Disable GPU decoding in \"Advanced\" and try again.") + "\n\n" + text;
         }

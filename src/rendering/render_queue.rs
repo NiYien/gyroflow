@@ -247,29 +247,49 @@ pub enum JobStatus {
     Skipped,
 }
 
-/// Returns true when the pixel format stores more than 8 bits per color
-/// component (10-bit, 12-bit, etc.). Derived from ffmpeg's pixel-format
-/// descriptor so any high-bit-depth format is covered generically, instead of
-/// matching a hardcoded list. Returns false for `Pixel::None` or any format
-/// without a resolvable descriptor (bit depth undetermined) — a safe default
-/// that leaves the job's codec untouched.
-fn pix_fmt_is_high_bit_depth(fmt: ffmpeg_next::format::Pixel) -> bool {
-    if fmt == ffmpeg_next::format::Pixel::None {
+// Bit-depth detection lives in `rendering::pix_fmt_is_high_bit_depth` so the
+// enqueue-time guard below and the encoder-open failure classifier in
+// `ffmpeg_video` cannot drift apart.
+use super::pix_fmt_is_high_bit_depth;
+
+/// Bit-depth codec guard: no shipping GPU family (NVIDIA, AMD or Intel) can
+/// encode H.264 above 8-bit in hardware, so a high-bit-depth source configured
+/// as `H.264/AVC` + GPU is guaranteed to fail when the encoding session is
+/// created (`h264_nvenc` reports `ENOSYS`, `h264_amf` reports `AVERROR_BUG`).
+/// Switch such a job to HEVC with GPU retained (→ `hevc_nvenc` / `hevc_amf`,
+/// which encode high bit depth via P010) before it is ever queued.
+///
+/// The guard is keyed on the codec/bit-depth/GPU combination only — it is
+/// deliberately vendor-independent. CPU H.264 (libx264 High 10) and non-H.264
+/// codecs are left untouched, as is a source whose bit depth could not be
+/// determined (`None`, or a format without a resolvable descriptor).
+///
+/// Returns true when the codec was switched. Emits the diagnostic itself so
+/// every call site logs identically.
+fn normalize_render_options_for_bit_depth(
+    opts: &mut RenderOptions,
+    pix_fmt: Option<ffmpeg_next::format::Pixel>,
+    job_id: u32,
+) -> bool {
+    let Some(fmt) = pix_fmt else {
+        return false;
+    };
+    if !pix_fmt_is_high_bit_depth(fmt) {
         return false;
     }
-    unsafe {
-        let desc = ffmpeg_next::ffi::av_pix_fmt_desc_get(fmt.into());
-        if desc.is_null() {
-            return false;
-        }
-        let nb = (*desc).nb_components as usize;
-        if nb == 0 {
-            return false;
-        }
-        // comp[0] is the primary (luma) component; its `depth` is the
-        // bits-per-component that gates encoder bit-depth capability.
-        (*desc).comp[0].depth > 8
+    if opts.codec != "H.264/AVC" || !opts.use_gpu {
+        return false;
     }
+
+    ::log::info!(
+        target: "video.codec",
+        "codec auto-switched H.264->HEVC reason=high_bit_depth_h264_gpu_unsupported job_id={} pix_fmt={:?}",
+        job_id,
+        fmt
+    );
+    opts.codec = "H.265/HEVC".to_string();
+    opts.codec_options.clear();
+    true
 }
 
 struct Job {
@@ -3161,6 +3181,9 @@ impl RenderQueue {
                         render_options,
                         additional_data,
                         thumbnail_url,
+                        // Main preview has no ffmpeg-side video info; the guard
+                        // in add_internal probes the source itself.
+                        None,
                     );
                 }
             }
@@ -3168,6 +3191,10 @@ impl RenderQueue {
         job_id
     }
 
+    /// `source_pix_fmt`: the source's pixel format when the caller already
+    /// probed it (`add_file` reuses its own `get_video_info` result). `None`
+    /// makes this function probe once itself — the main-preview path has no
+    /// ffmpeg-side video info at hand.
     pub fn add_internal(
         &mut self,
         job_id: u32,
@@ -3175,6 +3202,7 @@ impl RenderQueue {
         mut render_options: RenderOptions,
         additional_data: String,
         thumbnail_url: QString,
+        source_pix_fmt: Option<ffmpeg_next::format::Pixel>,
     ) {
         let size = stab.params.read().size;
         stab.set_render_params(
@@ -3229,6 +3257,40 @@ impl RenderQueue {
                 return;
             }
         }
+
+        // Bit-depth codec guard. This is the single Job construction point, so
+        // applying it here covers every enqueue path: main-preview `add`,
+        // `add_file` (files, folders and `.gyroflow` project restore). Placed
+        // after the early-return dedup checks so a skipped job never pays the
+        // probe cost, and before the first read of `render_options` below so
+        // the stored settings and the actual render agree.
+        let source_pix_fmt = source_pix_fmt.or_else(|| {
+            // Probe lazily: this runs on the UI thread, and `.gyroflow` project
+            // restores arrive here with no pixel format, so a batch of restored
+            // projects would otherwise pay one ffmpeg open each before the queue
+            // even appears. The guard can only fire for H.264 + GPU, so every
+            // other combination skips the probe entirely — including the common
+            // case where QML already switched the codec to HEVC.
+            if render_options.codec != "H.264/AVC" || !render_options.use_gpu {
+                return None;
+            }
+            // MDK-decoded sources (BRAW/R3D/NEV) fail this probe and stay
+            // unguarded here, same as before — the render-time fallback covers them.
+            match rendering::VideoProcessor::get_video_info(&video_url) {
+                Ok(info) => Some(info.pix_fmt),
+                Err(e) => {
+                    ::log::debug!(
+                        target: "video.codec",
+                        "bit-depth guard probe failed job_id={} file='{}' error={}",
+                        job_id,
+                        filesystem::get_filename(&video_url),
+                        e
+                    );
+                    None
+                }
+            }
+        });
+        normalize_render_options_for_bit_depth(&mut render_options, source_pix_fmt, job_id);
 
         if editing {
             update_model!(self, job_id, itm {
@@ -5258,6 +5320,31 @@ impl RenderQueue {
                 },
             );
 
+            // Writes back the codec picked by the render-time capability fallback, so the queue's
+            // displayed export settings and any later re-render of this job agree with what was
+            // actually encoded. The render thread only owns a clone of render_options.
+            let codec_switched = util::qt_queued_callback_mut(
+                QPointer::from(self as &Self),
+                move |this, new_codec: String| {
+                    let settings_string = {
+                        let Some(job) = this.jobs.get_mut(&job_id) else {
+                            return;
+                        };
+                        job.render_options.codec = new_codec;
+                        job.render_options.codec_options.clear();
+                        let fps = job
+                            .stab
+                            .as_ref()
+                            .map(|s| s.params.read().get_scaled_fps())
+                            .unwrap_or_default();
+                        job.render_options.settings_string(fps)
+                    };
+                    update_model!(this, job_id, itm {
+                        itm.export_settings = QString::from(settings_string.clone());
+                    });
+                },
+            );
+
             let err = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
                 move |this, (msg, mut arg): (String, String)| {
@@ -5778,6 +5865,13 @@ impl RenderQueue {
                 let original_gpu_decode = stab.gpu_decoding.load(SeqCst);
                 let render_start = std::time::Instant::now();
                 let mut render_ok = true;
+                // Mutable from here on so the encoder-capability fallback in the retry loop can
+                // switch the output codec and go around again. `codec_downgraded` is the brake:
+                // if the switched-to codec fails as well (the real cause was bitrate or
+                // resolution, not bit depth), the failure must surface instead of looping through
+                // another full decode.
+                let mut render_options = render_options;
+                let mut codec_downgraded = false;
                 'ranges: for range in ranges_to_render {
                     if cancel_flag.load(SeqCst) {
                         render_ok = false;
@@ -5797,6 +5891,40 @@ impl RenderQueue {
                             encoder_initialized.clone(),
                         );
                         if let Err(e) = result {
+                            // Silent self-heal, ahead of the PixelFormatNotSupported arm below
+                            // (which breaks out of 'ranges immediately and would otherwise take
+                            // this case). The device refused a hardware H.264 session — could be
+                            // bit depth, could be the bitrate or resolution ceiling, AMF does not
+                            // say which. The same GPU's HEVC encoder is a superset on all three,
+                            // so retrying as HEVC beats a format dialog whose options (downgrade
+                            // the bit depth, or encode on the CPU) are worse or irrelevant.
+                            if let rendering::FFmpegError::EncoderCodecUnsupported((
+                                ref rejected_encoder,
+                                rejected_fmt,
+                            )) = e
+                            {
+                                if !codec_downgraded {
+                                    codec_downgraded = true;
+                                    ::log::warn!(
+                                        target: "video.codec",
+                                        "codec auto-switched H.264->HEVC reason=hw_h264_encoder_refused job_id={} encoder={} pix_fmt={:?}",
+                                        job_id,
+                                        rejected_encoder,
+                                        rejected_fmt
+                                    );
+                                    render_options.codec = "H.265/HEVC".to_string();
+                                    render_options.codec_options.clear();
+                                    codec_switched(render_options.codec.clone());
+                                    continue;
+                                }
+                                ::log::warn!(
+                                    target: "video.codec",
+                                    "encoder rejected the frame again after the codec switch, giving up job_id={} encoder={} pix_fmt={:?}",
+                                    job_id,
+                                    rejected_encoder,
+                                    rejected_fmt
+                                );
+                            }
                             if let rendering::FFmpegError::PixelFormatNotSupported((
                                 fmt,
                                 supported,
@@ -6235,13 +6363,18 @@ impl RenderQueue {
                     let stab2 = stab.clone();
                     let loaded = util::qt_queued_callback_mut(
                         QPointer::from(self as &Self),
-                        move |this, render_options: RenderOptions| {
+                        move |this,
+                              (render_options, source_pix_fmt): (
+                            RenderOptions,
+                            Option<ffmpeg_next::format::Pixel>,
+                        )| {
                             this.add_internal(
                                 job_id,
                                 stab2.clone(),
                                 render_options,
                                 additional_data2.clone(),
                                 QString::default(),
+                                source_pix_fmt,
                             );
                         },
                     );
@@ -6396,7 +6529,10 @@ impl RenderQueue {
                                                 as serde_json::Result<RenderOptions>
                                         {
                                             render_options2.update_from_json(out);
-                                            loaded(render_options2);
+                                            // No ffmpeg probe on the project-restore
+                                            // path; `add_internal` probes the video
+                                            // the project points at.
+                                            loaded((render_options2, None));
                                         }
                                     }
                                     if let Some(out) = obj.get("videofile").and_then(|x| x.as_str())
@@ -6513,19 +6649,13 @@ impl RenderQueue {
                                     // (libx264 High 10) and non-H.264 codecs are left untouched.
                                     // Applied before output_filename derivation so the stored
                                     // settings reflect the final codec.
-                                    if pix_fmt_is_high_bit_depth(info.pix_fmt)
-                                        && render_options.codec == "H.264/AVC"
-                                        && render_options.use_gpu
-                                    {
-                                        ::log::info!(
-                                            target: "video.codec",
-                                            "codec auto-switched H.264->HEVC reason=10bit_nvenc_unsupported job_id={} pix_fmt={:?}",
-                                            job_id,
-                                            info.pix_fmt
-                                        );
-                                        render_options.codec = "H.265/HEVC".to_string();
-                                        render_options.codec_options.clear();
-                                    }
+                                    // ^ superseded: the guard now runs in add_internal (the
+                                    // single Job construction point) so every enqueue path is
+                                    // covered, not just this one. This path passes its already
+                                    // probed info.pix_fmt to the loaded() callback below, so the
+                                    // file is not probed twice. The codec is still final before
+                                    // output_filename is derived a few lines down, since H.264
+                                    // and HEVC share the .mp4 extension.
 
                                     render_options.bitrate =
                                         render_options.bitrate.max(info.bitrate);
@@ -6911,7 +7041,10 @@ impl RenderQueue {
                                     job_id,
                                     filesystem::get_filename(&url)
                                 );
-                                loaded(render_options);
+                                // Hand the already-probed pixel format to the
+                                // bit-depth guard in `add_internal` so it doesn't
+                                // probe the same file a second time.
+                                loaded((render_options, Some(info.pix_fmt)));
 
                                 Self::update_sync_settings(&stab, &sync_options);
 
@@ -7742,6 +7875,23 @@ impl RenderQueue {
                             .get("output_extension")
                             .and_then(|x| x.as_str());
                         job.render_options.update_from_json(new_output_options);
+                        // Bit-depth guard, mirroring add_internal: applying a preset can
+                        // turn an already-queued job into the unrenderable
+                        // H.264 + GPU + high-bit-depth combination. The source pixel
+                        // format is not kept on the job, so probe it here — but only
+                        // for that exact combination, so the common cases (8-bit
+                        // sources, non-H.264 presets, CPU encoding) pay nothing.
+                        if job.render_options.codec == "H.264/AVC" && job.render_options.use_gpu {
+                            let source_pix_fmt =
+                                rendering::VideoProcessor::get_video_info(&itm.input_file.to_string())
+                                    .ok()
+                                    .map(|i| i.pix_fmt);
+                            normalize_render_options_for_bit_depth(
+                                &mut job.render_options,
+                                source_pix_fmt,
+                                job_id,
+                            );
+                        }
                         job.render_options.output_folder = Self::get_output_folder(
                             &itm.input_file.to_string(),
                             &job.render_options.output_folder,
@@ -15143,6 +15293,122 @@ mod tests {
         assert!(pix_fmt_is_high_bit_depth(Pixel::YUV420P12LE));
         // Undetermined (Pixel::None): safe default false → codec left untouched.
         assert!(!pix_fmt_is_high_bit_depth(Pixel::None));
+    }
+
+    // ---- amd-amf-encoder-capability-guard: bit-depth codec guard ----
+
+    fn guard_opts(codec: &str, use_gpu: bool) -> RenderOptions {
+        RenderOptions {
+            codec: codec.to_string(),
+            codec_options: "some-variant".to_string(),
+            use_gpu,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn bit_depth_guard_switches_high_bit_depth_h264_gpu_to_hevc() {
+        use ffmpeg_next::format::Pixel;
+        for fmt in [
+            Pixel::YUV420P10LE,
+            Pixel::P010LE,
+            Pixel::YUV422P10LE,
+            Pixel::YUV420P12LE,
+            Pixel::YUV444P16LE,
+        ] {
+            let mut opts = guard_opts("H.264/AVC", true);
+            assert!(
+                normalize_render_options_for_bit_depth(&mut opts, Some(fmt), 1),
+                "{fmt:?} must trigger the guard"
+            );
+            assert_eq!(opts.codec, "H.265/HEVC");
+            // Codec-specific encoder options must not survive the switch.
+            assert!(opts.codec_options.is_empty());
+            // GPU encoding is retained on purpose (hevc_* encodes high bit depth).
+            assert!(opts.use_gpu);
+        }
+    }
+
+    #[test]
+    fn bit_depth_guard_leaves_eight_bit_sources_alone() {
+        use ffmpeg_next::format::Pixel;
+        for fmt in [Pixel::YUV420P, Pixel::NV12] {
+            let mut opts = guard_opts("H.264/AVC", true);
+            assert!(!normalize_render_options_for_bit_depth(
+                &mut opts,
+                Some(fmt),
+                1
+            ));
+            assert_eq!(opts.codec, "H.264/AVC");
+            assert_eq!(opts.codec_options, "some-variant");
+        }
+    }
+
+    #[test]
+    fn bit_depth_guard_leaves_undetermined_bit_depth_alone() {
+        use ffmpeg_next::format::Pixel;
+        // Probe failed entirely (MDK-decoded sources) …
+        let mut opts = guard_opts("H.264/AVC", true);
+        assert!(!normalize_render_options_for_bit_depth(&mut opts, None, 1));
+        assert_eq!(opts.codec, "H.264/AVC");
+        // … or probed but with no usable pixel format.
+        let mut opts = guard_opts("H.264/AVC", true);
+        assert!(!normalize_render_options_for_bit_depth(
+            &mut opts,
+            Some(Pixel::None),
+            1
+        ));
+        assert_eq!(opts.codec, "H.264/AVC");
+    }
+
+    #[test]
+    fn bit_depth_guard_only_applies_to_h264_with_gpu() {
+        use ffmpeg_next::format::Pixel;
+        // CPU H.264 encodes 10-bit fine (libx264 High 10).
+        let mut opts = guard_opts("H.264/AVC", false);
+        assert!(!normalize_render_options_for_bit_depth(
+            &mut opts,
+            Some(Pixel::YUV420P10LE),
+            1
+        ));
+        assert_eq!(opts.codec, "H.264/AVC");
+
+        // Non-H.264 codecs are never touched, GPU or not.
+        for codec in ["H.265/HEVC", "AV1", "ProRes", "DNxHD", "CineForm"] {
+            let mut opts = guard_opts(codec, true);
+            assert!(!normalize_render_options_for_bit_depth(
+                &mut opts,
+                Some(Pixel::YUV420P10LE),
+                1
+            ));
+            assert_eq!(opts.codec, codec);
+            assert_eq!(opts.codec_options, "some-variant");
+        }
+    }
+
+    // Structural guard: the bit-depth guard must stay at the single Job
+    // construction point. It previously lived in `add_file` only, which left the
+    // main-preview add, `.gyroflow` project restore and apply-to-all paths
+    // unguarded (two field reports). Moving it back to a single enqueue path
+    // would silently reintroduce that gap, so pin the call site here.
+    #[test]
+    fn bit_depth_guard_is_called_from_add_internal() {
+        let source = include_str!("render_queue.rs");
+        let add_internal_idx = source
+            .find("pub fn add_internal(")
+            .expect("add_internal must exist");
+        // Bound the search at the next `pub fn` after add_internal so a call in
+        // some later function cannot satisfy this assertion by accident.
+        let body_after = &source[add_internal_idx + "pub fn add_internal(".len()..];
+        let body_end = body_after
+            .find("\n    pub fn ")
+            .unwrap_or(body_after.len());
+        let body = &body_after[..body_end];
+        assert!(
+            body.contains("normalize_render_options_for_bit_depth("),
+            "the bit-depth guard must run inside add_internal (the single Job \
+             construction point), not on individual enqueue paths"
+        );
     }
 
     // ---- plugin-only-export-gate ----

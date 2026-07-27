@@ -878,6 +878,14 @@ Se disponi di un dispositivo moderno, degli ultimi driver GPU e pensi che questo
     </message>
     <message>
         <location filename="../../src/ui/App.qml" line="2203"/>
+        <source>Your GPU&apos;s hardware encoder rejected these export settings.
+This usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.
+Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.</source>
+        <translation>Il codificatore hardware della tua GPU ha rifiutato queste impostazioni di esportazione.
+Di solito significa che il codec, la risoluzione o il bitrate selezionati superano ciò che questa GPU può codificare.
+Prova un altro codec di output (H.265/HEVC copre più casi di H.264/AVC), riduci il bitrate oppure disattiva la codifica GPU nelle impostazioni di esportazione.</translation>
+    </message>
+    <message>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
         <translation>Il decoder GPU non è riuscito a decodificare questo file. Disabilita la decodifica GPU in &quot;Avanzate&quot; e riprova.</translation>
     </message>

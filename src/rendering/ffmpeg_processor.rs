@@ -80,6 +80,14 @@ pub enum FFmpegError {
     GPUDecodingFailed,
     ToHWBufferError(i32),
     PixelFormatNotSupported((format::Pixel, Vec<format::Pixel>, Option<format::Pixel>)),
+    /// The device rejected the encoder itself, not merely a pixel format: the
+    /// selected hardware H.264 encoder cannot encode the source's bit depth (no
+    /// GPU family can encode H.264 above 8-bit). Carries the encoder name and
+    /// the rejected pixel format for diagnostics. Distinct from
+    /// `PixelFormatNotSupported` because the fix is switching the output codec,
+    /// not the pixel format — the render layer heals it silently instead of
+    /// raising the format-choice dialog.
+    EncoderCodecUnsupported((String, format::Pixel)),
     UnknownPixelFormat(format::Pixel),
     InternalError(ffmpeg_next::Error),
     CannotOpenInputFile((String, FilesystemError)),
@@ -125,6 +133,10 @@ impl std::fmt::Display for FFmpegError {
                 f,
                 "Pixel format {:?} is not supported. Supported ones: {:?}. Optimal choice: {:?}",
                 v.0, v.1, v.2
+            ),
+            FFmpegError::EncoderCodecUnsupported((name, fmt)) => write!(
+                f,
+                "Encoder {name} cannot encode pixel format {fmt:?} on this device"
             ),
             FFmpegError::InternalError(e) => write!(f, "ffmpeg error: {:?}", e),
             FFmpegError::CannotOpenInputFile((url, e)) => {

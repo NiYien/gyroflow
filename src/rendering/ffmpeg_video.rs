@@ -55,10 +55,66 @@ const DEVICE_CAPABILITY_ERRNO: i32 = 38;
 /// H.264. A pixel format can therefore pass the static support check and still be rejected once the
 /// encoding session is actually created, at which point NVENC returns `ENOSYS`.
 ///
-/// Only `ENOSYS` qualifies: `avcodec_open2` also fails for unrelated reasons (bitrate, resolution,
-/// level), and reporting those as a pixel format problem would send the user after the wrong fix.
-fn is_device_capability_error(err: &FFmpegError) -> bool {
-    matches!(err, FFmpegError::InternalError(Error::Other { errno }) if *errno == DEVICE_CAPABILITY_ERRNO)
+/// Two error shapes qualify:
+/// - `ENOSYS`, which NVENC / QSV return when the physical device refuses the session.
+/// - `AVERROR_BUG` **from an AMF encoder only**. ffmpeg's AMF wrapper collapses every
+///   `encoder->Init()` failure into `AVERROR_BUG` regardless of cause, so the encoder-name suffix is
+///   what keeps this from swallowing unrelated failures. It stays deliberately narrow: `AVERROR_BUG`
+///   from AMF also covers bitrate and resolution limits, which the caller must not mistake for a
+///   pixel format problem — see `classify_encoder_open_failure`.
+///
+/// Nothing else qualifies: `avcodec_open2` fails for plenty of unrelated reasons (bitrate,
+/// resolution, level), and reporting those as a pixel format problem would send the user after the
+/// wrong fix.
+fn is_device_capability_error(err: &FFmpegError, encoder_name: &str) -> bool {
+    match err {
+        FFmpegError::InternalError(Error::Other { errno }) => *errno == DEVICE_CAPABILITY_ERRNO,
+        FFmpegError::InternalError(Error::Bug) => encoder_name.ends_with("_amf"),
+        _ => false,
+    }
+}
+
+/// How a failed `avcodec_open2` should be reported upwards.
+#[derive(Debug, Eq, PartialEq)]
+enum EncoderOpenFailure {
+    /// Device capability failure whose fix is a different output codec: a hardware H.264 encoder
+    /// refused the session. Every GPU family's hardware HEVC encoder is a superset of its H.264 one
+    /// — higher bit depth (H.264 hardware encoding is 8-bit only everywhere), higher resolution
+    /// ceiling (~4096x2304 vs 8192x4320) and a higher bitrate ceiling (H.264's top level allows
+    /// ~240 Mbps against HEVC High tier's ~800 Mbps). So whatever the device objected to, retrying
+    /// as HEVC with GPU encoding retained is the single best next move, and the render layer does
+    /// it silently rather than asking the user.
+    SwitchCodec,
+    /// Device capability failure whose fix is a different pixel format (or CPU encoding). Raised as
+    /// `PixelFormatNotSupported` so the existing format-choice dialog handles it.
+    PixelFormat,
+    /// Not a capability failure — propagate the original error untouched.
+    Passthrough,
+}
+
+/// Classifies an encoder-open failure. Split out from the call site so the routing rules are
+/// unit-testable without an actual encoder.
+///
+/// Deliberately does NOT inspect bit depth: bit depth is only one of the ways a hardware H.264
+/// encoder can refuse a session, and the other two (bitrate and resolution ceilings) are equally
+/// fixed by switching to HEVC. Gating on bit depth would leave a user whose 700 Mbps ProRes source
+/// blew past H.264's bitrate ceiling staring at a pixel-format dialog that cannot help them.
+fn classify_encoder_open_failure(
+    err: &FFmpegError,
+    encoder_name: &str,
+    gpu_encoding: bool,
+    has_hw_upload: bool,
+) -> EncoderOpenFailure {
+    // The hardware-upload path lets the encoder consume device frames directly; its failures are
+    // not ours to reinterpret.
+    if has_hw_upload || !is_device_capability_error(err, encoder_name) {
+        return EncoderOpenFailure::Passthrough;
+    }
+    let is_hw_h264 = encoder_name.starts_with("h264_");
+    if is_hw_h264 && gpu_encoding {
+        return EncoderOpenFailure::SwitchCodec;
+    }
+    EncoderOpenFailure::PixelFormat
 }
 
 #[derive(Default)]
@@ -618,36 +674,62 @@ impl<'a> VideoTranscoder<'a> {
 
                             let encoder = match result {
                                 Ok(encoder) => encoder,
-                                Err(e)
-                                    if hw_upload_format.is_none()
-                                        && is_device_capability_error(&e) =>
-                                {
+                                Err(e) => {
                                     // The check above only consulted the encoder's advertised format
                                     // table; the device itself first speaks up here, when the
-                                    // encoding session is created. Report it the same way an
-                                    // unsupported format is reported before opening, so the caller
-                                    // offers the format/CPU dialog rather than a bare ffmpeg error.
-                                    // The rejected format is dropped from the offered list, and no
-                                    // candidate is suggested: the remaining hardware formats are
-                                    // either lossy downgrades or equally unsupported, so CPU
-                                    // encoding is the choice worth highlighting.
-                                    log::warn!(
-                                        target: "video.render",
-                                        "Encoder {} rejected pixel format {:?} when opening (device lacks the capability), falling back to the pixel format dialog",
-                                        self.encoder_name,
-                                        pixel_format
-                                    );
-                                    return Err(FFmpegError::PixelFormatNotSupported((
-                                        pixel_format,
-                                        self.codec_supported_formats
-                                            .iter()
-                                            .copied()
-                                            .filter(|f| *f != pixel_format)
-                                            .collect(),
-                                        None,
-                                    )));
+                                    // encoding session is created.
+                                    match classify_encoder_open_failure(
+                                        &e,
+                                        &self.encoder_name,
+                                        self.gpu_encoding,
+                                        hw_upload_format.is_some(),
+                                    ) {
+                                        EncoderOpenFailure::SwitchCodec => {
+                                            // Fixable by switching the output codec, so don't
+                                            // bother the user with a format dialog whose options
+                                            // (downgrade the bit depth, or encode on the CPU) are
+                                            // both worse than encoding the same frames as HEVC —
+                                            // and neither of which helps at all when the real
+                                            // limit was bitrate or resolution.
+                                            log::warn!(
+                                                target: "video.render",
+                                                "Hardware H.264 encoder {} refused this session (pixel format {:?}); the device's HEVC encoder is a superset, falling back to a codec switch",
+                                                self.encoder_name,
+                                                pixel_format
+                                            );
+                                            return Err(FFmpegError::EncoderCodecUnsupported((
+                                                self.encoder_name.clone(),
+                                                pixel_format,
+                                            )));
+                                        }
+                                        EncoderOpenFailure::PixelFormat => {
+                                            // Report it the same way an unsupported format is
+                                            // reported before opening, so the caller offers the
+                                            // format/CPU dialog rather than a bare ffmpeg error.
+                                            // The rejected format is dropped from the offered list,
+                                            // and no candidate is suggested: the remaining hardware
+                                            // formats are either lossy downgrades or equally
+                                            // unsupported, so CPU encoding is the choice worth
+                                            // highlighting.
+                                            log::warn!(
+                                                target: "video.render",
+                                                "Encoder {} rejected pixel format {:?} when opening (device lacks the capability), falling back to the pixel format dialog",
+                                                self.encoder_name,
+                                                pixel_format
+                                            );
+                                            return Err(FFmpegError::PixelFormatNotSupported((
+                                                pixel_format,
+                                                self.codec_supported_formats
+                                                    .iter()
+                                                    .copied()
+                                                    .filter(|f| *f != pixel_format)
+                                                    .collect(),
+                                                None,
+                                            )));
+                                        }
+                                        EncoderOpenFailure::Passthrough => return Err(e),
+                                    }
                                 }
-                                Err(e) => return Err(e),
                             };
                             self.encoder = Some(encoder);
 
@@ -871,26 +953,153 @@ mod tests {
         let err = FFmpegError::InternalError(Error::Other {
             errno: DEVICE_CAPABILITY_ERRNO,
         });
-        assert!(is_device_capability_error(&err));
+        assert!(is_device_capability_error(&err, "hevc_nvenc"));
+        // ENOSYS is vendor-neutral: it qualifies regardless of the encoder name.
+        assert!(is_device_capability_error(&err, "hevc_amf"));
     }
 
     #[test]
     fn device_capability_error_rejects_unrelated_errno() {
         // EINVAL: what avcodec_open2 returns for a bad bitrate/resolution, not a capability problem.
         let err = FFmpegError::InternalError(Error::Other { errno: 22 });
-        assert!(!is_device_capability_error(&err));
+        assert!(!is_device_capability_error(&err, "h264_nvenc"));
+    }
+
+    // AMF collapses every encoder->Init() failure into AVERROR_BUG, so the encoder-name suffix is
+    // the only thing separating "device cannot do this" from an unrelated ffmpeg bug.
+    #[test]
+    fn device_capability_error_matches_averror_bug_only_for_amf() {
+        let err = FFmpegError::InternalError(Error::Bug);
+        assert!(is_device_capability_error(&err, "h264_amf"));
+        assert!(is_device_capability_error(&err, "hevc_amf"));
+        assert!(!is_device_capability_error(&err, "h264_nvenc"));
+        assert!(!is_device_capability_error(&err, "libx264"));
+        assert!(!is_device_capability_error(&err, ""));
     }
 
     #[test]
     fn device_capability_error_rejects_other_variants() {
-        assert!(!is_device_capability_error(&FFmpegError::GPUDecodingFailed));
-        assert!(!is_device_capability_error(&FFmpegError::EncoderNotFound));
+        assert!(!is_device_capability_error(
+            &FFmpegError::GPUDecodingFailed,
+            "h264_amf"
+        ));
+        assert!(!is_device_capability_error(
+            &FFmpegError::EncoderNotFound,
+            "h264_amf"
+        ));
         assert!(!is_device_capability_error(
             &FFmpegError::PixelFormatNotSupported((
                 format::Pixel::P210LE,
                 vec![format::Pixel::YUV420P],
                 None,
-            ))
+            )),
+            "h264_amf"
         ));
+    }
+
+    // ---- amd-amf-encoder-capability-guard: encoder-open failure routing ----
+
+    fn enosys() -> FFmpegError {
+        FFmpegError::InternalError(Error::Other {
+            errno: DEVICE_CAPABILITY_ERRNO,
+        })
+    }
+
+    // Any capability refusal from a hardware H.264 encoder routes to a codec switch, and both
+    // vendors must reach it through the same branch — AMD via AVERROR_BUG, NVIDIA via ENOSYS.
+    #[test]
+    fn hardware_h264_capability_failure_routes_to_codec_switch_on_both_vendors() {
+        assert_eq!(
+            classify_encoder_open_failure(
+                &FFmpegError::InternalError(Error::Bug),
+                "h264_amf",
+                true,
+                false
+            ),
+            EncoderOpenFailure::SwitchCodec
+        );
+        assert_eq!(
+            classify_encoder_open_failure(&enosys(), "h264_nvenc", true, false),
+            EncoderOpenFailure::SwitchCodec
+        );
+        assert_eq!(
+            classify_encoder_open_failure(&enosys(), "h264_qsv", true, false),
+            EncoderOpenFailure::SwitchCodec
+        );
+    }
+
+    // The classifier must not look at bit depth: bitrate and resolution ceilings are equally H.264
+    // specific, and a source that merely overshot H.264's ~240 Mbps ceiling is 8-bit.
+    #[test]
+    fn hardware_h264_switches_codec_regardless_of_bit_depth() {
+        assert_eq!(
+            classify_encoder_open_failure(
+                &FFmpegError::InternalError(Error::Bug),
+                "h264_amf",
+                true,
+                false
+            ),
+            EncoderOpenFailure::SwitchCodec,
+            "an 8-bit source that blew past H.264's bitrate ceiling must still switch to HEVC"
+        );
+    }
+
+    #[test]
+    fn non_h264_capability_failures_keep_the_pixel_format_dialog() {
+        // 4:2:2 on an HEVC encoder: still a real capability failure, but there is no superset codec
+        // to fall back to — the existing format/CPU dialog is the right answer.
+        assert_eq!(
+            classify_encoder_open_failure(&enosys(), "hevc_nvenc", true, false),
+            EncoderOpenFailure::PixelFormat
+        );
+        assert_eq!(
+            classify_encoder_open_failure(
+                &FFmpegError::InternalError(Error::Bug),
+                "hevc_amf",
+                true,
+                false
+            ),
+            EncoderOpenFailure::PixelFormat
+        );
+    }
+
+    #[test]
+    fn non_capability_failures_pass_through_untouched() {
+        // EINVAL must not be reinterpreted as either kind of capability problem, on any encoder.
+        let einval = FFmpegError::InternalError(Error::Other { errno: 22 });
+        assert_eq!(
+            classify_encoder_open_failure(&einval, "h264_amf", true, false),
+            EncoderOpenFailure::Passthrough
+        );
+        // AVERROR_BUG from a non-AMF encoder is not a capability signal.
+        assert_eq!(
+            classify_encoder_open_failure(
+                &FFmpegError::InternalError(Error::Bug),
+                "h264_nvenc",
+                true,
+                false
+            ),
+            EncoderOpenFailure::Passthrough
+        );
+    }
+
+    #[test]
+    fn hardware_upload_path_and_cpu_encoding_do_not_switch_codecs() {
+        // Hardware frame upload: the encoder consumes device frames, failures stay untouched.
+        assert_eq!(
+            classify_encoder_open_failure(
+                &FFmpegError::InternalError(Error::Bug),
+                "h264_amf",
+                true,
+                true
+            ),
+            EncoderOpenFailure::Passthrough
+        );
+        // GPU encoding off: libx264 has none of the hardware ceilings, so there is nothing to route
+        // around and the failure is about something else.
+        assert_eq!(
+            classify_encoder_open_failure(&enosys(), "h264_nvenc", false, false),
+            EncoderOpenFailure::PixelFormat
+        );
     }
 }

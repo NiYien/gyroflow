@@ -143,6 +143,34 @@ pub fn sync_decoder_scale_string(proc_height: i32, url: &str) -> Option<String> 
     Some(raw)
 }
 
+/// Returns true when the pixel format stores more than 8 bits per color
+/// component (10-bit, 12-bit, etc.). Derived from ffmpeg's pixel-format
+/// descriptor so any high-bit-depth format is covered generically, instead of
+/// matching a hardcoded list. Returns false for `Pixel::None` or any format
+/// without a resolvable descriptor (bit depth undetermined) — a safe default
+/// that leaves the caller's codec choice untouched.
+///
+/// Shared by the enqueue-time codec guard (`render_queue`) and the encoder-open
+/// failure classifier (`ffmpeg_video`) so both judge bit depth identically.
+pub fn pix_fmt_is_high_bit_depth(fmt: ffmpeg_next::format::Pixel) -> bool {
+    if fmt == ffmpeg_next::format::Pixel::None {
+        return false;
+    }
+    unsafe {
+        let desc = ffmpeg_next::ffi::av_pix_fmt_desc_get(fmt.into());
+        if desc.is_null() {
+            return false;
+        }
+        let nb = (*desc).nb_components as usize;
+        if nb == 0 {
+            return false;
+        }
+        // comp[0] is the primary (luma) component; its `depth` is the
+        // bits-per-component that gates encoder bit-depth capability.
+        (*desc).comp[0].depth > 8
+    }
+}
+
 pub fn get_possible_encoders(codec: &str, use_gpu: bool) -> Vec<(&'static str, bool)> {
     // -> (name, is_gpu)
     if codec.contains("PNG") || codec.contains("png") {

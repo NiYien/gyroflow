@@ -117,6 +117,10 @@ MenuItem {
     property alias outBitrate: bitrate.value;
     property alias defaultBitrate: bitrate.defaultValue;
     property alias outGpu: gpu.checked;
+    // False when the current codec / source combination cannot be GPU encoded.
+    // Exposed so mirrored GPU-encoding toggles elsewhere can grey themselves out
+    // instead of offering a switch that getExportOptions will override anyway.
+    property alias outGpuEnabled: gpu.enabled2;
     property alias outAudio: audio.checked;
     property alias preserveOutputSettings: preserveOutputSettings;
     property alias preserveOutputPath: preserveOutputPath;
@@ -172,7 +176,12 @@ MenuItem {
             output_width:   root.outWidth,
             output_height:  root.outHeight,
             bitrate:        root.outBitrate,
-            use_gpu:        root.outGpu,
+            // Final choke point for the GPU capability constraint. updateGpuStatus
+            // already forces the toggle off when `enabled2` is false, but paths that
+            // write outGpu without going through it — setExportOptions restoring a
+            // .gyroflow project that stored use_gpu:true — would otherwise resurrect
+            // an unrenderable combination.
+            use_gpu:        root.outGpu && gpu.enabled2,
             audio:          root.outAudio,
             pixel_format:   "",
 
@@ -221,6 +230,19 @@ MenuItem {
         outHeight     = h;
         disableUpdate = false;
     }
+    // Whether the loaded source stores more than 8 bits per component.
+    // `vidInfo.pixelFormat` is assembled by VideoInformation::getPixelFormat and
+    // ends in one of "8 bit" / "10 bit" / "12 bit" / "14 bit" / "16 bit" /
+    // "16 bit float" / "32 bit float". Testing for "not 8 bit" covers every high
+    // bit depth at once, where the previous "contains 10 bit" test silently let
+    // 12/14/16-bit and floating point sources through. A source whose format
+    // could not be read also reports "8 bit", so unknown input keeps the
+    // conservative "do not trigger" behavior.
+    function isHighBitDepthSource(): bool {
+        const pf = (window.vidInfo && window.vidInfo.pixelFormat) ? ("" + window.vidInfo.pixelFormat) : "";
+        if (!pf || pf === "---") return false;
+        return !pf.includes("8 bit");
+    }
     function videoInfoLoaded(w: real, h: real, br: real): void {
         lensProfileOutputSizeActive = false;
         lensProfileOutputWidth = 0;
@@ -238,8 +260,9 @@ MenuItem {
         outBitrate     = br;
         defaultBitrate = br;
 
-        // Change to HEVC if the video is 10-bit
-        if (codec.currentIndex == 0 && window.vidInfo && window.vidInfo.pixelFormat.includes("10 bit")) {
+        // Change to HEVC if the source is high bit depth (no GPU family encodes
+        // H.264 above 8-bit in hardware).
+        if (codec.currentIndex == 0 && isHighBitDepthSource()) {
             codec.currentIndex = 1;
         }
 
@@ -353,11 +376,22 @@ MenuItem {
         function updateGpuStatus(): void {
             const format = exportFormats[currentIndex];
             gpu.enabled2 = format.gpu;
-            if ((format.name == "H.264/AVC" && window.vidInfo && window.vidInfo.pixelFormat.includes("10 bit"))) {
+            if (format.name == "H.264/AVC" && root.isHighBitDepthSource()) {
                 gpu.enabled2 = false;
             }
             const gpuChecked = +settings.value("exportGpu-" + currentIndex, -1);
-            if (gpuChecked == -1) {
+            if (!gpu.enabled2) {
+                // `enabled2 == false` is a capability constraint, not a preference:
+                // this combination cannot be encoded on the GPU at all. It must win
+                // over the persisted per-codec preference, which previously kept
+                // `checked` (and therefore the exported `use_gpu`) true behind a
+                // greyed-out control. preventSave keeps the user's stored preference
+                // intact, so it comes back when they switch to a codec that can use
+                // the GPU.
+                gpu.preventSave = true;
+                gpu.checked = false;
+                gpu.preventSave = false;
+            } else if (gpuChecked == -1) {
                 gpu.preventSave = true;
                 gpu.checked = gpu.enabled2;
                 gpu.preventSave = false;
