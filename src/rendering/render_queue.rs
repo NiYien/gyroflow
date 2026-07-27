@@ -2902,17 +2902,38 @@ impl RenderQueue {
             .unwrap_or_default()
     }
 
+    /// Convert a playback-timeline stamp to the physical recording timeline.
+    ///
+    /// Anything derived from `params.duration_ms` (decoder seeks, requested
+    /// sync timestamps) lives on the playback timeline; anything derived from
+    /// the gyro (the OptimSync rank table, batch-match offsets, gyro slices)
+    /// lives on the physical one. They only coincide when `fps_scale` is unset.
+    fn playback_to_physical_ms(stab: &StabilizationManager, playback_ms: f64) -> f64 {
+        match stab.params.read().fps_scale {
+            Some(scale) if scale.is_finite() && scale > 0.0 => playback_ms / scale,
+            _ => playback_ms,
+        }
+    }
+
     fn batch_sync_rank_for_candidate_ms(
         stab: &StabilizationManager,
         result_timestamp_ms: f64,
         requested_timestamp_ms: Option<f64>,
         initial_offset_ms: f64,
     ) -> f32 {
-        Self::batch_sync_rank_at_timestamp_ms(
-            stab,
-            requested_timestamp_ms.unwrap_or(result_timestamp_ms),
-            initial_offset_ms,
-        )
+        // The two arms arrive on DIFFERENT timelines: `requested_timestamp_ms`
+        // is `fract * playback_duration` (it seeks the decoder), while
+        // `result_timestamp_ms` comes back from sync already on the physical
+        // recording timeline — the same one `sync_data.rank` is indexed on.
+        // Normalizing only the requested arm keeps both lookups in the rank
+        // table's own timebase. Without this an overcranked clip indexes
+        // fps_scale times too far, `rank.get()` falls off the end and returns
+        // 0.0, and every candidate is discarded as low_rank.
+        let lookup_ms = match requested_timestamp_ms {
+            Some(ms) => Self::playback_to_physical_ms(stab, ms),
+            None => result_timestamp_ms,
+        };
+        Self::batch_sync_rank_at_timestamp_ms(stab, lookup_ms, initial_offset_ms)
     }
 
     pub fn get_batch_sync_status_json(&self, job_id: u32) -> QString {
@@ -7409,12 +7430,20 @@ impl RenderQueue {
                                         requested_timestamp_ms,
                                         sync_initial_offset_ms,
                                     );
-                                    let rank_source_timestamp_ms =
-                                        requested_timestamp_ms.unwrap_or(x.0);
+                                    // `requested_ts` stays raw (playback
+                                    // timeline) while `rank_src_ts` shows the
+                                    // physical-timeline value actually fed to
+                                    // the rank table — on an overcranked clip
+                                    // the two differ by fps_scale.
+                                    let rank_source_timestamp_ms = match requested_timestamp_ms {
+                                        Some(ms) => Self::playback_to_physical_ms(&stab2, ms),
+                                        None => x.0,
+                                    };
                                     ::log::debug!(
-                                        "[batch_sync] candidate job={} ts={:.4} requested_ts={:.4} rank_ts={:.4} rank_lookup_ts={:.4} offset={:.4} cost={:.4} conf={:.3} rank={:.1}",
+                                        "[batch_sync] candidate job={} ts={:.4} requested_ts={:.4} rank_src_ts={:.4} rank_ts={:.4} rank_lookup_ts={:.4} offset={:.4} cost={:.4} conf={:.3} rank={:.1}",
                                         job_id,
                                         x.0,
+                                        requested_timestamp_ms.unwrap_or(x.0),
                                         rank_source_timestamp_ms,
                                         rank_source_timestamp_ms - sync_initial_offset_ms,
                                         rank_source_timestamp_ms
@@ -16412,6 +16441,91 @@ mod tests {
         }
 
         assert_eq!(RenderQueue::batch_sync_rank_at_timestamp_ms(&stab, 1500.0, 0.0), 90.0);
+    }
+
+    #[test]
+    fn batch_sync_candidate_rank_normalizes_requested_timestamp_by_fps_scale() {
+        // The requested timestamp is a PLAYBACK-timeline stamp (fract *
+        // playback duration — it is what seeks the decoder), but sync_data.rank
+        // is built by OptimSync from the gyro slice and is indexed on the
+        // PHYSICAL recording timeline. On an overcranked clip the raw playback
+        // stamp indexes fps_scale times too far, runs off the end of the table,
+        // and `rank.get(idx).unwrap_or_default()` silently yields 0.0 — which
+        // the batch-sync filter reads as low_rank and discards.
+        let stab = StabilizationManager::default();
+        stab.params.write().fps_scale = Some(4.0);
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0; // one index per second
+            sync_data.rank = vec![0.0, 0.0, 90.0, 0.0];
+        }
+
+        // Playback 8000ms -> physical 2000ms -> index 2.
+        assert_eq!(
+            RenderQueue::batch_sync_rank_for_candidate_ms(&stab, 2000.0, Some(8000.0), 0.0),
+            90.0
+        );
+    }
+
+    #[test]
+    fn batch_sync_candidate_rank_keeps_result_timestamp_on_the_physical_timeline() {
+        // The fallback arm already receives a physical-timeline stamp (the sync
+        // result), so it must NOT be divided a second time.
+        let stab = StabilizationManager::default();
+        stab.params.write().fps_scale = Some(4.0);
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0;
+            sync_data.rank = vec![0.0, 0.0, 90.0, 0.0];
+        }
+
+        assert_eq!(
+            RenderQueue::batch_sync_rank_for_candidate_ms(&stab, 2000.0, None, 0.0),
+            90.0
+        );
+    }
+
+    #[test]
+    fn batch_sync_candidate_rank_is_unchanged_without_a_scale() {
+        let stab = StabilizationManager::default();
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 1.0;
+            sync_data.rank = vec![0.0, 0.0, 90.0, 0.0];
+        }
+
+        assert_eq!(
+            RenderQueue::batch_sync_rank_for_candidate_ms(&stab, 0.0, Some(2000.0), 0.0),
+            90.0
+        );
+    }
+
+    #[test]
+    fn batch_sync_candidate_rank_survives_the_120_to_30_fps_feedback_case() {
+        // Verbatim numbers from the 2026-07-27 run (P1004811.MP4, 120->30fps):
+        // requested_ts=25885.0891 on a rank table covering only the 11.5s gyro
+        // slice (657 entries at ratio 0.016). The playback stamp indexed 1680,
+        // 2.5x past the end, so every candidate scored 0 and all four jobs went
+        // yellow with confirmed_points=0.
+        let stab = StabilizationManager::default();
+        stab.params.write().fps_scale = Some(3.999996);
+        {
+            let mut sync_data = stab.sync_data.write();
+            sync_data.ratio = 0.016;
+            sync_data.rank_window_center_offset_ms = 500.0;
+            sync_data.rank = vec![0.0; 657];
+            sync_data.rank[467] = 1572.45;
+        }
+
+        assert_eq!(
+            RenderQueue::batch_sync_rank_for_candidate_ms(
+                &stab,
+                6473.139,
+                Some(25885.0891),
+                -1500.0286
+            ),
+            1572.45
+        );
     }
 
     #[test]
