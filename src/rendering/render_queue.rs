@@ -21009,8 +21009,149 @@ mod tests {
         );
     }
 
+    // [gyro-drop-promotes-to-queue] Replaces the former
+    // `video_area_single_mix_bin_not_added_to_render_queue_before_motion_data_routing`,
+    // which locked the opposite routing. A standalone `*_mix.bin` used to be treated as
+    // the current video's motion data, so the deep-match / clock-shift-learning workflow
+    // (queue side only) was unreachable for a single clip + single gyro file import.
     #[test]
-    fn video_area_single_mix_bin_not_added_to_render_queue_before_motion_data_routing() {
+    fn video_area_single_mix_bin_routes_to_queue_before_motion_data() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let drop_area_idx = qml
+            .find("id: da;")
+            .expect("VideoArea main drop area exists");
+        let drop_remaining = &qml[drop_area_idx..];
+        let drop_idx = drop_remaining
+            .find("onDropped:")
+            .expect("VideoArea main drop area handles drop");
+        let drop_body = &drop_remaining[drop_idx..];
+
+        let mix_bin_idx = drop_body
+            .find("dropCount === 1 && render_queue.is_gyro_mix_file(drop.urls[0].toString())")
+            .expect("a single dropped *_mix.bin must be recognized before motion-data routing");
+        let motion_data_idx = drop_body
+            .find("dropCount === 1 && isSingleMotionDataFile(drop.urls[0])")
+            .expect("other single motion-data files must keep the motion-data path");
+
+        assert!(
+            mix_bin_idx < motion_data_idx,
+            "the *_mix.bin check must run before the generic motion-data check, otherwise \
+             `bin` in MotionData.qml's extension table swallows it"
+        );
+
+        let mix_bin_branch = &drop_body[mix_bin_idx..motion_data_idx];
+        assert!(
+            mix_bin_branch.contains("render_queue.add_gyro_file("),
+            "a standalone *_mix.bin must register as a render-queue gyro source"
+        );
+        assert!(
+            mix_bin_branch.contains("promotePreviewToQueue()"),
+            "a standalone *_mix.bin must promote the previewed clip into the render queue"
+        );
+        assert!(
+            !mix_bin_branch.contains("motionData.loadFile"),
+            "a standalone *_mix.bin must not reach the current-video motion-data path"
+        );
+    }
+
+    // [gyro-drop-promotes-to-queue] The file dialog (`App.qml` fileDialog.onAccepted) and
+    // the Android picker fallback (`App.qml` onUrls_opened) both funnel into
+    // loadMultipleFiles, so the same ordering must hold there or the dialog and the drop
+    // surface disagree about where a `[video, *_mix.bin]` selection lands.
+    #[test]
+    fn video_area_load_multiple_routes_mix_bin_to_queue_before_motion_data() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+
+        let single_idx = body
+            .find("if (urls.length == 1)")
+            .expect("VideoArea.loadMultipleFiles must keep single-item routing");
+        let single_branch = &body[single_idx..];
+
+        let mix_bin_idx = single_branch
+            .find("render_queue.is_gyro_mix_file(urls[0].toString())")
+            .expect("single-item routing must recognize *_mix.bin");
+        let motion_data_idx = single_branch
+            .find("isSingleMotionDataFile(urls[0])")
+            .expect("single-item routing must keep the generic motion-data check");
+        let video_fallback_idx = single_branch
+            .find("root.loadFile(urls[0], skip_detection, 0, \"\", droppedPairedGyroflow)")
+            .expect("single-item routing must keep the single-video fallback");
+
+        assert!(
+            mix_bin_idx < motion_data_idx && motion_data_idx < video_fallback_idx,
+            "single-item routing order must be: *_mix.bin -> queue, other motion data -> \
+             MotionData.loadFile, everything else -> main preview"
+        );
+
+        let mix_bin_branch = &single_branch[mix_bin_idx..motion_data_idx];
+        assert!(
+            mix_bin_branch.contains("render_queue.add_gyro_file("),
+            "the *_mix.bin branch must register a render-queue gyro source"
+        );
+        assert!(
+            mix_bin_branch.contains("promotePreviewToQueue()"),
+            "the *_mix.bin branch must promote the previewed clip into the render queue"
+        );
+    }
+
+    // [gyro-drop-promotes-to-queue] Promotion reuses only `render_queue.add()`, not
+    // `renderBtn.render()`'s pre-flight chain (overwrite prompt, REDline notice, AMD
+    // bitrate warning, sandbox folder picker, mobile foreground notice) and never starts
+    // rendering. Dropping a gyro file must not turn into an export interrogation.
+    #[test]
+    fn video_area_promotion_helper_has_no_render_preflight() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function promotePreviewToQueue")
+            .expect("VideoArea must define the promotion helper");
+        let remaining = &qml[fn_idx..];
+        // The helper is a top-level function; the next `\n    function ` at the same
+        // indent level ends its body.
+        let end_idx = remaining[1..]
+            .find("\n    function ")
+            .map(|i| i + 1)
+            .expect("promotion helper must be followed by another VideoArea function");
+        let body = &remaining[..end_idx];
+
+        assert!(
+            body.contains("render_queue.add(window.getAdditionalProjectDataJson()"),
+            "promotion must reuse the shared render_queue.add() entry point"
+        );
+        assert!(
+            body.contains("vid.grabToImage("),
+            "promotion must supply a thumbnail like the Add-to-render-queue path does"
+        );
+        assert!(
+            !body.contains("render_queue.start("),
+            "promotion must not start rendering"
+        );
+        for forbidden in [
+            "messageBox(",
+            "outputFile.selectFolder(",
+            "find_redline(",
+            "get_default_encoder(",
+        ] {
+            assert!(
+                !body.contains(forbidden),
+                "promotion must not reuse renderBtn.render()'s pre-flight chain (found {forbidden})"
+            );
+        }
+    }
+
+    // [gyro-drop-promotes-to-queue] Only `*_mix.bin` moves to the queue. `bin` itself is
+    // in MotionData.qml's extension table (Betaflight blackbox logs), so the helper's
+    // extension branch must stay intact or upstream Gyroflow's external-gyro workflow
+    // breaks.
+    #[test]
+    fn video_area_motion_data_helper_keeps_extension_table_branch() {
         let qml = include_str!("../ui/VideoArea.qml");
         let helper_idx = qml
             .find("function isSingleMotionDataFile")
@@ -21022,27 +21163,111 @@ mod tests {
         let helper_body = &helper_remaining[..helper_end_idx];
 
         assert!(
-            helper_body.contains("render_queue.is_gyro_mix_file(url.toString())"),
-            "single motion-data helper must explicitly recognize *_mix.bin files"
+            helper_body.contains("window.motionData.extensions"),
+            "the motion-data helper must keep matching against MotionData.qml's extension table"
+        );
+        assert!(
+            helper_body.contains("if (isVideoOrProjectFile(url)) return false"),
+            "the motion-data helper must keep excluding video/project extensions"
         );
 
-        let drop_area_idx = qml
-            .find("id: da;")
-            .expect("VideoArea main drop area exists");
-        let drop_remaining = &qml[drop_area_idx..];
-        let drop_idx = drop_remaining
-            .find("onDropped:")
-            .expect("VideoArea main drop area handles drop");
-        let drop_body = &drop_remaining[drop_idx..];
-        let single_drop_idx = drop_body
-            .find("dropCount === 1 && isSingleMotionDataFile(drop.urls[0])")
-            .expect("single dropped motion-data files must be routed before batch gyro handling");
-        let add_gyro_idx = drop_body
-            .find("render_queue.add_gyro_file(")
-            .expect("batch drop path must keep render-queue gyro matching");
+        let motion_data_qml = include_str!("../ui/menu/MotionData.qml");
+        for ext in ["csv", "bbl", "gcsv", "bin", "log"] {
+            assert!(
+                motion_data_qml.contains(&format!("\"{ext}\"")),
+                "MotionData.qml must keep accepting .{ext} so non-device logs still route there"
+            );
+        }
+    }
+
+    // [gyro-drop-promotes-to-queue] Invariant: a single video import that carries no
+    // device gyro file must stay on the untouched main-preview path. Implicit queueing was
+    // explicitly rejected (see design Decision 3) because it would split `queueMode` and
+    // silently disable the preview's auto-autosync.
+    #[test]
+    fn video_area_single_video_import_does_not_touch_the_queue() {
+        let qml = include_str!("../ui/VideoArea.qml");
+        let fn_idx = qml
+            .find("function loadMultipleFiles")
+            .expect("VideoArea.loadMultipleFiles exists");
+        let remaining = &qml[fn_idx..];
+        let next_fn_idx = remaining
+            .find("function askForOutputLocation")
+            .expect("loadMultipleFiles block end marker exists");
+        let body = &remaining[..next_fn_idx];
+        let single_idx = body
+            .find("if (urls.length == 1)")
+            .expect("VideoArea.loadMultipleFiles must keep single-item routing");
+        let batch_idx = body
+            .find("if (urls.length < 1) return;")
+            .expect("loadMultipleFiles must keep its empty-input guard after single routing");
+        let single_branch = &body[single_idx..batch_idx];
+
+        assert_eq!(
+            single_branch.matches("promotePreviewToQueue()").count(),
+            1,
+            "promotion must happen only in the *_mix.bin branch, never on the plain \
+             single-video fallback"
+        );
+        assert_eq!(
+            single_branch.matches("render_queue.add_gyro_file(").count(),
+            1,
+            "the single-item branch must register a gyro source only for *_mix.bin"
+        );
+
+        // Everything after the mix-bin branch (generic motion data + single video) must be
+        // free of queue mutations.
+        let mix_bin_end = single_branch
+            .find("isSingleMotionDataFile(urls[0])")
+            .expect("single-item routing must keep the generic motion-data check");
+        let after_mix_bin = &single_branch[mix_bin_end..];
+        for forbidden in [
+            "promotePreviewToQueue()",
+            "render_queue.add_gyro_file(",
+            "render_queue.add(",
+            "queue.item.shown = true",
+        ] {
+            assert!(
+                !after_mix_bin.contains(forbidden),
+                "the plain single-video / motion-data fallback must not touch the render \
+                 queue (found {forbidden})"
+            );
+        }
+    }
+
+    // [gyro-drop-promotes-to-queue] Invariant: `queueMode` still means "panel visible AND
+    // queue non-empty". This change must not create rows behind a closed panel, so the
+    // predicate stays untouched; changing it would drag the whole stabilize/export
+    // decision tree into this change's blast radius.
+    #[test]
+    fn app_queue_mode_predicate_still_requires_visible_panel() {
+        let qml = include_str!("../ui/App.qml");
+
+        assert_eq!(
+            qml.matches("videoArea.queue.shown && render_queue.queue.rowCount() > 0")
+                .count(),
+            2,
+            "runPluginStabilizeFlow and runStabilizedBatchExport must both keep the \
+             visible-panel term in queueMode"
+        );
+        assert_eq!(
+            qml.matches("videoArea.queue.shown && simpleExportBtnRow.queueRowCount > 0")
+                .count(),
+            2,
+            "the bottom-bar enable/visibility bindings must keep the visible-panel term"
+        );
+    }
+
+    // [gyro-drop-promotes-to-queue] Invariant: the main preview's automatic autosync is
+    // still gated on `editing_job_id == 0`. Single videos with embedded gyro (GoPro/Sony)
+    // must keep auto-syncing on load exactly as before, because they are never promoted.
+    #[test]
+    fn synchronization_auto_autosync_still_gated_on_editing_job_id() {
+        let qml = include_str!("../ui/menu/Synchronization.qml");
         assert!(
-            single_drop_idx < add_gyro_idx,
-            "single *_mix.bin drops must route as current-video motion data before batch gyro handling"
+            qml.contains("render_queue.editing_job_id == 0"),
+            "auto-autosync must stay disabled for queue jobs and enabled for plain \
+             single-video imports"
         );
     }
 

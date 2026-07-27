@@ -676,6 +676,11 @@ Item {
         const videoFirstExtensions = ["mp4", "mov", "mxf", "insv", "braw", "r3d", "nev", "crm", "gyroflow"];
         return videoFirstExtensions.indexOf(fileExtension(url)) >= 0;
     }
+    // NOTE: this returns true for `*_mix.bin` as well, because it *is* motion data.
+    // Routing, however, is decided at the call sites: they check
+    // `render_queue.is_gyro_mix_file()` first and send device gyro files to the render
+    // queue instead. Deleting the short-circuit below would not change that - `bin` is
+    // itself in MotionData.qml's extension table, so the loop would match it anyway.
     function isSingleMotionDataFile(url: url): bool {
         if (render_queue.is_gyro_mix_file(url.toString())) return true;
         if (isVideoOrProjectFile(url)) return false;
@@ -685,6 +690,49 @@ Item {
             if (ext === accepted.toString().replace(/^\./, "").toLowerCase()) return true;
         }
         return false;
+    }
+    // A standalone device gyro file (*_mix.bin) means the user is entering the batch
+    // matching workflow: deep match, clock-shift learning and cross-clip propagation all
+    // live on the render-queue side only. Reveal the queue and promote whatever clip is
+    // currently in the main preview into a job, so a "one clip + one gyro file" import
+    // reaches the same state as a multi-clip import.
+    //
+    // Reuses only the shared `render_queue.add()` entry point, deliberately NOT
+    // `renderBtn.render()`'s pre-flight chain (overwrite prompt, REDline notice, AMD
+    // bitrate warning, sandbox folder picker) - promotion turns footage into a queue
+    // entry, it does not start an export. It also never calls render_queue.start().
+    function promotePreviewToQueue(): void {
+        if (!queue.item) return;
+        // The queue is revealed on every path, including the skip cases below: gyro data
+        // has arrived, so the queue should become visible regardless.
+        queue.item.shown = true;
+
+        if (!vid.loaded || !vidInfo.filename) {
+            console.log("[gyro_promote] skip_no_video");
+            return;
+        }
+        if (controller.video_loading_in_progress) {
+            // Reading stabilization state mid-load would bypass the video-load guard.
+            console.log("[gyro_promote] skip_loading");
+            return;
+        }
+        if (render_queue.editing_job_id > 0) {
+            // The preview already *is* a queue job (reached via right-click Edit), so the
+            // row exists. Calling add() here would reuse that id and silently overwrite
+            // the job with an edit the user never asked to save.
+            console.log("[gyro_promote] skip_editing_job id=" + render_queue.editing_job_id);
+            return;
+        }
+
+        vid.grabToImage(function(result) {
+            const job_id = render_queue.add(window.getAdditionalProjectDataJson(), controller.image_to_b64(result.image));
+            // add() clears editing_job_id internally, so bind it back: the main preview
+            // must stay the edit view of this job, otherwise parameters tweaked in the
+            // preview after promotion would silently not reach the exported job.
+            // Assigning the property does not reload the video.
+            render_queue.editing_job_id = job_id;
+            console.log("[gyro_promote] promoted job_id=" + job_id);
+        }, Qt.size(50 * dpiScale * vid.parent.ratio, 50 * dpiScale));
     }
 
     function loadMultipleFiles(urls: list<url>, skip_detection: bool): void {
@@ -758,6 +806,15 @@ Item {
             console.log("filter_non_source_inputs failed:", e);
         }
         if (urls.length == 1) {
+            // Same ordering as the drop handler: device gyro files go to the render queue,
+            // everything else keeps the motion-data / main-preview routing. This branch is
+            // what the main file dialog and the Android picker callback funnel through, so
+            // opening `[video, *_mix.bin]` and dropping it must not disagree.
+            if (render_queue.is_gyro_mix_file(urls[0].toString())) {
+                render_queue.add_gyro_file(urls[0].toString());
+                root.promotePreviewToQueue();
+                return;
+            }
             if (window.motionData && isSingleMotionDataFile(urls[0])) {
                 window.motionData.loadFile(urls[0]);
                 return;
@@ -1229,6 +1286,18 @@ Item {
                     console.log("[main_drop:drop] calibrator_dispatched=" + dropCount);
                     return;
                 }
+                // Device gyro files belong to the render queue (deep match / clock-shift
+                // learning), never to the current-video motion-data path. This check must
+                // stay ahead of isSingleMotionDataFile: `bin` is in MotionData.qml's
+                // extension table, so the generic check would swallow *_mix.bin.
+                if (dropCount === 1 && render_queue.is_gyro_mix_file(drop.urls[0].toString())) {
+                    render_queue.add_gyro_file(drop.urls[0].toString());
+                    root.promotePreviewToQueue();
+                    console.log("[main_drop:dispatch] files=1 target=queue_gyro");
+                    return;
+                }
+                // Other motion-data formats (.bbl / .gcsv / plain .bin blackbox logs) keep
+                // loading as the current video's external gyro source.
                 if (dropCount === 1 && isSingleMotionDataFile(drop.urls[0])) {
                     root.loadMultipleFiles(drop.urls, false);
                     console.log("[main_drop:dispatch] files=1 target=motion_data");
@@ -1329,6 +1398,14 @@ Item {
                     const items = folderUrls.concat(fileUrls);
                     Qt.callLater(function() { queue.item.dt.loadFiles(items); });
                     console.log("[main_drop:dispatch] folders=" + folderUrls.length + " files=" + fileUrls.length + " target=queue");
+                } else if (fileUrls.length > 0 && hasGyroFile && queue.item) {
+                    // A device gyro file came in with the videos, so the whole import
+                    // belongs to the render queue. Without this, a single video would fall
+                    // into loadMultipleFiles' one-file main-preview branch and the user
+                    // would end up staring at an open but empty queue.
+                    const gyroDropUrls = [...fileUrls];
+                    Qt.callLater(function() { queue.item.dt.loadFiles(gyroDropUrls); });
+                    console.log("[main_drop:dispatch] files=" + fileUrls.length + " target=queue_with_gyro");
                 } else if (fileUrls.length > 0) {
                     root.loadMultipleFiles(fileUrls, false);
                     console.log("[main_drop:dispatch] files=" + fileUrls.length + " target=" + (fileUrls.length > 1 ? "queue" : "main"));
