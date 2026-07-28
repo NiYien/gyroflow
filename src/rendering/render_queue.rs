@@ -4972,9 +4972,11 @@ impl RenderQueue {
                     .as_ref()
                     .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
             });
+            // Display accessor (nominal focal first) so the queue matches the Video
+            // Information panel. Compute paths keep using extract_video_focus_length_mm.
             let metadata_focal_length = metadata_snapshot
                 .as_ref()
-                .and_then(niyien_lens_presets::extract_video_focus_length_mm)
+                .and_then(niyien_lens_presets::extract_display_focal_length_mm)
                 .unwrap_or(0.0);
             let mut lens_group_mode = "auto";
             let mut lens_group_number = 0usize;

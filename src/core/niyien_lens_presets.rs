@@ -361,6 +361,40 @@ pub fn extract_video_focus_length_mm(metadata: &FileMetadata) -> Option<f64> {
         })
 }
 
+/// Display-only focal length: same candidate sources as
+/// `extract_video_focus_length_mm`, but with the priority reversed so the
+/// nominal focal length reported by the camera wins over the value stored in
+/// `lens_params`.
+///
+/// The two must stay separate because `sony::init_lens_profile` overwrites
+/// `lens_params[].focal_length` with a focal derived from the Sony lens
+/// distortion polynomial (see `gyro_source/sony.rs`). That derived value is the
+/// correct input for the camera matrix, but it is not the focal length the
+/// camera reports, so showing it next to the Video Information panel (which
+/// renders the raw `TagId::FocalLength` tag) made the two disagree — 45mm vs
+/// 55mm on A7S3 footage.
+///
+/// Compute paths (`build_lens_profile`, `lens_group_build_decision`, the lens
+/// group missing-data gates) MUST keep using `extract_video_focus_length_mm`.
+/// Both functions draw from the same union of sources, so their `is_some()`
+/// results are identical and any presence check is unaffected by the choice.
+pub fn extract_display_focal_length_mm(metadata: &FileMetadata) -> Option<f64> {
+    sanitize_video_focal_length_mm(
+        metadata
+            .camera_identifier
+            .as_ref()
+            .and_then(|id| id.focal_length),
+    )
+    .or_else(|| {
+        metadata.lens_params.values().find_map(|params| {
+            params
+                .focal_length
+                .map(|value| value as f64)
+                .and_then(|value| sanitize_video_focal_length_mm(Some(value)))
+        })
+    })
+}
+
 pub fn update_status_from_metadata(statuses: &mut [LensGroupStatus], metadata: &FileMetadata) {
     let Some(lens_index) = extract_lens_index(&metadata.additional_data) else {
         return;
@@ -370,10 +404,14 @@ pub fn update_status_from_metadata(statuses: &mut [LensGroupStatus], metadata: &
     };
     status.used = true;
     status.video_count += 1;
-    if let Some(focal_length_mm) = extract_video_focus_length_mm(metadata) {
+    // The presence gate deliberately stays on the compute accessor: has_auto_focus
+    // / has_missing_focus feed the lens group missing-data gates, so they must not
+    // depend on which display source wins. Only the value shown to the user comes
+    // from the display accessor.
+    if extract_video_focus_length_mm(metadata).is_some() {
         status.has_auto_focus = true;
         if status.auto_focus_length_mm.is_none() {
-            status.auto_focus_length_mm = Some(focal_length_mm);
+            status.auto_focus_length_mm = extract_display_focal_length_mm(metadata);
         }
     } else {
         status.has_missing_focus = true;
