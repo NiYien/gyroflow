@@ -439,6 +439,25 @@ mod upstream_data_dir_guard {
     }
 
     #[test]
+    fn guard_flags_commented_out_forms_too() {
+        // This is the shape that actually sat in the tree: a disabled app-dir
+        // lookup, one uncomment away from restoring the cross-app settings leak.
+        // Stripping whitespace before matching makes comment markers irrelevant,
+        // but the guarantee is worth pinning rather than inferring.
+        let line_comment = format!("// if let Some(d) = ProjectDirs::from(\"xyz\", \"{BRAND}\", \"{BRAND}\") {{");
+        let block_comment = format!(
+            "/*\n    let info = &AppInfo {{\n        name: \"{BRAND}\",\n        author: \"{BRAND}\",\n    }};\n*/"
+        );
+        let doc_comment = concat!("/// See migrate_from", "_legacy_dir for the old behaviour.").to_string();
+        for sample in [line_comment, block_comment, doc_comment] {
+            assert!(
+                !violations_in(&pack(&sample)).is_empty(),
+                "guard failed to flag a commented-out form: {sample}"
+            );
+        }
+    }
+
+    #[test]
     fn guard_allows_the_intentional_brand_mentions() {
         // Every one of these exists in the repository today and is deliberate:
         // none of them is a filesystem path into the upstream app directory.
