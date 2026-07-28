@@ -634,6 +634,12 @@ impl RenderOptions {
 struct GyroFileInfo {
     id: u64,
     path: String,
+    /// Normalized form of `path`, computed once at registration time and used
+    /// only to reject duplicate registrations (see `gyro_pool_dedup_key`).
+    /// Cached rather than derived on demand because a single folder scan can
+    /// register hundreds of files and re-normalizing every existing entry on
+    /// every add would be quadratic URL parsing.
+    dedup_key: String,
     filename: String,
     created_at_ms: Option<i64>,
     duration_ms: Option<f64>,
@@ -8738,12 +8744,39 @@ impl RenderQueue {
                 .unwrap_or(&url)
                 .to_string();
         }
+
+        // Reject a file already in the pool. Every entry point funnels through
+        // here (file dialog, main-preview drop, queue drop, and the folder scans
+        // in `add_gyro_folder`), and a folder can legitimately be scanned twice
+        // - once by the single-folder main-preview branch and again by the queue
+        // drop handler - so without this the same `_mix.bin` lands twice.
+        //
+        // Rejecting *before* the push is required, not stylistic: `manual_pairs`,
+        // `deep_match_results` and `pairing_mode_gyro_index` all reference pool
+        // entries by position, so dropping a duplicate out of the middle later
+        // would silently re-point them at other files. Refusing entry keeps
+        // indices append-only and every existing reference valid.
+        //
+        // Duplicates are skipped silently (log only): no dialog, no signal, and
+        // no parse thread - the pool did not change, so `gyro_files_changed`
+        // would only trigger a pointless full QML re-read, and re-parsing a file
+        // the pool already has (or is already parsing) is pure waste.
+        let dedup_key = gyro_pool_dedup_key(&url);
+        if is_duplicate_gyro_pool_entry(
+            self.gyro_files.iter().map(|info| info.dedup_key.as_str()),
+            &dedup_key,
+        ) {
+            ::log::info!("[add_gyro_file] skipped duplicate: '{}'", filename);
+            return;
+        }
+
         let gyro_file_id = self.next_gyro_file_id;
         self.next_gyro_file_id = self.next_gyro_file_id.wrapping_add(1);
         let index = self.gyro_files.len();
         self.gyro_files.push(GyroFileInfo {
             id: gyro_file_id,
             path: url.clone(),
+            dedup_key,
             filename,
             ..Default::default()
         });
@@ -14860,6 +14893,40 @@ fn is_gyro_mix_file_url_impl(url: &str) -> bool {
     url.starts_with("content://") && url.to_ascii_lowercase().ends_with("_mix.bin")
 }
 
+/// Key that decides whether two gyro registrations refer to the same physical
+/// file. Deliberately the same normalization the video-side queue dedupe uses
+/// (`add_internal`), so both sides answer "is this the same file?" identically.
+///
+/// Intentional platform difference — do NOT "fix" this: on Android
+/// `filesystem::url_to_path` returns only the display name (it cannot resolve a
+/// SAF content URI to a filesystem path), so the effective rule there is "same
+/// name means same file" regardless of the containing folder, while desktop
+/// compares full paths and keeps same-named files in different folders apart.
+/// Device gyro files are timestamp-named (`2025-08-20_09-18-05_mix.bin`), so a
+/// name collision in practice means the same recording.
+fn gyro_pool_dedup_key(url: &str) -> String {
+    let normalized = filesystem::url_to_path(url);
+    if normalized.is_empty() && !url.is_empty() {
+        // `url_to_path` swallows failures and hands back an empty string (its
+        // `result!` macro logs and returns `Default::default()`). Keying on that
+        // would collapse every unnormalizable input onto one bucket, so the
+        // second such file would be rejected as a "duplicate" of the first and
+        // silently vanish. Fall back to the raw URL, which keeps distinct inputs
+        // distinct while still deduping a literally identical registration.
+        return url.to_string();
+    }
+    normalized
+}
+
+/// Whether `new_key` already identifies an entry in the gyro pool. Split out of
+/// `add_gyro_file` so the rule is unit-testable without a Qt object.
+fn is_duplicate_gyro_pool_entry<'a>(
+    existing_keys: impl IntoIterator<Item = &'a str>,
+    new_key: &str,
+) -> bool {
+    existing_keys.into_iter().any(|key| key == new_key)
+}
+
 fn is_supported_drop_item_impl(url: &str, accepted_exts: &HashSet<String>) -> bool {
     if is_gyro_mix_file_url_impl(url) {
         return true;
@@ -16567,6 +16634,7 @@ mod tests {
         queue.gyro_files.push(GyroFileInfo {
             id: 0,
             path: "g.bin".into(),
+            dedup_key: "g.bin".into(),
             filename: "g.bin".into(),
             created_at_ms: Some(0),
             duration_ms: Some(3_600_000.0),
@@ -16642,6 +16710,7 @@ mod tests {
         queue.gyro_files.push(GyroFileInfo {
             id: 0,
             path: "g.bin".into(),
+            dedup_key: "g.bin".into(),
             filename: "g.bin".into(),
             created_at_ms: Some(0),
             duration_ms: Some(200.0 * H as f64),
@@ -16861,6 +16930,7 @@ mod tests {
         queue.gyro_files.push(GyroFileInfo {
             id: 0,
             path: "g.bin".into(),
+            dedup_key: "g.bin".into(),
             filename: "g.bin".into(),
             created_at_ms: Some(0),
             duration_ms: Some(200.0 * H as f64),
@@ -22171,6 +22241,112 @@ mod tests {
         );
         assert_eq!(stabilized, 0);
         assert_eq!(image, 4);
+    }
+
+    // --- gyro-pool-path-dedup: pool registration dedupe rule ---
+    //
+    // These exercise the desktop semantics of `gyro_pool_dedup_key`, where
+    // `filesystem::url_to_path` maps a file URL to a full path. Android's
+    // "same display name means same file" behaviour cannot be reproduced here
+    // (the branch is `cfg!(target_os = "android")` and needs a live
+    // ContentResolver), so it is covered by on-device verification instead.
+    //
+    // Assertions compare keys to each other rather than to literal path
+    // strings, so they stay valid across the platform-specific formatting of
+    // `to_file_path()`.
+
+    fn gyro_keys(urls: &[&str]) -> Vec<String> {
+        urls.iter().map(|u| gyro_pool_dedup_key(u)).collect()
+    }
+
+    fn gyro_is_duplicate(existing: &[String], new_url: &str) -> bool {
+        is_duplicate_gyro_pool_entry(
+            existing.iter().map(|k| k.as_str()),
+            &gyro_pool_dedup_key(new_url),
+        )
+    }
+
+    #[test]
+    fn gyro_pool_dedup_rejects_same_url_registered_twice() {
+        let existing = gyro_keys(&["file:///C:/clips/2025-08-20_09-18-05_mix.bin"]);
+
+        assert!(gyro_is_duplicate(
+            &existing,
+            "file:///C:/clips/2025-08-20_09-18-05_mix.bin"
+        ));
+    }
+
+    #[test]
+    fn gyro_pool_dedup_accepts_first_entry_into_empty_pool() {
+        let existing: Vec<String> = Vec::new();
+
+        assert!(!gyro_is_duplicate(
+            &existing,
+            "file:///C:/clips/2025-08-20_09-18-05_mix.bin"
+        ));
+    }
+
+    #[test]
+    fn gyro_pool_dedup_accepts_different_files_in_same_folder() {
+        let existing = gyro_keys(&["file:///C:/clips/2025-08-20_09-18-05_mix.bin"]);
+
+        assert!(!gyro_is_duplicate(
+            &existing,
+            "file:///C:/clips/2025-08-20_09-31-42_mix.bin"
+        ));
+    }
+
+    #[test]
+    fn gyro_pool_dedup_desktop_keeps_same_name_in_different_folders_apart() {
+        // Spec scenario "桌面端同名不同目录视为不同文件". The Android counterpart
+        // deliberately collapses these two - see `gyro_pool_dedup_key`.
+        let existing = gyro_keys(&["file:///C:/cardA/2025-08-20_09-18-05_mix.bin"]);
+
+        assert!(!gyro_is_duplicate(
+            &existing,
+            "file:///C:/cardB/2025-08-20_09-18-05_mix.bin"
+        ));
+    }
+
+    #[test]
+    fn gyro_pool_dedup_treats_percent_encoded_and_plain_urls_as_one_file() {
+        // Normalization decodes percent escapes, so the same file reached
+        // through a picker that encodes spaces still dedupes.
+        let existing = gyro_keys(&["file:///C:/my%20clips/2025-08-20_09-18-05_mix.bin"]);
+
+        assert!(gyro_is_duplicate(
+            &existing,
+            "file:///C:/my clips/2025-08-20_09-18-05_mix.bin"
+        ));
+    }
+
+    #[test]
+    fn gyro_pool_dedup_key_is_case_sensitive() {
+        // Documents actual behaviour rather than an aspiration: `url_to_path`
+        // does not case-fold, so a differently-cased URL for the same Windows
+        // file registers twice. Same property as the video-side queue dedupe;
+        // pickers and folder scans both emit consistent casing in practice.
+        let existing = gyro_keys(&["file:///C:/clips/2025-08-20_09-18-05_MIX.BIN"]);
+
+        assert!(!gyro_is_duplicate(
+            &existing,
+            "file:///C:/clips/2025-08-20_09-18-05_mix.bin"
+        ));
+    }
+
+    #[test]
+    fn gyro_pool_dedup_keeps_unnormalizable_urls_distinct() {
+        // `url_to_path` returns "" when it cannot map the input to a path -
+        // a non-file scheme is the reachable case (`to_file_path()` fails).
+        // Two different such inputs must not collapse onto that one empty key,
+        // otherwise the second file would be silently dropped.
+        let key_a = gyro_pool_dedup_key("content://provider/document/A_mix.bin");
+        let key_b = gyro_pool_dedup_key("content://provider/document/B_mix.bin");
+
+        assert_ne!(key_a, key_b);
+        assert!(!key_a.is_empty());
+        assert!(is_duplicate_gyro_pool_entry([key_a.as_str()], &key_a));
+        assert!(!is_duplicate_gyro_pool_entry([key_a.as_str()], &key_b));
     }
 
     #[test]
