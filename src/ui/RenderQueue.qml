@@ -2701,8 +2701,9 @@ Item {
             // source video (per-source fallback in render_queue::add_file).
             // Only the explicit preserve checkbox carries panel values across
             // sources — the panel reflects the main-preview video, not the
-            // files being enqueued.
-            if (!window.exportSettings.preserveOutputSettings.checked) {
+            // files being enqueued. Gated on isPreserveActive so a ghost
+            // checkbox value in settings never exempts Simple mode.
+            if (!window.exportSettings.isPreserveActive()) {
                 delete additional.output.output_width;
                 delete additional.output.output_height;
                 delete additional.output.bitrate;

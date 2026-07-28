@@ -125,11 +125,19 @@ MenuItem {
     property alias preserveOutputSettings: preserveOutputSettings;
     property alias preserveOutputPath: preserveOutputPath;
     // Only the explicit persisted preserve checkbox carries settings across
-    // videos. Simple mode no longer forces preserve at runtime: batch-added
-    // jobs derive per-source output settings in prepareBatchAdditionalData,
-    // and the (hidden) panel always follows the loaded video, so stale
-    // preserved* values cannot leak into new batches.
-    function isPreserveActive(): bool { return preserveOutputSettings.checked; }
+    // videos, and only in Full mode where the checkbox is actually reachable.
+    // Simple mode treats preserve as inert regardless of the stored value:
+    // settings migrated from other installs can carry a ghost
+    // preserveOutputSettings=true that the user can neither see nor untick
+    // (the checkbox is hidden), which used to force stale portrait
+    // preservedWidth/Height onto every loaded video. All preserve consumers
+    // (panel reads, preserved* writes, queue-clear reset exemption, batch
+    // add scrub exemption) must go through this single gate.
+    function isPreserveActive(): bool { return preserveOutputSettings.checked && !window.isSimpleMode; }
+    // Same gate for the "Preserve export path" checkbox: a ghost checked
+    // value must neither redirect the single-video output folder in Simple
+    // mode nor let Simple-mode folder changes overwrite the preserved path.
+    function isPreservePathActive(): bool { return preserveOutputPath.checked && !window.isSimpleMode; }
     property alias exportTrimsSeparately: exportTrimsSeparately;
     // [queue-batch-streamline T3] 队列输出路径设置
     property alias queueOutputMode: queueOutputModeBox.currentIndex
@@ -200,8 +208,10 @@ MenuItem {
     property bool disableUpdate: false;
     function notifySizeChanged(): void {
         controller.set_output_size(outWidth, outHeight);
-        // Only the persistent preserve toggle writes preserved* settings.
-        if (preserveOutputSettings.checked && outWidth > 0 && outHeight > 0) {
+        // Only the persistent preserve toggle writes preserved* settings, and
+        // never from Simple mode so a Simple session cannot overwrite values
+        // explicitly preserved in Full mode.
+        if (isPreserveActive() && outWidth > 0 && outHeight > 0) {
             settings.setValue("preservedWidth", outWidth);
             settings.setValue("preservedHeight", outHeight);
         }
@@ -624,7 +634,7 @@ MenuItem {
             unit: qsTr("Mbps");
             width: parent.width;
             onValueChanged: {
-                if (preserveOutputSettings.checked && value > 0) {
+                if (isPreserveActive() && value > 0) {
                     settings.setValue("preservedBitrate", value);
                 }
             }

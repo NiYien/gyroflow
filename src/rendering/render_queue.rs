@@ -18382,12 +18382,12 @@ mod tests {
         let body = &body[..end_idx];
 
         assert!(
-            body.contains("!window.exportSettings.preserveOutputSettings.checked"),
-            "batch add must key the scrub on the explicit preserve checkbox only"
+            body.contains("!window.exportSettings.isPreserveActive()"),
+            "batch add must key the scrub on isPreserveActive (checkbox AND full mode)"
         );
         assert!(
-            !body.contains("isPreserveActive"),
-            "batch add must not consult the removed runtime preserve helper semantics"
+            !body.contains("preserveOutputSettings.checked"),
+            "batch add must not read the raw checkbox — ghost settings values would exempt Simple mode"
         );
         assert!(
             body.contains("delete additional.output.output_width")
@@ -18405,13 +18405,46 @@ mod tests {
         assert!(
             app_qml.contains("function onQueue_cleared()")
                 && app_qml.contains("resetToSourceDefaults()")
-                && app_qml.contains("!window.exportSettings.preserveOutputSettings.checked"),
-            "App.qml must reset the export panel on queue_cleared unless explicit preserve is on"
+                && app_qml.contains("!window.exportSettings.isPreserveActive()"),
+            "App.qml must reset the export panel on queue_cleared unless preserve is active (checkbox AND full mode)"
         );
         assert!(
             export_qml.contains("function resetToSourceDefaults()")
                 && export_qml.contains("root.sourceBitrate = br;"),
             "Export.qml must record the source bitrate and offer resetToSourceDefaults"
+        );
+        assert!(
+            export_qml.contains(
+                "function isPreserveActive(): bool { return preserveOutputSettings.checked && !window.isSimpleMode; }"
+            ),
+            "isPreserveActive must gate on full mode so ghost preserveOutputSettings values \
+             (e.g. historically migrated from an upstream Gyroflow settings.json) stay inert in Simple mode"
+        );
+    }
+
+    #[test]
+    fn preserve_path_is_inert_in_simple_mode() {
+        let app_qml = include_str!("../ui/App.qml");
+        let video_area_qml = include_str!("../ui/VideoArea.qml");
+        let export_qml = include_str!("../ui/menu/Export.qml");
+
+        assert!(
+            export_qml.contains(
+                "function isPreservePathActive(): bool { return preserveOutputPath.checked && !window.isSimpleMode; }"
+            ),
+            "isPreservePathActive must gate on full mode so a ghost preserveOutputPath \
+             value cannot redirect Simple-mode output folders"
+        );
+        assert!(
+            video_area_qml.contains("isPreservePathActive()")
+                && !video_area_qml.contains("preserveOutputPath.checked"),
+            "VideoArea must consult isPreservePathActive, not the raw checkbox"
+        );
+        assert!(
+            app_qml.contains("isPreservePathActive()")
+                && !app_qml.contains("preserveOutputPath.checked"),
+            "App.qml preservedOutputPath write-back must consult isPreservePathActive — \
+             the handler still fires in Simple mode even though its parent label is hidden"
         );
     }
 

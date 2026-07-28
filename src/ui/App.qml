@@ -469,8 +469,10 @@ Rectangle {
         function onQueue_cleared(): void {
             // Fresh-start semantics: clearing the queue drops export panel
             // leftovers from the previous batch. The explicit preserve
-            // checkbox is a deliberate cross-video preference and is exempt.
-            if (window.exportSettings && !window.exportSettings.preserveOutputSettings.checked) {
+            // checkbox is a deliberate cross-video preference and is exempt —
+            // but only in Full mode (isPreserveActive), so a ghost checkbox
+            // value in settings cannot block the reset in Simple mode.
+            if (window.exportSettings && !window.exportSettings.isPreserveActive()) {
                 window.exportSettings.resetToSourceDefaults();
             }
         }
@@ -819,7 +821,11 @@ Rectangle {
                     OutputPathField {
                         id: outputFile;
                         onFolderUrlChanged: {
-                            if (exportSettings.item.preserveOutputPath.checked) {
+                            // The parent label is only hidden in Simple mode, so this
+                            // handler still fires there on programmatic setFolder calls —
+                            // gate on isPreservePathActive to keep Simple mode from
+                            // overwriting a path explicitly preserved in Full mode.
+                            if (exportSettings.item.isPreservePathActive()) {
                                 const outputFolder = folderUrl.toString();
                                 if (outputFolder) settings.setValue("preservedOutputPath", outputFolder);
                             }

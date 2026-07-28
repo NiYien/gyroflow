@@ -599,7 +599,7 @@ Item {
             window.outputFile.setFilename(filesystem.filename_with_suffix(filename, suffix).replace(/%0[0-9]+d/, ""));
 
             const preservedPath = settings.value("preservedOutputPath", "");
-            if (window.exportSettings.preserveOutputPath.checked && preservedPath) {
+            if (window.exportSettings.isPreservePathActive() && preservedPath) {
                 window.outputFile.setFolder(preservedPath);
             } else {
                 window.outputFile.setFolder(folder);
