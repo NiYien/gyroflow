@@ -37,21 +37,12 @@ fn get_sdk_path() -> Result<std::path::PathBuf> {
     if cfg!(target_os = "linux") {
         out_dir.push("lib/");
     }
-    /*{
-        let mut test = out_dir.clone();
-        test.push("__tmp_test");
-        let writable = std::fs::File::create(&test).is_ok();
-        let _ = std::fs::remove_file(test);
-        if !writable {
-            // Get writeable path
-            if let Some(new_dir) = directories::ProjectDirs::from("xyz", "Gyroflow", "Gyroflow") {
-                let mut writable_path = new_dir.data_local_dir();
-                if std::fs::create_dir_all(writable_path).is_ok() {
-                    out_dir = writable_path.to_path_buf();
-                }
-            }
-        }
-    }*/
+    // A commented-out fallback used to live here that resolved a writable SDK
+    // directory through the upstream Gyroflow app dir. It was removed: reading
+    // anything out of the upstream data directory is forbidden (see the
+    // settings-data-dir capability), and commented-out code is one uncomment
+    // away from reintroducing the cross-app settings leak it was deleted for.
+    // `upstream_data_dir_guard` fails the build if it comes back, comment or not.
     Ok(out_dir)
 }
 

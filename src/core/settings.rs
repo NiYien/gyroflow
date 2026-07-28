@@ -17,6 +17,53 @@ fn test_settings_file_override() -> &'static std::sync::Mutex<Option<PathBuf>> {
     PATH.get_or_init(|| std::sync::Mutex::new(None))
 }
 
+/// Project fields that carry a value backed by a persisted UI setting, paired
+/// with that setting's key.
+///
+/// A `.gyroflow` records whatever the app's global stabilization settings were
+/// when it was written. Importing one therefore writes those globals back — a
+/// path that bypasses the settings layer entirely, which is how a project
+/// holding `"method": "Fixed camera"` kept restoring the black-preview state
+/// even once the stored `smoothingMethod` was no longer honoured.
+///
+/// The keys here must all be denied by the app's settings policy; a test in the
+/// main crate asserts exactly that, so gating a field whose key is actually
+/// user-facing fails the build rather than silently dropping the user's choice.
+pub const GATED_PROJECT_STABILIZATION_FIELDS: &[(&str, &str)] = &[
+    ("method", "smoothingMethod"),
+    ("adaptive_zoom_window", "adaptiveZoom"),
+    ("adaptive_zoom_method", "zoomingMethod"),
+    ("max_zoom", "maxZoom"),
+    // Upstream's key really is spelled this way in the project format.
+    ("max_zoom_terations", "maxZoomIterations"),
+    ("lens_correction_amount", "correctionAmount"),
+    ("use_gravity_vectors", "useGravityVectors"),
+    ("horizon_lock_integration_method", "hlIntegrationMethod"),
+    ("video_speed_affects_smoothing", "videoSpeedAffectsSmoothing"),
+    ("video_speed_affects_zooming", "videoSpeedAffectsZooming"),
+    (
+        "video_speed_affects_zooming_limit",
+        "videoSpeedAffectsZoomingLimit",
+    ),
+];
+
+static PROJECT_IMPORT_GATE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Whether project import should ignore the fields above.
+///
+/// Defaults to **off** and is switched on only by the desktop app. The NLE
+/// plugins and the CLI share this crate and must keep honouring a project's
+/// stabilization settings verbatim — that is the entire point of handing them a
+/// project — so the gate can never be something they opt out of by accident.
+pub fn project_import_gate() -> bool {
+    PROJECT_IMPORT_GATE.load(SeqCst)
+}
+
+pub fn set_project_import_gate(enabled: bool) {
+    PROJECT_IMPORT_GATE.store(enabled, SeqCst);
+}
+
 pub fn data_dir() -> PathBuf {
     static PATH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
@@ -249,4 +296,169 @@ fn settings_file() -> PathBuf {
     }
 
     data_dir().join("settings.json")
+}
+
+/// Guard against re-introducing any read of the upstream Gyroflow data directory.
+///
+/// A first-launch migration used to copy the upstream `settings.json` wholesale,
+/// which shipped dirty keys into this app twice: portrait `preserved*` output
+/// settings, and a smoothing method of "Fixed camera" that collapsed the adaptive
+/// zoom to a black frame. That migration is gone, but nothing stopped an upstream
+/// merge from bringing it back, and a commented-out app-dir lookup sat in
+/// `external_sdk` as a one-uncomment-away landmine. Hence: scan every `.rs` file in
+/// the repository, comments included.
+///
+/// Note the forbidden identifiers are deliberately not spelled out anywhere in this
+/// file — including in prose. The scan covers its own source, so naming them here
+/// would make the guard fail on itself.
+#[cfg(test)]
+mod upstream_data_dir_guard {
+    use std::path::{Path, PathBuf};
+
+    /// The forbidden literals are assembled from fragments on purpose. This file is
+    /// itself part of the scan, so spelling them out verbatim would make the guard
+    /// trip over its own source and force an exclusion list — and an exclusion list
+    /// would have to exclude `settings.rs`, the very file that needs guarding most.
+    const BRAND: &str = concat!("Gyro", "flow");
+
+    fn repo_root() -> PathBuf {
+        // gyroflow-core's manifest lives at <repo>/src/core.
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+    }
+
+    /// Whitespace is stripped before matching so a needle written as one contiguous
+    /// string matches regardless of how the offending code is formatted or wrapped.
+    fn pack(source: &str) -> String {
+        source.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    fn forbidden_needles() -> Vec<(String, &'static str)> {
+        vec![
+            (
+                format!("name:\"{BRAND}\",author:\"{BRAND}\""),
+                "AppInfo pointing at the upstream data directory",
+            ),
+            (
+                format!("author:\"{BRAND}\",name:\"{BRAND}\""),
+                "AppInfo pointing at the upstream data directory",
+            ),
+            (
+                format!("\"{BRAND}\",\"{BRAND}\")"),
+                "ProjectDirs/app-dir call ending in the upstream qualifier pair",
+            ),
+            (
+                concat!("legacy_data", "_dir").to_string(),
+                "legacy data directory resolver",
+            ),
+            (
+                concat!("migrate_from", "_legacy_dir").to_string(),
+                "legacy data directory migration",
+            ),
+        ]
+    }
+
+    /// Pure detection over already-packed source. Split out so the guard itself is
+    /// testable with synthetic input instead of relying on the repository contents.
+    fn violations_in(packed: &str) -> Vec<&'static str> {
+        forbidden_needles()
+            .into_iter()
+            .filter(|(needle, _)| packed.contains(needle.as_str()))
+            .map(|(_, reason)| reason)
+            .collect()
+    }
+
+    fn collect_rs_files(dir: &Path, out: &mut Vec<PathBuf>) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                // Build artifacts contain vendored upstream sources; never scan them.
+                if path.file_name().map(|n| n == "target").unwrap_or(false) {
+                    continue;
+                }
+                collect_rs_files(&path, out);
+            } else if path.extension().map(|e| e == "rs").unwrap_or(false) {
+                out.push(path);
+            }
+        }
+    }
+
+    #[test]
+    fn no_source_file_reads_the_upstream_data_dir() {
+        let src_root = repo_root().join("src");
+        let mut files = Vec::new();
+        collect_rs_files(&src_root, &mut files);
+        assert!(
+            files.len() > 10,
+            "guard found only {} .rs files under {src_root:?} — the scan root is wrong",
+            files.len()
+        );
+
+        let mut offenders = Vec::new();
+        for file in files {
+            let Ok(source) = std::fs::read_to_string(&file) else {
+                continue;
+            };
+            for reason in violations_in(&pack(&source)) {
+                let shown = file
+                    .strip_prefix(&src_root)
+                    .unwrap_or(&file)
+                    .display()
+                    .to_string();
+                offenders.push(format!("  src/{shown}: {reason}"));
+            }
+        }
+
+        assert!(
+            offenders.is_empty(),
+            "source reads the upstream data directory:\n{}\n\n\
+             Reading anything out of the upstream app directory is forbidden — it \
+             imported dirty settings into this app twice. If an upstream merge \
+             brought this back, drop it rather than adapting it.",
+            offenders.join("\n")
+        );
+    }
+
+    #[test]
+    fn guard_detects_every_forbidden_form() {
+        let samples = [
+            format!("&AppInfo {{ name: \"{BRAND}\", author: \"{BRAND}\" }},"),
+            format!("&AppInfo {{ author: \"{BRAND}\", name: \"{BRAND}\" }},"),
+            format!("ProjectDirs::from(\"xyz\", \"{BRAND}\", \"{BRAND}\")"),
+            concat!("fn legacy_data", "_dir() -> PathBuf {").to_string(),
+            concat!("migrate_from", "_legacy_dir(&path);").to_string(),
+        ];
+        for sample in samples {
+            assert!(
+                !violations_in(&pack(&sample)).is_empty(),
+                "guard failed to flag: {sample}"
+            );
+        }
+    }
+
+    #[test]
+    fn guard_allows_the_intentional_brand_mentions() {
+        // Every one of these exists in the repository today and is deliberate:
+        // none of them is a filesystem path into the upstream app directory.
+        let samples = [
+            format!("keep_awake::inhibit_system(\"{BRAND}\", \"Rendering video\");"),
+            format!("cstr::cstr!(\"{BRAND}\"), 1, 0, cstr::cstr!(\"TimelineGyroChart\"),"),
+            format!("QIcon::setThemeName(QStringLiteral(\"{BRAND}\"));"),
+            format!("doc = \"{BRAND}\""),
+            // NiYien's own predecessor tool, read-only, intentionally still read.
+            "fn legacy_tool_telemetry_ini() -> Option<std::path::PathBuf> {".to_string(),
+            "let path = legacy_tool_anon_id()?;".to_string(),
+            // The supported brand-driven resolution must keep working.
+            "&AppInfo { name: &brand.application_name, author: &brand.organization_name },"
+                .to_string(),
+        ];
+        for sample in samples {
+            assert!(
+                violations_in(&pack(&sample)).is_empty(),
+                "guard false-positived on an intentional mention: {sample}"
+            );
+        }
+    }
 }

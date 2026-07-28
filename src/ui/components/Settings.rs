@@ -22,8 +22,18 @@ pub struct Settings {
 }
 
 impl Settings {
+    // The three accessors below are the single choke point for every persisted
+    // QML setting: `init` funnels whole `sett` blocks through `value`, and the
+    // ad-hoc call sites use the same methods. Gating here — rather than resetting
+    // values at startup — is deliberate: panels live in `asynchronous` ItemLoaders
+    // and restore themselves at unpredictable times, which is precisely how three
+    // earlier attempts to keep Simple mode clean were defeated. A denied key that
+    // never returns a stored value cannot lose that race.
     fn value(&self, key: QString, default: QVariant) -> QVariant {
         let key = key.to_string();
+        if !super::settings_policy::allows(&key) {
+            return default;
+        }
         serde_json_to_qvariant(gyroflow_core::settings::get(
             &key,
             qvariant_to_serde_json(default),
@@ -31,10 +41,18 @@ impl Settings {
     }
     fn contains(&self, key: QString) -> bool {
         let key = key.to_string();
+        if !super::settings_policy::allows(&key) {
+            return false;
+        }
         gyroflow_core::settings::contains(&key)
     }
     fn setValue(&self, key: QString, val: QVariant) {
         let key = key.to_string();
+        if !super::settings_policy::allows(&key) {
+            // Dropped, not written back as a default: whatever is on disk stays
+            // frozen so that disabling the gate restores the user's real values.
+            return;
+        }
         gyroflow_core::settings::set(&key, qvariant_to_serde_json(val))
     }
     fn clear(&self) {

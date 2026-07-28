@@ -33,6 +33,7 @@ pub mod ui {
     pub mod components {
         pub mod FrequencyGraph;
         pub mod Settings;
+        pub mod settings_policy;
         pub mod TimelineGyroChart;
         pub mod TimelineKeyframesView;
     }
@@ -131,6 +132,12 @@ fn entry() {
     if cli::run(&mut open_file, &mut open_preset) {
         return;
     }
+
+    // Past the CLI hand-off, so a headless render still applies a project's
+    // stabilization settings verbatim. From here on this is the GUI, where a
+    // stored setting the user can neither see nor reach must not drive the
+    // output — see ui::components::settings_policy.
+    ui::components::settings_policy::init();
 
     if cfg!(compiled_qml) {
         // For some reason on some devices QML detects that debugger is connected and fails to load pre-compiled qml files

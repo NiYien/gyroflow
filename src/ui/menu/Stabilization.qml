@@ -75,14 +75,21 @@ MenuItem {
                 correctionAmount.value = +stab.lens_correction_amount;
             }
 
-            const az = +stab.adaptive_zoom_window;
-            if (az < -0.9) {
-                croppingMode.currentIndex = 2; // Static crop
-            } else if (az > 0) {
-                croppingMode.currentIndex = 1; // Dynamic cropping
-                adaptiveZoom.value = az;
-            } else {
-                croppingMode.currentIndex = 0; // No cropping
+            // Absent means "leave the current zooming mode alone". Without this
+            // check `+undefined` is NaN, every comparison below is false, and the
+            // else branch silently switches zooming off — which would happen both
+            // for projects predating the field and for any project whose gated
+            // fields were stripped on import.
+            if (stab.hasOwnProperty("adaptive_zoom_window")) {
+                const az = +stab.adaptive_zoom_window;
+                if (az < -0.9) {
+                    croppingMode.currentIndex = 2; // Static crop
+                } else if (az > 0) {
+                    croppingMode.currentIndex = 1; // Dynamic cropping
+                    adaptiveZoom.value = az;
+                } else {
+                    croppingMode.currentIndex = 0; // No cropping
+                }
             }
             if (stab.hasOwnProperty("adaptive_zoom_center_offset")) {
                 zoomingCenterX.value = stab.adaptive_zoom_center_offset[0];

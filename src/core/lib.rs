@@ -3781,6 +3781,44 @@ impl StabilizationManager {
                 });
             }
             if let Some(serde_json::Value::Object(obj)) = obj.get_mut("stabilization") {
+                if crate::settings::project_import_gate() {
+                    // Strip rather than branch at every use site: each field below
+                    // is read through `obj.get(...)`, so removing it here makes the
+                    // existing "absent means leave alone" paths do the work, with
+                    // no chance of missing one. The stripped object is what gets
+                    // handed back to the UI too, so the QML side inherits the same
+                    // decision instead of needing its own copy of this list.
+                    for (field, _) in crate::settings::GATED_PROJECT_STABILIZATION_FIELDS {
+                        obj.remove(*field);
+                    }
+                    // With `method` gone the current algorithm stays put, so a
+                    // project written under a different algorithm carries parameter
+                    // names this one does not accept. Drop those instead of letting
+                    // each become an `Invalid parameter name` error — a card full of
+                    // such projects would otherwise flood the incident log again.
+                    let accepted: Vec<String> = self
+                        .smoothing
+                        .read()
+                        .current()
+                        .get_parameters_json()
+                        .as_array()
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|p| {
+                                    p.get("name").and_then(|n| n.as_str()).map(str::to_owned)
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    if let Some(serde_json::Value::Array(list)) = obj.get_mut("smoothing_params") {
+                        list.retain(|p| {
+                            p.get("name")
+                                .and_then(|n| n.as_str())
+                                .map(|n| accepted.iter().any(|a| a == n))
+                                .unwrap_or(false)
+                        });
+                    }
+                }
                 let mut params = self.params.write();
                 if let Some(v) = obj.get("fov").and_then(|x| x.as_f64()) {
                     params.fov = v;
@@ -5308,6 +5346,108 @@ mod tests {
             assert_eq!(target.get_lens_group_manual_edit(), manual_edit_before);
             assert!(settings::get_bool("lens_group_manual_edit", false));
         });
+    }
+
+    #[test]
+    #[serial]
+    fn project_import_gate_pins_the_smoothing_algorithm_but_keeps_ungated_fields() {
+        // Mirrors the sidecars written next to a card of already-synced clips:
+        // "Fixed camera" holds a world-fixed orientation, so every frame drifts
+        // out of the source and the preview goes black.
+        let project = serde_json::json!({
+            "title": "Gyroflow data file",
+            "version": 4,
+            "videofile": "",
+            "stabilization": {
+                "fov": 1.25,
+                "method": "Fixed camera",
+                "smoothing_params": [
+                    { "name": "roll",  "value": 0.0 },
+                    { "name": "pitch", "value": 0.0 },
+                    { "name": "yaw",   "value": 0.0 }
+                ]
+            }
+        })
+        .to_string();
+
+        let import = |target: &StabilizationManager| {
+            let mut is_preset = false;
+            target
+                .import_gyroflow_data(
+                    project.as_bytes(),
+                    false,
+                    None,
+                    |_| (),
+                    Arc::new(AtomicBool::new(false)),
+                    &mut is_preset,
+                    false,
+                )
+                .unwrap();
+        };
+
+        // Gate off is what the NLE plugins and the CLI see: a project is applied
+        // verbatim, because applying it is the whole reason they were handed one.
+        settings::set_project_import_gate(false);
+        let ungated = StabilizationManager::default();
+        import(&ungated);
+        assert_eq!(ungated.smoothing.read().current().get_name(), "Fixed camera");
+
+        // Gate on is the desktop app: the project cannot move a global the user
+        // has no way to see or change back.
+        settings::set_project_import_gate(true);
+        let gated = StabilizationManager::default();
+        import(&gated);
+        assert_eq!(gated.smoothing.read().current().get_name(), "Default");
+        // Fields that are not backed by a persisted setting still load.
+        assert_eq!(gated.params.read().fov, 1.25);
+
+        settings::set_project_import_gate(false);
+    }
+
+    #[test]
+    #[serial]
+    fn project_import_gate_drops_parameters_the_active_algorithm_rejects() {
+        // Without the filtering these three become `Invalid parameter name`
+        // errors on every load; a card full of such sidecars floods the incident
+        // log exactly as it did before the gate existed.
+        let project = serde_json::json!({
+            "title": "Gyroflow data file",
+            "version": 4,
+            "videofile": "",
+            "stabilization": {
+                "method": "Fixed camera",
+                "smoothing_params": [
+                    { "name": "roll",       "value": 12.0 },
+                    { "name": "smoothness", "value": 0.75 }
+                ]
+            }
+        })
+        .to_string();
+
+        settings::set_project_import_gate(true);
+        let target = StabilizationManager::default();
+        let mut is_preset = false;
+        target
+            .import_gyroflow_data(
+                project.as_bytes(),
+                false,
+                None,
+                |_| (),
+                Arc::new(AtomicBool::new(false)),
+                &mut is_preset,
+                false,
+            )
+            .unwrap();
+
+        let smoothing = target.smoothing.read();
+        // `smoothness` belongs to the default algorithm and must survive: it is
+        // the value behind Simple mode's only stabilization control.
+        assert_eq!(smoothing.current().get_parameter("smoothness"), 0.75);
+        // `roll` belongs to Fixed camera and must not have been offered at all.
+        assert_eq!(smoothing.current().get_parameter("roll"), 0.0);
+        drop(smoothing);
+
+        settings::set_project_import_gate(false);
     }
 
     #[test]
