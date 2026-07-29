@@ -4,6 +4,7 @@
 #[cfg(feature = "opencv")]
 pub mod calibration;
 pub mod camera_identifier;
+pub mod canon_builtin_gyro;
 pub mod distribution;
 pub mod gyro_source;
 pub mod imu_integration;
