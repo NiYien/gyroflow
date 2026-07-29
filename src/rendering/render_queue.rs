@@ -803,11 +803,29 @@ fn set_additional_data_lens_index_override(additional_data: &mut String, value: 
     }
 }
 
-// mounting-rotation-propagation: apply the mounting rotation snapshot taken
-// from the main stabilizer at enqueue time to a batch-queued job stab. Must
-// run after load_gyro_data (load_from_telemetry clears imu_transforms). No-op
-// when both are None so jobs without a mounting rotation stay byte-identical.
-// Returns whether anything was applied.
+// mounting-rotation-home-value: an all-zero mounting is stored as `None`,
+// exactly the way IMUTransforms::set_imu_rotation normalizes it. Keeping the
+// home snapshot in that same representation lets it be compared against
+// `imu_transforms.imu_rotation_angles` without any special-casing.
+fn mounting_angles_to_option(pitch_deg: f64, roll_deg: f64, yaw_deg: f64) -> Option<[f64; 3]> {
+    if pitch_deg.abs() > 0.0 || roll_deg.abs() > 0.0 || yaw_deg.abs() > 0.0 {
+        Some([pitch_deg, roll_deg, yaw_deg])
+    } else {
+        None
+    }
+}
+
+// mounting-rotation-propagation: apply the enqueue-time mounting snapshot to a
+// batch-queued job stab. Must run after load_gyro_data (load_from_telemetry
+// clears imu_transforms). No-op when both are None so jobs without a mounting
+// rotation stay byte-identical. Returns whether anything was applied.
+//
+// mounting-rotation-home-value: `imu_rotation` is now the home value (the
+// mounting angle persisted in settings), not the main stab's current value —
+// the main preview may be borrowing a rotation from a loaded .gyroflow project
+// and the queue must never follow a borrowed value. `acc_rotation` has no home
+// counterpart (it is the Advanced/MotionData IMU orientation, not a mounting
+// preset) and still comes from the main stab.
 fn apply_inherited_mounting_rotation(
     stab: &StabilizationManager,
     imu_rotation: Option<[f64; 3]>,
@@ -826,6 +844,44 @@ fn apply_inherited_mounting_rotation(
     true
 }
 
+// mounting-rotation-home-value: force the home mounting value onto a job stab
+// built from a .gyroflow project, replacing the `gyro_source.rotation` the
+// import just applied. Deliberate behaviour reversal: the render queue only
+// ever follows the home value, there is no per-job mounting angle. Re-integrates
+// because the import already integrated with the project's rotation.
+//
+// Two different kinds of "no home rotation" must NOT be conflated here:
+//   * `home_known == false` — the snapshot has not been pushed yet (the selector
+//     lives in an asynchronous ItemLoader). Nothing is known, so nothing is
+//     touched; this keeps the pre-change behaviour byte for byte.
+//   * `home_known == true` with `home_imu_rotation == None` — the user's home
+//     value IS top. That is a real value and it must be forced onto the job,
+//     clearing whatever non-zero rotation the project declared. Leaving the
+//     project's rotation in place would put a job in the queue whose mounting
+//     differs from every other job's, which is exactly what "the queue only
+//     follows the home value" forbids.
+// Unchanged values still short-circuit: set_imu_rotation(0,0,0) stores `None`,
+// so the Option comparison below covers the top case too and no redundant
+// re-integration is triggered.
+//
+// Returns whether anything was applied.
+fn apply_home_mounting_rotation_over_project(
+    stab: &StabilizationManager,
+    home_imu_rotation: Option<[f64; 3]>,
+    home_known: bool,
+) -> bool {
+    if !home_known {
+        return false;
+    }
+    if stab.gyro.read().imu_transforms.imu_rotation_angles == home_imu_rotation {
+        return false;
+    }
+    let v = home_imu_rotation.unwrap_or([0.0, 0.0, 0.0]);
+    stab.set_imu_rotation(v[0], v[1], v[2]);
+    stab.recompute_gyro();
+    true
+}
+
 // Synchronous body of RenderQueue::apply_mounting_rotation_to_all: overwrite
 // the mounting rotation on each stab, skipping stabs already at the target
 // value (avoids redundant per-clip re-integration on the telemetry_loaded
@@ -836,11 +892,7 @@ fn apply_mounting_rotation_to_stabs(
     roll_deg: f64,
     yaw_deg: f64,
 ) -> usize {
-    let target = if pitch_deg.abs() > 0.0 || roll_deg.abs() > 0.0 || yaw_deg.abs() > 0.0 {
-        Some([pitch_deg, roll_deg, yaw_deg])
-    } else {
-        None
-    };
+    let target = mounting_angles_to_option(pitch_deg, roll_deg, yaw_deg);
     let mut updated = 0;
     for (job_id, stab) in stabs {
         if stab.gyro.read().imu_transforms.imu_rotation_angles == target {
@@ -1230,6 +1282,25 @@ pub struct RenderQueue {
 
     pub queue: qt_property!(RefCell<SimpleListModel<RenderQueueItem>>; NOTIFY queue_changed),
     jobs: HashMap<u32, Job>,
+
+    // mounting-rotation-home-value: the mounting angle the user owns (the
+    // "home" value persisted in settings), mirrored here from
+    // MountingPresetSelector. Stored the way core normalizes it (`None` when
+    // every angle is zero, i.e. top mounting).
+    //
+    // There is no separate push channel: every apply_mounting_rotation_to_all()
+    // call already carries the home value. QML only broadcasts for the "manual"
+    // source (a user edit, persisted to settings in the same breath) and the
+    // "home" source (startup restore / UI reset broadcast, read straight back
+    // from settings). Values borrowed from a loaded .gyroflow project stop at
+    // the main preview and never reach that method.
+    home_mounting_rotation: Option<[f64; 3]>,
+    // False until the first push arrives. The selector lives in an asynchronous
+    // ItemLoader, so in principle a file could be enqueued before it finishes
+    // loading; that window behaves like the pre-change "main stab rotation is
+    // None" case (nothing injected). Kept separate from the value above purely
+    // so the log can tell "home is top" apart from "home never arrived".
+    home_mounting_known: bool,
 
     add: qt_method!(fn(&mut self, additional_data: String, thumbnail_url: QString) -> u32),
     remove: qt_method!(fn(&mut self, job_id: u32)),
@@ -6953,24 +7024,32 @@ impl RenderQueue {
                     render_options.update_from_json(out);
                     let smoothing = stabilizer.smoothing.read().clone();
                     // Snapshot the user's mounting rotation at enqueue time: the job
-                    // stab below is built fresh and never inherits imu_transforms,
-                    // while set_imu_rotation (mounting preset selector / motion data)
-                    // only ever writes the main stab. Applied after load_gyro_data
-                    // (load_from_telemetry clears imu_transforms).
-                    let (main_imu_rotation, main_acc_rotation) = {
+                    // stab below is built fresh and never inherits imu_transforms.
+                    // Applied after load_gyro_data (load_from_telemetry clears
+                    // imu_transforms).
+                    //
+                    // mounting-rotation-home-value: the mounting angle comes from the
+                    // home snapshot, NOT from the main stab. The main preview may be
+                    // borrowing a rotation from a .gyroflow project loaded into it,
+                    // and the queue must only ever follow the home value. The acc
+                    // rotation has no home counterpart (Advanced/MotionData IMU
+                    // orientation, not a mounting preset) and still comes from the
+                    // main stab, exactly as before.
+                    let home_imu_rotation = self.home_mounting_rotation;
+                    let home_known = self.home_mounting_known;
+                    let main_acc_rotation = {
                         let gyro = stabilizer.gyro.read();
-                        (
-                            gyro.imu_transforms.imu_rotation_angles,
-                            gyro.imu_transforms.acc_rotation_angles,
-                        )
+                        gyro.imu_transforms.acc_rotation_angles
                     };
                     // Logged unconditionally: a None snapshot is exactly the
                     // diagnostic case (mounting set in UI but absent here).
+                    // home_known=false means the selector never pushed at all.
                     ::log::info!(
                         target: "video.load",
-                        "[queue_add] mounting snapshot job_id={} imu_rotation={:?} acc_rotation={:?}",
+                        "[queue_add] mounting snapshot job_id={} home_imu_rotation={:?} home_known={} acc_rotation={:?}",
                         job_id,
-                        main_imu_rotation,
+                        home_imu_rotation,
+                        home_known,
                         main_acc_rotation
                     );
                     let params = stabilizer.params.read();
@@ -7182,6 +7261,28 @@ impl RenderQueue {
 
                             match result {
                                 Ok(obj) => {
+                                    // mounting-rotation-home-value: the import above
+                                    // just applied the project's own
+                                    // gyro_source.rotation to this job stab. The render
+                                    // queue only follows the home value, so overwrite
+                                    // it here — including when the home value is top,
+                                    // which clears the project's rotation. This is a
+                                    // deliberate behaviour reversal: enqueuing an
+                                    // existing project now renders it with the home
+                                    // mounting angle rather than the one baked into the
+                                    // project.
+                                    if apply_home_mounting_rotation_over_project(
+                                        &stab,
+                                        home_imu_rotation,
+                                        home_known,
+                                    ) {
+                                        ::log::info!(
+                                            target: "video.load",
+                                            "[queue_add] project mounting rotation overridden by home job_id={} imu_rotation={:?}",
+                                            job_id,
+                                            home_imu_rotation
+                                        );
+                                    }
                                     if let Some(out) = obj.get("output") {
                                         if let Ok(mut render_options2) =
                                             serde_json::from_value(out.clone())
@@ -7465,20 +7566,21 @@ impl RenderQueue {
                                         }
                                     }
                                 }
-                                // Inherit the user's mounting rotation (set on the main
-                                // stab only) into this freshly-built job stab. .gyroflow
-                                // inputs never reach this branch, so a project's own
-                                // rotation stays authoritative there.
+                                // Inherit the home mounting rotation into this
+                                // freshly-built job stab. .gyroflow inputs take the
+                                // other branch above, which applies the same home value
+                                // on top of whatever rotation the project declared —
+                                // the queue has no per-job mounting angle.
                                 if apply_inherited_mounting_rotation(
                                     &stab,
-                                    main_imu_rotation,
+                                    home_imu_rotation,
                                     main_acc_rotation,
                                 ) {
                                     ::log::info!(
                                         target: "video.load",
                                         "[queue_add] inherited mounting rotation job_id={} imu_rotation={:?} acc_rotation={:?}",
                                         job_id,
-                                        main_imu_rotation,
+                                        home_imu_rotation,
                                         main_acc_rotation
                                     );
                                 }
@@ -8478,7 +8580,15 @@ impl RenderQueue {
     // job's current rotation are skipped, so the telemetry_loaded re-apply
     // doesn't trigger redundant per-job re-integration. Runs threaded because
     // recompute_gyro re-integrates the whole clip.
+    //
+    // mounting-rotation-home-value: this is also where the home snapshot used
+    // by add_file is recorded — QML only reaches this method with the home
+    // value (see the home_mounting_rotation field). Should a future caller ever
+    // want to broadcast something that is *not* the home value, it must not
+    // reuse this method.
     pub fn apply_mounting_rotation_to_all(&mut self, pitch_deg: f64, roll_deg: f64, yaw_deg: f64) {
+        self.home_mounting_rotation = mounting_angles_to_option(pitch_deg, roll_deg, yaw_deg);
+        self.home_mounting_known = true;
         let stabs: Vec<(u32, Arc<StabilizationManager>)> = self
             .jobs
             .iter()
@@ -16076,6 +16186,164 @@ mod tests {
         assert_eq!(apply_mounting_rotation_to_stabs(&stabs, 0.0, 0.0, 0.0), 2);
         assert_eq!(stab_a.gyro.read().imu_transforms.imu_rotation_angles, None);
         assert_eq!(stab_b.gyro.read().imu_transforms.imu_rotation_angles, None);
+    }
+
+    // ---- mounting-rotation-home-value ----
+
+    #[test]
+    fn mounting_angles_to_option_normalizes_top_to_none() {
+        // All-zero == top mounting, stored as None just like core does.
+        assert_eq!(mounting_angles_to_option(0.0, 0.0, 0.0), None);
+        assert_eq!(
+            mounting_angles_to_option(0.0, 45.0, 0.0),
+            Some([0.0, 45.0, 0.0])
+        );
+        assert_eq!(
+            mounting_angles_to_option(0.0, 0.0, -90.0),
+            Some([0.0, 0.0, -90.0])
+        );
+    }
+
+    // Bare-video branch only: a top-equivalent home value must not produce any
+    // set call on the freshly built job stab (byte-identical to the pre-change
+    // behaviour, and equivalent anyway since a fresh stab is already top). A
+    // non-zero acc rotation still comes through — it is not part of the mounting
+    // home value. The .gyroflow branch does NOT share this rule: there the stab
+    // carries the project's rotation and a top home value must flatten it, see
+    // top_home_value_flattens_a_queued_projects_rotation.
+    #[test]
+    fn top_home_value_injects_nothing_into_a_fresh_job() {
+        let stab = StabilizationManager::default();
+        assert!(!apply_inherited_mounting_rotation(
+            &stab,
+            mounting_angles_to_option(0.0, 0.0, 0.0),
+            None
+        ));
+        assert_eq!(stab.gyro.read().imu_transforms.imu_rotation_angles, None);
+
+        // acc rotation is an independent (MotionData) setting and is unaffected.
+        assert!(apply_inherited_mounting_rotation(
+            &stab,
+            None,
+            Some([0.0, 45.0, 0.0])
+        ));
+        let gyro = stab.gyro.read();
+        assert_eq!(gyro.imu_transforms.imu_rotation_angles, None);
+        assert_eq!(
+            gyro.imu_transforms.acc_rotation_angles,
+            Some([0.0, 45.0, 0.0])
+        );
+    }
+
+    // A queued .gyroflow project keeps no per-job mounting angle: whatever
+    // gyro_source.rotation the import applied is replaced by the home value.
+    #[test]
+    fn home_value_overrides_a_queued_projects_own_rotation() {
+        let stab = StabilizationManager::default();
+        // What import_gyroflow_data would have applied from the project.
+        stab.set_imu_rotation(0.0, 90.0, -90.0);
+
+        let home = mounting_angles_to_option(0.0, 45.0, 0.0);
+        assert!(apply_home_mounting_rotation_over_project(&stab, home, true));
+        assert_eq!(
+            stab.gyro.read().imu_transforms.imu_rotation_angles,
+            Some([0.0, 45.0, 0.0])
+        );
+
+        // Already at the home value -> no redundant re-integration.
+        assert!(!apply_home_mounting_rotation_over_project(&stab, home, true));
+    }
+
+    // "The queue only follows the home value" is unconditional: a top home value
+    // flattens a project's own rotation too, otherwise that job would sit in the
+    // queue with a mounting angle no other job has.
+    #[test]
+    fn top_home_value_flattens_a_queued_projects_rotation() {
+        let stab = StabilizationManager::default();
+        stab.set_imu_rotation(0.0, 180.0, 0.0);
+
+        let home = mounting_angles_to_option(0.0, 0.0, 0.0);
+        assert_eq!(home, None);
+        assert!(apply_home_mounting_rotation_over_project(&stab, home, true));
+        // set_imu_rotation(0,0,0) stores None — the project's rotation is gone.
+        assert_eq!(stab.gyro.read().imu_transforms.imu_rotation_angles, None);
+
+        // Already flat -> no redundant re-integration.
+        assert!(!apply_home_mounting_rotation_over_project(&stab, home, true));
+    }
+
+    // The two kinds of "no home rotation" must stay distinguishable: an
+    // unpushed snapshot (selector still loading) means "unknown", not "top", and
+    // must leave the job exactly as the pre-change code did.
+    #[test]
+    fn unknown_home_value_leaves_a_queued_projects_rotation_untouched() {
+        let stab = StabilizationManager::default();
+        stab.set_imu_rotation(0.0, 180.0, 0.0);
+
+        assert!(!apply_home_mounting_rotation_over_project(&stab, None, false));
+        assert_eq!(
+            stab.gyro.read().imu_transforms.imu_rotation_angles,
+            Some([0.0, 180.0, 0.0])
+        );
+
+        // Same snapshot value, but now it is known to be the user's home value
+        // -> the project's rotation is flattened after all.
+        assert!(apply_home_mounting_rotation_over_project(&stab, None, true));
+        assert_eq!(stab.gyro.read().imu_transforms.imu_rotation_angles, None);
+    }
+
+    // Structural guard: add_file must take the mounting angle from the home
+    // snapshot, never from the main stabilizer. The main preview can be
+    // borrowing a rotation from a loaded .gyroflow project, and reading it here
+    // would silently leak that borrow into every job enqueued meanwhile — a
+    // failure that is invisible in the UI.
+    #[test]
+    fn add_file_takes_mounting_rotation_from_the_home_snapshot() {
+        let source = include_str!("render_queue.rs");
+        let idx = source
+            .find("pub fn add_file(")
+            .expect("add_file must exist");
+        let body_after = &source[idx + "pub fn add_file(".len()..];
+        let body_end = body_after
+            .find("\n    pub fn ")
+            .unwrap_or(body_after.len());
+        let body = &body_after[..body_end];
+        assert!(
+            body.contains("self.home_mounting_rotation"),
+            "add_file must read the home mounting snapshot"
+        );
+        assert!(
+            !body.contains("imu_rotation_angles"),
+            "add_file must not read the main stab's current mounting rotation \
+             (it may be borrowed from a loaded project)"
+        );
+        assert!(
+            body.contains("apply_home_mounting_rotation_over_project("),
+            "the .gyroflow enqueue branch must apply the home value on top of \
+             the project's own rotation"
+        );
+    }
+
+    // Structural guard: the home snapshot has no push channel of its own — it
+    // is recorded inside apply_mounting_rotation_to_all, which QML only ever
+    // calls with the home value. Dropping that line would leave add_file with a
+    // permanently empty snapshot and no visible symptom.
+    #[test]
+    fn apply_mounting_rotation_to_all_records_the_home_snapshot() {
+        let source = include_str!("render_queue.rs");
+        let idx = source
+            .find("pub fn apply_mounting_rotation_to_all(")
+            .expect("apply_mounting_rotation_to_all must exist");
+        let body_after = &source[idx + "pub fn apply_mounting_rotation_to_all(".len()..];
+        let body_end = body_after
+            .find("\n    pub fn ")
+            .unwrap_or(body_after.len());
+        let body = &body_after[..body_end];
+        assert!(
+            body.contains("self.home_mounting_rotation =")
+                && body.contains("self.home_mounting_known = true"),
+            "apply_mounting_rotation_to_all must record the home snapshot"
+        );
     }
 
     #[test]

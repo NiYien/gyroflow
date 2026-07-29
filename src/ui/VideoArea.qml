@@ -191,25 +191,35 @@ Item {
                 } else if (obj.hasOwnProperty("trim_ranges")) {
                     timeline.setTrimRanges(obj.trim_ranges);
                 }
-                window.motionData.loadGyroflow(obj);
+                // Every panel below is backed by an `asynchronous` ItemLoader,
+                // so its `item` is null until that loader finishes. Calling
+                // into a null panel throws a TypeError that aborts this whole
+                // handler, silently skipping every later readback and the
+                // external-gyro fallback at the end — hence the individual
+                // null guards.
+                if (window.motionData) window.motionData.loadGyroflow(obj);
                 // Simple-mode mounting selector adopts the project's rotation.
                 // Its async loader may not be ready yet when a project is
                 // opened via command line (e.g. NLE "Open in Gyroflow") —
                 // park the rotation for its Component.onCompleted then.
                 if (window.simpleMounting) {
                     window.simpleMounting.loadGyroflow(obj);
-                } else {
-                    // Park a normalized rotation so the selector's
-                    // Component.onCompleted adopts null/absent as top too
-                    // (project-authoritative mounting semantics).
+                } else if (!obj["__niyien_ui_reset"] && obj.hasOwnProperty("gyro_source")) {
+                    // Park only a real project's rotation (normalizing
+                    // null/absent to top, matching the selector's own project
+                    // branch). The UI reset broadcast — marked with
+                    // UI_RESET_BROADCAST_KEY in src/controller.rs — and
+                    // parameter presets must park nothing: parking [0,0,0] for
+                    // them would force top onto a selector whose own
+                    // Component.onCompleted already lands on the home value.
                     const projRot = (obj.gyro_source || {}).rotation;
                     window.pendingMountingRotation = (projRot && projRot.length === 3) ? projRot : [0, 0, 0];
                 }
-                window.stab.loadGyroflow(obj);
-                window.advanced.loadGyroflow(obj);
-                window.sync.loadGyroflow(obj);
-                window.lensProfile.loadGyroflow(obj);
-                Qt.callLater(window.exportSettings.loadGyroflow, obj);
+                if (window.stab)           window.stab.loadGyroflow(obj);
+                if (window.advanced)       window.advanced.loadGyroflow(obj);
+                if (window.sync)           window.sync.loadGyroflow(obj);
+                if (window.lensProfile)    window.lensProfile.loadGyroflow(obj);
+                if (window.exportSettings) Qt.callLater(window.exportSettings.loadGyroflow, obj);
 
                 if (obj.hasOwnProperty("image_sequence_start") && +obj.image_sequence_start > 0) {
                     controller.image_sequence_start = +obj.image_sequence_start;
@@ -241,7 +251,10 @@ Item {
                 if (fallbackUrl && fallbackUrl.toString() && !controller.gyro_loaded) {
                     console.log("Falling back to external gyro file", fallbackUrl);
                     controller.set_prevent_recompute(false);
-                    window.motionData.lastSelectedFile = fallbackUrl;
+                    // Guarded like the readbacks above: losing the bookkeeping
+                    // of the last selected file is acceptable, aborting the
+                    // fallback load itself is not.
+                    if (window.motionData) window.motionData.lastSelectedFile = fallbackUrl;
                     controller.load_telemetry(fallbackUrl, false, window.videoArea.vid, -1, fallbackProjectVersion);
                     return;
                 }

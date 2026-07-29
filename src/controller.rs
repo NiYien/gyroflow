@@ -34,6 +34,14 @@ use crate::ui::components::TimelineKeyframesView::TimelineKeyframesView;
 use crate::util;
 use crate::wrap_simple_method;
 
+/// Marker key inserted into the `gyroflow_file_loaded` payload that `do_load`
+/// emits to reset the UI after clearing the stabilizer. It exists purely so QML
+/// can distinguish that reset broadcast from a real top-mounted `.gyroflow`
+/// project (the two are otherwise identical JSON). It is consumed only by the
+/// mounting-angle routing and takes no part in project serialization, so the
+/// name is deliberately outside the `.gyroflow` key namespace.
+pub const UI_RESET_BROADCAST_KEY: &str = "__niyien_ui_reset";
+
 #[derive(Default, SimpleListItem)]
 struct OffsetItem {
     pub timestamp_us: i64,
@@ -683,10 +691,26 @@ impl Controller {
                         "{}",
                         None,
                     ) {
-                        if let Ok(current_state) =
+                        if let Ok(mut current_state) =
                             serde_json::from_str(current_state.as_str())
                                 as serde_json::Result<serde_json::Value>
                         {
+                            // Tag this payload as a UI reset broadcast rather
+                            // than a loaded project. A freshly cleared state
+                            // and a genuine top-mounted project are identical
+                            // in JSON (a zero mounting rotation is stored as
+                            // `None` and exports as `null`), so the QML side
+                            // cannot tell them apart without an explicit
+                            // marker. This key is consumed only by the
+                            // mounting-angle routing in
+                            // MountingPresetSelector; it is never part of a
+                            // .gyroflow file and never serialized back out.
+                            if let Some(obj) = current_state.as_object_mut() {
+                                obj.insert(
+                                    UI_RESET_BROADCAST_KEY.to_string(),
+                                    serde_json::Value::Bool(true),
+                                );
+                            }
                             this.gyroflow_file_loaded(util::serde_json_to_qt_object(
                                 &current_state,
                             ));
