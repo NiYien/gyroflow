@@ -1083,14 +1083,21 @@ fn build_reapply_base_metadata(
 /// exit, `batch_sync_job_ids` admission, `estimated_sync_frames_for_stab`), so
 /// they cannot drift apart.
 fn builtin_gyro_skips_autosync(md: &FileMetadata) -> bool {
-    builtin_gyro_skips_autosync_with(md, &core::canon_builtin_gyro::offset_table())
+    builtin_gyro_skips_autosync_with(md, core::canon_builtin_gyro::offset_table)
 }
 
 /// Table-injecting inner form of [`builtin_gyro_skips_autosync`], so the gate
 /// itself is unit-testable without a real camera_db on disk.
+///
+/// The table arrives as a thunk rather than a reference because
+/// `canon_builtin_gyro::offset_table()` re-resolves the camera_db directory on
+/// the filesystem (that is what makes the lens hot-update package take effect
+/// without a restart). `estimated_sync_frames_for_stab` runs this gate for every
+/// queue item on every progress tick, so anything that is not a Canon body with
+/// a built-in gyro must decide without paying for the lookup.
 fn builtin_gyro_skips_autosync_with(
     md: &FileMetadata,
-    table: &core::canon_builtin_gyro::OffsetTable,
+    load_table: impl FnOnce() -> Arc<core::canon_builtin_gyro::OffsetTable>,
 ) -> bool {
     if !md.keep_video_gyro {
         return false;
@@ -1098,10 +1105,10 @@ fn builtin_gyro_skips_autosync_with(
     match md.detected_source.as_deref() {
         // Canon: classification decides. Unknown bodies run auto-sync.
         Some(src) if src.starts_with("Canon") => {
-            core::canon_builtin_gyro::classify(src, table).skips_autosync()
+            core::canon_builtin_gyro::classify(src, &load_table()).skips_autosync()
         }
         // Komodo / Sony / anything else promoted by `compute_keep_video_gyro`:
-        // unconditional skip, and the table is never consulted.
+        // unconditional skip, and the table is never even loaded.
         _ => true,
     }
 }
@@ -24744,8 +24751,8 @@ mod tests {
         }
     }
 
-    fn canon_offset_table() -> core::canon_builtin_gyro::OffsetTable {
-        core::canon_builtin_gyro::parse_table(
+    fn canon_offset_table() -> Arc<core::canon_builtin_gyro::OffsetTable> {
+        Arc::new(core::canon_builtin_gyro::parse_table(
             r#"{"builtin_gyro_offset":{
                 "R5 Mark II":"one_frame",
                 "C50":"none",
@@ -24753,7 +24760,7 @@ mod tests {
                 "C400":"none",
                 "R6 Mark III":"none"
             }}"#,
-        )
+        ))
     }
 
     #[test]
@@ -24761,7 +24768,8 @@ mod tests {
         let table = canon_offset_table();
         for src in ["Canon R5 Mark II", "Canon EOS R5 Mark II", "Canon C50"] {
             assert!(
-                builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, Some(src)), &table),
+                builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, Some(src)), || table
+                    .clone()),
                 "{src} is classified and must skip auto-sync"
             );
         }
@@ -24772,40 +24780,45 @@ mod tests {
         let table = canon_offset_table();
         // R50 V is the body this change was written for: built-in gyro, but never
         // measured, so it must fall through to a normal auto-sync.
-        assert!(!builtin_gyro_skips_autosync_with(
-            &builtin_gyro_md(true, Some("Canon R50 V")),
-            &table
-        ));
-        assert!(!builtin_gyro_skips_autosync_with(
-            &builtin_gyro_md(true, Some("Canon EOS R50 V")),
-            &table
-        ));
+        for src in ["Canon R50 V", "Canon EOS R50 V"] {
+            assert!(
+                !builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, Some(src)), || table
+                    .clone()),
+                "{src} is unclassified and must run auto-sync"
+            );
+        }
     }
 
     #[test]
     fn builtin_gyro_gate_keeps_non_canon_bodies_unconditional() {
-        // Sony / Komodo must skip even against an empty table — proof that the
-        // classification table is never what decides for them.
-        let empty = core::canon_builtin_gyro::OffsetTable::default();
+        // Sony / Komodo must skip without the table ever being loaded — the thunk
+        // panics to prove the lookup (which touches the filesystem) is skipped.
         for src in [Some("Sony ILCE-7SM3"), Some("RED KOMODO"), None] {
             assert!(
-                builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, src), &empty),
+                builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, src), || {
+                    panic!("non-Canon source must not load the classification table")
+                }),
                 "{src:?} must keep the unconditional skip"
             );
         }
-        // ...while a Canon body against the same empty table does not.
+        // ...while a Canon body against an empty table does not skip.
+        let empty = Arc::new(core::canon_builtin_gyro::OffsetTable::default());
         assert!(!builtin_gyro_skips_autosync_with(
             &builtin_gyro_md(true, Some("Canon R5 Mark II")),
-            &empty
+            || empty.clone()
         ));
     }
 
     #[test]
     fn builtin_gyro_gate_ignores_clips_without_builtin_gyro() {
-        let table = canon_offset_table();
+        // No built-in gyro at all: decided before the source is even inspected, so
+        // the table must not be loaded here either (this gate runs for every queue
+        // item on every progress tick).
         for src in [Some("Canon R5 Mark II"), Some("Sony ILCE-7SM3"), None] {
             assert!(
-                !builtin_gyro_skips_autosync_with(&builtin_gyro_md(false, src), &table),
+                !builtin_gyro_skips_autosync_with(&builtin_gyro_md(false, src), || {
+                    panic!("a clip without keep_video_gyro must not load the table")
+                }),
                 "{src:?} without keep_video_gyro must never be gated here"
             );
         }
@@ -24825,7 +24838,10 @@ mod tests {
             "Canon R50",
         ] {
             let class = core::canon_builtin_gyro::classify(src, &table);
-            let skips = builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, Some(src)), &table);
+            let skips =
+                builtin_gyro_skips_autosync_with(&builtin_gyro_md(true, Some(src)), || {
+                    table.clone()
+                });
             let writes_fixed_offset =
                 class == core::canon_builtin_gyro::CanonGyroOffset::OneFrame;
             assert_eq!(
