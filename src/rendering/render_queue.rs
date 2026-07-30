@@ -1122,23 +1122,52 @@ fn build_reapply_base_metadata(
     snapshot
 }
 
-/// Whether a video whose built-in gyro is the trusted motion source should skip
-/// auto-sync entirely.
+/// What a video's built-in gyro implies for the auto-sync stage.
+///
+/// The two non-trivial arms are deliberately distinct states rather than one
+/// boolean: `Require` is *not* the negation of `Skip`. `NotApplicable` (an
+/// ordinary clip driven by an external IMU) also does not skip, but it must keep
+/// obeying the generic "accurate timestamps mean no sync is needed" waiver,
+/// while `Require` must override that waiver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuiltinGyroSyncPolicy {
+    /// The built-in gyro is not the trusted motion source; generic rules decide.
+    NotApplicable,
+    /// Trusted and known to be frame-aligned (RED Komodo, Sony, or a Canon body
+    /// classified in camera_db): skip auto-sync entirely.
+    Skip,
+    /// Trusted but never measured (a Canon body absent from the camera_db
+    /// `builtin_gyro_offset` table): auto-sync is required, and the
+    /// accurate-timestamp waiver MUST NOT cancel it.
+    ///
+    /// Caveat when reading the gates below: **passing the gate is not the same
+    /// as syncing.** `SyncParams` is `#[serde(default)]`, so a missing
+    /// `max_sync_points` deserializes to 0 and `do_autosync`'s inner
+    /// `max_sync_points > 0` check then does nothing, silently. Reaching the
+    /// sync stage with usable parameters relies on `lens.sync_settings` having
+    /// been populated (by `apply_match` or the main-UI sync panel); the
+    /// re-queue paths only ever strip the single `do_autosync` key, never the
+    /// rest of the block. Nothing asserts that today.
+    Require,
+}
+
+/// Classify a video's built-in gyro for the auto-sync stage.
 ///
 /// RED Komodo and Sony bodies keep the historical unconditional skip. Canon is
 /// decided by the camera_db `builtin_gyro_offset` classification: bodies listed
 /// as `one_frame` / `none` skip, everything else (including every body that has
-/// never been measured) falls through to a normal auto-sync. See
+/// never been measured) requires a normal auto-sync. See
 /// `gyroflow_core::canon_builtin_gyro`.
 ///
-/// This is the single predicate behind all three skip gates (`do_autosync` early
-/// exit, `batch_sync_job_ids` admission, `estimated_sync_frames_for_stab`), so
-/// they cannot drift apart.
-fn builtin_gyro_skips_autosync(md: &FileMetadata) -> bool {
-    builtin_gyro_skips_autosync_with(md, core::canon_builtin_gyro::offset_table)
+/// This is the single predicate behind every auto-sync gate (`do_autosync`'s
+/// early exit *and* its sync gate, `batch_sync_job_ids` admission,
+/// `estimated_sync_frames_for_stab`, and the search-window choice in
+/// `apply_match`), so they cannot drift apart.
+fn builtin_gyro_sync_policy(md: &FileMetadata) -> BuiltinGyroSyncPolicy {
+    builtin_gyro_sync_policy_with(md, core::canon_builtin_gyro::offset_table)
 }
 
-/// Table-injecting inner form of [`builtin_gyro_skips_autosync`], so the gate
+/// Table-injecting inner form of [`builtin_gyro_sync_policy`], so the gate
 /// itself is unit-testable without a real camera_db on disk.
 ///
 /// The table arrives as a thunk rather than a reference because
@@ -1147,22 +1176,79 @@ fn builtin_gyro_skips_autosync(md: &FileMetadata) -> bool {
 /// without a restart). `estimated_sync_frames_for_stab` runs this gate for every
 /// queue item on every progress tick, so anything that is not a Canon body with
 /// a built-in gyro must decide without paying for the lookup.
+fn builtin_gyro_sync_policy_with(
+    md: &FileMetadata,
+    load_table: impl FnOnce() -> Arc<core::canon_builtin_gyro::OffsetTable>,
+) -> BuiltinGyroSyncPolicy {
+    if !md.keep_video_gyro {
+        return BuiltinGyroSyncPolicy::NotApplicable;
+    }
+    match md.detected_source.as_deref() {
+        // Canon: classification decides. Unknown bodies must run auto-sync.
+        Some(src) if src.starts_with("Canon") => {
+            if core::canon_builtin_gyro::classify(src, &load_table()).skips_autosync() {
+                BuiltinGyroSyncPolicy::Skip
+            } else {
+                BuiltinGyroSyncPolicy::Require
+            }
+        }
+        // Komodo / Sony / anything else promoted by `compute_keep_video_gyro`:
+        // unconditional skip, and the table is never even loaded.
+        _ => BuiltinGyroSyncPolicy::Skip,
+    }
+}
+
+/// Whether a video whose built-in gyro is the trusted motion source should skip
+/// auto-sync entirely. Thin view over [`builtin_gyro_sync_policy`].
+fn builtin_gyro_skips_autosync(md: &FileMetadata) -> bool {
+    builtin_gyro_sync_policy(md) == BuiltinGyroSyncPolicy::Skip
+}
+
+/// The single "does this clip need an auto-sync pass now?" decision.
+///
+/// Shared by `do_autosync` (which performs the pass) and
+/// `estimated_sync_frames_for_stab` (which budgets progress for it) so the two
+/// cannot disagree — a mismatch shows up as a progress bar that finishes while
+/// work is still running, or vice versa.
+///
+/// `requires_autosync` overrides the accurate-timestamp waiver only; it never
+/// overrides `has_sync_points`, because a clip that already carries offsets
+/// keeps them (re-exporting a synced job must not re-sync it).
+fn autosync_gate_passes(
+    force_autosync: bool,
+    has_sync_points: bool,
+    has_accurate_timestamps: bool,
+    requires_autosync: bool,
+) -> bool {
+    force_autosync || (!has_sync_points && (!has_accurate_timestamps || requires_autosync))
+}
+
+/// The sync search window for one queue item: `(initial_offset_s, search_size_s,
+/// offset_is_anchor)`.
+///
+/// Single source of truth for the two places `apply_match` writes the pair —
+/// `lens.sync_settings` and the `additional_data["synchronization"]` mirror that
+/// survives a project round-trip. They must agree: if the mirror kept the
+/// match-derived offset while `lens.sync_settings` held the built-in-gyro
+/// window, reloading the project would silently restore the wrong window.
+fn sync_window_for_policy(
+    policy: BuiltinGyroSyncPolicy,
+    init_offset_ms: Option<f64>,
+) -> (f64, f64, bool) {
+    if policy == BuiltinGyroSyncPolicy::Require {
+        (0.0, BUILTIN_GYRO_SYNC_SEARCH_SIZE_S, false)
+    } else {
+        let (init_offset_s, search_size_s) = batch_match_sync_overrides(init_offset_ms);
+        (init_offset_s, search_size_s, true)
+    }
+}
+
+/// Table-injecting inner form of [`builtin_gyro_skips_autosync`].
 fn builtin_gyro_skips_autosync_with(
     md: &FileMetadata,
     load_table: impl FnOnce() -> Arc<core::canon_builtin_gyro::OffsetTable>,
 ) -> bool {
-    if !md.keep_video_gyro {
-        return false;
-    }
-    match md.detected_source.as_deref() {
-        // Canon: classification decides. Unknown bodies run auto-sync.
-        Some(src) if src.starts_with("Canon") => {
-            core::canon_builtin_gyro::classify(src, &load_table()).skips_autosync()
-        }
-        // Komodo / Sony / anything else promoted by `compute_keep_video_gyro`:
-        // unconditional skip, and the table is never even loaded.
-        _ => true,
-    }
+    builtin_gyro_sync_policy_with(md, load_table) == BuiltinGyroSyncPolicy::Skip
 }
 
 fn effective_lens_group_configs(
@@ -6794,9 +6880,14 @@ impl RenderQueue {
         // a Canon body classified in camera_db) contributes zero estimated sync
         // frames. An unclassified Canon body does run auto-sync, so it must be
         // budgeted normally.
-        if builtin_gyro_skips_autosync(&stab.gyro.read().file_metadata.read()) {
+        let policy = builtin_gyro_sync_policy(&stab.gyro.read().file_metadata.read());
+        if policy == BuiltinGyroSyncPolicy::Skip {
             return 0;
         }
+        // Mirrors `do_autosync`'s override of the accurate-timestamp waiver. The
+        // two gates below must stay identical, otherwise the progress budget and
+        // the work actually performed disagree.
+        let requires_autosync = policy == BuiltinGyroSyncPolicy::Require;
 
         let (url, duration_ms, fps, frame_count, fps_scale) = {
             let params = stab.params.read();
@@ -6822,7 +6913,12 @@ impl RenderQueue {
             .get("do_autosync")
             .and_then(|v| v.as_bool())
             .unwrap_or_default();
-        if !(force_autosync || (!has_sync_points && !has_accurate_timestamps)) {
+        if !autosync_gate_passes(
+            force_autosync,
+            has_sync_points,
+            has_accurate_timestamps,
+            requires_autosync,
+        ) {
             return 0;
         }
 
@@ -7923,16 +8019,20 @@ impl RenderQueue {
         // A Canon body that is not in the table is *unknown*, not *aligned*, so it
         // falls through and runs a normal auto-sync — the offset it computes is
         // the built-in gyro's offset against its own frames.
-        let (keep_video_gyro, is_komodo, detected_source, skips_autosync) = {
+        let (keep_video_gyro, is_komodo, detected_source, policy) = {
             let gyro = stab.gyro.read();
             let fm = gyro.file_metadata.read();
             (
                 fm.keep_video_gyro,
                 fm.is_komodo,
                 fm.detected_source.clone(),
-                builtin_gyro_skips_autosync(&fm),
+                builtin_gyro_sync_policy(&fm),
             )
         };
+        let skips_autosync = policy == BuiltinGyroSyncPolicy::Skip;
+        // An unclassified Canon body must sync even when nothing marked the job
+        // with `do_autosync`. Carried down to the sync gate below.
+        let requires_autosync = policy == BuiltinGyroSyncPolicy::Require;
         if keep_video_gyro {
             let url = stab.input_file.read().url.clone();
             let canon_source = detected_source
@@ -7987,6 +8087,20 @@ impl RenderQueue {
         if force_autosync && has_accurate_timestamps {
             ::log::info!("do_autosync overriding has_accurate_timestamps for {}", url);
         }
+        // The accurate-timestamp waiver ("telemetry timestamps already line up
+        // with the frames, so no optical-flow sync is needed") does not hold for
+        // an unclassified Canon built-in gyro: what is unknown there is the
+        // gyro's offset against its *own* frames, which says nothing about
+        // timestamp quality. telemetry-parser hardcodes `true` for the whole
+        // Canon brand, so without this override such a clip only ever syncs on
+        // paths that happen to set `do_autosync` — and that marker is stripped
+        // by several re-queue paths.
+        if !force_autosync && requires_autosync && has_accurate_timestamps && !has_sync_points {
+            ::log::info!(
+                "[canon_arbitration] unclassified Canon built-in gyro: accurate-timestamp waiver does not apply, running auto-sync for {}",
+                url
+            );
+        }
         // force_autosync takes precedence over stale offsets: a reset + re-queue from the
         // render queue's Auto sync button must rerun the full sync even if the previous
         // pass left offsets on stab.gyro. Clear them so the pipeline recomputes fresh.
@@ -7999,7 +8113,12 @@ impl RenderQueue {
                 url
             );
         }
-        if force_autosync || (!has_sync_points && !has_accurate_timestamps) {
+        if autosync_gate_passes(
+            force_autosync,
+            has_sync_points,
+            has_accurate_timestamps,
+            requires_autosync,
+        ) {
             // ----------------------------------------------------------------------------
             // --------------------------------- Autosync ---------------------------------
             let mut sync_frames = 0usize;
@@ -11815,10 +11934,24 @@ impl RenderQueue {
                 // search_size pair comes from batch_match_sync_overrides so this
                 // write site and the additional_data patch site (par_iter#3 below)
                 // stay in sync.
-                let (init_offset_s, search_size_s) =
-                    batch_match_sync_overrides(item.init_offset_ms);
+                //
+                // Exception: a clip that syncs against its *own* built-in gyro
+                // (unclassified Canon) must not inherit the match's offset. That
+                // number says where the video sits inside the external .bin —
+                // a file which is not this clip's motion source at all. The
+                // quantity being solved for here is the built-in gyro's offset
+                // against its own frames, which is physically near zero (R5
+                // Mark II = 1 frame, R50 V = -51.4ms ≈ 1.29 frames @25fps), so
+                // the search starts at 0 with a tight radius. `offset_is_anchor`
+                // stays false: that flag selects the σ=1500ms anchor-tier prior,
+                // which is far wider than this window's real uncertainty.
+                let policy =
+                    builtin_gyro_sync_policy(&item.stab.gyro.read().file_metadata.read());
+                let requires_builtin_gyro_sync = policy == BuiltinGyroSyncPolicy::Require;
+                let (init_offset_s, search_size_s, offset_is_anchor) =
+                    sync_window_for_policy(policy, item.init_offset_ms);
                 ::log::info!(
-                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} duration_s={:.3} playback_fps={:.3} effective_fps={:.3} fps_scale={:?} max_sync_points={} every_nth_frame={}",
+                    "[batch_match_diag] sync_override job_id={} video='{}' gyro_file='{}' raw_range_ms={:?} normalized_range_ms={:?} init_offset_ms={:?} initial_offset_s={:.3} search_size_s={:.3} window={} duration_s={:.3} playback_fps={:.3} effective_fps={:.3} fps_scale={:?} max_sync_points={} every_nth_frame={}",
                     item.job_id,
                     item.render_options.input_filename,
                     filesystem::get_filename(&item.gyro_path),
@@ -11827,6 +11960,7 @@ impl RenderQueue {
                     item.init_offset_ms,
                     init_offset_s,
                     search_size_s,
+                    if requires_builtin_gyro_sync { "builtin_gyro" } else { "match" },
                     duration_s,
                     playback_fps,
                     effective_fps,
@@ -11845,7 +11979,8 @@ impl RenderQueue {
                     "initial_offset": init_offset_s,
                     // COMP_TIME-grade anchor — posterior uses the σ=1500ms
                     // anchor prior instead of search_size/2 (5s floor → 2500ms).
-                    "offset_is_anchor": true,
+                    // False for the built-in-gyro window, see above.
+                    "offset_is_anchor": offset_is_anchor,
                     // Disable essential_matrix pre-computation so it doesn't
                     // overwrite our per-clip initial_offset and force search_size=3000ms.
                     "calc_initial_fast": false,
@@ -11891,8 +12026,16 @@ impl RenderQueue {
                     // UI-global synchronization (e.g. initial_offset=-1) on top
                     // of our per-clip data, and reloading the project would also
                     // overwrite lens.sync_settings via update_sync_settings.
-                    let (init_offset_s, search_size_s) =
-                        batch_match_sync_overrides(item.init_offset_ms);
+                    //
+                    // The built-in-gyro window branch has to be repeated here for
+                    // the same reason: this mirror is what survives a project
+                    // round-trip, so if it kept the match-derived offset while
+                    // lens.sync_settings held 0, reloading the project would put
+                    // the wrong window back.
+                    let (init_offset_s, search_size_s, _) = sync_window_for_policy(
+                        builtin_gyro_sync_policy(&item.stab.gyro.read().file_metadata.read()),
+                        item.init_offset_ms,
+                    );
                     let every_nth_frame =
                         batch_sync_every_nth_frame(&item.stab.params.read());
                     if let Some(patched) = patch_additional_data_sync_block(
@@ -13751,6 +13894,18 @@ fn batch_match_sync_overrides(init_offset_ms: Option<f64>) -> (f64, f64) {
     let search_size_s = 5.0_f64.max(init_offset_s.abs() * 1.5);
     (init_offset_s, search_size_s)
 }
+
+// Search window for a clip syncing against its own built-in gyro
+// (`BuiltinGyroSyncPolicy::Require`), in seconds — the search starts at 0 and
+// spans ±half this value.
+//
+// Sized off the physical quantity: a body's built-in gyro is offset from its own
+// frames by sub-frame to a few frames (R5 Mark II = 1 frame; R50 V = -51.4ms ≈
+// 1.29 frames @25fps). ±0.5s covers ±12.5 frames at 25fps — an order of
+// magnitude of headroom — while being 5× tighter than the match window it
+// replaces, so the search is both faster and less likely to lock onto a distant
+// false peak.
+const BUILTIN_GYRO_SYNC_SEARCH_SIZE_S: f64 = 1.0;
 
 // Pool selector for next_batch_sync_repair_timestamp_ms — distinguishes
 // "primary OptimSync candidate" from "rank-based fallback" so the caller can
@@ -25120,6 +25275,156 @@ mod tests {
             assert!(
                 !(writes_fixed_offset && !skips),
                 "{src}: fixed offset without skipping auto-sync"
+            );
+        }
+    }
+
+    // ---- canon-builtin-gyro-offset-table §9: accurate-timestamp waiver ----
+
+    fn builtin_gyro_policy(
+        keep: bool,
+        detected_source: Option<&str>,
+    ) -> BuiltinGyroSyncPolicy {
+        let table = canon_offset_table();
+        builtin_gyro_sync_policy_with(&builtin_gyro_md(keep, detected_source), || table.clone())
+    }
+
+    // 9.4.1
+    #[test]
+    fn builtin_gyro_policy_requires_sync_only_for_unclassified_canon() {
+        for src in ["Canon R50 V", "Canon EOS R50 V", "Canon R50"] {
+            assert_eq!(
+                builtin_gyro_policy(true, Some(src)),
+                BuiltinGyroSyncPolicy::Require,
+                "{src} is unclassified and must require auto-sync"
+            );
+        }
+        for src in ["Canon R5 Mark II", "Canon EOS R5 Mark II", "Canon C50"] {
+            assert_eq!(
+                builtin_gyro_policy(true, Some(src)),
+                BuiltinGyroSyncPolicy::Skip,
+                "{src} is classified and must skip"
+            );
+        }
+        for src in [Some("Sony ILCE-7SM3"), Some("RED KOMODO"), None] {
+            assert_eq!(
+                builtin_gyro_sync_policy_with(&builtin_gyro_md(true, src), || {
+                    panic!("non-Canon source must not load the classification table")
+                }),
+                BuiltinGyroSyncPolicy::Skip,
+                "{src:?} must keep the unconditional skip"
+            );
+        }
+        // No built-in gyro: `NotApplicable`, decided before the table is touched.
+        // This arm must stay distinct from `Require` — an ordinary external-IMU
+        // clip still has to obey the accurate-timestamp waiver.
+        for src in [Some("Canon R50 V"), Some("Sony ILCE-7SM3"), None] {
+            assert_eq!(
+                builtin_gyro_sync_policy_with(&builtin_gyro_md(false, src), || {
+                    panic!("a clip without keep_video_gyro must not load the table")
+                }),
+                BuiltinGyroSyncPolicy::NotApplicable,
+                "{src:?} without keep_video_gyro"
+            );
+        }
+    }
+
+    // 9.4.2 — the truth table the export-path bug lived in.
+    #[test]
+    fn autosync_gate_truth_table() {
+        // The reported failure: accurate timestamps (hardcoded true for every
+        // Canon body), no `do_autosync` marker, no offsets yet, unclassified
+        // body. Before this change the gate said "no sync needed".
+        assert!(
+            autosync_gate_passes(false, false, true, true),
+            "unclassified Canon must sync without a do_autosync marker"
+        );
+        // Same clip once it has offsets: keep them, do not re-sync.
+        assert!(
+            !autosync_gate_passes(false, true, true, true),
+            "an already-synced clip must not be re-synced"
+        );
+        // Classified Canon / Sony / Komodo never reach the gate (they early-exit
+        // in do_autosync), but if they did the waiver still applies.
+        assert!(
+            !autosync_gate_passes(false, false, true, false),
+            "a classified body must keep the accurate-timestamp waiver"
+        );
+        // Regression guard: ordinary accurate-timestamp sources (GoPro with
+        // CORI, DJI, Insta360) are `NotApplicable`, so the waiver holds.
+        assert!(
+            !autosync_gate_passes(false, false, true, false),
+            "external accurate-timestamp sources must keep the waiver"
+        );
+        // Ordinary external-IMU clip: no accurate timestamps, so it syncs.
+        assert!(autosync_gate_passes(false, false, false, false));
+        // An explicit marker always wins, offsets or not.
+        assert!(autosync_gate_passes(true, true, true, false));
+        assert!(autosync_gate_passes(true, false, false, false));
+    }
+
+    // 9.4.3 — both gates call `autosync_gate_passes`, so agreement is structural
+    // rather than asserted per call site; this pins the shared function's shape
+    // so a future "small tweak" at one call site has to change it here too.
+    #[test]
+    fn autosync_gate_is_symmetric_across_both_consumers() {
+        for force in [false, true] {
+            for has_points in [false, true] {
+                for accurate in [false, true] {
+                    for requires in [false, true] {
+                        let expected = force
+                            || (!has_points && (!accurate || requires));
+                        assert_eq!(
+                            autosync_gate_passes(force, has_points, accurate, requires),
+                            expected,
+                            "force={force} points={has_points} accurate={accurate} requires={requires}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // 9.4.4
+    #[test]
+    fn sync_window_is_zero_centred_only_for_builtin_gyro_sync() {
+        // Built-in gyro: start at 0 with the tight radius, and not as an anchor
+        // (the anchor tier's σ=1500ms prior is far wider than this window).
+        let (init, search, anchor) =
+            sync_window_for_policy(BuiltinGyroSyncPolicy::Require, Some(-1505.5));
+        assert_eq!(init, 0.0);
+        assert_eq!(search, BUILTIN_GYRO_SYNC_SEARCH_SIZE_S);
+        assert!(!anchor);
+        // The match-derived offset must not leak in even when it is large.
+        let (init, search, _) =
+            sync_window_for_policy(BuiltinGyroSyncPolicy::Require, Some(-480_000.0));
+        assert_eq!(init, 0.0);
+        assert_eq!(search, BUILTIN_GYRO_SYNC_SEARCH_SIZE_S);
+
+        // Everything else keeps the match window byte-for-byte.
+        for policy in [
+            BuiltinGyroSyncPolicy::NotApplicable,
+            BuiltinGyroSyncPolicy::Skip,
+        ] {
+            for init_ms in [None, Some(-1505.5), Some(12_000.0)] {
+                let (init, search, anchor) = sync_window_for_policy(policy, init_ms);
+                let (expect_init, expect_search) = batch_match_sync_overrides(init_ms);
+                assert_eq!((init, search), (expect_init, expect_search), "{policy:?}");
+                assert!(anchor, "{policy:?} must stay an anchor");
+            }
+        }
+    }
+
+    // The window has to cover the physical range it was sized for, otherwise the
+    // tightening silently breaks bodies with a larger offset than R50 V.
+    #[test]
+    fn builtin_gyro_search_window_covers_several_frames() {
+        let half_window_ms = BUILTIN_GYRO_SYNC_SEARCH_SIZE_S / 2.0 * 1000.0;
+        // Measured offsets this window must contain, with room to spare.
+        for offset_ms in [51.4_f64, 1000.0 / 25.0, 1000.0 / 24.0 * 4.0] {
+            assert!(
+                offset_ms < half_window_ms / 2.0,
+                "{offset_ms}ms leaves less than 2x headroom in a ±{half_window_ms}ms window"
             );
         }
     }
