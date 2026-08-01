@@ -5231,7 +5231,19 @@ impl RenderQueue {
             }
 
             if let Some(ref data) = job.project_data {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(data) {
+                // Reference-form project_data ({"project_file": url}, stored when the
+                // main stab has a project_file_url — see
+                // get_gyroflow_data_internal_with_type) carries no "stabilization" key.
+                // Fall through to the no-project-data fallback below instead of
+                // fabricating stabilization values (zoom_mode="none", smoothness=0.5,
+                // ...) — the fabricated zeros used to leak through the Simple-mode
+                // panel mirror into the main preview. Do NOT dereference the file
+                // here: this runs synchronously on the UI thread and projects can
+                // embed tens of MB of gyro data.
+                let parsed = serde_json::from_str::<serde_json::Value>(data)
+                    .ok()
+                    .filter(|v| v.get("stabilization").is_some());
+                if let Some(v) = parsed {
                     let stab = v.get("stabilization").cloned().unwrap_or_default();
                     let smoothness = stab
                         .get("smoothing_params")
@@ -20102,6 +20114,56 @@ mod tests {
             Some(0.25)
         );
         assert_eq!(live_data["video_info"]["vfr_fps"].as_f64(), Some(25.0));
+    }
+
+    #[test]
+    fn display_params_omit_stab_keys_for_reference_form_project_data() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        let (stab, render_options) = {
+            let job = queue.jobs.get(&1).unwrap();
+            (job.stab.as_ref().unwrap().clone(), job.render_options.clone())
+        };
+
+        // Control: full project data exposes the stabilization-derived keys.
+        stab.set_adaptive_zoom(-1.0);
+        let full_data = RenderQueue::get_gyroflow_data_internal_with_type(
+            &stab,
+            "{}",
+            &render_options,
+            core::GyroflowProjectType::Simple,
+            false,
+        )
+        .expect("project data export succeeds");
+        queue.jobs.get_mut(&1).unwrap().project_data = Some(full_data);
+        let display = serde_json::from_str::<serde_json::Value>(
+            &queue.get_job_display_params(1).to_string(),
+        )
+        .expect("display params parse");
+        assert_eq!(display["zoom_mode"].as_str(), Some("static"));
+        assert!(display.get("smoothness").is_some());
+
+        // Reference form ({"project_file": url}) carries no "stabilization" key —
+        // display params must omit the stabilization-derived keys entirely instead
+        // of fabricating zoom_mode="none"/smoothness=0.5/... (which used to leak
+        // through the Simple-mode panel mirror into the main preview).
+        queue.jobs.get_mut(&1).unwrap().project_data =
+            Some(r#"{"project_file": "file:///D:/videos/DSC_0001.gyroflow"}"#.into());
+        let display = serde_json::from_str::<serde_json::Value>(
+            &queue.get_job_display_params(1).to_string(),
+        )
+        .expect("display params parse");
+        for key in [
+            "zoom_mode",
+            "smoothness",
+            "horizon_lock_amount",
+            "lens_correction",
+        ] {
+            assert!(
+                display.get(key).is_none(),
+                "{key} must be absent for reference-form project_data"
+            );
+        }
+        assert!(display.get("auto_rotate").is_some());
     }
 
     #[test]

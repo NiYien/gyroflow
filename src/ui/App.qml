@@ -503,13 +503,22 @@ Rectangle {
         _batchApplySuppressed = true;
         try {
             const p = JSON.parse(render_queue.get_job_display_params(primaryJobId));
-            batchState.smoothness = (p.smoothness || 0.5) * 100;
-            batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
+            // Absent stabilization keys mean "unknown" (reference-form or missing
+            // project_data — see queue-display-params-reference-form): keep the
+            // current batchState values so the panel mirror never pushes
+            // substituted defaults into the comboboxes (and from there into the
+            // main preview when batchState.active is false).
+            if (p.smoothness !== undefined) batchState.smoothness = (p.smoothness || 0.5) * 100;
+            if (p.horizon_lock_amount !== undefined) {
+                batchState.horizonLock = (p.horizon_lock_amount || 0) > 0;
+                batchState.horizonLockAmount = p.horizon_lock_amount || 0;
+            }
             batchState.autoRotate = !!p.auto_rotate;
-            batchState.horizonLockAmount = p.horizon_lock_amount || 0;
-            const zm = p.zoom_mode || "dynamic";
-            batchState.zoomMode = zm === "static" ? 2 : zm === "dynamic" ? 1 : 0;
-            batchState.lensCorrection = p.lens_correction !== undefined ? p.lens_correction : 1.0;
+            if (p.zoom_mode !== undefined) {
+                const zm = p.zoom_mode || "dynamic";
+                batchState.zoomMode = zm === "static" ? 2 : zm === "dynamic" ? 1 : 0;
+            }
+            if (p.lens_correction !== undefined) batchState.lensCorrection = p.lens_correction;
             batchState.framerate = (p.fps_scale !== undefined && p.fps_scale !== null)
                 ? (p.framerate || 0)
                 : 0;
