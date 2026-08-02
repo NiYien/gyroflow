@@ -339,6 +339,10 @@ pub struct Controller {
     app_update_handoff_started: qt_signal!(),
     app_update_state: Arc<Mutex<Option<crate::distribution::PreparedAppUpdate>>>,
     sync_device_time: qt_method!(fn(&mut self, tz_offset_minutes: i32)),
+    timezone_offset_minutes: qt_method!(fn(&self, tz_id: QString) -> i32),
+    // Saved timezone selection pushed from QML at startup and on change, so
+    // the connect-time auto sync works even before the device panel exists.
+    device_timezone_id: qt_property!(QString),
     check_firmware_update: qt_method!(fn(&mut self)),
     start_firmware_update: qt_method!(fn(&mut self)),
     poll_device_events: qt_method!(fn(&mut self)),
@@ -3585,6 +3589,12 @@ impl Controller {
         self.device_time_sync_finished(false, QString::from("Device command channel is unavailable"));
     }
 
+    // Returns i32::MIN when the id cannot be resolved so QML can fall back
+    // to the static offset from device_timezones.js.
+    fn timezone_offset_minutes(&self, tz_id: QString) -> i32 {
+        crate::niyien_device::timezone::offset_minutes_for_tz_now(&tz_id.to_string())
+    }
+
     fn check_firmware_update(&mut self) {
         ::log::info!("NiYien: check_firmware_update requested");
         self.ota_error = QString::default();
@@ -3714,10 +3724,25 @@ impl Controller {
                     hard_version
                 );
                 self.device_state_changed();
-                if std::env::var("GYROFLOW_NIYIEN_AUTO_SYNC_TIME").unwrap_or_default() == "1" {
-                    let system_offset_minutes =
-                        chrono::Local::now().offset().local_minus_utc() / 60;
-                    self.sync_device_time(system_offset_minutes);
+                if crate::niyien_device::timezone::auto_sync_time_enabled() {
+                    // Saved-city offsets are computed at this moment, so a
+                    // reconnect after a DST transition rewrites the device
+                    // wall clock to the current civil time.
+                    let tz_id = self.device_timezone_id.to_string();
+                    let offset_minutes = if tz_id.is_empty() || tz_id == "System" {
+                        chrono::Local::now().offset().local_minus_utc() / 60
+                    } else {
+                        match crate::niyien_device::timezone::offset_minutes_for_tz_now(&tz_id) {
+                            crate::niyien_device::timezone::OFFSET_SENTINEL => {
+                                chrono::Local::now().offset().local_minus_utc() / 60
+                            }
+                            minutes => minutes,
+                        }
+                    };
+                    ::log::info!(
+                        "NiYien: auto time sync on connect tz_id={tz_id:?} offset_minutes={offset_minutes}"
+                    );
+                    self.sync_device_time(offset_minutes);
                 }
                 if self.ota_state != QString::from("updating") {
                     self.check_firmware_update();

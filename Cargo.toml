@@ -86,6 +86,7 @@ whoami = "2.1"
 tar = "0.4.45"
 lru = "0.16"
 chrono = "0.4"
+chrono-tz = "0.10"
 toml = "0.9"
 
 log-panics = { version = "2.1", features = ["with-backtrace"] }

@@ -9,6 +9,7 @@ import QtQuick.Dialogs
 import "."
 import "components/"
 import "menu/" as Menu
+import "menu/device_timezones.js" as DeviceTimezones
 
 Rectangle {
     id: window;
@@ -2766,6 +2767,12 @@ Rectangle {
         // Mirrors the picker/tutorial conditions used at the end of this handler.
         window.onboardingActive = (!settings.contains("lang"))
             || (!isMobileLayout && isSimpleMode && settings.value("niyien_tutorial_seen_v1", "0") === "0");
+        // device-timezone-dst: hand the saved timezone to the controller before any
+        // device Connected event, so connect-time auto sync uses the user's choice
+        // even while the (lazily loaded) device panel does not exist yet. Pre-tzId
+        // installs are mapped through their stored city key.
+        controller.device_timezone_id = ("" + settings.value("niyienTimezoneTzId", ""))
+            || DeviceTimezones.tzIdForCityKey("" + settings.value("niyienTimezoneKey", ""));
         controller.check_updates();
         // Defer crash scan one tick so QML overlay z-stack is ready.
         Qt.callLater(controller.scanCrashCheckpoints);

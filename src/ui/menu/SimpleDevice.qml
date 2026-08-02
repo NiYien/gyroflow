@@ -23,9 +23,11 @@ MenuItem {
     property string lastDeviceTimeSource: ""
     property var deviceTimeBase: null
     property double deviceTimeBaseMs: 0
-    property var selectedTimezone: ({ key: "Shanghai", offsetMinutes: 480 })
+    property var selectedTimezone: ({ key: "Shanghai", offsetMinutes: 480, tzId: "Asia/Shanghai" })
     property var selectedRegion: null
     property var timezoneCatalog: DeviceTimezones.timezoneRegions
+    // Mirrors OFFSET_SENTINEL in src/niyien_device/timezone.rs.
+    readonly property int tzOffsetSentinel: -2147483648
 
     readonly property bool lightTheme: style === "light"
     readonly property color cardColor: root.lightTheme ? "#ffffff" : "#f0282828"
@@ -59,8 +61,24 @@ MenuItem {
             + ":"
             + (minutes < 10 ? "0" : "") + minutes
     }
+    // DST-aware offset for a table choice or the current selection: computed
+    // from the IANA tz id at call time, falling back to the static table
+    // offset when the id cannot be resolved, and to the live system offset
+    // for the "System" selection.
+    function effectiveOffsetMinutes(entry: var): int {
+        if (!entry)
+            return root.systemOffsetMinutes()
+        if (entry.tzId === "System" || entry.key === "System")
+            return root.systemOffsetMinutes()
+        if (entry.tzId) {
+            const computed = controller.timezone_offset_minutes(entry.tzId)
+            if (computed !== root.tzOffsetSentinel)
+                return computed
+        }
+        return entry.offsetMinutes
+    }
     function currentTimezoneLabel(): string {
-        return root.cityDisplayName(root.selectedTimezone.key) + "  " + root.formatUtcOffset(root.selectedTimezone.offsetMinutes)
+        return root.cityDisplayName(root.selectedTimezone.key) + "  " + root.formatUtcOffset(root.effectiveOffsetMinutes(root.selectedTimezone))
     }
     function translatedDeviceText(text: string): string {
         return text && text.length > 0 ? qsTranslate("Device", text) : ""
@@ -125,7 +143,10 @@ MenuItem {
     }
     function applyTimezoneChoice(choice: var, region: var): void {
         root.selectedRegion = region
-        root.selectedTimezone = { key: choice.key, offsetMinutes: choice.offsetMinutes }
+        root.selectedTimezone = { key: choice.key, offsetMinutes: choice.offsetMinutes, tzId: choice.tzId || "" }
+        settings.setValue("niyienTimezoneTzId", choice.tzId || "")
+        // Legacy keys keep the static table offset so a downgraded client
+        // still matches its own table by offset equality.
         settings.setValue("niyienTimezoneKey", choice.key)
         settings.setValue("niyienTimezoneOffsetMinutes", choice.offsetMinutes)
         settings.setValue("niyienTimezoneLabel", choice.key)
@@ -133,69 +154,110 @@ MenuItem {
             settings.setValue("niyienTimezoneRegionX", region.x)
             settings.setValue("niyienTimezoneRegionY", region.y)
         }
+        controller.device_timezone_id = choice.tzId || ""
     }
     function selectRegion(region: var): void {
         const choices = root.regionChoices(region)
         if (choices.length > 0)
             root.applyTimezoneChoice(choices[0], region)
     }
-    function choiceMatchesSaved(choice: var, savedKey: string, savedLabel: string, savedOffset: int): bool {
-        return choice.offsetMinutes === savedOffset
-            && (
-                (savedKey && choice.key === savedKey)
-                || (!savedKey && savedLabel && (choice.key === savedLabel || root.cityDisplayName(choice.key) === savedLabel))
-                || (!savedKey && !savedLabel)
-            )
+    // Saved selections match by identity (city key or tz id), never by
+    // offset: computed offsets change with the seasons, so an offset written
+    // in winter would fail to match the same city in summer.
+    function choiceMatchesSaved(choice: var, savedTzId: string, savedKey: string, savedLabel: string): bool {
+        if (savedKey)
+            return choice.key === savedKey
+        if (savedTzId)
+            return choice.tzId === savedTzId
+        if (savedLabel)
+            return choice.key === savedLabel || root.cityDisplayName(choice.key) === savedLabel
+        return false
     }
-    function matchingRegion(savedKey: string, savedLabel: string, savedOffset: int): var {
+    function matchingRegion(savedTzId: string, savedKey: string, savedLabel: string): var {
         for (let i = 0; i < root.timezoneCatalog.length; ++i) {
             const region = root.timezoneCatalog[i]
             const choices = root.regionChoices(region)
             for (let j = 0; j < choices.length; ++j) {
-                if (root.choiceMatchesSaved(choices[j], savedKey, savedLabel, savedOffset))
+                if (root.choiceMatchesSaved(choices[j], savedTzId, savedKey, savedLabel))
                     return region
             }
         }
         return null
     }
-    function loadSelectedTimezone(): void {
-        const savedKey = settings.value("niyienTimezoneKey", "")
-        const savedOffsetRaw = settings.value("niyienTimezoneOffsetMinutes", "")
-        const savedLabel = settings.value("niyienTimezoneLabel", "")
-        const offsetMinutes = savedOffsetRaw === "" ? root.systemOffsetMinutes() : +savedOffsetRaw
-        const region = root.matchingRegion(savedKey, savedLabel, offsetMinutes)
-        if (region) {
+    // Fresh-install helper: both sides of the comparison are live offsets, so
+    // a summer install in a DST region snaps to the right city.
+    function cityMatchingSystemOffset(): var {
+        const sysOffset = root.systemOffsetMinutes()
+        for (let i = 0; i < root.timezoneCatalog.length; ++i) {
+            const region = root.timezoneCatalog[i]
             const choices = root.regionChoices(region)
-            for (let i = 0; i < choices.length; ++i) {
-                if (root.choiceMatchesSaved(choices[i], savedKey, savedLabel, offsetMinutes)) {
-                    root.applyTimezoneChoice(choices[i], region)
-                    return
-                }
+            for (let j = 0; j < choices.length; ++j) {
+                if (root.effectiveOffsetMinutes(choices[j]) === sysOffset)
+                    return { region: region, choice: choices[j] }
             }
-            root.applyTimezoneChoice(choices[0], region)
+        }
+        return null
+    }
+    function loadSelectedTimezone(): void {
+        const savedTzId = "" + settings.value("niyienTimezoneTzId", "")
+        const savedKey = "" + settings.value("niyienTimezoneKey", "")
+        const savedLabel = "" + settings.value("niyienTimezoneLabel", "")
+        if (savedTzId === "System" || (savedTzId === "" && savedKey === "System")) {
+            if (savedTzId === "")
+                settings.setValue("niyienTimezoneTzId", "System") // one-shot legacy migration
+            root.selectedRegion = null
+            root.selectedTimezone = { key: "System", offsetMinutes: root.systemOffsetMinutes(), tzId: "System" }
+            controller.device_timezone_id = "System"
+            return
+        }
+        if (savedTzId !== "" || savedKey !== "" || savedLabel !== "") {
+            const region = root.matchingRegion(savedTzId, savedKey, savedLabel)
+            if (region) {
+                const choices = root.regionChoices(region)
+                for (let i = 0; i < choices.length; ++i) {
+                    if (root.choiceMatchesSaved(choices[i], savedTzId, savedKey, savedLabel)) {
+                        // applyTimezoneChoice re-writes all keys, which is the
+                        // one-shot migration for pre-tzId settings.
+                        root.applyTimezoneChoice(choices[i], region)
+                        return
+                    }
+                }
+                root.applyTimezoneChoice(root.regionChoices(region)[0], region)
+                return
+            }
+            // The saved selection no longer maps to a table entry; keep it
+            // visible instead of silently replacing the user's choice.
+            const savedOffsetRaw = "" + settings.value("niyienTimezoneOffsetMinutes", "")
+            root.selectedRegion = null
+            root.selectedTimezone = {
+                key: savedKey || savedLabel || "System",
+                offsetMinutes: savedOffsetRaw === "" ? root.systemOffsetMinutes() : +savedOffsetRaw,
+                tzId: savedTzId
+            }
+            controller.device_timezone_id = savedTzId
+            return
+        }
+        // Fresh install: snap to a city whose current offset matches the
+        // system's, else follow the system timezone.
+        const match = root.cityMatchingSystemOffset()
+        if (match) {
+            root.applyTimezoneChoice(match.choice, match.region)
             return
         }
         root.selectedRegion = null
-        root.selectedTimezone = {
-            key: savedKey || savedLabel || "System",
-            offsetMinutes: offsetMinutes
-        }
+        root.selectedTimezone = { key: "System", offsetMinutes: root.systemOffsetMinutes(), tzId: "System" }
+        controller.device_timezone_id = "System"
     }
     function selectSystemTimezone(): void {
-        const offsetMinutes = root.systemOffsetMinutes()
-        const region = root.matchingRegion("", "", offsetMinutes)
-        if (region) {
-            root.selectRegion(region)
-            return
-        }
+        // Persist the special value instead of snapping to a city, so the
+        // selection keeps following the live system offset across DST.
         root.selectedRegion = null
-        root.selectedTimezone = {
-            key: "System",
-            offsetMinutes: offsetMinutes
-        }
+        root.selectedTimezone = { key: "System", offsetMinutes: root.systemOffsetMinutes(), tzId: "System" }
+        settings.setValue("niyienTimezoneTzId", "System")
         settings.setValue("niyienTimezoneKey", "System")
-        settings.setValue("niyienTimezoneOffsetMinutes", offsetMinutes)
+        settings.setValue("niyienTimezoneOffsetMinutes", root.systemOffsetMinutes())
         settings.setValue("niyienTimezoneLabel", "System")
+        controller.device_timezone_id = "System"
     }
     function refreshDeviceTime(): void {
         if (!controller.device_time || controller.device_time.length === 0) {
@@ -535,7 +597,7 @@ MenuItem {
                             enabled: controller.device_connected && !controller.device_time_sync_in_progress && controller.ota_state !== "updating"
                             onClicked: {
                                 root.clearDeviceSyncNotice()
-                                controller.sync_device_time(root.selectedTimezone.offsetMinutes)
+                                controller.sync_device_time(root.effectiveOffsetMinutes(root.selectedTimezone))
                             }
                         }
 
@@ -736,11 +798,11 @@ MenuItem {
                 ComboBox {
                     id: cityCombo
                     width: parent.width
-                    model: root.regionChoices(root.selectedRegion).map(choice => root.cityDisplayName(choice.key) + "  " + root.formatUtcOffset(choice.offsetMinutes))
+                    model: root.regionChoices(root.selectedRegion).map(choice => root.cityDisplayName(choice.key) + "  " + root.formatUtcOffset(root.effectiveOffsetMinutes(choice)))
                     currentIndex: {
                         const choices = root.regionChoices(root.selectedRegion)
                         for (let i = 0; i < choices.length; ++i) {
-                            if (choices[i].key === root.selectedTimezone.key && choices[i].offsetMinutes === root.selectedTimezone.offsetMinutes)
+                            if (choices[i].key === root.selectedTimezone.key)
                                 return i
                         }
                         return choices.length > 0 ? 0 : -1

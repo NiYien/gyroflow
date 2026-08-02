@@ -44,6 +44,7 @@ const ALLOW_EXACT: &[&str] = &[
     "niyienTimezoneKey",
     "niyienTimezoneLabel",
     "niyienTimezoneOffsetMinutes",
+    "niyienTimezoneTzId",
     "niyienTimezoneRegionX",
     "niyienTimezoneRegionY",
     // MountingPresetSelector card.

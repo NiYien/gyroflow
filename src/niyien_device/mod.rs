@@ -21,6 +21,7 @@ pub mod mobile_backend;
 pub mod ota;
 pub mod protocol;
 pub mod serial_backend;
+pub mod timezone;
 pub mod transport;
 pub mod update_checker;
 
