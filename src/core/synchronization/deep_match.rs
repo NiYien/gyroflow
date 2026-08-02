@@ -582,36 +582,15 @@ pub fn decide_posterior(
     drift_rate_ms_per_min: f64,
     drift_floor_ms: f64,
 ) -> DeepMatchVerdict {
-    use crate::synchronization::posterior::{
-        approx_window_log_likelihood, combine_windows_on_common_grid_dilated, posterior_decide, Prior,
-    };
+    use crate::synchronization::posterior::{posterior_decide, Prior};
     if curves.is_empty() {
         return DeepMatchVerdict::ProbeNotRun;
     }
     if curves.len() < 2 {
         return DeepMatchVerdict::TooFewWindows;
     }
-    // Per-window (grid, logL). The combine re-cleans (sort/dedup/drop
-    // non-finite) so an unsorted curve is fine.
-    let per_window: Vec<(Vec<f64>, Vec<f64>)> = curves
-        .iter()
-        .map(|c| {
-            let grid: Vec<f64> = c.curve.iter().map(|p| p.0).collect();
-            let logl: Vec<f64> = c
-                .curve
-                .iter()
-                .map(|p| approx_window_log_likelihood(p.1, c.cost_min, c.n_eff))
-                .collect();
-            (grid, logl)
-        })
-        .collect();
-    let views: Vec<(&[f64], &[f64])> = per_window.iter().map(|(g, l)| (g.as_slice(), l.as_slice())).collect();
-
     let t_d = drift_tolerance_ms(clip_duration_ms, drift_rate_ms_per_min, drift_floor_ms);
-    const GRID_STEP_MS: f64 = 5.0;
-    let Some((joint_grid, joint_logl)) =
-        combine_windows_on_common_grid_dilated(&views, GRID_STEP_MS, t_d / 2.0)
-    else {
+    let Some((joint_grid, joint_logl)) = build_joint_grid(curves, t_d) else {
         // No usable span overlap -> windows do not share an offset domain.
         return DeepMatchVerdict::Inconsistent { spread_ms: f64::INFINITY };
     };
@@ -637,6 +616,225 @@ pub fn decide_posterior(
         // Narrow but low-confidence = flat joint (noise match) -> advance.
         DeepMatchVerdict::WeakValley { worst_ratio: 1.0 - post.conf_posterior }
     }
+}
+
+/// Shared joint construction for `decide_posterior` and `posterior_peaks`:
+/// per-window nuisance-normalized log-likelihoods, drift-dilated by T(D)/2,
+/// log-added on a common 5ms grid. Returns None when the windows share no
+/// usable offset span.
+fn build_joint_grid(curves: &[DeepMatchWindowCurve], t_d_ms: f64) -> Option<(Vec<f64>, Vec<f64>)> {
+    use crate::synchronization::posterior::{
+        approx_window_log_likelihood, combine_windows_on_common_grid_dilated,
+    };
+    // Per-window (grid, logL). The combine re-cleans (sort/dedup/drop
+    // non-finite) so an unsorted curve is fine.
+    let per_window: Vec<(Vec<f64>, Vec<f64>)> = curves
+        .iter()
+        .map(|c| {
+            let grid: Vec<f64> = c.curve.iter().map(|p| p.0).collect();
+            let logl: Vec<f64> = c
+                .curve
+                .iter()
+                .map(|p| approx_window_log_likelihood(p.1, c.cost_min, c.n_eff))
+                .collect();
+            (grid, logl)
+        })
+        .collect();
+    let views: Vec<(&[f64], &[f64])> = per_window.iter().map(|(g, l)| (g.as_slice(), l.as_slice())).collect();
+    const GRID_STEP_MS: f64 = 5.0;
+    combine_windows_on_common_grid_dilated(&views, GRID_STEP_MS, t_d_ms / 2.0)
+}
+
+/// Top-K peaks of the joint posterior over the recorded window curves, by
+/// descending posterior weight, with non-maximum suppression (peaks closer
+/// than `min_separation_ms` to an already-kept stronger peak are dropped).
+/// Used as verification hypotheses; cross-window cost_min comparison MUST NOT
+/// be used instead (cost magnitude tracks motion strength, not match quality —
+/// scale normalization is owned by the nuisance conversion above).
+/// Returns an empty vec when no joint can be built or it is entirely flat.
+pub fn posterior_peaks(
+    curves: &[DeepMatchWindowCurve],
+    clip_duration_ms: f64,
+    drift_rate_ms_per_min: f64,
+    drift_floor_ms: f64,
+    k: usize,
+    min_separation_ms: f64,
+) -> Vec<f64> {
+    if curves.len() < 2 || k == 0 {
+        return Vec::new();
+    }
+    let t_d = drift_tolerance_ms(clip_duration_ms, drift_rate_ms_per_min, drift_floor_ms);
+    let Some((grid, logl)) = build_joint_grid(curves, t_d) else {
+        return Vec::new();
+    };
+    // Local maxima on the (already sorted, uniform) joint grid. Plateau runs
+    // keep their first point. Endpoints qualify against their single neighbor.
+    let mut peaks: Vec<(f64, f64)> = Vec::new(); // (offset_ms, logl)
+    let n = grid.len();
+    for i in 0..n {
+        if !logl[i].is_finite() {
+            continue;
+        }
+        let left_ok = i == 0 || !logl[i - 1].is_finite() || logl[i] > logl[i - 1];
+        let right_ok = i + 1 >= n || !logl[i + 1].is_finite() || logl[i] >= logl[i + 1];
+        if left_ok && right_ok {
+            peaks.push((grid[i], logl[i]));
+        }
+    }
+    if peaks.is_empty() {
+        return Vec::new();
+    }
+    // A (near-)flat joint has no evidence — a "peak" on it is numerical
+    // noise, not a hypothesis. Require the joint's log-likelihood dynamic
+    // range to exceed 0.5 (likelihood ratio ~1.65 between best and worst
+    // grid point); genuine valleys sit orders of magnitude above this.
+    // The same floor also kills plateau artifacts: flat far-field runs
+    // produce "peaks" (first-point-of-plateau rule) sitting exactly on the
+    // joint's floor — a real peak must rise above it.
+    let max_l = peaks.iter().map(|p| p.1).fold(f64::NEG_INFINITY, f64::max);
+    let min_l = logl.iter().copied().filter(|v| v.is_finite()).fold(f64::INFINITY, f64::min);
+    if !(max_l - min_l > 0.5) {
+        return Vec::new();
+    }
+    peaks.retain(|p| p.1 - min_l > 0.5);
+    peaks.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let mut kept: Vec<f64> = Vec::new();
+    for (pos, _) in peaks {
+        if kept.len() >= k {
+            break;
+        }
+        if kept.iter().all(|kp| (kp - pos).abs() >= min_separation_ms) {
+            kept.push(pos);
+        }
+    }
+    kept
+}
+
+/// Pick verification-window positions (video timestamps, ms) by scanning the
+/// loaded chunk gyro's angular-rate series for motion hotspots under the
+/// hypothesis `video_ts = gyro_ts + delta_ms` (same offset convention as
+/// `search_domain`: delta = video_ts − gyro_ts).
+///
+/// `gyro_rate_dps` is (gyro_ts_ms, |angular rate| in °/s), ascending, may be
+/// downsampled by the caller. Hotspot strength is the sliding mean over
+/// `window_ms`. Constraints: mapped position stays inside
+/// [window_ms/2, duration − window_ms/2]; ≥ `max(60s, duration/10)` away from
+/// every already-scanned center and every other pick. Picks are greedy by
+/// strength with a tail-coverage swap (if nothing lands past 70% of the clip
+/// but an eligible tail candidate exists, the weakest pick is replaced).
+/// Returns fewer than `n` (possibly none) when candidates run out.
+pub fn pick_verify_windows(
+    gyro_rate_dps: &[(f64, f64)],
+    delta_ms: f64,
+    video_duration_ms: f64,
+    scanned_centers_ms: &[f64],
+    n: usize,
+    window_ms: f64,
+    hot_min_dps: f64,
+) -> Vec<f64> {
+    if n == 0 || !video_duration_ms.is_finite() || video_duration_ms <= 0.0 || gyro_rate_dps.len() < 2 {
+        return Vec::new();
+    }
+    let half_win = (window_ms.max(0.0)) / 2.0;
+    let lo = half_win;
+    let hi = video_duration_ms - half_win;
+    if hi <= lo {
+        return Vec::new();
+    }
+    // Sliding-window mean via two pointers (series may be irregularly sampled).
+    let mut candidates: Vec<(f64, f64)> = Vec::new(); // (video_ts, strength)
+    let mut start = 0usize;
+    let mut sum = 0.0f64;
+    let mut count = 0usize;
+    let mut end = 0usize;
+    for i in 0..gyro_rate_dps.len() {
+        let center_ts = gyro_rate_dps[i].0;
+        while end < gyro_rate_dps.len() && gyro_rate_dps[end].0 <= center_ts + half_win {
+            sum += gyro_rate_dps[end].1;
+            count += 1;
+            end += 1;
+        }
+        while start < gyro_rate_dps.len() && gyro_rate_dps[start].0 < center_ts - half_win {
+            sum -= gyro_rate_dps[start].1;
+            count -= 1;
+            start += 1;
+        }
+        if count == 0 {
+            continue;
+        }
+        let strength = sum / count as f64;
+        if strength < hot_min_dps {
+            continue;
+        }
+        let video_ts = center_ts + delta_ms;
+        if video_ts >= lo && video_ts <= hi {
+            candidates.push((video_ts, strength));
+        }
+    }
+    if candidates.is_empty() {
+        return Vec::new();
+    }
+    candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    let spacing = (video_duration_ms / 10.0).max(60_000.0);
+    let ok = |pos: f64, picked: &[(f64, f64)]| {
+        scanned_centers_ms.iter().all(|c| (c - pos).abs() >= spacing)
+            && picked.iter().all(|(p, _)| (p - pos).abs() >= spacing)
+    };
+    let mut picked: Vec<(f64, f64)> = Vec::new();
+    for &(pos, s) in &candidates {
+        if picked.len() >= n {
+            break;
+        }
+        if ok(pos, &picked) {
+            picked.push((pos, s));
+        }
+    }
+    // Tail coverage: mutually-distant placement multiplies down the
+    // false-alignment probability; make sure the clip tail participates when
+    // it can.
+    let tail_from = 0.7 * video_duration_ms;
+    if picked.len() >= 2 && !picked.iter().any(|(p, _)| *p >= tail_from) {
+        if let Some(&(tp, ts)) = candidates.iter().find(|(pos, _)| {
+            *pos >= tail_from && {
+                let others: Vec<(f64, f64)> =
+                    picked[..picked.len() - 1].to_vec();
+                ok(*pos, &others)
+            }
+        }) {
+            let last = picked.len() - 1; // weakest kept pick (strength-ordered)
+            picked[last] = (tp, ts);
+        }
+    }
+    picked.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+    picked.into_iter().map(|(p, _)| p).collect()
+}
+
+/// Window-level verification gate: the verification window individually
+/// confirms the hypothesis iff its refined argmin lands within
+/// `align_tol_ms` of `delta_ms` AND its local curve is non-flat
+/// (`cost_min / p25(local domain) <= ratio_max`). Within-window ratio is
+/// scale-legitimate (single window); cross-window cost comparison is not.
+pub fn verify_window_aligned(
+    curve: &DeepMatchWindowCurve,
+    delta_ms: f64,
+    align_tol_ms: f64,
+    ratio_max: f64,
+) -> bool {
+    if !(curve.argmin_ms - delta_ms).abs().is_finite() || (curve.argmin_ms - delta_ms).abs() > align_tol_ms {
+        return false;
+    }
+    let mut costs: Vec<f64> = curve
+        .curve
+        .iter()
+        .map(|p| p.1)
+        .filter(|c| c.is_finite() && *c > 0.0)
+        .collect();
+    if costs.len() < 4 || !curve.cost_min.is_finite() || curve.cost_min <= 0.0 {
+        return false;
+    }
+    costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let p25 = costs[costs.len() / 4];
+    p25 > 0.0 && curve.cost_min / p25 <= ratio_max
 }
 
 fn env_f64(name: &str, default: f64) -> f64 {
@@ -817,6 +1015,91 @@ pub fn post_dense_ms() -> f64 {
 /// `time_per_syncpoint` written into the probe sync_settings (2.5s).
 pub fn per_window_ms() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_PER_WINDOW_MS", 2500.0)
+}
+
+/// Master switch for the posterior-peak verification pass
+/// (change deep-match-peak-verification). `GYROFLOW_DEEP_MATCH_VERIFY=0|off|
+/// false|no` disables it byte-for-byte; any other value (or unset) enables.
+/// OnceLock-cached; first resolve logs to `target="lifecycle"`.
+pub fn verify_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_DEEP_MATCH_VERIFY").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_DEEP_MATCH_VERIFY={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "deep_match_verify resolved={} source={}", v, source);
+        v
+    })
+}
+
+/// Confidence floor for the merged (base + verification) re-decision.
+/// Tighten-only: clamped to be no lower than the regular `post_conf_min()`.
+pub fn verify_conf_min() -> f64 {
+    let raw = env_f64("GYROFLOW_DEEP_MATCH_VERIFY_CONF_MIN", 0.6);
+    let floor = post_conf_min();
+    if raw < floor {
+        log::warn!(
+            target: "sync",
+            "[deep-match] GYROFLOW_DEEP_MATCH_VERIFY_CONF_MIN={} below regular conf gate {}, clamping (verification must not loosen)",
+            raw, floor
+        );
+        floor
+    } else {
+        raw
+    }
+}
+
+/// Number of posterior peaks tried as verification hypotheses (clamp 1-3).
+pub fn verify_top_k() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_VERIFY_TOP_K", 1.0) as usize).clamp(1, 3)
+}
+
+/// Target verification-window count per hypothesis (clamp 2-4).
+pub fn verify_windows() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_VERIFY_WINDOWS", 3.0) as usize).clamp(2, 4)
+}
+
+/// Minimum individually-aligned verification windows required to upgrade
+/// (window-level gate M; clamp 1-4).
+pub fn verify_min_aligned() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_VERIFY_MIN_ALIGNED", 2.0) as usize).clamp(1, 4)
+}
+
+/// Local scan radius around the hypothesis (T(D) is added on top by the
+/// orchestration) — a local scan, not a full-domain scan.
+pub fn verify_local_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_VERIFY_LOCAL_MS", 1500.0)
+}
+
+/// Window-level argmin alignment tolerance (T(D) is added on top).
+pub fn verify_align_tol_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_VERIFY_ALIGN_TOL_MS", 250.0)
+}
+
+/// Window-level non-flatness ceiling (cost_min / local p25) for verification
+/// windows.
+pub fn verify_ratio() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_VERIFY_RATIO", 0.6)
+}
+
+/// Gyro hotspot strength floor (°/s) for verification-window placement. Gyro
+/// rates are ground truth (unaffected by lens-matrix scaling), so this sits
+/// above the OF-side motion gate.
+pub fn verify_gyro_hot_min_dps() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_VERIFY_GYRO_HOT_MIN_DPS", 5.0)
 }
 
 #[cfg(test)]
@@ -1200,6 +1483,134 @@ mod tests {
             !matches!(v, DeepMatchVerdict::Accepted { .. }),
             "flat noise curves must not be accepted, got {v:?}"
         );
+    }
+
+    // ---- posterior-peak verification (deep-match-peak-verification) ----
+
+    #[test]
+    fn posterior_peaks_single_peak_and_kill_conditions() {
+        // Two agreeing windows -> one clear joint peak near -100.
+        let curves = vec![wc(0, 1000.0, -100.0, 75.0), wc(1, 2000.0, -98.0, 75.0)];
+        let peaks = posterior_peaks(&curves, 120_000.0, 2.0, 10.0, 3, 30.0);
+        assert_eq!(peaks.len(), 1, "one true valley must yield exactly one peak, got {peaks:?}");
+        assert!((peaks[0] + 100.0).abs() <= 15.0, "peak should sit near -100, got {}", peaks[0]);
+        // k=0 and <2 curves return empty.
+        assert!(posterior_peaks(&curves, 120_000.0, 2.0, 10.0, 0, 30.0).is_empty());
+        assert!(posterior_peaks(&curves[..1], 120_000.0, 2.0, 10.0, 3, 30.0).is_empty());
+    }
+
+    #[test]
+    fn posterior_peaks_two_separated_peaks_ordered_by_mass() {
+        // Short clip (T(D)=10ms): 80ms-apart window peaks stay separated in
+        // the joint -> two local maxima. n_eff asymmetry makes the -140 peak
+        // strictly stronger, so it must come first (descending posterior).
+        let curves = vec![wc(0, 1_000.0, -140.0, 150.0), wc(1, 59_000.0, -60.0, 75.0)];
+        let peaks = posterior_peaks(&curves, 60_000.0, 2.0, 10.0, 2, 30.0);
+        assert_eq!(peaks.len(), 2, "expected both separated peaks, got {peaks:?}");
+        assert!((peaks[0] + 140.0).abs() <= 15.0, "stronger peak first, got {peaks:?}");
+        assert!((peaks[1] + 60.0).abs() <= 15.0, "weaker peak second, got {peaks:?}");
+        // k=1 keeps only the strongest.
+        let top1 = posterior_peaks(&curves, 60_000.0, 2.0, 10.0, 1, 30.0);
+        assert_eq!(top1.len(), 1);
+        assert!((top1[0] + 140.0).abs() <= 15.0);
+    }
+
+    #[test]
+    fn posterior_peaks_flat_noise_returns_empty() {
+        let curves = vec![flat_wc(0, 1000.0), flat_wc(1, 2000.0)];
+        assert!(
+            posterior_peaks(&curves, 120_000.0, 2.0, 10.0, 3, 30.0).is_empty(),
+            "flat joint must produce no hypothesis"
+        );
+    }
+
+    #[test]
+    fn posterior_peaks_nms_suppresses_same_peak_resamples() {
+        // Two windows whose valleys are 5ms apart merge into one joint peak
+        // region; with min_separation=30ms only one hypothesis may survive.
+        let curves = vec![wc(0, 1000.0, -100.0, 75.0), wc(1, 2000.0, -95.0, 75.0)];
+        let peaks = posterior_peaks(&curves, 120_000.0, 2.0, 10.0, 3, 30.0);
+        assert_eq!(peaks.len(), 1, "NMS must keep a single peak, got {peaks:?}");
+    }
+
+    fn gyro_series_with_hotspots(hotspots: &[(f64, f64)]) -> Vec<(f64, f64)> {
+        // 0..700s at 1Hz, 1°/s background, boxcar hotspots of ±5s.
+        (0..=700)
+            .map(|k| {
+                let ts = k as f64 * 1000.0;
+                let dps = hotspots
+                    .iter()
+                    .find(|(c, _)| (ts - c).abs() <= 5_000.0)
+                    .map(|(_, s)| *s)
+                    .unwrap_or(1.0);
+                (ts, dps)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pick_verify_windows_maps_hotspots_and_orders_ascending() {
+        // delta = video_ts - gyro_ts = -100s: gyro hotspot at 200s -> video 100s.
+        let gyro = gyro_series_with_hotspots(&[(200_000.0, 30.0), (400_000.0, 25.0), (600_000.0, 20.0)]);
+        let picks = pick_verify_windows(&gyro, -100_000.0, 600_000.0, &[], 3, 2_500.0, 5.0);
+        assert_eq!(picks.len(), 3, "three hotspots should yield three windows, got {picks:?}");
+        assert!((picks[0] - 100_000.0).abs() <= 6_000.0, "got {picks:?}");
+        assert!((picks[1] - 300_000.0).abs() <= 6_000.0, "got {picks:?}");
+        assert!((picks[2] - 500_000.0).abs() <= 6_000.0, "got {picks:?}");
+        assert!(picks.windows(2).all(|w| w[0] < w[1]), "ascending order required");
+    }
+
+    #[test]
+    fn pick_verify_windows_weak_gyro_returns_empty() {
+        // Background 1°/s everywhere, floor 5°/s -> nothing qualifies.
+        let gyro = gyro_series_with_hotspots(&[]);
+        assert!(pick_verify_windows(&gyro, -100_000.0, 600_000.0, &[], 3, 2_500.0, 5.0).is_empty());
+    }
+
+    #[test]
+    fn pick_verify_windows_respects_spacing_and_scanned_centers() {
+        // Two hotspots 20s apart (< spacing 60s) -> only the stronger one kept.
+        let gyro = gyro_series_with_hotspots(&[(200_000.0, 30.0), (220_000.0, 25.0)]);
+        let picks = pick_verify_windows(&gyro, -100_000.0, 600_000.0, &[], 3, 2_500.0, 5.0);
+        assert_eq!(picks.len(), 1, "spacing must collapse near hotspots, got {picks:?}");
+        assert!((picks[0] - 100_000.0).abs() <= 6_000.0);
+        // A scanned center on top of the mapped hotspot excludes it entirely.
+        let picks2 = pick_verify_windows(&gyro, -100_000.0, 600_000.0, &[100_000.0], 3, 2_500.0, 5.0);
+        assert!(picks2.is_empty(), "scanned-center avoidance failed: {picks2:?}");
+    }
+
+    #[test]
+    fn pick_verify_windows_covers_the_tail_when_possible() {
+        // Strong hotspots early, a weaker one in the tail (>70% of 600s = 420s).
+        // n=2 greedy would pick the two strong early ones; tail coverage must
+        // swap the weakest pick for the tail candidate.
+        let gyro = gyro_series_with_hotspots(&[(150_000.0, 30.0), (300_000.0, 28.0), (620_000.0, 10.0)]);
+        let picks = pick_verify_windows(&gyro, -100_000.0, 600_000.0, &[], 2, 2_500.0, 5.0);
+        assert_eq!(picks.len(), 2);
+        assert!(picks.iter().any(|p| *p >= 420_000.0), "tail must be covered, got {picks:?}");
+    }
+
+    #[test]
+    fn pick_verify_windows_clamps_to_video_domain() {
+        // Hotspot mapping outside [half_win, duration-half_win] is dropped.
+        let gyro = gyro_series_with_hotspots(&[(50_000.0, 30.0)]);
+        // delta -100s -> video -50s: out of domain -> empty.
+        assert!(pick_verify_windows(&gyro, -100_000.0, 600_000.0, &[], 3, 2_500.0, 5.0).is_empty());
+    }
+
+    #[test]
+    fn verify_window_aligned_gates() {
+        // Aligned deep valley (wc: cost_min 1.0 at peak, plateau ~2.0 -> ratio ~0.5).
+        let good = wc(100, 100_000.0, -19_800.0, 58.0);
+        assert!(verify_window_aligned(&good, -19_855.0, 250.0, 0.6));
+        // Misplaced valley: argmin 400ms away from the hypothesis.
+        let misplaced = wc(101, 200_000.0, -19_400.0, 58.0);
+        assert!(!verify_window_aligned(&misplaced, -19_855.0, 250.0, 0.6));
+        // Flat local curve: ratio ~1.0 fails the non-flatness gate even when
+        // the argmin happens to sit on the hypothesis.
+        let mut flat = flat_wc(102, 300_000.0);
+        flat.argmin_ms = -19_855.0;
+        assert!(!verify_window_aligned(&flat, -19_855.0, 250.0, 0.6));
     }
 
     // ---- pool-wide prelocation (deep-match-gyro-pool-prelocate) ----

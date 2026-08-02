@@ -698,6 +698,31 @@ struct DeepMatchState {
     // Pool runs advance to the next candidate on a broken gyro file instead
     // of terminating (one bad file must not kill the pool search).
     pool_run: bool,
+    // Posterior-peak verification pass (deep-match-peak-verification):
+    // present while a verification probe is in flight for the current chunk.
+    verify: Option<DeepMatchVerify>,
+}
+
+// One in-flight verification pass: local-scan probe windows placed at gyro
+// hotspots under a posterior-peak hypothesis. Upgrade is one-way
+// (Inconsistent/WeakValley -> Accepted) and strictly gated; on any failure
+// the ORIGINAL verdict drives the unchanged chunk orchestration.
+#[derive(Clone)]
+struct DeepMatchVerify {
+    // Hypothesis queue (posterior peaks, descending quality) and cursor.
+    peaks: Vec<f64>,
+    peak_idx: usize,
+    // Current hypothesis offset (== peaks[peak_idx], ms).
+    delta_ms: f64,
+    // Curves recorded by the chunk's regular probe; merged with the
+    // verification curves for the strict re-decision.
+    base_curves: Vec<gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve>,
+    // Verdict the chunk probe produced; consumed unchanged when
+    // verification fails or is exhausted.
+    original_verdict: gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    // Video-domain centers of the already-scanned probe windows (avoided by
+    // verification-window placement).
+    scanned_centers_ms: Vec<f64>,
 }
 
 #[derive(Clone)]
@@ -13244,6 +13269,7 @@ impl RenderQueue {
             probe_plan: Vec::new(),
             current_probe: 0,
             pool_run: false,
+            verify: None,
         }
     }
 
@@ -13309,6 +13335,13 @@ impl RenderQueue {
         }
 
         if !cancelled {
+            // A verification probe reports back through the same divert; its
+            // curves are the verification windows, not a chunk scan — hand
+            // them to the strict re-decision instead of the verdict logic.
+            if self.deep_match_pending.get(&job_id).map(|s| s.verify.is_some()).unwrap_or(false) {
+                self.finish_deep_match_verify(job_id, stab, curves);
+                return;
+            }
             // Posterior owns the decision when enabled AND curves were captured
             // (a real posterior probe records curves, never legacy stats). The
             // `!curves.is_empty()` guard falls back to the legacy double-gate
@@ -13342,45 +13375,20 @@ impl RenderQueue {
                 current_probe + 1, probe_count,
                 current_chunk + 1, chunk_count, job_id, offsets_ms.len(), offsets_ms, verdict
             );
-            // "No hit in this chunk" verdicts advance the scan — next chunk
-            // within the probe, then next ProbeTask in the plan; Accepted,
-            // TooFewWindows (video-side motion gate, independent of the gyro
-            // chunk AND of the gyro candidate) and ProbeNotRun (assembly
-            // failure, reproducible on every chunk) terminate the whole plan
-            // immediately.
-            let advanceable = matches!(
+            // Posterior-peak verification (deep-match-peak-verification):
+            // before the orchestration consumes an advance verdict, give the
+            // chunk one hypothesis-driven verification pass. A launched pass
+            // returns here through the verify branch above; failure falls
+            // back to consuming the ORIGINAL verdict below.
+            if matches!(
                 verdict,
                 deep_match::DeepMatchVerdict::Inconsistent { .. }
                     | deep_match::DeepMatchVerdict::WeakValley { .. }
-            );
-            if advanceable {
-                if current_chunk + 1 < chunk_count {
-                    // Freeze the bar at the next chunk's base while it loads.
-                    if !self.is_auto_probe_run(job_id) {
-                        let within_probe = (current_chunk + 1) as f64 / chunk_count.max(1) as f64;
-                        self.deep_match_progress(
-                            job_id,
-                            (current_probe as f64 + within_probe) / probe_count as f64,
-                        );
-                    }
-                    self.advance_deep_match_chunk(job_id);
-                    return;
-                }
-                if current_probe + 1 < probe_count {
-                    // Probe exhausted — freeze at the next probe's base and
-                    // move on to the next candidate.
-                    if !self.is_auto_probe_run(job_id) {
-                        self.deep_match_progress(
-                            job_id,
-                            (current_probe + 1) as f64 / probe_count as f64,
-                        );
-                    }
-                    if self.advance_deep_match_probe(job_id) {
-                        return;
-                    }
-                }
+            ) && self.try_start_deep_match_verification(job_id, &stab, &curves, &verdict)
+            {
+                return;
             }
-            self.terminate_deep_match(job_id, stab, verdict);
+            self.consume_deep_match_verdict(job_id, stab, verdict);
             return;
         }
 
@@ -13401,6 +13409,339 @@ impl RenderQueue {
         }
         ::log::info!(target: "sync", "[deep-match] cancelled: job={}", job_id);
         self.finish_deep_match_run(job_id, false, QString::from("cancelled"), 0.0);
+    }
+
+    // Consumes a chunk verdict through the unchanged orchestration matrix:
+    // Inconsistent/WeakValley advance (next chunk, then next ProbeTask),
+    // everything else terminates. Extracted from finish_deep_match so the
+    // verification pass can consume the ORIGINAL verdict after a failed
+    // upgrade attempt without duplicating the advance logic.
+    fn consume_deep_match_verdict(
+        &mut self,
+        job_id: u32,
+        stab: Option<Arc<StabilizationManager>>,
+        verdict: gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let Some((current_chunk, chunk_count, current_probe, probe_count)) = self
+            .deep_match_pending
+            .get(&job_id)
+            .map(|s| (
+                s.current_chunk,
+                s.chunk_plan.len(),
+                s.current_probe,
+                s.probe_plan.len().max(1),
+            ))
+        else {
+            return;
+        };
+        // "No hit in this chunk" verdicts advance the scan — next chunk
+        // within the probe, then next ProbeTask in the plan; Accepted,
+        // TooFewWindows (video-side motion gate, independent of the gyro
+        // chunk AND of the gyro candidate) and ProbeNotRun (assembly
+        // failure, reproducible on every chunk) terminate the whole plan
+        // immediately.
+        let advanceable = matches!(
+            verdict,
+            deep_match::DeepMatchVerdict::Inconsistent { .. }
+                | deep_match::DeepMatchVerdict::WeakValley { .. }
+        );
+        if advanceable {
+            if current_chunk + 1 < chunk_count {
+                // Freeze the bar at the next chunk's base while it loads.
+                if !self.is_auto_probe_run(job_id) {
+                    let within_probe = (current_chunk + 1) as f64 / chunk_count.max(1) as f64;
+                    self.deep_match_progress(
+                        job_id,
+                        (current_probe as f64 + within_probe) / probe_count as f64,
+                    );
+                }
+                self.advance_deep_match_chunk(job_id);
+                return;
+            }
+            if current_probe + 1 < probe_count {
+                // Probe exhausted — freeze at the next probe's base and
+                // move on to the next candidate.
+                if !self.is_auto_probe_run(job_id) {
+                    self.deep_match_progress(
+                        job_id,
+                        (current_probe + 1) as f64 / probe_count as f64,
+                    );
+                }
+                if self.advance_deep_match_probe(job_id) {
+                    return;
+                }
+            }
+        }
+        self.terminate_deep_match(job_id, stab, verdict);
+    }
+
+    // Attempts to start a posterior-peak verification pass for the chunk
+    // whose verdict was Inconsistent/WeakValley. Returns true when a
+    // verification probe was launched (the caller must return and wait for
+    // the divert); false when verification is disabled or not applicable
+    // (the caller consumes the original verdict unchanged).
+    fn try_start_deep_match_verification(
+        &mut self,
+        job_id: u32,
+        stab: &Option<Arc<StabilizationManager>>,
+        curves: &[gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve],
+        verdict: &gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    ) -> bool {
+        use gyroflow_core::synchronization::deep_match;
+        if !deep_match::verify_enabled() {
+            ::log::info!(target: "sync", "[deep-match] verify skipped: reason=disabled job={}", job_id);
+            return false;
+        }
+        // The auto-probe is a headless bootstrap rescue inside a live batch —
+        // keep its latency profile unchanged.
+        if self.is_auto_probe_run(job_id) {
+            ::log::info!(target: "sync", "[deep-match] verify skipped: reason=auto_probe job={}", job_id);
+            return false;
+        }
+        let Some(stab_arc) = stab.as_ref() else { return false };
+        if !deep_match::posterior_enabled() || curves.is_empty() {
+            return false;
+        }
+        let clip_ms = stab_arc.params.read().duration_ms;
+        let t_d = deep_match::drift_tolerance_ms(
+            clip_ms,
+            deep_match::drift_rate_ms_per_min(),
+            deep_match::drift_floor_ms(),
+        );
+        let min_sep = 2.0 * (deep_match::verify_local_ms() + t_d);
+        let peaks = deep_match::posterior_peaks(
+            curves,
+            clip_ms,
+            deep_match::drift_rate_ms_per_min(),
+            deep_match::drift_floor_ms(),
+            deep_match::verify_top_k(),
+            min_sep,
+        );
+        if peaks.is_empty() {
+            ::log::info!(target: "sync", "[deep-match] verify skipped: reason=no_peaks job={}", job_id);
+            return false;
+        }
+        let scanned_centers: Vec<f64> = curves.iter().map(|c| c.t_center_ms).collect();
+        // Find the first hypothesis with enough placeable hotspot windows.
+        for (idx, &delta) in peaks.iter().enumerate() {
+            let windows = Self::pick_deep_match_verify_windows(stab_arc, delta, clip_ms, &scanned_centers);
+            if windows.len() >= deep_match::verify_min_aligned() {
+                if let Some(state) = self.deep_match_pending.get_mut(&job_id) {
+                    state.verify = Some(DeepMatchVerify {
+                        peaks: peaks.clone(),
+                        peak_idx: idx,
+                        delta_ms: delta,
+                        base_curves: curves.to_vec(),
+                        original_verdict: verdict.clone(),
+                        scanned_centers_ms: scanned_centers.clone(),
+                    });
+                } else {
+                    return false;
+                }
+                self.launch_deep_match_verify_probe(job_id, stab_arc, delta, &windows, idx, peaks.len(), t_d);
+                return true;
+            }
+        }
+        ::log::info!(target: "sync", "[deep-match] verify skipped: reason=no_hotspots job={}", job_id);
+        false
+    }
+
+    // Downsampled |angular rate| series (°/s) of the currently loaded probe
+    // gyro chunk, then hotspot-based verification-window placement under the
+    // hypothesis delta. Bucketed max (100ms) keeps short spikes visible.
+    fn pick_deep_match_verify_windows(
+        stab: &StabilizationManager,
+        delta_ms: f64,
+        clip_ms: f64,
+        scanned_centers_ms: &[f64],
+    ) -> Vec<f64> {
+        use gyroflow_core::synchronization::deep_match;
+        let rate: Vec<(f64, f64)> = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            let raw = gyro.raw_imu(&md);
+            let mut out: Vec<(f64, f64)> = Vec::with_capacity(raw.len() / 32 + 1);
+            let mut bucket_ts = f64::NEG_INFINITY;
+            let mut bucket_max = 0.0f64;
+            for s in raw.iter() {
+                let Some(g) = s.gyro else { continue };
+                let mag = (g[0] * g[0] + g[1] * g[1] + g[2] * g[2]).sqrt();
+                if s.timestamp_ms - bucket_ts >= 100.0 {
+                    if bucket_ts.is_finite() {
+                        out.push((bucket_ts, bucket_max));
+                    }
+                    bucket_ts = s.timestamp_ms;
+                    bucket_max = mag;
+                } else if mag > bucket_max {
+                    bucket_max = mag;
+                }
+            }
+            if bucket_ts.is_finite() {
+                out.push((bucket_ts, bucket_max));
+            }
+            out
+        };
+        deep_match::pick_verify_windows(
+            &rate,
+            delta_ms,
+            clip_ms,
+            scanned_centers_ms,
+            deep_match::verify_windows(),
+            deep_match::per_window_ms(),
+            deep_match::verify_gyro_hot_min_dps(),
+        )
+    }
+
+    // Launches the local-scan verification probe: one-shot sync params
+    // centered on the hypothesis with a ±(local + T(D)) search radius,
+    // re-armed collector, same sync-only launch path as the chunk probe.
+    fn launch_deep_match_verify_probe(
+        &mut self,
+        job_id: u32,
+        stab: &Arc<StabilizationManager>,
+        delta_ms: f64,
+        windows: &[f64],
+        peak_idx: usize,
+        peak_total: usize,
+        t_d: f64,
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let search_ms = deep_match::verify_local_ms() + t_d;
+        let pattern: Vec<String> = windows.iter().map(|w| format!("{w:.0}ms")).collect();
+        ::log::info!(
+            target: "sync",
+            "[deep-match] verify start: job={} peak={:.1}ms (k={}/{}) windows={:?} local=±{:.0}ms",
+            job_id, delta_ms, peak_idx + 1, peak_total, pattern, search_ms
+        );
+        {
+            let mut lens = stab.lens.write();
+            lens.sync_settings = Some(serde_json::json!({
+                "initial_offset": delta_ms / 1000.0,
+                "search_size": search_ms / 1000.0,
+                "calc_initial_fast": false,
+                "max_sync_points": windows.len(),
+                "every_nth_frame": 1,
+                "time_per_syncpoint": 2.5,
+                "of_method": 2,
+                "offset_method": 0, // essential matrix only — never touches fusion
+                "pose_method": 0,
+                "auto_sync_points": false,
+                "custom_sync_pattern": pattern,
+                "do_autosync": true,
+            }));
+        }
+        update_model!(self, job_id, itm {
+            itm.status = JobStatus::Queued;
+            itm.current_frame = 0;
+            itm.processing_progress = 0.0;
+            itm.error_string = QString::default();
+        });
+        // Scan every verification window (no top-K-by-motion truncation).
+        deep_match::arm(windows.len());
+        self.export_project = 2;
+        self.batch_sync_job_ids.insert(job_id);
+        self.expected_batch_sync_job_ids = std::iter::once(job_id).collect();
+        self.completed_batch_sync_job_ids.clear();
+        self.render_job(job_id);
+    }
+
+    // Strict re-decision after a verification probe reports back. Upgrade is
+    // one-way and requires BOTH the merged joint passing the raised conf
+    // floor with the un-widened ci95 gate AND >= min_aligned verification
+    // windows individually aligned at the hypothesis.
+    fn finish_deep_match_verify(
+        &mut self,
+        job_id: u32,
+        stab: Option<Arc<StabilizationManager>>,
+        mut verify_curves: Vec<gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve>,
+    ) {
+        use gyroflow_core::synchronization::deep_match;
+        let Some(vs) = self
+            .deep_match_pending
+            .get_mut(&job_id)
+            .and_then(|s| s.verify.take())
+        else {
+            return;
+        };
+        // Verification curves live in their own range_idx namespace (>= 100)
+        // so logs and merged decisions stay distinguishable from chunk windows.
+        for c in verify_curves.iter_mut() {
+            c.range_idx += 100;
+        }
+        let clip_ms = stab.as_ref().map(|s| s.params.read().duration_ms).unwrap_or(0.0);
+        let t_d = deep_match::drift_tolerance_ms(
+            clip_ms,
+            deep_match::drift_rate_ms_per_min(),
+            deep_match::drift_floor_ms(),
+        );
+        let align_tol = deep_match::verify_align_tol_ms() + t_d;
+        let ratio_max = deep_match::verify_ratio();
+        let mut aligned = 0usize;
+        for c in &verify_curves {
+            let ok = deep_match::verify_window_aligned(c, vs.delta_ms, align_tol, ratio_max);
+            let ratio = {
+                let mut costs: Vec<f64> = c.curve.iter().map(|p| p.1).filter(|v| v.is_finite() && *v > 0.0).collect();
+                costs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                if costs.len() >= 4 { c.cost_min / costs[costs.len() / 4] } else { f64::NAN }
+            };
+            if ok {
+                aligned += 1;
+            }
+            ::log::info!(
+                target: "sync",
+                "[deep-match] verify window {} offset={:.1}ms cost_min={:.2} ratio={:.3} aligned={}",
+                c.range_idx, c.argmin_ms, c.cost_min, ratio, ok
+            );
+        }
+        let mut merged = vs.base_curves.clone();
+        merged.extend(verify_curves.iter().cloned());
+        let merged_verdict = deep_match::decide_posterior(
+            &merged,
+            clip_ms,
+            deep_match::verify_conf_min(),
+            deep_match::post_ci95_base_ms(),
+            deep_match::drift_rate_ms_per_min(),
+            deep_match::drift_floor_ms(),
+        );
+        let min_aligned = deep_match::verify_min_aligned();
+        let (pass, outcome) = match &merged_verdict {
+            deep_match::DeepMatchVerdict::Accepted { .. } if aligned >= min_aligned => (true, "pass"),
+            deep_match::DeepMatchVerdict::Accepted { .. } => (false, "fail_aligned"),
+            deep_match::DeepMatchVerdict::Inconsistent { .. } => (false, "fail_ci95"),
+            _ => (false, "fail_conf"),
+        };
+        ::log::info!(
+            target: "sync",
+            "[deep-match] verify posterior: job={} peak={:.1}ms aligned={}/{} verdict={}",
+            job_id, vs.delta_ms, aligned, verify_curves.len(), outcome
+        );
+        if pass {
+            self.terminate_deep_match(job_id, stab, merged_verdict);
+            return;
+        }
+        // Next hypothesis in the queue, if any peak still has placeable
+        // hotspot windows; otherwise fall back to the ORIGINAL verdict.
+        if let Some(stab_arc) = stab.as_ref() {
+            for idx in (vs.peak_idx + 1)..vs.peaks.len() {
+                let delta = vs.peaks[idx];
+                let windows =
+                    Self::pick_deep_match_verify_windows(stab_arc, delta, clip_ms, &vs.scanned_centers_ms);
+                if windows.len() >= min_aligned {
+                    let total = vs.peaks.len();
+                    if let Some(state) = self.deep_match_pending.get_mut(&job_id) {
+                        state.verify = Some(DeepMatchVerify {
+                            peak_idx: idx,
+                            delta_ms: delta,
+                            ..vs.clone()
+                        });
+                    }
+                    self.launch_deep_match_verify_probe(job_id, stab_arc, delta, &windows, idx, total, t_d);
+                    return;
+                }
+            }
+        }
+        self.consume_deep_match_verdict(job_id, stab, vs.original_verdict.clone());
     }
 
     // Terminal resolution of a deep match run: restores the snapshotted
@@ -17948,6 +18289,103 @@ mod tests {
             let idx = queue.jobs[&job_id].queue_index;
             assert_eq!(queue.queue.borrow()[idx].status, JobStatus::Queued);
         }
+    }
+
+    // ---- posterior-peak verification (deep-match-peak-verification) ----
+
+    // Synthetic essential cost curve over [-2000, 2000] @25ms: min cost 1.0
+    // at `peak`, plateau ~2.0 elsewhere (sigma ~13ms) — same shape as the
+    // deep_match module's posterior tests.
+    fn dm_curve(
+        idx: usize,
+        t_center: f64,
+        peak: f64,
+    ) -> gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve {
+        let curve: Vec<(f64, f64)> = (0..=160)
+            .map(|k| {
+                let off = -2000.0 + k as f64 * 25.0;
+                let d = (off - peak) / 13.0;
+                (off, 1.0 + (1.0 - (-0.5 * d * d).exp()))
+            })
+            .collect();
+        gyroflow_core::synchronization::deep_match::DeepMatchWindowCurve {
+            range_idx: idx,
+            t_center_ms: t_center,
+            argmin_ms: peak,
+            cost_min: 1.0,
+            n_eff: 75.0,
+            curve,
+        }
+    }
+
+    fn verify_pending_queue(
+        original_verdict: gyroflow_core::synchronization::deep_match::DeepMatchVerdict,
+    ) -> (RenderQueue, Arc<StabilizationManager>) {
+        let mut queue = RenderQueue::default();
+        add_eta_job(&mut queue, 1, 0);
+        queue.status = QString::from("stopped");
+        let stab = queue.jobs[&1].stab.clone().unwrap();
+        let mut state = RenderQueue::snapshot_deep_match_state(&queue.jobs[&1], &stab, 0, None);
+        state.chunk_plan = vec![(0.0, 10_000.0)];
+        // Base evidence: one true valley at -100ms, one false valley at
+        // -1500ms — the DSC_7734 shape (joint argmax on the true peak, ci95
+        // blown wide by the false-valley window).
+        state.verify = Some(DeepMatchVerify {
+            peaks: vec![-100.0],
+            peak_idx: 0,
+            delta_ms: -100.0,
+            base_curves: vec![dm_curve(0, 1_000.0, -100.0), dm_curve(1, 3_000.0, -1_500.0)],
+            original_verdict,
+            scanned_centers_ms: vec![1_000.0, 3_000.0],
+        });
+        queue.deep_match_pending.insert(1, state);
+        (queue, stab)
+    }
+
+    #[test]
+    fn verify_pass_upgrades_polluted_true_peak_to_accepted() {
+        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+        let (mut queue, stab) = verify_pending_queue(DeepMatchVerdict::Inconsistent { spread_ms: 1_400.0 });
+        // Two verification windows individually aligned at the hypothesis:
+        // merged joint = 3 windows at -100 vs 1 at -1500 → sharp Accepted,
+        // window gate 2/2 aligned → upgrade.
+        let vc = vec![dm_curve(0, 5_000.0, -100.0), dm_curve(1, 8_000.0, -102.0)];
+        queue.finish_deep_match_verify(1, Some(stab), vc);
+        assert!(queue.deep_match_pending.is_empty(), "run must terminate");
+        let res = queue.deep_match_results.get(&1).expect("upgrade must record the deep match");
+        assert!((res.offset_ms + 100.0).abs() <= 15.0, "accepted offset near the hypothesis, got {}", res.offset_ms);
+    }
+
+    #[test]
+    fn verify_fail_consumes_original_verdict_and_never_upgrades() {
+        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+        let (mut queue, stab) = verify_pending_queue(DeepMatchVerdict::Inconsistent { spread_ms: 1_400.0 });
+        let original_additional = queue.jobs[&1].additional_data.clone();
+        // Misaligned verification windows (random argmins far from -100):
+        // window gate 0/2, merged joint stays wide → fail → the ORIGINAL
+        // verdict drives the unchanged termination (single chunk, single
+        // probe → not_in_range rollback).
+        let vc = vec![dm_curve(0, 5_000.0, -800.0), dm_curve(1, 8_000.0, -1_200.0)];
+        queue.finish_deep_match_verify(1, Some(stab.clone()), vc);
+        assert!(queue.deep_match_pending.is_empty(), "run must terminate on the original verdict");
+        assert!(queue.deep_match_results.is_empty(), "failed verification must never upgrade");
+        // One-shot: the verify state was consumed with the run; rollback
+        // restored the pre-probe stores.
+        assert_eq!(queue.jobs[&1].additional_data, original_additional);
+        assert!(stab.gyro.read().get_offsets().is_empty());
+    }
+
+    #[test]
+    fn verify_single_lucky_window_fails_the_aligned_gate() {
+        use gyroflow_core::synchronization::deep_match::DeepMatchVerdict;
+        let (mut queue, stab) = verify_pending_queue(DeepMatchVerdict::Inconsistent { spread_ms: 1_400.0 });
+        // One aligned window + one misaligned: the merged joint may sharpen
+        // (3 windows near -100) but the window-level M=2 gate must refuse
+        // the upgrade (fail_aligned) — a single lucky window cannot carry it.
+        let vc = vec![dm_curve(0, 5_000.0, -100.0), dm_curve(1, 8_000.0, -1_200.0)];
+        queue.finish_deep_match_verify(1, Some(stab), vc);
+        assert!(queue.deep_match_pending.is_empty());
+        assert!(queue.deep_match_results.is_empty(), "M-of-N aligned gate must block the upgrade");
     }
 
     #[test]
