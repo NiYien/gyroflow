@@ -2818,6 +2818,24 @@ Rectangle {
     }
 
     function getReadableError(text: string): string {
+        // Marker-based short causes (render-queue-error-messages spec): Rust sends
+        // machine-readable markers; the full diagnostics are already in the log file.
+        if (text.startsWith("render_failed:")) {
+            return qsTr("Rendering failed: %1").arg(text.substring(14).trim());
+        }
+        switch (text) {
+            case "gyro_export_failed":        return qsTr("Failed to export gyro data.");
+            case "stmap_write_failed":        return qsTr("Failed to write the STMAP file.");
+            case "project_export_failed":     return qsTr("Failed to export the project file.");
+            case "project_load_failed":       return qsTr("Failed to load the project file.");
+            case "thumb_failed":              return qsTr("Failed to generate the video thumbnail.");
+            case "sync_decode_failed":        return qsTr("Video decoding failed, cannot synchronize.");
+            case "sync_params_invalid":       return qsTr("Invalid synchronization parameters.");
+            case "restore_state_failed":      return qsTr("Failed to restore the job state.");
+            case "video_read_failed":         return qsTr("Unable to read the video file.");
+            case "lens_profile_load_failed":  return qsTr("Failed to load the lens profile.");
+            case "plugin_only_direct_export": return qsTr("This format cannot be exported directly. Use \"Stabilize\" with the video editor plugins instead.");
+        }
         // macOS TCC denied output folder. Pure text for the inline queue-item label;
         // the modal is raised separately in RenderQueue.onError (avoid double dialogs).
         if (text.startsWith("access_denied:")) {
@@ -2844,8 +2862,8 @@ Rectangle {
                 return "";
             }
 
-            if (text.includes("Permission denied")) return qsTr("Permission denied. Unable to create or write file.\nChange the output path or run the program as administrator.\nMake sure you have write permissions to the target directory and make sure target file is not used by any other application.");
-            if (text.includes("required nvenc API version")) return qsTr("NVIDIA GPU driver is too old, GPU encoding will not work for this format.\nUpdate your NVIDIA drivers to the newest version: %1.\nIf the issue is still present after driver update, your GPU probably doesn't support GPU encoding with this format. Disable GPU encoding in this case.").arg("<a href=\"https://www.nvidia.com/download/index.aspx\">https://www.nvidia.com/download/index.aspx</a>");
+            if (text.includes("Permission denied")) return qsTr("Cannot write the output file: permission denied. Change the output path, or make sure the file is not in use by another application.");
+            if (text.includes("required nvenc API version")) return qsTr("NVIDIA driver is too old to GPU-encode this video. Update the GPU driver and try again.");
 
             text = text.replace(/ @ [A-F0-9]{6,}\]/g, "]"); // Remove ffmpeg function addresses
 
@@ -2854,16 +2872,16 @@ Rectangle {
         }
         if (text.startsWith("convert_format:")) {
             const format = text.split(":")[1].split(";")[0];
-            return qsTr("GPU accelerated encoder doesn't support this pixel format (%1).\nDo you want to convert to a different supported pixel format or keep the original one and render on the CPU?").arg("<b>" + format + "</b>");
+            return qsTr("GPU encoder doesn't support the pixel format %1.").arg("<b>" + format + "</b>");
         }
         if (text.startsWith("file_exists:")) {
             return qsTr("Output file already exists, do you want to overwrite it?");
         }
         if (text.startsWith("uses_cpu")) {
-            return qsTr("GPU encoder failed to initialize and rendering is done on the CPU, which is much slower.\nIf you have a modern device, latest GPU drivers and you think this shouldn't happen, report this on GitHub including gyroflow.log file.");
+            return qsTr("GPU encoder failed to initialize, rendering on CPU instead (slower).");
         }
         if (text.includes("hevc") && text.includes("-12912")) {
-            return qsTr("Your GPU doesn't support H.265/HEVC encoding, try to use H.264/AVC or disable GPU encoding in Export settings.");
+            return qsTr("This GPU cannot encode H.265, so GPU export is not possible for this video.");
         }
         // Hardware encoder refused the session and the automatic codec switch either
         // didn't apply or didn't help. AMD's AMF wrapper collapses every cause into
@@ -2871,16 +2889,16 @@ Rectangle {
         // bit depth, bitrate, resolution and "this GPU has no encoder for that codec
         // at all" (e.g. AV1 on RDNA2) all arrive here identically.
         if (text.includes("encoder->Init() failed") || text.includes("558323010")) {
-            return qsTr("Your GPU's hardware encoder rejected these export settings.\nThis usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.\nTry a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.") + "\n\n" + text;
+            return qsTr("The GPU encoder doesn't support this video's encoding parameters. Update the GPU driver and try again; if it still fails, use \"%1\" to send logs.").arg(qsTr("Report a problem"));
         }
         if (text.includes("failed to decode picture") && text.includes("-12909")) {
-            return qsTr("GPU decoder failed to decode this file. Disable GPU decoding in \"Advanced\" and try again.") + "\n\n" + text;
+            return qsTr("GPU decoding failed for this file. Try again; if it keeps happening, use \"%1\" to send logs.").arg(qsTr("Report a problem"));
         }
         if (text.includes("codec not currently supported in container")) {
-            return qsTr("Make sure your output extension supports the selected codec. \".mov\" should work in most cases.") + "\n\n" + text;
+            return qsTr("The output format is incompatible with the video codec. Use \"%1\" to send logs.").arg(qsTr("Report a problem"));
         }
         if (text.includes("[aac]") && text.includes("Invalid data found when processing input")) {
-            return qsTr("Audio encoder couldn't process the input data. Try unchecking \"Export audio\" in Export settings.") + "\n\n" + text;
+            return qsTr("Audio encoding failed. Use \"%1\" to send logs.").arg(qsTr("Report a problem"));
         }
 
         return text.trim();

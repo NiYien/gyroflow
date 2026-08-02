@@ -380,7 +380,7 @@ Item {
         // main stabilize action auto-match the rest. Soft by design: the user
         // can always proceed (re-searching a mis-matched clip is legitimate).
         if (render_queue.deep_match_redundant_for_job(jobId)) {
-            messageBox(Modal.Info, qsTr("This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press \"%1\", no need to deep search each one.").arg(qsTr("Stabilize (or use with plugins)")), [
+            messageBox(Modal.Info, qsTr("This day's footage has already been deep-searched; clips from the same day are matched automatically."), [
                 { text: qsTr("Stabilize now"), accent: true, clicked: function() { window.runPluginStabilizeFlow(); } },
                 { text: qsTr("Deep search anyway"), clicked: function() { root.proceedDeepMatch(jobId, gyroIdx, videoName); } },
             ]);
@@ -405,7 +405,7 @@ Item {
             return;
         }
         if (res.state === "no_groups") {
-            messageBox(Modal.Info, qsTr("No lens group focal lengths are configured. Set them in Sensor & Lens first, then run deep match."), [{ text: qsTr("Ok") }]);
+            messageBox(Modal.Info, qsTr("No lens group focal lengths are configured. Set them in \"%1\" first.").arg(qsTranslate("App", "Sensor && Lens").replace("&&", "&")), [{ text: qsTr("Ok") }]);
             return;
         }
         startDeepMatch(jobId, gyroIdx, videoName, -1);
@@ -424,7 +424,7 @@ Item {
             property var groups: [];
             property int preselect: -1;
             iconType: Modal.Question;
-            text: qsTr("Which lens group was this video shot with?") + "\n" + qsTr("This video has no lens information. The correct lens group makes deep match much more accurate.");
+            text: qsTr("Which lens group was this video shot with? (The correct lens group makes deep match much more accurate.)");
             buttons: [qsTr("Ok"), qsTr("Cancel")];
             accentButton: 0;
             function groupLabel(g): string {
@@ -503,19 +503,24 @@ Item {
             property int dmTier: 3;
             function updateProgressText(): void {
                 if (deepMatchDialog.succeeded) return;
+                // Modal body is at most 3 lines: title / "video · gyro" / merged progress
+                // (render-queue-deep-gyro-match spec, no arrow-like typographic chars).
                 let t = qsTr("Deep matching gyro data...") + "\n" + deepMatchDialog.videoName;
                 if (deepMatchDialog.gyroName !== "")
-                    t += "\n⟷ " + deepMatchDialog.gyroName;
+                    t += " · " + deepMatchDialog.gyroName;
+                let parts = [];
                 if (deepMatchDialog.dmProbeTotal > 1) {
                     const tierLabel = deepMatchDialog.dmTier === 3 ? qsTr("full scan") : qsTr("timestamp guess");
-                    t += "\n" + qsTr("Searching candidate %1 of %2").arg(deepMatchDialog.dmProbe).arg(deepMatchDialog.dmProbeTotal) + " · " + tierLabel;
+                    parts.push(qsTr("Candidate %1 of %2 (%3)").arg(deepMatchDialog.dmProbe).arg(deepMatchDialog.dmProbeTotal).arg(tierLabel));
                 }
                 if (deepMatchDialog.dmTotal > 1)
-                    t += "\n" + qsTr("Scanning segment %1 of %2").arg(deepMatchDialog.dmChunk).arg(deepMatchDialog.dmTotal);
+                    parts.push(qsTr("Segment %1 of %2").arg(deepMatchDialog.dmChunk).arg(deepMatchDialog.dmTotal));
+                if (parts.length > 0)
+                    t += "\n" + parts.join(" · ");
                 deepMatchDialog.text = t;
             }
             iconType: Modal.Info;
-            text: qsTr("Deep matching gyro data...") + "\n" + videoName + (gyroName !== "" ? "\n⟷ " + gyroName : "");
+            text: qsTr("Deep matching gyro data...") + "\n" + videoName + (gyroName !== "" ? " · " + gyroName : "");
             buttons: [qsTr("Cancel")];
             onClicked: (index, dontShowAgain) => {
                 if (deepMatchDialog.succeeded) {
@@ -603,8 +608,7 @@ Item {
                             deepMatchDialog.loader.active = false;
                             deepMatchDialog.loader.visible = false;
                         }
-                        deepMatchDialog.text = qsTr("Deep match succeeded. Offset: %1 s").arg((offset_ms / 1000).toFixed(3))
-                                             + "\n" + qsTr("No further deep search needed for this day's clips.");
+                        deepMatchDialog.text = qsTr("Deep match succeeded (offset %1 s). Clips from the same day will be matched automatically.").arg((offset_ms / 1000).toFixed(3));
                         // manual-lens-pending-match-review: in Manual edit mode the
                         // third button becomes a match-only "review" trigger so lens
                         // numbers land on the queue rows before the user stabilizes.
@@ -631,10 +635,10 @@ Item {
                         // unreliable to lock onto (e.g. short long-lens clip).
                         const msg = deepMatchDialog.poolMode
                             ? qsTr("No match found in any gyro file. The recordings may not cover this video, or the video's motion may be unreliable.")
-                            : qsTr("No match found. The gyro file may not cover this video, or the video's motion may be unreliable. Try another gyro file or another video.");
+                            : qsTr("No match found (the gyro file may not cover this video, or the video's motion is too weak).");
                         messageBox(Modal.Warning, msg, [{ text: qsTr("Ok") }]);
                     } else if (error_kind === "probe_not_run") {
-                        messageBox(Modal.Warning, qsTr("Deep match could not run. Check the logs for details."), [{ text: qsTr("Ok") }]);
+                        messageBox(Modal.Warning, qsTr("Deep match could not run."), [{ text: qsTr("Ok") }]);
                     } else {
                         messageBox(Modal.Error, qsTr("Failed to load the gyro file."), [{ text: qsTr("Ok") }]);
                     }
@@ -1205,7 +1209,7 @@ Item {
                         }
                     });
 
-                    messageBox(Modal.Question, qsTr("GPU accelerated encoder doesn't support this pixel format (%1).\nDo you want to convert to a different supported pixel format or keep the original one and render on the CPU?").arg(format), buttons);
+                    messageBox(Modal.Question, qsTr("GPU encoder doesn't support the pixel format %1.").arg(format), buttons);
                 }
                 delete loader.pendingJobs[job_id];
                 loader.updateStatus();
