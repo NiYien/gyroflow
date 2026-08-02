@@ -733,7 +733,12 @@ Rectangle {
         }
     }
     function onItemLoaded(): void {
-        if (window.vidInfo && window.stab && window.exportSettings && window.sync && window.motionData && pendingOpenFile.toString()) {
+        // window.advanced is required too: VideoArea.loadFile dereferences
+        // window.advanced.defaultSuffix unconditionally in its non-calibrator
+        // tail — starting the --open load before the Advanced panel's async
+        // loader finishes throws a TypeError that aborts the output-file
+        // setup mid-function (seen twice in incidents log).
+        if (window.vidInfo && window.stab && window.exportSettings && window.sync && window.motionData && window.advanced && pendingOpenFile.toString()) {
             pendingFileLoadTimer.start();
         }
         tabs.updateHeights();

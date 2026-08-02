@@ -368,7 +368,11 @@ pub struct StabilizationManager {
     // the guard on the main-video path so `in_flight_count` only decrements
     // after telemetry is committed and `telemetry_loaded` has been emitted.
     // Error paths (e.g. MDK metadata fail) call
-    // `Controller::abort_pending_video_load` to drain the guard.
+    // `Controller::abort_pending_video_load` to drain the guard; the
+    // invalid-media-timing path in `load_telemetry` releases it inline.
+    // The paired `Instant` records park time so
+    // `try_break_stale_video_load_guard` can force-release a guard leaked
+    // by any path not covered above (stale-guard circuit breaker).
     //
     // NOTE: it is intentional that this is independent of `in_flight_count`
     // itself — replacing the inner Some(_) with a new guard during a
@@ -376,7 +380,7 @@ pub struct StabilizationManager {
     // previous OpGuard's Drop fires automatically, keeping the counter
     // consistent. The Mutex is for concurrent reader/writer arbitration
     // between QML do_load (write) and load_telemetry::finished (take).
-    pub video_load_guard: Arc<Mutex<Option<OpGuard>>>,
+    pub video_load_guard: Arc<Mutex<Option<(OpGuard, Instant)>>>,
 }
 
 impl Default for StabilizationManager {
@@ -587,6 +591,50 @@ pub fn video_load_guard_enabled() -> bool {
         );
     }
     enabled
+}
+
+// Stale-guard circuit breaker threshold (seconds). A video-load guard parked
+// longer than this is considered leaked and may be force-released at a
+// wait-timeout site (`try_break_stale_video_load_guard`). `0` disables the
+// breaker entirely (a leaked guard is then never force-released). Legitimate
+// hold time is MDK metadata + telemetry parse, which can reach 30s+ on large
+// files — the 60s default keeps a wide margin above that.
+static VIDEO_LOAD_GUARD_STALE_S: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+static VIDEO_LOAD_GUARD_STALE_LOGGED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+pub fn video_load_guard_stale_secs() -> u64 {
+    let value = *VIDEO_LOAD_GUARD_STALE_S.get_or_init(|| {
+        match std::env::var("GYROFLOW_VIDEO_LOAD_GUARD_STALE_S") {
+            Ok(raw) => match raw.trim().parse::<u64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_VIDEO_LOAD_GUARD_STALE_S invalid ({}), falling back to 60",
+                        raw
+                    );
+                    60
+                }
+            },
+            Err(_) => 60,
+        }
+    });
+    if VIDEO_LOAD_GUARD_STALE_LOGGED.set(()).is_ok() {
+        let source = if std::env::var("GYROFLOW_VIDEO_LOAD_GUARD_STALE_S")
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            "env"
+        } else {
+            "default"
+        };
+        log::info!(
+            target: "lifecycle",
+            "video_load_guard_stale_s resolved={} source={}",
+            value, source
+        );
+    }
+    value
 }
 
 fn populate_lens_metadata_fields(
@@ -861,15 +909,61 @@ impl StabilizationManager {
                 return WaitOutcome::Idle;
             }
             if Instant::now() >= deadline {
+                // guard_held / guard_age_ms let incidents-log triage tell a
+                // leaked video_load_guard (held, old) from a compute race
+                // (not held, or freshly parked) without session logs.
+                let guard_age = self
+                    .video_load_guard
+                    .lock()
+                    .as_ref()
+                    .map(|(_, parked_at)| parked_at.elapsed().as_millis() as u64);
                 log::warn!(
                     target: "lifecycle",
-                    "wait_until_idle timeout ({:?}) with {} ops still running",
+                    "wait_until_idle timeout ({:?}) with {} ops still running guard_held={} guard_age_ms={}",
                     effective_timeout,
-                    c
+                    c,
+                    guard_age.is_some(),
+                    guard_age.map(|ms| ms.to_string()).unwrap_or_else(|| "-".into())
                 );
                 return WaitOutcome::Timeout { remaining: c };
             }
             std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    // Stale-guard circuit breaker (video-load-lifecycle-refusal-hardening):
+    // force-releases `video_load_guard` when it has been parked longer than
+    // the configured threshold (`GYROFLOW_VIDEO_LOAD_GUARD_STALE_S`, default
+    // 60s, 0 = disabled). Catch-all for leak paths not covered by the
+    // explicit releases (finished callback / invalid-timing else /
+    // abort_pending_video_load) — e.g. a telemetry parse panic or MDK never
+    // delivering metadata. Called from wait-timeout sites only; there is
+    // deliberately no background watchdog thread. Returns true when a guard
+    // was force-released — the caller should retry its wait exactly once and
+    // reset any QML-visible loading flag via its own queued callback.
+    pub fn try_break_stale_video_load_guard(&self) -> bool {
+        let threshold_s = video_load_guard_stale_secs();
+        if threshold_s == 0 {
+            return false;
+        }
+        self.try_break_stale_video_load_guard_with_threshold(Duration::from_secs(threshold_s))
+    }
+
+    // Threshold-injectable body, split out so unit tests bypass the env cache.
+    pub fn try_break_stale_video_load_guard_with_threshold(&self, threshold: Duration) -> bool {
+        let mut lock = self.video_load_guard.lock();
+        match lock.as_ref() {
+            Some((_, parked_at)) if parked_at.elapsed() >= threshold => {
+                let age_ms = parked_at.elapsed().as_millis() as u64;
+                *lock = None; // OpGuard Drop decrements in_flight_count
+                log::error!(
+                    target: "lifecycle",
+                    "video_load_guard_exit reason=stale_circuit_breaker age_ms={}",
+                    age_ms
+                );
+                true
+            }
+            _ => false,
         }
     }
 
@@ -4779,6 +4873,52 @@ mod tests {
         // Should return within roughly one poll cycle (~20 ms); allow 200 ms slack.
         assert!(elapsed < Duration::from_millis(200), "took {:?}", elapsed);
         assert!(cancel_flag.load(SeqCst));
+    }
+
+    #[test]
+    fn stale_video_load_guard_breaker_releases_only_old_guards() {
+        let manager = StabilizationManager::default();
+        let threshold = Duration::from_secs(60);
+
+        // No guard parked → no-op.
+        assert!(!manager.try_break_stale_video_load_guard_with_threshold(threshold));
+
+        // Freshly parked guard → not broken, counter intact.
+        let g = OpGuard::enter(&manager.in_flight_count);
+        *manager.video_load_guard.lock() = Some((g, Instant::now()));
+        assert_eq!(manager.in_flight_count.load(SeqCst), 1);
+        assert!(!manager.try_break_stale_video_load_guard_with_threshold(threshold));
+        assert_eq!(manager.in_flight_count.load(SeqCst), 1);
+
+        // Same guard re-parked with an aged timestamp → broken, counter drains.
+        // checked_sub can fail close to process start on some platforms; the
+        // fresh-guard assertions above already ran, so skipping is safe.
+        if let Some(parked_at) = Instant::now().checked_sub(Duration::from_secs(90)) {
+            let (g, _) = manager.video_load_guard.lock().take().unwrap();
+            *manager.video_load_guard.lock() = Some((g, parked_at));
+            assert!(manager.try_break_stale_video_load_guard_with_threshold(threshold));
+            assert_eq!(manager.in_flight_count.load(SeqCst), 0);
+            assert!(manager.video_load_guard.lock().is_none());
+            // Idempotent: a second call finds nothing to break.
+            assert!(!manager.try_break_stale_video_load_guard_with_threshold(threshold));
+        } else {
+            drop(manager.video_load_guard.lock().take());
+        }
+    }
+
+    #[test]
+    fn stale_video_load_guard_breaker_zero_threshold_is_guarded_by_caller() {
+        // `try_break_stale_video_load_guard` (public entry) treats a resolved
+        // threshold of 0 as "breaker disabled" BEFORE calling the
+        // threshold-injectable body — because for the body itself,
+        // elapsed >= ZERO always holds and would break a fresh guard.
+        // This test pins the body's ordering semantics that make the
+        // caller-side 0-guard necessary.
+        let manager = StabilizationManager::default();
+        let g = OpGuard::enter(&manager.in_flight_count);
+        *manager.video_load_guard.lock() = Some((g, Instant::now()));
+        assert!(manager.try_break_stale_video_load_guard_with_threshold(Duration::ZERO));
+        assert_eq!(manager.in_flight_count.load(SeqCst), 0);
     }
 
     #[test]

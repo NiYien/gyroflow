@@ -124,6 +124,11 @@ Item {
             ];
         }
         if ((!urls || !urls[0]) && !vidInfo.filename) {
+            // This return emits no gyroflow_file_loaded, so the early
+            // prevent_recompute(true) set by onTelemetry_loaded's
+            // pending-project branch would otherwise stick forever and
+            // silently freeze all recomputes for the session.
+            controller.set_prevent_recompute(false);
             messageBox(Modal.Error, qsTr("Preset can be applied only after loading a video."), [ { text: qsTr("Ok") } ]);
             return;
         }
@@ -365,6 +370,18 @@ Item {
                 messageBox(Modal.Warning, qsTr("Motion data sampling rate is too low (%1 Hz).\n50 Hz is an absolute minimum and we recommend at least 200 Hz.").arg(additional_data.sample_rate.toFixed(0)), [ { "text": qsTr("Ok") } ]);
             }
             if (root.pendingGyroflowData) {
+                // Suppress the recompute of the default state the pending
+                // project import is about to overwrite. Timing contract:
+                // this handler runs synchronously inside the Rust
+                // telemetry_loaded emit, which PRECEDES request_recompute()
+                // in the same finished callback — so the recompute worker's
+                // entry check sees the flag and skips, and the deferred
+                // import below no longer races a seconds-long recompute
+                // into a LifecycleBusy refusal. Reset paths:
+                // onGyroflow_file_loaded clears it unconditionally (both
+                // success and error emits), and loadGyroflowData's
+                // preset-error early return clears it explicitly.
+                controller.set_prevent_recompute(true);
                 Qt.callLater(loadGyroflowData, root.pendingGyroflowData, root.pendingQueueJobId);
             } else {
                 Qt.callLater(controller.recompute_threaded);
@@ -1174,7 +1191,8 @@ Item {
                             stabEnabledBtn.checked = true;
                             // Release the video-load guard. load_telemetry::finished
                             // will never fire (MDK reported videoWidth=0), so without
-                            // this call the guard would hang until the watchdog.
+                            // this call the guard would hang until the stale-guard
+                            // circuit breaker (≥60s later).
                             controller.abort_pending_video_load();
                         }
                     }

@@ -531,6 +531,124 @@ fn enter_video_load_log_context(filename: &str) -> log_context::CtxScope {
     )
 }
 
+// ---- Project-import wait/retry machinery (project-import-lifecycle) ----
+
+// Retry budget for the pre-import wait loop. Default 20s; `0` restores the
+// pre-change single-attempt behavior (one 2s wait, refuse on timeout).
+static IMPORT_RETRY_BUDGET_S: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+static IMPORT_RETRY_BUDGET_LOGGED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+fn import_retry_budget_s() -> u64 {
+    let value = *IMPORT_RETRY_BUDGET_S.get_or_init(|| {
+        match std::env::var("GYROFLOW_IMPORT_RETRY_BUDGET_S") {
+            Ok(raw) => match raw.trim().parse::<u64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    ::log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_IMPORT_RETRY_BUDGET_S invalid ({}), falling back to 20",
+                        raw
+                    );
+                    20
+                }
+            },
+            Err(_) => 20,
+        }
+    });
+    if IMPORT_RETRY_BUDGET_LOGGED.set(()).is_ok() {
+        let source = if std::env::var("GYROFLOW_IMPORT_RETRY_BUDGET_S")
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false)
+        {
+            "env"
+        } else {
+            "default"
+        };
+        ::log::info!(
+            target: "lifecycle",
+            "import_retry_budget_s resolved={} source={}",
+            value, source
+        );
+    }
+    value
+}
+
+// Outcome of `wait_for_import_slot` (see project-import-lifecycle spec).
+enum ImportWaitOutcome {
+    // Idle achieved: cancel_flag is cleared, the caller may enter its
+    // OpGuard and run the import.
+    Ready,
+    // Retry budget exhausted with ops still running. cancel_flag stays set
+    // (stuck ops keep trying to exit — existing contract).
+    Busy { remaining: usize, waited_s: u64 },
+    // The main video changed while this import was queued; applying the
+    // project now would land it on a video the user just loaded.
+    Abandoned,
+}
+
+// Bounded retry replacing the single-shot LifecycleBusy refusal on project
+// import. Each 2s round: re-check the main-video generation guard, wait for
+// the in-flight counter to drain, and on a timed-out round consult the
+// stale-guard circuit breaker BEFORE spending budget. `progress(0.0)` keeps
+// the QML spinner alive between rounds; `on_guard_broken` lets the caller
+// reset the QML loading flag from the QML thread after a force-release.
+fn wait_for_import_slot<P: Fn(f64), B: Fn(())>(
+    stab: &StabilizationManager,
+    cancel_flag: &Arc<AtomicBool>,
+    progress: P,
+    on_guard_broken: B,
+) -> ImportWaitOutcome {
+    wait_for_import_slot_with_budget(import_retry_budget_s(), stab, cancel_flag, progress, on_guard_broken)
+}
+
+// Budget-injectable body, split out so unit tests bypass the env cache.
+fn wait_for_import_slot_with_budget<P: Fn(f64), B: Fn(())>(
+    budget_s: u64,
+    stab: &StabilizationManager,
+    cancel_flag: &Arc<AtomicBool>,
+    progress: P,
+    on_guard_broken: B,
+) -> ImportWaitOutcome {
+    let baseline_url = stab.input_file.read().url.clone();
+    let started = std::time::Instant::now();
+    loop {
+        // Generation guard: do_load (QML thread) is the only writer of
+        // input_file.url — a change means the user moved on to another
+        // video and this queued import is stale.
+        if stab.input_file.read().url != baseline_url {
+            ::log::info!(target: "lifecycle", "import_abandoned reason=video_changed");
+            return ImportWaitOutcome::Abandoned;
+        }
+        match stab.wait_until_idle(cancel_flag, std::time::Duration::from_millis(2000)) {
+            WaitOutcome::Idle => {
+                cancel_flag.store(false, SeqCst);
+                return ImportWaitOutcome::Ready;
+            }
+            WaitOutcome::Timeout { remaining } => {
+                // A leaked guard is not genuine contention — breaking it does
+                // not spend budget. No infinite-loop risk: after the take the
+                // guard is None, and a freshly re-parked guard is not stale.
+                if stab.try_break_stale_video_load_guard() {
+                    on_guard_broken(());
+                    continue;
+                }
+                let waited_s = started.elapsed().as_secs();
+                if budget_s == 0 || waited_s >= budget_s {
+                    return ImportWaitOutcome::Busy { remaining, waited_s };
+                }
+                // progress < 1.0 keeps loading_gyro_in_progress true on the
+                // QML side, so the loader spinner stays visible while queued.
+                progress(0.0);
+                ::log::info!(
+                    target: "lifecycle",
+                    "import_wait retry: waited_s={} budget_s={} in_flight={}",
+                    waited_s, budget_s, remaining
+                );
+            }
+        }
+    }
+}
+
 impl Controller {
     pub fn new() -> Self {
         let mut this = Self {
@@ -666,8 +784,9 @@ impl Controller {
                 //
                 // Replacing a prior Some(_) is safe: the previous OpGuard's
                 // Drop fires on the temporary, keeping in_flight_count
-                // consistent. This handles the corner where a watchdog or
-                // error path failed to drain the guard cleanly.
+                // consistent. This handles the corner where an error path
+                // (or the stale-guard circuit breaker) failed to drain the
+                // guard cleanly.
                 //
                 // When GYROFLOW_VIDEO_LOAD_GUARD=0 we fall back to the
                 // c623a548 baseline: the guard drops naturally at the end
@@ -675,7 +794,9 @@ impl Controller {
                 // gate never sees video_loading_in_progress=true.
                 let g = OpGuard::enter(&this.stabilizer.in_flight_count);
                 if core::video_load_guard_enabled() {
-                    *this.stabilizer.video_load_guard.lock() = Some(g);
+                    // Park time feeds the stale-guard circuit breaker.
+                    *this.stabilizer.video_load_guard.lock() =
+                        Some((g, std::time::Instant::now()));
                     this.video_loading_in_progress = true;
                     this.video_loading_in_progress_changed();
                     ::log::info!(
@@ -771,11 +892,24 @@ impl Controller {
             move |this, remaining: usize| {
                 this.error(
                     QString::from(
-                        "前一项操作未结束，请稍后重试 / Previous operation still running, retry shortly (in_flight=%1)",
+                        "仍有 %1 项操作在进行（视频加载或稳定化计算），请稍候片刻再试 / %1 operation(s) still running (video load or stabilization compute) — please wait a moment and retry",
                     ),
                     QString::from(remaining.to_string()),
                     QString::default(),
                 );
+            },
+        );
+
+        // After the circuit breaker force-releases a stale guard, the
+        // QML-visible loading flag must be cleared from the QML thread —
+        // the breaker itself only drops the guard (core cannot reach this
+        // controller property). Without this, the loadFile gate would keep
+        // blocking video loads even though the guard is gone.
+        let clear_loading_flag = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, _: ()| {
+                this.video_loading_in_progress = false;
+                this.video_loading_in_progress_changed();
             },
         );
 
@@ -789,25 +923,40 @@ impl Controller {
             // mutations live in `do_load` on the QML thread to keep the
             // render thread's view of `stab` atomic w.r.t. the clear-and-
             // swap sequence.
-            match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
-                WaitOutcome::Idle => {
-                    cancel_flag.store(false, SeqCst);
-                    do_load((
-                        url_for_worker,
-                        filename_for_worker,
-                        custom_decoder_for_worker,
-                        url_scheme,
-                        image_sequence_start,
-                        image_sequence_fps,
-                    ));
-                }
-                WaitOutcome::Timeout { remaining } => {
-                    ::log::warn!(
-                        target: "lifecycle",
-                        "load_video refused: {} ops still running after wait_until_idle",
-                        remaining
-                    );
-                    do_toast(remaining);
+            let payload = (
+                url_for_worker,
+                filename_for_worker,
+                custom_decoder_for_worker,
+                url_scheme,
+                image_sequence_start,
+                image_sequence_fps,
+            );
+            let mut breaker_tried = false;
+            loop {
+                match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
+                    WaitOutcome::Idle => {
+                        cancel_flag.store(false, SeqCst);
+                        do_load(payload);
+                        return;
+                    }
+                    WaitOutcome::Timeout { remaining } => {
+                        // Stale-guard circuit breaker: a leaked guard would
+                        // otherwise pin this refusal forever — do_load, the
+                        // only guard-replacement point, sits behind this very
+                        // timeout. Retry the wait exactly once after a break.
+                        if !breaker_tried && stab.try_break_stale_video_load_guard() {
+                            breaker_tried = true;
+                            clear_loading_flag(());
+                            continue;
+                        }
+                        ::log::warn!(
+                            target: "lifecycle",
+                            "load_video refused: {} ops still running after wait_until_idle",
+                            remaining
+                        );
+                        do_toast(remaining);
+                        return;
+                    }
                 }
             }
         });
@@ -2017,6 +2166,24 @@ impl Controller {
                         additional_data,
                     ));
                 });
+            } else if is_main_video {
+                // Invalid media timing (duration<=0 or fps<=0): the threaded
+                // loader above — whose `finished` callback is the normal guard
+                // release point — never runs on this path, so release the
+                // video-load guard here or it leaks for the whole session.
+                // Flag first, then guard, matching the finished-callback
+                // ordering contract. No `telemetry_loaded` emit: nothing
+                // downstream expects it on the invalid path, and
+                // `loading_gyro_in_progress` was never set (valid branch only).
+                self.video_loading_in_progress = false;
+                self.video_loading_in_progress_changed();
+                let was_present = self.stabilizer.video_load_guard.lock().take().is_some();
+                if was_present {
+                    ::log::info!(
+                        target: "lifecycle",
+                        "video_load_guard_exit reason=invalid_timing"
+                    );
+                }
             }
         }
     }
@@ -2781,8 +2948,8 @@ impl Controller {
     // waiting for load_telemetry::finished. Called from QML's
     // onMetadataChanged error branch (MDK reports videoWidth=0 → decode
     // failed → no telemetry will follow, so the guard would otherwise hang
-    // until the watchdog fires). Idempotent: calling when the guard is
-    // already absent is a silent no-op.
+    // until the stale-guard circuit breaker fires, ≥60s later). Idempotent:
+    // calling when the guard is already absent is a silent no-op.
     fn abort_pending_video_load(&mut self) {
         self.video_loading_in_progress = false;
         self.video_loading_in_progress_changed();
@@ -3043,18 +3210,40 @@ impl Controller {
                 this.project_file_url_changed();
             },
         );
+        // After the circuit breaker force-releases a stale guard mid-retry,
+        // reset the QML-visible loading flag from the QML thread (core only
+        // drops the guard; the loadFile gate reads this property).
+        let clear_loading_flag = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, _: ()| {
+                this.video_loading_in_progress = false;
+                this.video_loading_in_progress_changed();
+            },
+        );
+        // Abandoned path (main video changed while queued): clear the loading
+        // flags WITHOUT emitting gyroflow_file_loaded — QML panels must keep
+        // the newly loaded video's state, not receive an empty project
+        // broadcast. prevent_recompute is restored by the new video's own
+        // load chain (do_load reset broadcast → onGyroflow_file_loaded).
+        let abandoned = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, _: ()| {
+                this.loading_gyro_in_progress = false;
+                this.loading_gyro_progress(1.0);
+                this.loading_gyro_in_progress_changed();
+            },
+        );
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
         // §D1: signal in-flight ops to cancel; the worker below waits for them
         // to exit before mutating shared state.
         core::run_threaded(move || {
-            // OpGuard MUST be entered AFTER wait_until_idle returns Idle,
-            // never before. Self-counting before the wait pins
+            // OpGuard MUST be entered AFTER the wait resolves Ready, never
+            // before. Self-counting before the wait pins
             // in_flight_count >= 1 and forces every wait to timeout (codex N1).
-            match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
-                WaitOutcome::Idle => {
-                    cancel_flag.store(false, SeqCst);
+            match wait_for_import_slot(&stab, &cancel_flag, &progress, &clear_loading_flag) {
+                ImportWaitOutcome::Ready => {
                     let _g = OpGuard::enter(&stab.in_flight_count);
                     finished(stab.import_gyroflow_file(
                         &url,
@@ -3064,15 +3253,16 @@ impl Controller {
                         false,
                     ));
                 }
-                WaitOutcome::Timeout { remaining } => {
+                ImportWaitOutcome::Busy { remaining, waited_s } => {
                     ::log::warn!(
                         target: "lifecycle",
-                        "import_gyroflow_file refused: {} ops still running after wait_until_idle",
-                        remaining
+                        "import_gyroflow_file refused: {} ops still running after {}s of retries",
+                        remaining, waited_s
                     );
                     // Do NOT clear cancel_flag: stuck ops keep trying to exit.
                     finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)));
                 }
+                ImportWaitOutcome::Abandoned => abandoned(()),
             }
         });
     }
@@ -3096,13 +3286,28 @@ impl Controller {
                 this.gyroflow_file_loaded(obj);
             },
         );
+        // Same pair as import_gyroflow_file — see comments there.
+        let clear_loading_flag = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, _: ()| {
+                this.video_loading_in_progress = false;
+                this.video_loading_in_progress_changed();
+            },
+        );
+        let abandoned = util::qt_queued_callback_mut(
+            QPointer::from(self as &Self),
+            move |this, _: ()| {
+                this.loading_gyro_in_progress = false;
+                this.loading_gyro_progress(1.0);
+                this.loading_gyro_in_progress_changed();
+            },
+        );
 
         let stab = self.stabilizer.clone();
         let cancel_flag = self.cancel_flag.clone();
         core::run_threaded(move || {
-            match stab.wait_until_idle(&cancel_flag, std::time::Duration::from_millis(2000)) {
-                WaitOutcome::Idle => {
-                    cancel_flag.store(false, SeqCst);
+            match wait_for_import_slot(&stab, &cancel_flag, &progress, &clear_loading_flag) {
+                ImportWaitOutcome::Ready => {
                     let _g = OpGuard::enter(&stab.in_flight_count);
                     let mut is_preset = false;
                     let result = stab.import_gyroflow_data(
@@ -3123,14 +3328,15 @@ impl Controller {
                     // render-thread re-init against transitional D3D11 textures.
                     finished(result);
                 }
-                WaitOutcome::Timeout { remaining } => {
+                ImportWaitOutcome::Busy { remaining, waited_s } => {
                     ::log::warn!(
                         target: "lifecycle",
-                        "import_gyroflow_data refused: {} ops still running after wait_until_idle",
-                        remaining
+                        "import_gyroflow_data refused: {} ops still running after {}s of retries",
+                        remaining, waited_s
                     );
                     finished(Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)));
                 }
+                ImportWaitOutcome::Abandoned => abandoned(()),
             }
         });
     }
@@ -3179,10 +3385,20 @@ impl Controller {
                 util::serde_json_to_qt_object(&thin_obj)
             }
             Err(gyroflow_core::GyroflowCoreError::LifecycleBusy(remaining)) => {
+                // With the retry loop enabled, LifecycleBusy means the whole
+                // budget was spent — say how long we waited and what kind of
+                // work is still running. Budget 0 (retry disabled via env)
+                // keeps the legacy single-attempt copy.
+                let budget = import_retry_budget_s();
+                let msg = if budget > 0 {
+                    format!(
+                        "已等待 {budget} 秒，仍有 %1 项操作未完成（视频加载或稳定化计算），本次工程导入未执行，请稍后重试 / Waited {budget}s but %1 operation(s) are still running (video load or stabilization compute); the project import was skipped — please retry"
+                    )
+                } else {
+                    "前一项操作未结束，请稍后重试 / Previous operation still running, retry shortly (in_flight=%1)".to_string()
+                };
                 self.error(
-                    QString::from(
-                        "前一项操作未结束，请稍后重试 / Previous operation still running, retry shortly (in_flight=%1)",
-                    ),
+                    QString::from(msg),
                     QString::from(remaining.to_string()),
                     QString::default(),
                 );
@@ -5478,6 +5694,73 @@ impl Controller {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- wait_for_import_slot three-state tests (project-import-lifecycle).
+    // Each timed-out round costs ~2s (wait_until_idle default); tests are
+    // kept to a single round.
+
+    #[test]
+    fn import_wait_slot_ready_when_idle() {
+        let stab = StabilizationManager::default();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let outcome = wait_for_import_slot_with_budget(20, &stab, &cancel_flag, |_| {}, |_| {});
+        assert!(matches!(outcome, ImportWaitOutcome::Ready));
+        assert!(!cancel_flag.load(SeqCst), "Ready must clear cancel_flag");
+    }
+
+    #[test]
+    fn import_wait_slot_budget_zero_is_single_attempt() {
+        let stab = StabilizationManager::default();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let _g = OpGuard::enter(&stab.in_flight_count);
+        let outcome = wait_for_import_slot_with_budget(0, &stab, &cancel_flag, |_| {}, |_| {});
+        match outcome {
+            ImportWaitOutcome::Busy { remaining, .. } => assert_eq!(remaining, 1),
+            _ => panic!("expected Busy after a single refused attempt"),
+        }
+        assert!(cancel_flag.load(SeqCst), "Busy must leave cancel_flag set");
+    }
+
+    #[test]
+    fn import_wait_slot_abandons_when_video_changed() {
+        let stab = StabilizationManager::default();
+        stab.input_file.write().url = "file:///A.mp4".into();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        let _g = OpGuard::enter(&stab.in_flight_count); // keep the wait busy
+        let url_writer = {
+            let input_file = stab.input_file.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                input_file.write().url = "file:///B.mp4".into();
+            })
+        };
+        let outcome = wait_for_import_slot_with_budget(20, &stab, &cancel_flag, |_| {}, |_| {});
+        url_writer.join().unwrap();
+        assert!(matches!(outcome, ImportWaitOutcome::Abandoned));
+    }
+
+    #[test]
+    fn import_wait_slot_breaks_stale_guard_then_ready() {
+        let stab = StabilizationManager::default();
+        let cancel_flag = Arc::new(AtomicBool::new(false));
+        // checked_sub can fail close to process start; skip silently then
+        // (the other three states are covered independently).
+        if let Some(parked_at) =
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(90))
+        {
+            let g = OpGuard::enter(&stab.in_flight_count);
+            *stab.video_load_guard.lock() = Some((g, parked_at));
+            let broke = Arc::new(AtomicBool::new(false));
+            let broke2 = broke.clone();
+            let outcome =
+                wait_for_import_slot_with_budget(20, &stab, &cancel_flag, |_| {}, move |_| {
+                    broke2.store(true, SeqCst);
+                });
+            assert!(matches!(outcome, ImportWaitOutcome::Ready));
+            assert!(broke.load(SeqCst), "on_guard_broken must fire on a break");
+            assert_eq!(stab.in_flight_count.load(SeqCst), 0);
+        }
+    }
 
     #[test]
     fn video_log_scheme_classifies_mobile_and_local_urls() {
