@@ -1439,6 +1439,58 @@ mod tests {
     }
 
     #[test]
+    fn effective_config_enters_for_anamorphic_only_with_telemetry_focal() {
+        // deep-match-anamorphic-lens-choice: the probe injection calls this
+        // with user_forced=false on a job that has a telemetry focal. The
+        // config must enter for the squeeze alone; focal selection then
+        // follows the normal job-build ordering (group manual focal when
+        // valid, else telemetry) — so the probe matrix equals the profile the
+        // job builds once matching assigns this lens number.
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                focal_length: Some(31.0),
+                pixel_focal_length: Some(3100.0),
+                ..Default::default()
+            },
+        );
+        // No manual focal on the group: telemetry drives the matrix.
+        let config = LensGroupConfig {
+            lens_index: 1,
+            anamorphic_enabled: true,
+            squeeze_ratio: Some(1.55),
+            ..Default::default()
+        };
+        let effective =
+            effective_lens_group_config_for_build(true, false, &config, &metadata).unwrap();
+        assert!(effective.anamorphic_enabled);
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None, None).unwrap();
+        assert_eq!(profile.focal_length, Some(31.0));
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 31.0 * 100.0);
+        assert!((profile.input_horizontal_stretch - 1.55).abs() < 1e-9);
+
+        // With a valid manual focal on the group, the manual value wins the
+        // focal selection (select_focal_length ordering) — same as the job
+        // build after matching.
+        let config_with_focal = LensGroupConfig {
+            focal_length_mm: Some(40.0),
+            ..config
+        };
+        let effective =
+            effective_lens_group_config_for_build(true, false, &config_with_focal, &metadata)
+                .unwrap();
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None, None).unwrap();
+        assert_eq!(profile.focal_length, Some(40.0));
+        assert!((profile.input_horizontal_stretch - 1.55).abs() < 1e-9);
+    }
+
+    #[test]
     fn manual_config_ignores_additional_focus_length_without_video_focal() {
         let metadata = FileMetadata {
             additional_data: serde_json::json!({ "focus_length": 310 }),

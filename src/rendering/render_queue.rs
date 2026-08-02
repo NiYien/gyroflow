@@ -12983,9 +12983,12 @@ impl RenderQueue {
                 .iter()
                 .find(|c| c.lens_index == lens_index)
                 .and_then(|config| {
-                    // Probe-scoped build stays byte-identical: this injection only
-                    // fires for bare manual-lens jobs (no auto focal), where the
-                    // fill-missing gate arm already passes without forcing.
+                    // Probe-scoped build with user_forced=false: on bare jobs the
+                    // fill-missing gate arm passes (the group focal is the missing
+                    // information); on anamorphic-confirmed jobs with a telemetry
+                    // focal the manual focal stays out (uses_manual_focal=false)
+                    // while applies_anamorphic carries the squeeze in — focal from
+                    // telemetry, squeeze from the group.
                     let cfg_for_build =
                         niyien_lens_presets::effective_lens_group_config_for_build(
                             manual_edit,
@@ -13543,12 +13546,30 @@ impl RenderQueue {
     }
 
     // Pre-flight query for the deep-match lens-group confirmation dialog.
-    // A bare manual-lens job (no lens identity, no video focal length, bare
-    // camera matrix) probes with the 0.8*width default matrix, which inflates
-    // valley ratios and deflates OF-estimated motion — asking the user for
-    // the lens group fixes the matrix before the probe.
+    // Two triggers, both requiring a job with no lens number (override /
+    // lens_group_index / telemetry):
+    //  - reason="bare": no video focal length AND bare camera matrix — the
+    //    probe would run on the 0.8*width default matrix, which inflates
+    //    valley ratios and deflates OF-estimated motion. The listed groups
+    //    need a valid manual focal length (it is the missing information).
+    //  - reason="anamorphic": manual edit ON and at least one resolvable
+    //    anamorphic group — a telemetry focal builds a spherical matrix whose
+    //    horizontal axis is off by the squeeze factor, so the user confirms
+    //    the anamorphic group (or "spherical") before the probe. Group focal
+    //    is optional here (telemetry fills it in).
     fn deep_match_needs_lens_choice(&self, job_id: u32) -> QString {
-        let ok = QString::from(r#"{"state":"ok"}"#);
+        let manual_edit = core::settings::get_bool("lens_group_manual_edit", false);
+        QString::from(self.deep_match_needs_lens_choice_impl(job_id, manual_edit).to_string())
+    }
+
+    // Settings-free core of deep_match_needs_lens_choice so tests can drive
+    // the manual_edit flag directly (settings::set would schedule a disk write).
+    fn deep_match_needs_lens_choice_impl(
+        &self,
+        job_id: u32,
+        manual_edit: bool,
+    ) -> serde_json::Value {
+        let ok = serde_json::json!({ "state": "ok" });
         let Some(job) = self.jobs.get(&job_id) else {
             return ok;
         };
@@ -13558,6 +13579,11 @@ impl RenderQueue {
                 .as_ref()
                 .and_then(|md| niyien_lens_presets::extract_lens_index(&md.additional_data))
         });
+        if lens_index.is_some() {
+            // The group config (incl. anamorphic) already applies through the
+            // job's own lens profile build — nothing to confirm.
+            return ok;
+        }
         let video_focal = metadata
             .as_ref()
             .and_then(niyien_lens_presets::extract_video_focus_length_mm);
@@ -13566,39 +13592,75 @@ impl RenderQueue {
             .as_ref()
             .map(|s| s.lens.read().fisheye_params.camera_matrix.is_empty())
             .unwrap_or(true);
-        if lens_index.is_some() || video_focal.is_some() || !camera_matrix_bare {
-            return ok;
-        }
-        // Configured groups = groups with a sensible manual focal length
-        // (same threshold as the sanitize step on the write path).
         let global_configs = self.stabilizer.lens_group_config.read().clone();
-        let mut groups: Vec<(usize, f64)> = global_configs
-            .iter()
-            .filter_map(|c| {
-                c.focal_length_mm
-                    .filter(|f| {
-                        f.is_finite() && *f > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
-                    })
-                    .map(|f| (c.lens_index, f))
-            })
-            .collect();
-        if groups.is_empty() {
-            return QString::from(r#"{"state":"no_groups"}"#);
-        }
-        groups.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
-        let preselect = groups[groups.len() / 2].0;
-        let groups_json: Vec<serde_json::Value> = groups
-            .iter()
-            .map(|(idx, focal)| serde_json::json!({ "index": idx, "focal": focal }))
-            .collect();
-        QString::from(
-            serde_json::json!({
+        if video_focal.is_none() && camera_matrix_bare {
+            // Bare state takes precedence: the missing focal length must come
+            // from the chosen group, so the list is restricted to groups with
+            // a sensible manual focal length (same threshold as the sanitize
+            // step on the write path).
+            let mut groups: Vec<(usize, f64)> = global_configs
+                .iter()
+                .filter_map(|c| {
+                    c.focal_length_mm
+                        .filter(|f| {
+                            f.is_finite() && *f > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+                        })
+                        .map(|f| (c.lens_index, f))
+                })
+                .collect();
+            if groups.is_empty() {
+                return serde_json::json!({ "state": "no_groups" });
+            }
+            groups.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            let preselect = groups[groups.len() / 2].0;
+            let groups_json: Vec<serde_json::Value> = groups
+                .iter()
+                .map(|(idx, focal)| serde_json::json!({ "index": idx, "focal": focal }))
+                .collect();
+            return serde_json::json!({
                 "state": "needs_choice",
+                "reason": "bare",
                 "groups": groups_json,
                 "preselect": preselect,
+            });
+        }
+        // Anamorphic confirmation. Manual edit OFF is excluded because
+        // applies_anamorphic (lens_group_build_decision) requires it — the
+        // injected squeeze could not take effect, so the dialog would lie.
+        if !manual_edit {
+            return ok;
+        }
+        // Only groups whose anamorphic config actually resolves are offered;
+        // an unresolvable one would silently skip the desqueeze after
+        // injection (same rationale as lens_group_missing_reasons).
+        let mut ana_groups: Vec<&niyien_lens_presets::LensGroupConfig> = global_configs
+            .iter()
+            .filter(|c| {
+                c.anamorphic_enabled
+                    && niyien_lens_presets::resolve_anamorphic_config(Some(c)).is_some()
             })
-            .to_string(),
-        )
+            .collect();
+        if ana_groups.is_empty() {
+            return ok;
+        }
+        ana_groups.sort_by_key(|c| c.lens_index);
+        // Single group preselects itself; otherwise the lowest lens index.
+        let preselect = ana_groups[0].lens_index;
+        let groups_json: Vec<serde_json::Value> = ana_groups
+            .iter()
+            .map(|c| {
+                let focal = c
+                    .focal_length_mm
+                    .filter(|f| f.is_finite() && *f > niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM);
+                serde_json::json!({ "index": c.lens_index, "focal": focal })
+            })
+            .collect();
+        serde_json::json!({
+            "state": "needs_choice",
+            "reason": "anamorphic",
+            "groups": groups_json,
+            "preselect": preselect,
+        })
     }
 
     // batch-lens-group-missing-data-gate: pre-dispatch check for the batch
@@ -19364,6 +19426,7 @@ mod tests {
         let v: serde_json::Value =
             serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
         assert_eq!(v["state"], "needs_choice");
+        assert_eq!(v["reason"], "bare");
         assert_eq!(v["preselect"], 2);
         assert_eq!(v["groups"].as_array().unwrap().len(), 3);
 
@@ -19385,6 +19448,42 @@ mod tests {
         }
         let v: serde_json::Value =
             serde_json::from_str(&queue.deep_match_needs_lens_choice(1).to_string()).unwrap();
+        assert_eq!(v["state"], "ok");
+
+        // Anamorphic trigger (manual edit ON): a resolvable anamorphic group
+        // prompts even though the camera matrix is no longer bare. The group
+        // focal is optional (telemetry fills it in) and serializes as null.
+        {
+            let mut configs = queue.stabilizer.lens_group_config.write();
+            configs[1].anamorphic_enabled = true;
+            configs[1].squeeze_ratio = Some(1.55);
+        }
+        let v = queue.deep_match_needs_lens_choice_impl(1, true);
+        assert_eq!(v["state"], "needs_choice");
+        assert_eq!(v["reason"], "anamorphic");
+        assert_eq!(v["preselect"], 1);
+        let groups = v["groups"].as_array().unwrap();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0]["index"], 1);
+        assert!(groups[0]["focal"].is_null());
+
+        // Manual edit OFF: the injected squeeze could not apply -> ok.
+        let v = queue.deep_match_needs_lens_choice_impl(1, false);
+        assert_eq!(v["state"], "ok");
+
+        // A lens number short-circuits ahead of the anamorphic trigger.
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(3);
+        let v = queue.deep_match_needs_lens_choice_impl(1, true);
+        assert_eq!(v["state"], "ok");
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = None;
+
+        // Unresolvable anamorphic config (no preset, no valid squeeze) is
+        // excluded from the offer -> falls through to ok.
+        {
+            let mut configs = queue.stabilizer.lens_group_config.write();
+            configs[1].squeeze_ratio = None;
+        }
+        let v = queue.deep_match_needs_lens_choice_impl(1, true);
         assert_eq!(v["state"], "ok");
     }
 

@@ -3779,6 +3779,16 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>Με ποια ομάδα φακών γυρίστηκε αυτό το βίντεο; (Η σωστή ομάδα κάνει τη βαθιά αντιστοίχιση πολύ πιο ακριβή.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Γυρίστηκε αυτό το βίντεο με αναμορφικό φακό; Επιλέξτε την ομάδα φακών του, ή σφαιρικό για να συνεχίσετε. (Η σωστή επιλογή κάνει τη βαθιά αντιστοίχιση πολύ πιο ακριβή.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Σφαιρικός φακός (όχι αναμορφικός)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Υποψήφιο %1 από %2 (%3)</translation>

@@ -3779,6 +3779,16 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>這個影片是用哪個鏡頭組拍的？（正確的鏡頭組可顯著提高匹配精度）</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>這個影片是用變形鏡頭拍攝的嗎？請選擇對應的鏡頭群組，或選擇球面鏡頭繼續。（正確的選擇能顯著提高深度匹配的準確度。）</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>球面鏡頭（非變形）</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>候選 %1/%2（%3）</translation>

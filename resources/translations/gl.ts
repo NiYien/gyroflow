@@ -3777,6 +3777,16 @@ A escolla aplicarase a todos os traballos restantes desta lote.</translation>
         <translation>Con que grupo de obxectivos se gravou este vídeo? (O grupo correcto fai o emparellamento profundo moito máis preciso.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Este vídeo gravouse cun obxectivo anamórfico? Escolla o seu grupo de obxectivos, ou esférico para continuar. (A escolla correcta fai que o emparellamento profundo sexa moito máis preciso.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Obxectivo esférico (non anamórfico)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Candidato %1 de %2 (%3)</translation>

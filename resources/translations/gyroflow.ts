@@ -3445,6 +3445,16 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation type="unfinished"></translation>

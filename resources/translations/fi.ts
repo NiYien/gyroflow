@@ -3778,6 +3778,16 @@ Valinta koskee kaikkia jäljellä olevia tämän erän töitä.</translation>
         <translation>Millä objektiiviryhmällä tämä video kuvattiin? (Oikea ryhmä tekee syväsovituksesta paljon tarkemman.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Kuvattiinko tämä video anamorfisella objektiivilla? Valitse sen objektiiviryhmä tai jatka valitsemalla sfäärinen. (Oikea valinta tekee syväsovituksesta paljon tarkemman.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Sfäärinen objektiivi (ei anamorfinen)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Ehdokas %1/%2 (%3)</translation>

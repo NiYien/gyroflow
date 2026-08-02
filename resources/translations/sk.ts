@@ -3779,6 +3779,16 @@ Voľba sa použije na všetky zostávajúce úlohy v tejto dávke.</translation>
         <translation>Ktorou skupinou objektívov bolo toto video natočené? (Správna skupina výrazne spresní hlboké párovanie.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Bolo toto video natočené anamorfným objektívom? Vyberte jeho skupinu objektívov, alebo pokračujte voľbou sférický. (Správna voľba výrazne spresní hlboké párovanie.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Sférický objektív (nie anamorfný)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Kandidát %1 z %2 (%3)</translation>

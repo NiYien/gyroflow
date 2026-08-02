@@ -3778,6 +3778,16 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>이 비디오는 어느 렌즈 그룹으로 촬영했나요? (올바른 렌즈 그룹을 선택하면 딥 매칭 정확도가 크게 향상됩니다)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>이 영상은 아나모픽 렌즈로 촬영되었나요? 해당 렌즈 그룹을 선택하거나 구면 렌즈를 선택해 계속하세요. (올바른 선택은 딥 매칭 정확도를 크게 향상시킵니다.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>구면 렌즈 (아나모픽 아님)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>후보 %1/%2 (%3)</translation>

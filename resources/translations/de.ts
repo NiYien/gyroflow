@@ -3778,6 +3778,16 @@ Die Auswahl gilt für alle verbleibenden Jobs in diesem Batch.</translation>
         <translation>Mit welcher Objektivgruppe wurde dieses Video aufgenommen? (Die richtige Objektivgruppe macht den Tiefenabgleich deutlich genauer.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Wurde dieses Video mit einem anamorphen Objektiv aufgenommen? Wählen Sie dessen Objektivgruppe oder sphärisch, um fortzufahren. (Die richtige Wahl macht den Tiefenabgleich deutlich genauer.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Sphärisches Objektiv (nicht anamorph)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Kandidat %1 von %2 (%3)</translation>

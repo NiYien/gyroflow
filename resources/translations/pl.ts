@@ -3779,6 +3779,16 @@ Wybór zostanie zastosowany do wszystkich pozostałych zadań w tej partii.</tra
         <translation>Którą grupą obiektywów nakręcono to wideo? (Właściwa grupa znacznie zwiększa dokładność głębokiego dopasowania.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Czy to wideo nakręcono obiektywem anamorficznym? Wybierz jego grupę obiektywów lub sferyczny, aby kontynuować. (Właściwy wybór znacznie zwiększa dokładność głębokiego dopasowania.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Obiektyw sferyczny (nieanamorficzny)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Kandydat %1 z %2 (%3)</translation>

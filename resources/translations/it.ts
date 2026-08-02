@@ -3776,6 +3776,16 @@ La scelta si applica a tutti i lavori rimanenti di questo batch.</translation>
         <translation>Con quale gruppo obiettivo è stato girato questo video? (Il gruppo corretto rende l'abbinamento profondo molto più preciso.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Questo video è stato girato con un obiettivo anamorfico? Scegli il suo gruppo di obiettivi, oppure sferico per continuare. (La scelta corretta rende l&apos;abbinamento profondo molto più preciso.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Obiettivo sferico (non anamorfico)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Candidato %1 di %2 (%3)</translation>

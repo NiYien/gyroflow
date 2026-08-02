@@ -3779,6 +3779,16 @@ Valget gælder alle resterende jobs i denne batch.</translation>
         <translation>Hvilken objektivgruppe blev denne video optaget med? (Den rigtige gruppe gør dyb matchning langt mere præcis.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Blev denne video optaget med et anamorf-objektiv? Vælg dets objektivgruppe, eller vælg sfærisk for at fortsætte. (Det rigtige valg gør dyb matchning meget mere præcis.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Sfærisk objektiv (ikke anamorft)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Kandidat %1 af %2 (%3)</translation>

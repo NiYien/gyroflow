@@ -3773,6 +3773,16 @@ Bu seçim bu toplu işteki tüm kalan işlere uygulanır.</translation>
         <translation>Bu video hangi lens grubuyla çekildi? (Doğru lens grubu derin eşleştirmeyi çok daha isabetli yapar.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Bu video anamorfik bir lensle mi çekildi? Lens grubunu seçin veya devam etmek için küresel&apos;i seçin. (Doğru seçim derin eşleştirmeyi çok daha doğru hale getirir.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Küresel lens (anamorfik değil)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Aday %1/%2 (%3)</translation>

@@ -3778,6 +3778,16 @@ Esta escolha se aplica a todas as tarefas restantes deste lote.</translation>
         <translation>Com qual grupo de lentes este vídeo foi filmado? (O grupo correto torna a correspondência profunda muito mais precisa.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Este vídeo foi gravado com uma lente anamórfica? Escolha o grupo de lentes dela, ou esférica para continuar. (A escolha correta torna a correspondência profunda muito mais precisa.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Lente esférica (não anamórfica)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Candidato %1 de %2 (%3)</translation>

@@ -398,6 +398,7 @@ Item {
                 "jobId": jobId,
                 "gyroIdx": gyroIdx,
                 "videoName": videoName,
+                "reason": res.reason || "bare",
                 "groups": res.groups || [],
                 "preselect": (res.preselect !== undefined && res.preselect !== null) ? res.preselect : -1
             });
@@ -410,10 +411,13 @@ Item {
         }
         startDeepMatch(jobId, gyroIdx, videoName, -1);
     }
-    // Lens-group confirmation modal for bare manual-lens deep matches. Lists
-    // only the configured groups (labels mirror lensSlotLabel incl. the
-    // anamorphic suffix), pre-selecting the median-focal group. Cancel
-    // starts nothing; the choice is probe-scoped and never persisted.
+    // Lens-group confirmation modal for deep matches, two modes by reason:
+    // "bare" lists the focal-configured groups (labels mirror lensSlotLabel
+    // incl. the anamorphic suffix), pre-selecting the median-focal group;
+    // "anamorphic" lists the resolvable anamorphic groups (focal optional)
+    // plus a "spherical lens" escape entry that starts the probe without
+    // injection. Cancel starts nothing; the choice is probe-scoped and
+    // never persisted.
     Component {
         id: deepMatchLensChoiceComponent;
         Modal {
@@ -421,10 +425,12 @@ Item {
             property int jobId: -1;
             property int gyroIdx: -1;
             property string videoName: "";
+            property string reason: "bare";
             property var groups: [];
             property int preselect: -1;
             iconType: Modal.Question;
-            text: qsTr("Which lens group was this video shot with? (The correct lens group makes deep match much more accurate.)");
+            text: reason === "anamorphic" ? qsTr("Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)")
+                                          : qsTr("Which lens group was this video shot with? (The correct lens group makes deep match much more accurate.)");
             buttons: [qsTr("Ok"), qsTr("Cancel")];
             accentButton: 0;
             function groupLabel(g): string {
@@ -441,13 +447,21 @@ Item {
                         }
                     }
                 } catch (e) { }
-                return "L" + (g.index + 1) + " " + (+g.focal).toFixed(1) + "mm" + anamorphic;
+                // Anamorphic-mode groups may have no manual focal (telemetry
+                // fills it in) — drop the "mm" segment instead of "NaNmm".
+                const focalPart = (g.focal !== null && g.focal !== undefined) ? " " + (+g.focal).toFixed(1) + "mm" : "";
+                return "L" + (g.index + 1) + focalPart + anamorphic;
             }
             ComboBox {
                 id: lensChoiceCombo;
                 width: 250 * dpiScale;
                 anchors.horizontalCenter: parent.horizontalCenter;
-                model: lensChoiceDialog.groups.map(g => lensChoiceDialog.groupLabel(g));
+                model: {
+                    const labels = lensChoiceDialog.groups.map(g => lensChoiceDialog.groupLabel(g));
+                    if (lensChoiceDialog.reason === "anamorphic")
+                        labels.push(qsTr("Spherical lens (not anamorphic)"));
+                    return labels;
+                }
                 Component.onCompleted: {
                     for (let i = 0; i < lensChoiceDialog.groups.length; ++i) {
                         if (lensChoiceDialog.groups[i].index === lensChoiceDialog.preselect) {
@@ -459,7 +473,10 @@ Item {
             }
             onClicked: (idx) => {
                 if (idx === 0) {
-                    const g = lensChoiceDialog.groups[lensChoiceCombo.currentIndex];
+                    // The escape entry (index past the groups) maps to no
+                    // injection, identical to the no-dialog pass-through.
+                    const g = lensChoiceCombo.currentIndex < lensChoiceDialog.groups.length
+                              ? lensChoiceDialog.groups[lensChoiceCombo.currentIndex] : null;
                     root.startDeepMatch(lensChoiceDialog.jobId, lensChoiceDialog.gyroIdx, lensChoiceDialog.videoName, g ? g.index : -1);
                 }
                 lensChoiceDialog.close();

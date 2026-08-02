@@ -3775,6 +3775,16 @@ Pilihan ini berlaku untuk semua pekerjaan tersisa dalam batch ini.</translation>
         <translation>Video ini direkam dengan grup lensa yang mana? (Grup lensa yang benar membuat pencocokan mendalam jauh lebih akurat.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Apakah video ini direkam dengan lensa anamorfik? Pilih grup lensanya, atau pilih sferis untuk melanjutkan. (Pilihan yang tepat membuat pencocokan mendalam jauh lebih akurat.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Lensa sferis (bukan anamorfik)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Kandidat %1 dari %2 (%3)</translation>

@@ -3779,6 +3779,16 @@ This choice applies to all remaining jobs in this batch.</source>
         <translation>Якою групою об'єктивів знято це відео? (Правильна група робить глибоке зіставлення набагато точнішим.)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="432"/>
+        <source>Was this video shot with an anamorphic lens? Pick its lens group, or pick spherical to continue. (The correct choice makes deep match much more accurate.)</source>
+        <translation>Це відео знято анаморфним об&apos;єктивом? Виберіть його групу об&apos;єктивів або сферичний, щоб продовжити. (Правильний вибір робить глибоке зіставлення набагато точнішим.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="462"/>
+        <source>Spherical lens (not anamorphic)</source>
+        <translation>Сферичний об&apos;єктив (не анаморфний)</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/RenderQueue.qml" line="514"/>
         <source>Candidate %1 of %2 (%3)</source>
         <translation>Кандидат %1 з %2 (%3)</translation>
