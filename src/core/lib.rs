@@ -2855,9 +2855,16 @@ impl StabilizationManager {
                 return Some(display_dim);
             } else {
                 // Revert to the source video's dimensions when the config has no
-                // anamorphic output dim.
-                self.set_output_size(size.0, size.1);
-                return Some((size.0, size.1));
+                // anamorphic output dim. `size` is params.size, i.e. sensor-space,
+                // so it needs the same swap as the branch above: set_output_size
+                // clamps the request against the rotation-swapped input bounds, so
+                // handing it a sensor-space request for a rotated clip produces a
+                // landscape target (3840x2160 becomes 2160x1214 on a 90-degree 4K
+                // clip), which stretches the preview and writes the wrong export
+                // resolution.
+                let display_dim = rotated_output_dim(size, video_rotation);
+                self.set_output_size(display_dim.0, display_dim.1);
+                return Some(display_dim);
             }
         }
         None
@@ -5192,6 +5199,21 @@ mod tests {
     }
 
     #[test]
+    fn export_gyroflow_data_writes_focal_source_guard() {
+        // focal-length-override-effective: project consumers (NLE plugins, project
+        // reload) need the guard to keep the exported camera matrix instead of
+        // rebuilding it from the embedded per-frame telemetry focal.
+        let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(35.0),
+            ..Default::default()
+        });
+
+        let project = export_project_json(&manager);
+        assert_eq!(project["calibration_data"]["lens_group_override"], true);
+    }
+
+    #[test]
     fn export_gyroflow_data_writes_anamorphic_preset_calibration_data() {
         let manager = manager_with_effective_lens_group_profile(LensGroupConfig {
             lens_index: 0,
@@ -6074,6 +6096,69 @@ mod tests {
         let lens = manager.lens.read();
         assert_eq!(lens.focal_length, Some(31.0));
         assert!(!lens.lens_group_override);
+    }
+
+    // focal-length-override-effective: the no-anamorphic fallback in
+    // apply_lens_group_config_to_main used to hand set_output_size the
+    // sensor-space size. constrained_output_size clamps that against the
+    // rotation-swapped input bounds, so a 90-degree 4K clip ended up with a
+    // landscape 2160x1214 target: stretched preview and wrong export resolution.
+    fn manager_for_rotated_lens_group_apply(
+        size: (usize, usize),
+        video_rotation: f64,
+    ) -> StabilizationManager {
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = size;
+            params.video_rotation = video_rotation;
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 1 }),
+                unit_pixel_focal_length: Some(100.0),
+                lens_params: BTreeMap::from([(
+                    0,
+                    gyro_source::LensParams {
+                        focal_length: Some(28.0),
+                        pixel_focal_length: Some(2800.0),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            }
+            .into();
+        }
+        manager.lens_group_manual_edit.store(true, SeqCst);
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[1].focal_length_mm = Some(50.0);
+        *manager.lens_group_config.write() = configs;
+        manager
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_returns_display_space_dim_for_rotated_clip() {
+        let manager = manager_for_rotated_lens_group_apply((3840, 2160), 90.0);
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((2160, 3840)));
+        assert_eq!(manager.params.read().output_size, (2160, 3840));
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_does_not_transpose_at_180_degrees() {
+        let manager = manager_for_rotated_lens_group_apply((3840, 2160), 180.0);
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((3840, 2160)));
+        assert_eq!(manager.params.read().output_size, (3840, 2160));
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_keeps_source_dim_without_rotation() {
+        let manager = manager_for_rotated_lens_group_apply((3840, 2160), 0.0);
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((3840, 2160)));
+        assert_eq!(manager.params.read().output_size, (3840, 2160));
     }
 
     #[test]

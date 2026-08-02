@@ -667,7 +667,15 @@ pub fn build_lens_profile(
 
     let mut profile = fallback_lens.cloned().unwrap_or_default();
     populate_profile_metadata(&mut profile, metadata, fallback_lens, size);
-    profile.lens_group_override = config.is_some();
+    // Focal-source guard. It tells `FrameTransform::get_lens_data_at_timestamp` that
+    // this camera matrix is owned by the user / lens group, so the per-frame telemetry
+    // branch must not overwrite fx/fy/cx/cy with `lens_params[].pixel_focal_length`.
+    // Both focal sources a user can set explicitly qualify: an effective lens-group
+    // config, and a job-level focal override. Covering only the first one made the
+    // override build a correct matrix that was silently reverted to the telemetry
+    // focal on every frame, for exactly the clips the override exists to rescue.
+    profile.lens_group_override =
+        config.is_some() || sanitize_manual_focal_length_mm(job_focal_override).is_some();
     profile.focal_length = Some(focal_length_mm);
     profile.set_input_stretch(1.0, 1.0);
     if fallback_lens.is_none() {
@@ -1552,6 +1560,67 @@ mod tests {
         let profile =
             build_lens_profile(&metadata, (1920, 1080), None, None, Some(35.0)).unwrap();
         assert_eq!(profile.focal_length, Some(35.0));
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 35.0 * 100.0);
+    }
+
+    // ── focal-length-override-effective: focal-source guard flag ──
+
+    #[test]
+    fn build_lens_profile_job_override_sets_focal_source_guard() {
+        // The override must also mark the profile as user-owned, otherwise
+        // FrameTransform::get_lens_data_at_timestamp overwrites fx/fy from
+        // lens_params[].pixel_focal_length on every frame and the user's focal
+        // never reaches the stabilization math.
+        let metadata = metadata_with_auto_focal(24.0);
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), None, None, Some(35.0)).unwrap();
+        assert!(profile.lens_group_override);
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 35.0 * 100.0);
+    }
+
+    #[test]
+    fn build_lens_profile_without_user_focal_leaves_guard_clear() {
+        // Default path stays byte-identical: no guard, so the per-frame telemetry
+        // focal keeps driving the matrix exactly as before this change.
+        let metadata = metadata_with_auto_focal(24.0);
+        let profile = build_lens_profile(&metadata, (1920, 1080), None, None, None).unwrap();
+        assert!(!profile.lens_group_override);
+
+        // A below-threshold override is not a valid focal source, so it must not
+        // arm the guard either.
+        let profile = build_lens_profile(&metadata, (1920, 1080), None, None, Some(3.0)).unwrap();
+        assert!(!profile.lens_group_override);
+        assert_eq!(profile.focal_length, Some(24.0));
+    }
+
+    #[test]
+    fn build_lens_profile_job_override_sets_guard_on_derived_upfl_chain() {
+        // Sony-shaped metadata: no unit_pixel_focal_length, so the matrix is
+        // rebuilt through derived_upfl = fallback_fx / fallback_focal. The guard
+        // must be armed on that branch too.
+        let mut metadata = FileMetadata::default();
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                focal_length: Some(55.0),
+                pixel_focal_length: Some(5500.0),
+                ..Default::default()
+            },
+        );
+        let mut fallback = LensProfile::default();
+        fallback.focal_length = Some(55.0);
+        fallback.fisheye_params = CameraParams {
+            RMS_error: 0.0,
+            camera_matrix: vec![[5500.0, 0.0, 960.0], [0.0, 5500.0, 540.0], [0.0, 0.0, 1.0]],
+            distortion_coeffs: Vec::new(),
+            radial_distortion_limit: None,
+        };
+
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), None, Some(&fallback), Some(35.0)).unwrap();
+        assert!(profile.lens_group_override);
+        assert_eq!(profile.focal_length, Some(35.0));
+        // derived_upfl = 5500 / 55 = 100
         assert_eq!(profile.fisheye_params.camera_matrix[0][0], 35.0 * 100.0);
     }
 

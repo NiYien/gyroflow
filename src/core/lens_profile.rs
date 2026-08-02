@@ -90,14 +90,21 @@ pub struct LensProfile {
     pub crop_factor: Option<f64>,
     pub global_shutter: bool,
 
+    // Focal-source guard, serialized on purpose. A project consumer (NLE plugin,
+    // main-preview project reload) must know that this camera matrix is owned by
+    // the user / lens group, otherwise the per-frame branch in
+    // `FrameTransform::get_lens_data_at_timestamp` rebuilds it from the embedded
+    // `lens_params[].pixel_focal_length` and silently discards the user's focal
+    // length. Pre-change projects have no such key; the struct-level
+    // `serde(default)` reads it back as false and reproduces the old behavior.
+    pub lens_group_override: bool,
+
     // Skip these fields, make sure to update in `get_json_value`
     pub path_to_file: String,
     pub optimal_fov: Option<f64>,
     pub is_copy: bool,
     pub rating: Option<f64>,
     pub checksum: Option<String>,
-    #[serde(skip)]
-    pub lens_group_override: bool,
     parsed_interpolations: BTreeMap<i64, LensProfile>,
 }
 
@@ -847,5 +854,58 @@ impl LensProfile {
             }
             self.parsed_interpolations = interpolations;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // focal-length-override-effective: the focal-source guard must cross the
+    // project boundary. Without it every consumer of an exported .gyroflow
+    // rebuilds the camera matrix from the embedded per-frame telemetry and
+    // silently discards the user's focal length.
+
+    #[test]
+    fn lens_group_override_round_trips_through_project_json() {
+        let mut profile = LensProfile::default();
+        profile.lens_group_override = true;
+        profile.focal_length = Some(45.0);
+
+        let value = profile.get_json_value().unwrap();
+        assert_eq!(
+            value.get("lens_group_override").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+
+        let mut restored = LensProfile::default();
+        restored.load_from_json_value(&value).unwrap();
+        assert!(restored.lens_group_override);
+        assert_eq!(restored.focal_length, Some(45.0));
+    }
+
+    #[test]
+    fn lens_group_override_serializes_as_false_when_unset() {
+        let profile = LensProfile::default();
+        let value = profile.get_json_value().unwrap();
+        assert_eq!(
+            value.get("lens_group_override").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn lens_group_override_defaults_to_false_on_legacy_project_json() {
+        // Projects written before the guard was serialized carry no such key;
+        // struct-level serde(default) must read it back as false so their
+        // stabilization result stays byte-identical.
+        let legacy = serde_json::json!({ "name": "legacy", "focal_length": 24.0 });
+
+        let mut restored = LensProfile::default();
+        restored.lens_group_override = true;
+        restored.load_from_json_value(&legacy).unwrap();
+
+        assert!(!restored.lens_group_override);
+        assert_eq!(restored.focal_length, Some(24.0));
     }
 }
