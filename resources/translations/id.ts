@@ -5531,6 +5531,10 @@ Apakah anda yakin ingin melanjutkan?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Belum distabilkan. Klik &quot;Stabilkan (atau gunakan dengan plugin)&quot; terlebih dahulu.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Pratinjau: orisinil</translation>
     </message>

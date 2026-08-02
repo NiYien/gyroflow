@@ -5535,6 +5535,10 @@ Opravdu chcete pokračovat?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Zatím nestabilizováno. Nejprve klikněte na &quot;Stabilizovat (nebo použít s pluginy)&quot;.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Náhled: původní</translation>
     </message>

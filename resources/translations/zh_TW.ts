@@ -5532,6 +5532,10 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>畫面尚未穩定，請先點擊「穩定（或搭配外掛使用）」</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>預覽：原始</translation>
     </message>

@@ -5536,6 +5536,10 @@ Er du sikker på at du vil fortsette?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Ikke stabilisert ennå. Klikk først på &quot;Stabiliser (eller bruk med programtillegg)&quot;.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Forhåndsvisning: original</translation>
     </message>

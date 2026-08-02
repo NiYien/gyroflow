@@ -1251,6 +1251,68 @@ fn builtin_gyro_skips_autosync_with(
     builtin_gyro_sync_policy_with(md, load_table) == BuiltinGyroSyncPolicy::Skip
 }
 
+/// Whether the pending stabilize step (batch senseflow apply + auto-sync) would
+/// actually change the currently loaded main-preview clip. This is the playback
+/// hint predicate for deep-match users who picked "Later" and pressed play
+/// (play-hint-after-deep-match); it lives next to the auto-sync gates on purpose
+/// so both read the same data sources (camera_db classification, the
+/// accurate-timestamp waiver, existing offsets) and cannot drift apart.
+///
+/// [`BuiltinGyroSyncPolicy`] alone cannot express this: R5 Mark II (`one_frame`)
+/// and C50 (`none`) are both `Skip` for the sync stage, yet only the former
+/// still needs the fixed -(1000/fps) offset that `apply_match` writes (deferred
+/// from plain load, see the comment in `core::lib.rs::load_gyro_data`) — hence
+/// the raw classification is consulted here.
+pub(crate) fn stabilize_step_pending(
+    md: &FileMetadata,
+    has_motion: bool,
+    has_offsets: bool,
+) -> bool {
+    stabilize_step_pending_with(md, has_motion, has_offsets, core::canon_builtin_gyro::offset_table)
+}
+
+/// Table-injecting inner form of [`stabilize_step_pending`], unit-testable
+/// without a camera_db on disk (same idiom as [`builtin_gyro_sync_policy_with`]).
+fn stabilize_step_pending_with(
+    md: &FileMetadata,
+    has_motion: bool,
+    has_offsets: bool,
+    load_table: impl FnOnce() -> Arc<core::canon_builtin_gyro::OffsetTable>,
+) -> bool {
+    // Sync offsets already present (project round-trip, manual sync point, or a
+    // completed batch apply): the step already landed for this clip.
+    if has_offsets {
+        return false;
+    }
+    // No usable motion data: the clip is waiting for the external-gyro
+    // distribution that only happens inside the stabilize/export main action.
+    if !has_motion {
+        return true;
+    }
+    if md.keep_video_gyro {
+        match md.detected_source.as_deref() {
+            Some(src) if src.starts_with("Canon") => {
+                match core::canon_builtin_gyro::classify(src, &load_table()) {
+                    // Frame-aligned body: plain playback is already correct.
+                    core::canon_builtin_gyro::CanonGyroOffset::NoOffset => false,
+                    // The fixed offset is only written at batch apply, so
+                    // playback before the stabilize step is one frame off.
+                    core::canon_builtin_gyro::CanonGyroOffset::OneFrame => true,
+                    // Unclassified body: a real auto-sync pass is still needed.
+                    core::canon_builtin_gyro::CanonGyroOffset::Unknown => true,
+                }
+            }
+            // Komodo / Sony / anything else promoted by `compute_keep_video_gyro`:
+            // unconditional skip, playback is already correct.
+            _ => false,
+        }
+    } else {
+        // External-IMU clip: the generic accurate-timestamp waiver decides,
+        // matching `autosync_gate_passes` with no sync points and no override.
+        !md.has_accurate_timestamps
+    }
+}
+
 fn effective_lens_group_configs(
     job: &Job,
     global_configs: &[niyien_lens_presets::LensGroupConfig],
@@ -23609,6 +23671,44 @@ mod tests {
         );
     }
 
+    // [play-hint-after-deep-match] Invariant: the pending-stabilize flag is armed
+    // at deep-match success and cleared at every batch-sync terminal state plus
+    // the queue-clear cleanup. The clear sites are deliberately paired with the
+    // `syncDirty = false` sites — a refactor that drops one silently leaves the
+    // hint stuck on (or never shown), so pin the counts here.
+    #[test]
+    fn play_hint_flag_sites_stay_paired() {
+        let rq = include_str!("../ui/RenderQueue.qml");
+        assert_eq!(
+            rq.matches("window.deepMatchStabilizePending = true").count(),
+            1,
+            "exactly one arming site: deep match success, next to matchDirty = true"
+        );
+        assert_eq!(
+            rq.matches("window.deepMatchStabilizePending = false").count(),
+            4,
+            "three sync-settle sites (paired with syncDirty = false) plus the \
+             queue-clear cleanup"
+        );
+        assert_eq!(
+            rq.matches("window.syncDirty = false").count(),
+            3,
+            "sync-settle site count changed: mirror the change onto \
+             deepMatchStabilizePending above"
+        );
+        let app = include_str!("../ui/App.qml");
+        assert!(
+            app.contains("property bool deepMatchStabilizePending: false"),
+            "the window-level runtime flag must exist and default to false"
+        );
+        let va = include_str!("../ui/VideoArea.qml");
+        assert!(
+            va.contains("window.deepMatchStabilizePending")
+                && va.contains("controller.stabilize_step_pending_for_preview()"),
+            "the playback listener must gate on the flag AND the per-clip predicate"
+        );
+    }
+
     #[test]
     fn simple_mode_sensor_section_hides_duplicate_sync_and_motion_file_buttons() {
         let qml = include_str!("../ui/App.qml");
@@ -25363,6 +25463,105 @@ mod tests {
                 "{src}: fixed offset without skipping auto-sync"
             );
         }
+    }
+
+    // ---- play-hint-after-deep-match: playback-hint predicate ----
+
+    fn hint_md(
+        keep: bool,
+        detected_source: Option<&str>,
+        accurate_ts: bool,
+    ) -> FileMetadata {
+        FileMetadata {
+            has_accurate_timestamps: accurate_ts,
+            ..builtin_gyro_md(keep, detected_source)
+        }
+    }
+
+    // The five field-report anchors the change was written against: C50 plays
+    // correctly without the stabilize step, R5 Mark II is one frame off, R50 V
+    // needs a real sync, a clip waiting for external gyro is bare, and existing
+    // offsets mean the step already landed.
+    #[test]
+    fn stabilize_pending_matches_field_report_anchors() {
+        let table = canon_offset_table();
+        // No motion data: waiting for the external-gyro distribution.
+        assert!(stabilize_step_pending_with(
+            &hint_md(false, None, false),
+            false,
+            false,
+            || table.clone()
+        ));
+        // R5 Mark II: the fixed one-frame offset only lands at batch apply.
+        assert!(stabilize_step_pending_with(
+            &hint_md(true, Some("Canon EOS R5 Mark II"), true),
+            true,
+            false,
+            || table.clone()
+        ));
+        // R50 V: unclassified, a real auto-sync pass is still needed.
+        assert!(stabilize_step_pending_with(
+            &hint_md(true, Some("Canon R50 V"), true),
+            true,
+            false,
+            || table.clone()
+        ));
+        // C50: frame-aligned, plain playback is already correct.
+        assert!(!stabilize_step_pending_with(
+            &hint_md(true, Some("Canon C50"), true),
+            true,
+            false,
+            || table.clone()
+        ));
+    }
+
+    #[test]
+    fn stabilize_pending_offsets_short_circuit_everything() {
+        // Existing sync offsets end the question before the source is even
+        // inspected — the panicking thunk proves the table is never loaded.
+        for (keep, src, motion) in [
+            (true, Some("Canon R5 Mark II"), true),
+            (true, Some("Canon R50 V"), true),
+            (false, None, false),
+        ] {
+            assert!(
+                !stabilize_step_pending_with(&hint_md(keep, src, false), motion, true, || {
+                    panic!("offsets short-circuit must not load the table")
+                }),
+                "{src:?} with offsets must not hint"
+            );
+        }
+    }
+
+    #[test]
+    fn stabilize_pending_skips_sony_komodo_without_table() {
+        for src in [Some("Sony ILCE-7SM3"), Some("RED KOMODO"), None] {
+            assert!(
+                !stabilize_step_pending_with(&hint_md(true, src, true), true, false, || {
+                    panic!("non-Canon source must not load the classification table")
+                }),
+                "{src:?} keeps the unconditional skip and must not hint"
+            );
+        }
+    }
+
+    #[test]
+    fn stabilize_pending_external_imu_follows_timestamp_waiver() {
+        // Accurate timestamps (GoPro/DJI style telemetry): playback is correct.
+        assert!(!stabilize_step_pending_with(
+            &hint_md(false, Some("GoPro HERO11 Black"), true),
+            true,
+            false,
+            || panic!("external-IMU arm must not load the table")
+        ));
+        // No accurate timestamps (e.g. a manually loaded external .bin that was
+        // never synced): the sync stage would still change this clip.
+        assert!(stabilize_step_pending_with(
+            &hint_md(false, None, false),
+            true,
+            false,
+            || panic!("external-IMU arm must not load the table")
+        ));
     }
 
     // ---- canon-builtin-gyro-offset-table §9: accurate-timestamp waiver ----

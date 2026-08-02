@@ -5525,6 +5525,10 @@ Bu özellik deneyseldir, sonuçlar hiç düzgün görünmeyebilir. Devam etmek i
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Henüz sabitlenmedi. Önce &quot;Sabitle (veya eklentilerle kullan)&quot; düğmesine tıklayın.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Önizleme: orijinal</translation>
     </message>

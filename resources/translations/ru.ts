@@ -5534,6 +5534,10 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Ещё не стабилизировано. Сначала нажмите «Стабилизировать (или использовать с плагинами)».</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Предпросмотр: оригинал</translation>
     </message>

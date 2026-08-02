@@ -1024,6 +1024,22 @@ Item {
                         }
                     ]
 
+                    // play-hint-after-deep-match: single choke point for every way
+                    // playback can start (play button, spacebar, playback-rate
+                    // shortcuts). While a deep-match stabilize step is pending and
+                    // would actually change this clip, surface a one-line reminder.
+                    // Rate-limited so rapid play/pause toggling (and suspend/resume,
+                    // which also flips `playing`) cannot stack messages.
+                    property real lastStabilizeHintMs: 0;
+                    onPlayingChanged: {
+                        if (!playing || !window.deepMatchStabilizePending) return;
+                        if (!controller.stabilize_step_pending_for_preview()) return;
+                        const now = Date.now();
+                        if (now - vid.lastStabilizeHintMs < 5000) return;
+                        vid.lastStabilizeHintMs = now;
+                        window.showNotification(Modal.Info, qsTr("Not stabilized yet. Click \"Stabilize (or use with plugins)\" first."));
+                    }
+
                     function fovChanged(): void {
                         const fov = controller.current_fov;
                         const focal_length = controller.current_focal_length;

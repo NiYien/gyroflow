@@ -5536,6 +5536,10 @@ Soll trotzdem mit der Analyse fortgefahren werden?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Noch nicht stabilisiert. Zuerst auf „Stabilisieren (oder mit Plugins verwenden)“ klicken.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Vorschau: Original</translation>
     </message>

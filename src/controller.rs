@@ -427,6 +427,10 @@ pub struct Controller {
     export_stmap: qt_method!(fn(&self, folder_url: QUrl, per_frame: bool)),
     stmap_progress: qt_signal!(progress: f64, ready: usize, total: usize),
 
+    // play-hint-after-deep-match: would the stabilize step (batch apply + sync)
+    // actually change the currently loaded main-preview clip?
+    stabilize_step_pending_for_preview: qt_method!(fn(&self) -> bool),
+
     // ---------- REDline conversion ----------
     find_redline: qt_method!(fn(&self) -> QString),
     // ---------- REDline conversion ----------
@@ -4679,6 +4683,16 @@ impl Controller {
             .file_metadata
             .read()
             .has_accurate_timestamps
+    }
+    // play-hint-after-deep-match: the QML playback hint asks this at each play
+    // start. Delegates to the predicate that lives next to the batch auto-sync
+    // gates so the hint can never disagree with what the batch flow would do.
+    fn stabilize_step_pending_for_preview(&self) -> bool {
+        let gyro = self.stabilizer.gyro.read();
+        let has_offsets = !gyro.get_offsets().is_empty();
+        let fm = gyro.file_metadata.read();
+        let has_motion = !fm.raw_imu.is_empty() || !fm.quaternions.is_empty();
+        rendering::render_queue::stabilize_step_pending(&fm, has_motion, has_offsets)
     }
 
     fn check_external_sdk(&self, filename: QString) -> bool {

@@ -5535,6 +5535,10 @@ Cette fonctionnalité est expérimentale, les résultats peuvent ne pas du tout 
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Pas encore stabilisé. Cliquez d’abord sur « Stabiliser (ou utiliser avec les plugins) ».</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Aperçu : original</translation>
     </message>

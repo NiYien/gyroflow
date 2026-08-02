@@ -5538,6 +5538,10 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>まだスタビライズされていません。先に「スタビライズ（またはプラグインで使用）」をクリックしてください。</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>プレビュー: オリジナル</translation>
     </message>

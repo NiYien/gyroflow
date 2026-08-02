@@ -615,6 +615,10 @@ Item {
                         // then re-matches (distributing the recorded anchors) and
                         // syncs/renders.
                         root.matchDirty = true;
+                        // play-hint-after-deep-match: nothing is distributed yet,
+                        // so playback of an affected clip gets a one-line hint
+                        // until a batch sync settles or the queue is cleared.
+                        window.deepMatchStabilizePending = true;
                         return;
                     }
                     deepMatchDialog.close();
@@ -751,6 +755,8 @@ Item {
                 if (root._batchSyncInFlight) {
                     root._batchSyncInFlight = false;
                     window.syncDirty = false;
+                    // play-hint-after-deep-match: the stabilize step landed.
+                    window.deepMatchStabilizePending = false;
                 }
                 return;
             }
@@ -770,6 +776,8 @@ Item {
                 // Terminal: sync ran (even if poor) — clear the dirty flag.
                 root._batchSyncInFlight = false;
                 window.syncDirty = false;
+                // play-hint-after-deep-match: terminal state, paired with syncDirty.
+                window.deepMatchStabilizePending = false;
                 messageBox(Modal.Warning, qsTr("Could not establish time sync. Right-click a video with clear camera motion and select \"Deep match with gyro\"."), [
                     { text: qsTr("Ok") }
                 ]);
@@ -777,6 +785,8 @@ Item {
                 // Terminal after repair rounds: clear the dirty flag.
                 root._batchSyncInFlight = false;
                 window.syncDirty = false;
+                // play-hint-after-deep-match: terminal state, paired with syncDirty.
+                window.deepMatchStabilizePending = false;
                 messageBox(Modal.Warning, qsTr("Some videos are still not reliably synchronized after repair."), [
                     { text: qsTr("Ok") }
                 ]);
@@ -3214,6 +3224,9 @@ Item {
                     render_queue.clear_gyro_files();
                     root.matchWarning = "";
                     root.resetConvertFormatBatchState();
+                    // play-hint-after-deep-match: the batch is gone, so the
+                    // pending-stabilize hint has nothing left to point at.
+                    window.deepMatchStabilizePending = false;
                 };
                 if (render_queue.status === "active") {
                     messageBox(Modal.Warning, qsTr("A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?"), [

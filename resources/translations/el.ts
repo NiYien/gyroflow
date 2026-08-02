@@ -5536,6 +5536,10 @@ Are you sure you want to continue?</source>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Δεν έχει σταθεροποιηθεί ακόμη. Πατήστε πρώτα «Σταθεροποίηση (ή χρήση με πρόσθετα)».</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Προεπισκόπηση: πρωτότυπο</translation>
     </message>

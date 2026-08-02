@@ -5535,6 +5535,10 @@ Czy na pewno chcesz kontynuować?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Jeszcze nie ustabilizowano. Najpierw kliknij &quot;Stabilizuj (lub użyj z wtyczkami)&quot;.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Podgląd: oryginalny</translation>
     </message>

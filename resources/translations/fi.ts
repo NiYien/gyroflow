@@ -5535,6 +5535,10 @@ Oletko varma, että haluat jatkaa?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Ei vielä vakautettu. Napsauta ensin &quot;Vakauta (tai käytä liitännäisten kanssa)&quot;.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Esikatselu: alkuperäinen</translation>
     </message>

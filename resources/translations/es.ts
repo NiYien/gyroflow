@@ -5532,6 +5532,10 @@ Esta característica es experimental, los resultados pueden no ser correctos del
 <context>
     <name>VideoArea</name>
     <message>
+        <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
+        <translation>Aún no está estabilizado. Primero haga clic en &quot;Estabilizar (o usar con plugins)&quot;.</translation>
+    </message>
+    <message>
         <source>Preview: original</source>
         <translation>Vista previa: original</translation>
     </message>

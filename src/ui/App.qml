@@ -31,6 +31,11 @@ Rectangle {
     // Simple-mode batch sync dirty flag (window-level because the AI sync toggle lives in
     // SimpleStabilization.qml). true = never synced / inputs changed since last sync.
     property bool syncDirty: true;
+    // play-hint-after-deep-match: set on deep match success, cleared when a batch
+    // sync settles (the three syncDirty=false terminal sites in RenderQueue.qml)
+    // or the queue is cleared. Runtime-only, never persisted. While set, playback
+    // of a clip the stabilize step would still change shows a one-line hint.
+    property bool deepMatchStabilizePending: false;
     // Android multi-pick callback. Set by a Button.onClicked just before opening
     // a FileDialog/FolderDialog; invoked by Connections.onUrls_opened (and the
     // single-URI Connections.onUrl_opened for parity) with the picked URL list.
