@@ -6,6 +6,14 @@ use super::protocol::{Frame, encode};
 pub const MSG_CMD_VERSION: u8 = 0x02;
 pub const MSG_CMD_TIME_SET: u8 = 0x03;
 pub const MSG_CMD_TIME_GET: u8 = 0x04;
+// Language index contract: the 1-byte payload equals the firmware language
+// table order, which equals the NiYien Tool combobox row order:
+// 0 = English, 1 = Simplified Chinese, 2 = Traditional Chinese.
+// Adding a language requires a coordinated firmware + client change.
+pub const MSG_CMD_LANGUAGE: u8 = 0x0C;
+// Lens display: payload [slot(0..5), focal_hi, focal_lo], focal is a
+// big-endian u16 in 0.1mm units; 0 means "do not display this slot".
+pub const MSG_CMD_LENS_INFO: u8 = 0x10;
 
 pub const MSG_CMD_OTA_BEGIN: u8 = 0xFE;
 pub const MSG_CMD_OTA_INFO: u8 = 0xFD;
@@ -81,6 +89,15 @@ pub fn set_time(
         (tz_offset_minutes & 0xFF) as u8,
     ];
     encode(MSG_CMD_TIME_SET, &payload)
+}
+
+pub fn set_language(index: u8) -> Vec<u8> {
+    encode(MSG_CMD_LANGUAGE, &[index])
+}
+
+pub fn set_lens_info(slot: u8, focal_dmm: u16) -> Vec<u8> {
+    let payload = [slot, ((focal_dmm >> 8) & 0xFF) as u8, (focal_dmm & 0xFF) as u8];
+    encode(MSG_CMD_LENS_INFO, &payload)
 }
 
 pub fn parse_response(frame: &Frame) -> Option<Response> {
@@ -190,6 +207,50 @@ mod tests {
                 0xAA, 0x55, 0x01, 0x03, 0x08, 0x1A, 0x04, 0x07, 0x0D, 0x0E, 0x0F, 0xFE, 0x20, 0x78
             ]
         );
+    }
+
+    #[test]
+    fn encodes_set_language_request() {
+        assert_eq!(
+            set_language(0),
+            vec![0xAA, 0x55, 0x01, 0x0C, 0x01, 0x00, 0x0D]
+        );
+        assert_eq!(
+            set_language(1),
+            vec![0xAA, 0x55, 0x01, 0x0C, 0x01, 0x01, 0x0E]
+        );
+    }
+
+    #[test]
+    fn encodes_set_lens_info_request() {
+        // 50.0mm on slot 2 -> 500 (0x01F4) in 0.1mm units, big-endian.
+        assert_eq!(
+            set_lens_info(2, 500),
+            vec![0xAA, 0x55, 0x01, 0x10, 0x03, 0x02, 0x01, 0xF4, 0x0A]
+        );
+        // Cleared slot carries focal 0.
+        assert_eq!(
+            set_lens_info(5, 0),
+            vec![0xAA, 0x55, 0x01, 0x10, 0x03, 0x05, 0x00, 0x00, 0x18]
+        );
+    }
+
+    #[test]
+    fn ignores_language_and_lens_info_replies() {
+        // Both commands are fire-and-forget; device echoes must fall through
+        // to None instead of polluting any state (the C++ original routes the
+        // 0x10 echo into its camera handler by mistake — do not replicate).
+        let language = Frame {
+            cmd: MSG_CMD_LANGUAGE,
+            data: vec![0x00],
+        };
+        let lens = Frame {
+            cmd: MSG_CMD_LENS_INFO,
+            data: vec![0x00],
+        };
+
+        assert_eq!(parse_response(&language), None);
+        assert_eq!(parse_response(&lens), None);
     }
 
     #[test]

@@ -48,7 +48,10 @@ pub struct UITools {
         qt_method!(fn(&self, value: String, cursor_position: usize, increase: bool) -> QString),
     closing: qt_method!(fn(&mut self)),
 
-    language_changed: qt_signal!(),
+    // Carries the language code so listeners never re-read settings: the
+    // Advanced-panel switch writes its Settings alias with deferred store
+    // flush, so a settings read at signal time can still see the old value.
+    language_changed: qt_signal!(lang: QString),
 
     calibrator_ctl: Option<RefCell<Controller>>,
 
@@ -64,6 +67,7 @@ pub struct UITools {
 impl UITools {
     pub fn set_language(&self, lang_id: QString) {
         if let Some(engine) = self.engine_ptr {
+            let lang_for_signal = lang_id.clone();
             let engine = unsafe { &mut *(engine) };
             let engine_ptr = engine.cpp_ptr();
             cpp!(unsafe [engine_ptr as "QQmlEngine *", lang_id as "QString"] {
@@ -78,7 +82,7 @@ impl UITools {
 
                 engine_ptr->retranslate();
             });
-            self.language_changed();
+            self.language_changed(lang_for_signal);
         }
     }
     pub fn get_default_language(&self) -> QString {

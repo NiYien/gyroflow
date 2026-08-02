@@ -343,6 +343,12 @@ pub struct Controller {
     // Saved timezone selection pushed from QML at startup and on change, so
     // the connect-time auto sync works even before the device panel exists.
     device_timezone_id: qt_property!(QString),
+    // UI language code pushed from QML at startup and on every language
+    // change (same pattern as device_timezone_id); resends to the device
+    // immediately while connected.
+    set_device_ui_language: qt_method!(fn(&mut self, lang: QString)),
+    send_device_lens_display: qt_method!(fn(&mut self)),
+    clear_device_lens_display: qt_method!(fn(&mut self)),
     check_firmware_update: qt_method!(fn(&mut self)),
     start_firmware_update: qt_method!(fn(&mut self)),
     poll_device_events: qt_method!(fn(&mut self)),
@@ -484,6 +490,7 @@ pub struct Controller {
     device_manager: Option<DeviceManager>,
     device_command_tx: Option<Sender<DeviceCommand>>,
     device_event_rx: Option<Arc<Mutex<Receiver<DeviceEvent>>>>,
+    device_ui_language: String,
 
     pub stabilizer: Arc<StabilizationManager>,
 }
@@ -3589,6 +3596,55 @@ impl Controller {
         self.device_time_sync_finished(false, QString::from("Device command channel is unavailable"));
     }
 
+    fn set_device_ui_language(&mut self, lang: QString) {
+        self.device_ui_language = lang.to_string();
+        if self.device_connected {
+            self.send_device_language();
+        }
+    }
+
+    // Fire-and-forget, mirroring the NiYien Tool semantics: no ack tracking,
+    // no retry, no failure event.
+    fn send_device_language(&self) {
+        let index = crate::niyien_device::device_language_index(&self.device_ui_language);
+        ::log::info!(
+            "NiYien: device language sync lang={:?} index={}",
+            self.device_ui_language,
+            index
+        );
+        if let Some(tx) = self.device_command_tx.as_ref() {
+            let _ = tx.send(DeviceCommand::SetLanguage(index));
+        }
+    }
+
+    // Sends the global manual focal length of lens groups L1-L6 to the six
+    // device display slots. Groups without a manual focal send 0 ("do not
+    // display"), matching the wipe-on-write semantics chosen in the design.
+    fn send_device_lens_display(&mut self) {
+        let mut focals_dmm = [0u16; 6];
+        {
+            let configs = self.stabilizer.lens_group_config.read();
+            for config in configs.iter() {
+                if let Some(slot) = focals_dmm.get_mut(config.lens_index) {
+                    *slot = crate::niyien_device::focal_mm_to_dmm(
+                        config.focal_length_mm.unwrap_or(0.0),
+                    );
+                }
+            }
+        }
+        ::log::info!("NiYien: lens display write focals_dmm={focals_dmm:?}");
+        if let Some(tx) = self.device_command_tx.as_ref() {
+            let _ = tx.send(DeviceCommand::SetLensDisplay(focals_dmm));
+        }
+    }
+
+    fn clear_device_lens_display(&mut self) {
+        ::log::info!("NiYien: lens display clear");
+        if let Some(tx) = self.device_command_tx.as_ref() {
+            let _ = tx.send(DeviceCommand::SetLensDisplay([0u16; 6]));
+        }
+    }
+
     // Returns i32::MIN when the id cannot be resolved so QML can fall back
     // to the static offset from device_timezones.js.
     fn timezone_offset_minutes(&self, tz_id: QString) -> i32 {
@@ -3744,6 +3800,10 @@ impl Controller {
                     );
                     self.sync_device_time(offset_minutes);
                 }
+                // Align the device display language with the software UI
+                // language on every connect (fire-and-forget, firmware only
+                // ships en/zh_CN/zh_TW).
+                self.send_device_language();
                 if self.ota_state != QString::from("updating") {
                     self.check_firmware_update();
                 }

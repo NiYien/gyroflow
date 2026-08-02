@@ -53,9 +53,37 @@ const HANDSHAKE_MAX_PROBES: u32 = 3;
 // seconds does. Keep the port closed this long after giving up a handshake.
 const HANDSHAKE_REOPEN_COOLDOWN: Duration = Duration::from_secs(5);
 
+// Maps the software UI language code (settings "lang") to the firmware
+// language table index carried by commands::MSG_CMD_LANGUAGE. The firmware
+// only ships English, Simplified Chinese and Traditional Chinese; every other
+// UI language falls back to English. Codes are matched verbatim (the settings
+// value is written from the fixed translation file list, never free-form).
+pub fn device_language_index(lang: &str) -> u8 {
+    match lang {
+        "zh_CN" => 1,
+        "zh_TW" => 2,
+        _ => 0,
+    }
+}
+
+// Converts a focal length in millimeters to the device's 0.1mm fixed-point
+// display unit, rounding and clamping to the u16 payload range. Non-finite
+// and non-positive inputs map to 0 ("do not display").
+pub fn focal_mm_to_dmm(focal_mm: f64) -> u16 {
+    if !focal_mm.is_finite() || focal_mm <= 0.0 {
+        return 0;
+    }
+    (focal_mm * 10.0).round().min(u16::MAX as f64) as u16
+}
+
 #[derive(Debug)]
 pub enum DeviceCommand {
     SyncTime(i16),
+    // Fire-and-forget device UI language (see commands::MSG_CMD_LANGUAGE).
+    SetLanguage(u8),
+    // Fire-and-forget lens focal display, one 0.1mm fixed-point value per
+    // device slot 0..5; 0 clears the slot display.
+    SetLensDisplay([u16; 6]),
     CheckUpdate(String),
     StartOta,
     Stop,
@@ -100,6 +128,8 @@ pub enum DeviceEvent {
 
 enum TransportCommand {
     SyncTime(i16),
+    SetLanguage(u8),
+    SetLensDisplay([u16; 6]),
     Stop,
 }
 
@@ -256,6 +286,12 @@ fn dispatcher_loop(
             Ok(DeviceCommand::SyncTime(tz_offset_minutes)) => {
                 let _ = transport_tx.send(TransportCommand::SyncTime(tz_offset_minutes));
             }
+            Ok(DeviceCommand::SetLanguage(index)) => {
+                let _ = transport_tx.send(TransportCommand::SetLanguage(index));
+            }
+            Ok(DeviceCommand::SetLensDisplay(focals_dmm)) => {
+                let _ = transport_tx.send(TransportCommand::SetLensDisplay(focals_dmm));
+            }
             Ok(DeviceCommand::CheckUpdate(current_version)) => {
                 let _ = network_tx.send(NetworkCommand::CheckUpdate(current_version));
             }
@@ -309,6 +345,24 @@ fn run_transport_thread<B: DeviceTransportBackend>(
                 } else {
                     let _ = event_tx.send(DeviceEvent::TimeSyncResult(false));
                 }
+            }
+            Ok(TransportCommand::SetLanguage(index)) => {
+                send_fire_and_forget_frames(
+                    &mut session,
+                    &event_tx,
+                    &shared_state,
+                    "SetLanguage",
+                    vec![commands::set_language(index)],
+                );
+            }
+            Ok(TransportCommand::SetLensDisplay(focals_dmm)) => {
+                send_fire_and_forget_frames(
+                    &mut session,
+                    &event_tx,
+                    &shared_state,
+                    "SetLensDisplay",
+                    lens_display_packets(&focals_dmm),
+                );
             }
             Ok(TransportCommand::Stop) => break,
             Err(RecvTimeoutError::Timeout) => {
@@ -710,6 +764,41 @@ fn write_packet<P: DeviceTransportStream>(stream: &mut P, packet: &[u8]) -> io::
     stream.flush()
 }
 
+// One encoded frame per device lens slot, in slot order 0..5.
+fn lens_display_packets(focals_dmm: &[u16; 6]) -> Vec<Vec<u8>> {
+    focals_dmm
+        .iter()
+        .enumerate()
+        .map(|(slot, focal_dmm)| commands::set_lens_info(slot as u8, *focal_dmm))
+        .collect()
+}
+
+// Shared sender for fire-and-forget commands (language, lens display). No
+// session means the command is dropped by design (no failure event); a write
+// error tears the session down like any other dead link.
+fn send_fire_and_forget_frames<P: DeviceTransportStream>(
+    session: &mut Option<DeviceSession<P>>,
+    event_tx: &Sender<DeviceEvent>,
+    shared_state: &Arc<Mutex<DeviceSharedState>>,
+    what: &str,
+    packets: Vec<Vec<u8>>,
+) {
+    if session.is_none() {
+        log::debug!("Dropping {what} command: no active device session");
+        return;
+    }
+    for packet in packets {
+        let Some(active) = session.as_mut() else {
+            return;
+        };
+        if let Err(err) = write_packet(&mut active.stream, &packet) {
+            log::warn!("Failed to send {} to {}: {}", what, active.port_name, err);
+            disconnect_session(session, event_tx, shared_state);
+            return;
+        }
+    }
+}
+
 fn send_current_time<P: DeviceTransportStream>(
     session: &mut DeviceSession<P>,
     tz_offset_minutes: i16,
@@ -1032,6 +1121,26 @@ fn run_ota_pump_loop<B: DeviceTransportBackend>(
                     let _ = event_tx.send(DeviceEvent::TimeSyncResult(false));
                 }
             }
+            // Same interleave semantics as SyncTime: these small frames ride
+            // along the OTA byte stream instead of being silently dropped.
+            Ok(TransportCommand::SetLanguage(index)) => {
+                send_fire_and_forget_frames(
+                    session,
+                    event_tx,
+                    shared_state,
+                    "SetLanguage",
+                    vec![commands::set_language(index)],
+                );
+            }
+            Ok(TransportCommand::SetLensDisplay(focals_dmm)) => {
+                send_fire_and_forget_frames(
+                    session,
+                    event_tx,
+                    shared_state,
+                    "SetLensDisplay",
+                    lens_display_packets(&focals_dmm),
+                );
+            }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => return OtaPumpExit::Stop,
         }
@@ -1118,6 +1227,29 @@ mod tests {
             shifted.minute(),
             shifted.second(),
         )
+    }
+
+    #[test]
+    fn maps_ui_language_to_device_index() {
+        assert_eq!(device_language_index("zh_CN"), 1);
+        assert_eq!(device_language_index("zh_TW"), 2);
+        assert_eq!(device_language_index("en"), 0);
+        assert_eq!(device_language_index("ja"), 0);
+        assert_eq!(device_language_index("zh"), 0);
+        assert_eq!(device_language_index(""), 0);
+        // Codes are matched verbatim; unexpected casing falls back to English.
+        assert_eq!(device_language_index("ZH_CN"), 0);
+    }
+
+    #[test]
+    fn converts_focal_mm_to_fixed_point() {
+        assert_eq!(focal_mm_to_dmm(50.0), 500);
+        assert_eq!(focal_mm_to_dmm(0.0), 0);
+        assert_eq!(focal_mm_to_dmm(-1.0), 0);
+        // Rounds instead of truncating (the C++ original truncates).
+        assert_eq!(focal_mm_to_dmm(23.96), 240);
+        assert_eq!(focal_mm_to_dmm(1_000_000.0), u16::MAX);
+        assert_eq!(focal_mm_to_dmm(f64::NAN), 0);
     }
 
     #[test]
@@ -1280,7 +1412,9 @@ mod tests {
         assert_eq!(writes.lock().first(), Some(&commands::ask_version()));
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1308,7 +1442,77 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn transport_thread_writes_language_and_lens_display_frames() {
+        let writes = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let backend = ScriptedBackend {
+            streams: VecDeque::from([ScriptedStream::new(
+                vec![ReadStep::Data(version_frame())],
+                Arc::clone(&writes),
+            )]),
+        };
+        let running = Arc::new(AtomicBool::new(true));
+        let (command_tx, command_rx) = mpsc::channel();
+        let (event_tx, event_rx) = mpsc::channel();
+        let shared_state = Arc::new(parking_lot::Mutex::new(DeviceSharedState::default()));
+
+        let handle = {
+            let running = Arc::clone(&running);
+            thread::spawn(move || {
+                run_transport_thread(backend, running, command_rx, event_tx, shared_state, true);
+            })
+        };
+
+        assert!(matches!(
+            event_rx.recv_timeout(Duration::from_secs(1)).unwrap(),
+            DeviceEvent::Connected(_)
+        ));
+
+        let focals_dmm = [500u16, 0, 240, 0, 0, 65535];
+        command_tx.send(TransportCommand::SetLanguage(1)).unwrap();
+        command_tx
+            .send(TransportCommand::SetLensDisplay(focals_dmm))
+            .unwrap();
+
+        // Filter by command byte: the periodic time poll may interleave its
+        // own frames into the write capture.
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let (language_frames, lens_frames) = loop {
+            let captured = writes.lock().clone();
+            let language: Vec<Vec<u8>> = captured
+                .iter()
+                .filter(|frame| frame.get(3) == Some(&commands::MSG_CMD_LANGUAGE))
+                .cloned()
+                .collect();
+            let lens: Vec<Vec<u8>> = captured
+                .iter()
+                .filter(|frame| frame.get(3) == Some(&commands::MSG_CMD_LENS_INFO))
+                .cloned()
+                .collect();
+            if (!language.is_empty() && lens.len() >= 6) || Instant::now() >= deadline {
+                break (language, lens);
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
+
+        assert_eq!(language_frames, vec![commands::set_language(1)]);
+        let expected_lens: Vec<Vec<u8>> = focals_dmm
+            .iter()
+            .enumerate()
+            .map(|(slot, focal)| commands::set_lens_info(slot as u8, *focal))
+            .collect();
+        assert_eq!(lens_frames, expected_lens);
+
+        running.store(false, SeqCst);
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1361,7 +1565,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1405,7 +1611,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1439,7 +1647,9 @@ mod tests {
         thread::sleep(Duration::from_millis(1500));
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
 
         assert_eq!(count_version_probes(&writes), 1);
@@ -1517,7 +1727,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1664,7 +1876,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1704,7 +1918,9 @@ mod tests {
         );
 
         let stop_sent = Instant::now();
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
         assert!(
             stop_sent.elapsed() < Duration::from_secs(2),
@@ -1750,7 +1966,9 @@ mod tests {
         // WaitingReconnect with the session gone.
         thread::sleep(Duration::from_millis(800));
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
 
         let calls = list_calls.load(SeqCst);
@@ -1817,7 +2035,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1860,7 +2080,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 
@@ -1896,7 +2118,9 @@ mod tests {
         );
 
         running.store(false, SeqCst);
-        command_tx.send(TransportCommand::Stop).unwrap();
+        // The thread may have already observed running=false and exited,
+        // dropping the receiver — a failed send is success, not a panic.
+        let _ = command_tx.send(TransportCommand::Stop);
         handle.join().unwrap();
     }
 

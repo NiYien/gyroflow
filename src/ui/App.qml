@@ -2757,6 +2757,18 @@ Rectangle {
         }
     }
 
+    // device-language-and-lens-display: single hook covering every language
+    // switch entry point (first-run picker, Advanced dropdown). The signal
+    // carries the language code — do NOT re-read settings("lang") here: the
+    // Advanced dropdown writes its Settings alias with a deferred store
+    // flush, so a read at signal time can still return the previous value
+    // (field-tested 2026-08-02: the device kept receiving the old language).
+    Connections {
+        target: ui_tools;
+        function onLanguage_changed(lang) {
+            controller.set_device_ui_language("" + lang);
+        }
+    }
     Component.onCompleted: {
         // simple-mode-ux-overhaul: enforce Simple mode at every launch.
         // The property default is already true (line 25), but assign explicitly so
@@ -2773,6 +2785,11 @@ Rectangle {
         // installs are mapped through their stored city key.
         controller.device_timezone_id = ("" + settings.value("niyienTimezoneTzId", ""))
             || DeviceTimezones.tzIdForCityKey("" + settings.value("niyienTimezoneKey", ""));
+        // device-language-and-lens-display: hand the UI language to the controller
+        // before any device Connected event, so connect-time auto language sync
+        // works while no device panel exists. Runtime changes flow through the
+        // ui_tools.language_changed hook below.
+        controller.set_device_ui_language("" + settings.value("lang", "en"));
         controller.check_updates();
         // Defer crash scan one tick so QML overlay z-stack is ready.
         Qt.callLater(controller.scanCrashCheckpoints);

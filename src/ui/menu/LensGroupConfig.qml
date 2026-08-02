@@ -370,6 +370,10 @@ MenuItem {
         syncing = false
         persistConfigs(next)
     }
+    function showDeviceDisplayNotice(message: string): void {
+        deviceDisplayNotice.text = message
+        deviceDisplayNoticeTimer.restart()
+    }
     function clearCurrentFocalLength(): void {
         // simple-mode-ux-overhaul: clearing focal length is always a global edit.
         // persistConfigs takes care of clearing per-job overrides on all jobs.
@@ -732,6 +736,59 @@ MenuItem {
 
                 // simple-mode-ux-overhaul: "Apply globally" button removed — every edit
                 // is global by default now.
+
+                // device-language-and-lens-display: write/clear the focal length
+                // display on the connected NiYien device (slots 0..5 = L1..L6).
+                // Fire-and-forget — the notice only says "sent", never "confirmed".
+                Column {
+                    width: parent.width
+                    spacing: 8 * dpiScale
+                    visible: controller.device_connected
+
+                    Row {
+                        width: parent.width
+                        spacing: 8 * dpiScale
+
+                        Button {
+                            width: (parent.width - parent.spacing) / 2
+                            accent: true
+                            text: qsTr("Display on Device")
+                            enabled: controller.ota_state !== "updating"
+                            onClicked: {
+                                controller.send_device_lens_display()
+                                root.showDeviceDisplayNotice(qsTr("Sent to the device."))
+                            }
+                        }
+
+                        Button {
+                            width: (parent.width - parent.spacing) / 2
+                            text: qsTr("Clear Device Display")
+                            enabled: controller.ota_state !== "updating"
+                            onClicked: {
+                                controller.clear_device_lens_display()
+                                root.showDeviceDisplayNotice(qsTr("Sent to the device."))
+                            }
+                        }
+                    }
+
+                    BasicText {
+                        id: deviceDisplayNotice
+                        width: parent.width
+                        leftPadding: 0
+                        visible: text.length > 0
+                        color: root.mutedTextColor
+                        font.pixelSize: 11 * dpiScale
+                        font.bold: true
+                        wrapMode: Text.WordWrap
+                    }
+
+                    Timer {
+                        id: deviceDisplayNoticeTimer
+                        interval: 4000
+                        repeat: false
+                        onTriggered: deviceDisplayNotice.text = ""
+                    }
+                }
             }
         }
     }
