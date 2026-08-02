@@ -13048,6 +13048,53 @@ impl RenderQueue {
             }
         }
 
+        // Probe-scoped telemetry lens fallback: Canon clips deferred bare by
+        // canon_defer_lens reach the probe with an empty camera matrix, so
+        // get_camera_matrix would fall back to fx = 0.8*width — ~2x off on
+        // single-sample bodies whose per-frame lens_params only cover the
+        // first 100ms of the clip. When the matrix is still bare after the
+        // group injection above, build the same matrix the post-match job
+        // build produces (telemetry auto focal x upfl) from the *snapshot*
+        // metadata — the live gyro metadata is the probe file's by now.
+        // Removed by the lens snapshot restore on every exit path; never
+        // persisted. First chunk only, mirroring the group injection gate.
+        if stab.lens.read().fisheye_params.camera_matrix.len() != 3 {
+            if let Some(snapshot_md) = self.deep_match_pending.get(&job_id).and_then(|s| {
+                if s.current_chunk != 0 {
+                    return None;
+                }
+                Some(s.original_gyro.file_metadata.read().clone())
+            }) {
+                let size = stab.params.read().size;
+                match niyien_lens_presets::build_lens_profile(&snapshot_md, size, None, None, None)
+                {
+                    Some(profile) => {
+                        ::log::info!(
+                            target: "sync",
+                            "[deep-match] probe telemetry lens injected (bare matrix): job={} focal={:?}mm fx={:.2}",
+                            job_id,
+                            profile.focal_length,
+                            profile
+                                .fisheye_params
+                                .camera_matrix
+                                .first()
+                                .and_then(|row| row.first())
+                                .copied()
+                                .unwrap_or_default()
+                        );
+                        *stab.lens.write() = profile;
+                    }
+                    None => {
+                        ::log::debug!(
+                            target: "sync",
+                            "[deep-match] bare matrix and no usable telemetry focal/upfl — probing with the default matrix: job={}",
+                            job_id
+                        );
+                    }
+                }
+            }
+        }
+
         // One-shot essential-only sync params. do_autosync parses
         // lens.sync_settings (seconds; multiplied to ms at the parse site) —
         // the repair backbone patches the same store.
@@ -22156,6 +22203,42 @@ mod tests {
             None,
         )
         .is_none());
+    }
+
+    // Precondition contract of the deep-match bare-matrix telemetry lens
+    // fallback (continue_deep_gyro_match): a canon_defer_lens-shaped snapshot
+    // (telemetry lens_params focal + upfl, no lens_profile) must build a
+    // profile with fx = focal x upfl and an unforced matrix (the per-frame
+    // telemetry branch stays active).
+    #[test]
+    fn deep_match_bare_matrix_telemetry_lens_fallback_builds_from_snapshot() {
+        let snapshot_md = core::gyro_source::FileMetadata {
+            unit_pixel_focal_length: Some(85.571),
+            lens_params: BTreeMap::from([(
+                0,
+                core::gyro_source::LensParams {
+                    focal_length: Some(36.0),
+                    pixel_focal_length: Some(3080.557),
+                    ..Default::default()
+                },
+            )]),
+            ..Default::default()
+        };
+
+        let profile =
+            niyien_lens_presets::build_lens_profile(&snapshot_md, (1920, 1080), None, None, None)
+                .expect("canon_defer_lens-shaped snapshot must yield a probe lens");
+
+        assert_eq!(profile.focal_length, Some(36.0));
+        assert!((profile.fisheye_params.camera_matrix[0][0] - 36.0 * 85.571).abs() < 1e-6);
+        assert!((profile.fisheye_params.camera_matrix[1][1] - 36.0 * 85.571).abs() < 1e-6);
+        assert!(!profile.lens_group_override);
+
+        // Without upfl the fallback must bail (debug-log path — probe runs bare).
+        let mut no_upfl = snapshot_md.clone();
+        no_upfl.unit_pixel_focal_length = None;
+        assert!(niyien_lens_presets::build_lens_profile(&no_upfl, (1920, 1080), None, None, None)
+            .is_none());
     }
 
     #[test]
