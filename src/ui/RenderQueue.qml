@@ -1672,9 +1672,15 @@ Item {
             Menu {
                 id: contextMenu;
                 font.pixelSize: 11.5 * dpiScale;
-                Action {
-                    iconName: "video";
+                // Hidden in simple mode: right-click single-job render bypasses the
+                // guided bottom-bar stabilize flow. Menu.MenuItem instead of a bare
+                // Action because Action lacks the `visible` property.
+                Menu.MenuItem {
+                    parentMenu: contextMenu;
+                    icon.name: "video";
                     text: qsTr("Render now");
+                    visible: !window.isSimpleMode;
+                    height: visible ? implicitHeight : 0;
                     enabled: !isFinished && !isInProgress;
                     onTriggered: {
                         // [queue-render-skip] Skipped 状态先重置再渲染
