@@ -4150,10 +4150,20 @@ impl RenderQueue {
         // .gyroflow project via the additional_data JSON string. None on legacy files
         // (no key present) — caller falls back to telemetry-derived lens_index.
         let lens_index_override_at_load = read_additional_data_lens_index_override(&additional_data);
+            read_additional_data_focal_length_override(&additional_data);
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
         let original_video_rotation = stab.params.read().video_rotation;
-        let original_output_size = (render_options.output_width, render_options.output_height);
+        // Sensor-space accounting: un-swap the display-space render_options so
+        // apply_match's "reset to original -> Priority-1 metadata rotation swap"
+        // round-trips (rotated_output_dim is an involution for 90/270, identity
+        // otherwise). base_render_output_size above intentionally stays
+        // display-space (render target semantics) — the two fields diverge on
+        // purpose, do not merge or substitute one for the other.
+        let original_output_size = gyroflow_core::rotated_output_dim(
+            (render_options.output_width, render_options.output_height),
+            original_video_rotation,
+        );
         self.jobs.insert(
             job_id,
             Job {
@@ -7527,11 +7537,27 @@ impl RenderQueue {
 
                                     render_options.bitrate =
                                         render_options.bitrate.max(info.bitrate);
+                                    // Computed before the per-source size fallback so the
+                                    // fallback can be display-space; the same value feeds
+                                    // set_video_rotation below (single source of truth).
+                                    let normalized_metadata_rotation =
+                                        ((360 - info.rotation) % 360) as f64;
+                                    // Per-source fallback is display-space: swap the container
+                                    // dimensions for 90/270 metadata rotation (same
+                                    // consumer-boundary rule as the lens output_dimension
+                                    // branch below). A portrait clip must not enqueue a
+                                    // landscape render target — constrained_output_size would
+                                    // squash it into a letterboxed landscape canvas
+                                    // (e.g. 3840x2160 @ rot=90 -> 2160x1214).
+                                    let (fallback_w, fallback_h) = gyroflow_core::rotated_output_dim(
+                                        (info.width as usize, info.height as usize),
+                                        normalized_metadata_rotation,
+                                    );
                                     if !has_output_width {
-                                        render_options.output_width = info.width as usize;
+                                        render_options.output_width = fallback_w;
                                     }
                                     if !has_output_height {
-                                        render_options.output_height = info.height as usize;
+                                        render_options.output_height = fallback_h;
                                     }
                                     render_options.output_folder =
                                         Self::get_output_folder(&url, &render_options.output_folder);
@@ -7553,8 +7579,6 @@ impl RenderQueue {
                                     info.frame_count,
                                     video_size,
                                 );
-                                let normalized_metadata_rotation =
-                                    ((360 - info.rotation) % 360) as f64;
                                 ::log::info!(
                                     "[video_rotation] file='{}' metadata_raw={} metadata_normalized={}",
                                     filesystem::get_filename(&url),
@@ -25488,6 +25512,67 @@ mod tests {
                 offset_ms < half_window_ms / 2.0,
                 "{offset_ms}ms leaves less than 2x headroom in a ±{half_window_ms}ms window"
             );
+        }
+    }
+
+    // queue-add-rotation-output-size: the per-source size fallback in add_file
+    // must be display-space. A 3840x2160 container with metadata rotation
+    // normalized to 90/270 enqueues a 2160x3840 render target; 0/180 keeps the
+    // container dimensions byte-for-byte.
+    #[test]
+    fn per_source_size_fallback_is_display_space() {
+        let sensor = (3840usize, 2160usize);
+        assert_eq!(gyroflow_core::rotated_output_dim(sensor, 90.0), (2160, 3840));
+        assert_eq!(gyroflow_core::rotated_output_dim(sensor, 270.0), (2160, 3840));
+        assert_eq!(gyroflow_core::rotated_output_dim(sensor, -90.0), (2160, 3840));
+        assert_eq!(gyroflow_core::rotated_output_dim(sensor, 0.0), sensor);
+        assert_eq!(gyroflow_core::rotated_output_dim(sensor, 180.0), sensor);
+    }
+
+    // queue-add-rotation-output-size: Job.original_output_size stores the
+    // sensor-space value (display-space render_options un-swapped by the same
+    // rotation captured next to it).
+    #[test]
+    fn original_output_size_accounting_is_sensor_space() {
+        // Portrait job enqueued with display-space 2160x3840 → sensor 3840x2160.
+        assert_eq!(
+            gyroflow_core::rotated_output_dim((2160, 3840), 90.0),
+            (3840, 2160)
+        );
+        // rotation=0 → identity, byte-for-byte pre-change behavior.
+        assert_eq!(
+            gyroflow_core::rotated_output_dim((1920, 1080), 0.0),
+            (1920, 1080)
+        );
+    }
+
+    // queue-add-rotation-output-size: apply_match resets render_options to
+    // original_output_size and then applies the Priority-1 metadata swap for
+    // 90/270. With sensor-space accounting the two swaps are an involution, so
+    // the post-match render target equals the enqueue-time display-space value
+    // — both for the per-source fallback and for explicit panel sizes.
+    #[test]
+    fn apply_match_reset_swap_roundtrips_display_space() {
+        // Mirror of the apply_match consumer: reset + Priority-1 swap.
+        fn reset_then_metadata_swap(
+            original: (usize, usize),
+            metadata_rot: i32,
+        ) -> (usize, usize) {
+            let mut out = original;
+            if metadata_rot == 90 || metadata_rot == 270 {
+                std::mem::swap(&mut out.0, &mut out.1);
+            }
+            out
+        }
+        for rot in [0.0f64, 90.0, 180.0, 270.0] {
+            for enqueue_display in [(2160usize, 3840usize), (3840, 2160), (1080, 1920)] {
+                let original = gyroflow_core::rotated_output_dim(enqueue_display, rot);
+                let post_match = reset_then_metadata_swap(original, rot.round() as i32);
+                assert_eq!(
+                    post_match, enqueue_display,
+                    "rot={rot} enqueue={enqueue_display:?} must round-trip"
+                );
+            }
         }
     }
 }
