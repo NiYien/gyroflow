@@ -319,6 +319,12 @@ struct Job {
     // Set via render-queue right-click "Change lens group" menu (Manual edit ON).
     // Persisted across .gyroflow save/load by mirroring into job.additional_data.
     lens_index_override: Option<usize>,
+    // focal-length-user-override: job-level focal length override in mm, set via
+    // the queue right-click "Change focal length" action (Manual edit OFF). Always
+    // the highest-priority focal source for this job's lens profile build.
+    // Independent of lens_index_override: changing the lens group later keeps it.
+    // Persisted across .gyroflow save/load by mirroring into job.additional_data.
+    focal_length_override: Option<f64>,
     // [T20] 保存 video_created_at，stab 释放后排序仍可用
     video_created_at: Option<i64>,
     // plugin-only-export-gate: source ffmpeg cannot decode (.r3d/.nev with no
@@ -801,6 +807,37 @@ fn set_additional_data_lens_index_override(additional_data: &mut String, value: 
     if let Ok(s) = serde_json::to_string(&obj) {
         *additional_data = s;
     }
+}
+
+// focal-length-user-override: mirror Job.focal_length_override into the job's
+// additional_data JSON string so it persists across .gyroflow save/load.
+// On None: remove the key entirely (no stale entries left behind).
+fn set_additional_data_focal_length_override(additional_data: &mut String, value: Option<f64>) {
+    let mut obj: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(additional_data).unwrap_or_default();
+    match value {
+        Some(v) => {
+            obj.insert(
+                "focal_length_override".to_string(),
+                serde_json::Value::from(v),
+            );
+        }
+        None => {
+            obj.remove("focal_length_override");
+        }
+    }
+    if let Ok(s) = serde_json::to_string(&obj) {
+        *additional_data = s;
+    }
+}
+
+// Inverse of set_additional_data_focal_length_override — used at .gyroflow load
+// time to restore Job.focal_length_override. Returns None for absent keys
+// (legacy projects) and for values below the manual-focal sanity threshold.
+fn read_additional_data_focal_length_override(additional_data: &str) -> Option<f64> {
+    let v: serde_json::Value = serde_json::from_str(additional_data).ok()?;
+    let f = v.get("focal_length_override")?.as_f64()?;
+    (f.is_finite() && f >= niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM).then_some(f)
 }
 
 // mounting-rotation-home-value: an all-zero mounting is stored as `None`,
@@ -1725,13 +1762,16 @@ pub struct RenderQueue {
         qt_method!(fn(&mut self, job_ids_json: String, lens_index: usize)),
     // simple-mode-ux-overhaul: per-job lens override APIs called from the render-queue
     // right-click menu. set_job_lens_index_override writes Job.lens_index_override; pass
-    // JSON null to clear. set_job_focal_length_override writes focal into the effective
-    // group's per-job override. clear_all_per_job_lens_group_for_indices is called by
+    // JSON null to clear. set_job_focal_length_override writes the job-level
+    // Job.focal_length_override (focal-length-user-override change) and
+    // clear_job_focal_length_override removes it ("Restore auto focal length").
+    // clear_all_per_job_lens_group_for_indices is called by
     // Controller::set_lens_group_config to enforce global-wins semantics.
     set_job_lens_index_override:
         qt_method!(fn(&mut self, job_ids_json: String, lens_index_json: String)),
     set_job_focal_length_override:
         qt_method!(fn(&mut self, job_ids_json: String, focal_mm: f64)),
+    clear_job_focal_length_override: qt_method!(fn(&mut self, job_ids_json: String)),
     clear_all_per_job_lens_group_for_indices:
         qt_method!(fn(&mut self, indices_json: String)),
     // batch-lens-group-missing-data-gate: pre-dispatch check for the batch
@@ -1807,11 +1847,11 @@ pub struct RenderQueue {
     pub pairing_mode_changed: qt_signal!(),
     pub deep_match_progress: qt_signal!(job_id: u32, progress: f64),
     // Chunked scan: fired once per chunk launch so the progress modal can
-    // show "Scanning segment i of n".
+    // show "Segment i of n" in its merged progress line.
     pub deep_match_chunk_changed: qt_signal!(job_id: u32, chunk: u32, total: u32),
     // Pool-wide search: fired alongside each chunk launch with the current
-    // probe's ordinal, tier and candidate filename ("Searching candidate
-    // i of n"). Single-probe (manual) runs emit 1/1 and QML keeps quiet.
+    // probe's ordinal, tier and candidate filename ("Candidate i of n").
+    // Single-probe (manual) runs emit 1/1 and QML keeps quiet.
     pub deep_match_probe_changed: qt_signal!(job_id: u32, probe: u32, total: u32, tier: u32, gyro_filename: QString),
     pub deep_match_finished: qt_signal!(job_id: u32, success: bool, error_kind: QString, offset_ms: f64),
     // plugin-only-export-gate: fired once per video-export start (and once per
@@ -3820,8 +3860,11 @@ impl RenderQueue {
             let Some((group_config, _)) =
                 effective_lens_group_config_for_group(job, &global_configs, lens_index)
             else { continue; };
+            // user_forced only affects the manual-focal arm, never the anamorphic
+            // arm counted here — false keeps the count identical.
             let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
                 manual_edit,
+                false,
                 group_config,
                 &metadata,
             );
@@ -4212,6 +4255,8 @@ impl RenderQueue {
         // .gyroflow project via the additional_data JSON string. None on legacy files
         // (no key present) — caller falls back to telemetry-derived lens_index.
         let lens_index_override_at_load = read_additional_data_lens_index_override(&additional_data);
+        // focal-length-user-override: same round-trip for the job-level focal override.
+        let focal_length_override_at_load =
             read_additional_data_focal_length_override(&additional_data);
         // [T20] 在 stab 释放前保存 video_created_at
         let video_created_at = stab.params.read().video_created_at;
@@ -4243,6 +4288,7 @@ impl RenderQueue {
                 base_lens_metadata,
                 lens_group_config_override: None,
                 lens_index_override: lens_index_override_at_load,
+                focal_length_override: focal_length_override_at_load,
                 lens_group_index,
                 video_created_at,
                 plugin_only: Self::is_plugin_only_source(&video_url),
@@ -4877,7 +4923,7 @@ impl RenderQueue {
                             e
                         );
                         update_model!(self, job_id, itm {
-                            itm.error_string = QString::from(format!("Failed to restore job state: {:?}", e));
+                            itm.error_string = QString::from("restore_state_failed");
                             itm.status = JobStatus::Error;
                         });
                         return;
@@ -5268,6 +5314,9 @@ impl RenderQueue {
                     if let Some(display_config) =
                         niyien_lens_presets::effective_lens_group_config_for_build(
                             self.stabilizer.get_lens_group_manual_edit(),
+                            // Display mirrors the build gate: a user-assigned lens
+                            // group (指组即强制) unlocks the group's manual focal.
+                            job.lens_index_override.is_some(),
                             config,
                             metadata,
                         )
@@ -5405,6 +5454,10 @@ impl RenderQueue {
                         // lens_index_effective is the index actually applied for rendering.
                         "lens_index_override": job.lens_index_override,
                         "lens_index_effective": lens_group_index,
+                        // focal-length-user-override: job-level focal override (mm);
+                        // null when unset. Drives the queue-row star marker and the
+                        // "Restore auto focal length" entry visibility.
+                        "focal_length_override": job.focal_length_override,
                     });
                     return QString::from(result.to_string());
                 }
@@ -5420,6 +5473,11 @@ impl RenderQueue {
                 "lens_group_display_focal_length": lens_group_focal_length,
                 "lens_group_display_ratio": lens_group_ratio,
                 "lens_group_display_direction": lens_group_direction,
+                // focal-length-user-override: keep the override visible on the
+                // no-project-data fallback too, so the queue row marker and the
+                // restore entry work before the first (re)apply.
+                "lens_index_override": job.lens_index_override,
+                "focal_length_override": job.focal_length_override,
             });
             return QString::from(result.to_string());
         }
@@ -5644,43 +5702,50 @@ impl RenderQueue {
         }
     }
 
-    // simple-mode-ux-overhaul: writes focal_length_mm into the effective lens group's
-    // per-job override for each target job. Effective lens_index resolution:
-    // lens_index_override > telemetry-extracted lens_index > FALLBACK to 0 (L1).
-    // Fallback also persists as lens_index_override so reapply uses it consistently.
+    // focal-length-user-override: writes the job-level focal override (highest
+    // priority focal source, wins over telemetry auto focal and any group manual
+    // focal). Deliberately does NOT touch lens group configs (global or per-job)
+    // and does NOT set lens_index_override — an explicit focal edit must not
+    // double as an explicit lens-group assignment, which would trip the
+    // group-forcing gate (design D2). The pre-change body wrote the focal into
+    // the effective group's per-job config and persisted a L1 lens_index_override
+    // fallback; both behaviours are removed on purpose.
     fn set_job_focal_length_override(&mut self, job_ids_json: String, focal_mm: f64) {
         let job_ids = parse_job_ids_json(&job_ids_json);
-        if job_ids.is_empty() || !focal_mm.is_finite() || focal_mm <= 0.0 {
+        if job_ids.is_empty()
+            || !focal_mm.is_finite()
+            || focal_mm < niyien_lens_presets::MANUAL_FOCAL_LENGTH_MIN_MM
+        {
             return;
         }
-        let global_configs = self.stabilizer.lens_group_config.read().clone();
         for job_id in &job_ids {
             if let Some(job) = self.jobs.get_mut(job_id) {
-                let resolved_li = job.lens_index_override.or_else(|| {
-                    let stab = job.stab.as_ref()?;
-                    let gyro = stab.gyro.read();
-                    let md = gyro.file_metadata.read();
-                    niyien_lens_presets::extract_lens_index(&md.additional_data)
-                });
-                // Fallback: when no telemetry/explicit override is available, assume L1.
-                // Without this, jobs whose camera doesn't report lens_index would silently
-                // skip the focal override and the user would see the change apply only to
-                // a subset of the batch.
-                let lens_index = resolved_li.unwrap_or(0);
-                if job.lens_index_override.is_none() && resolved_li.is_none() {
-                    job.lens_index_override = Some(0);
-                    set_additional_data_lens_index_override(&mut job.additional_data, Some(0));
-                }
-                let mut requested_configs = effective_lens_group_configs(job, &global_configs);
-                if let Some(config) = requested_configs.get_mut(lens_index) {
-                    config.focal_length_mm = Some(focal_mm);
-                }
-                let existing_override = job.lens_group_config_override.clone();
-                job.lens_group_config_override = build_job_lens_group_override(
-                    &requested_configs,
-                    &global_configs,
-                    existing_override.as_ref(),
+                job.focal_length_override = Some(focal_mm);
+                set_additional_data_focal_length_override(
+                    &mut job.additional_data,
+                    Some(focal_mm),
                 );
+            }
+        }
+        if self.has_match_results() {
+            self.reapply_selected_lens_group_config(job_ids_json);
+        } else {
+            self.match_results_changed();
+        }
+    }
+
+    // focal-length-user-override: "Restore auto focal length" — clears the
+    // job-level focal override so the profile build falls back to the telemetry
+    // auto focal (or the group fill-only path) on the next reapply.
+    fn clear_job_focal_length_override(&mut self, job_ids_json: String) {
+        let job_ids = parse_job_ids_json(&job_ids_json);
+        if job_ids.is_empty() {
+            return;
+        }
+        for job_id in &job_ids {
+            if let Some(job) = self.jobs.get_mut(job_id) {
+                job.focal_length_override = None;
+                set_additional_data_focal_length_override(&mut job.additional_data, None);
             }
         }
         if self.has_match_results() {
@@ -6245,7 +6310,7 @@ impl RenderQueue {
 
             let err = util::qt_queued_callback_mut(
                 QPointer::from(self as &Self),
-                move |this, (msg, mut arg): (String, String)| {
+                move |this, (msg, arg): (String, String)| {
                     // [cancel-epoch] Same guard as progress — a cancelled render may surface
                     // as an Err from ffmpeg; we must not mark the job Error after the user
                     // has already requested a restart (which bumped the epoch).
@@ -6258,8 +6323,16 @@ impl RenderQueue {
                         return;
                     }
 
-                    arg.push_str("\n\n");
-                    arg.push_str(&rendering::get_log());
+                    // Full diagnostics go to the log file only; the card and the error
+                    // dialog show a short translated cause (getReadableError markers).
+                    ::log::error!(
+                        target: "video.render",
+                        "render error job={}: {} | {}\n{}",
+                        job_id,
+                        msg,
+                        arg,
+                        rendering::get_log()
+                    );
 
                     update_model!(this, job_id, itm {
                         itm.error_string = QString::from(arg.clone());
@@ -6604,7 +6677,8 @@ impl RenderQueue {
                         Ok(())
                     };
                     if let Err(e) = result() {
-                        err(("An error occured: %1".to_string(), e.to_string()));
+                        ::log::error!(target: "video.render", "gyro data export failed job={job_id}: {e}");
+                        err(("%1".to_string(), "gyro_export_failed".to_string()));
                     } else {
                         Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
                         progress((1.0, 1, 1, true, false));
@@ -6632,7 +6706,8 @@ impl RenderQueue {
                             ),
                             &undist,
                         ) {
-                            return err((e.to_string(), String::new()));
+                            ::log::error!(target: "video.render", "STMAP write failed job={job_id}: {e}");
+                            return err(("%1".to_string(), "stmap_write_failed".to_string()));
                         }
                         if let Err(e) = filesystem::write(
                             &filesystem::get_file_url(
@@ -6642,7 +6717,8 @@ impl RenderQueue {
                             ),
                             &dist,
                         ) {
-                            return err((e.to_string(), String::new()));
+                            ::log::error!(target: "video.render", "STMAP write failed job={job_id}: {e}");
+                            return err(("%1".to_string(), "stmap_write_failed".to_string()));
                         }
                         processed += 1;
                         progress((
@@ -6711,7 +6787,8 @@ impl RenderQueue {
                     };
                     if export_project != 4 {
                         if let Err(e) = result {
-                            err((e.to_string(), String::new()));
+                            ::log::error!(target: "video.render", "project file export failed job={job_id}: {e:?}");
+                            err(("%1".to_string(), "project_export_failed".to_string()));
                         } else {
                             Self::submit_sync_eta_sample(eta_sample.as_ref(), &eta_sample_done);
                             progress((1.0, 1, 1, true, false));
@@ -6745,11 +6822,7 @@ impl RenderQueue {
                             "[queue-render-skip] '{}' reached render without a sibling .mov — failing explicitly (plugin-only source)",
                             filename
                         );
-                        err((
-                            "This format cannot be exported directly. Use \"Stabilize\" and the video editor plugins instead.%1"
-                                .to_string(),
-                            String::new(),
-                        ));
+                        err(("%1".to_string(), "plugin_only_direct_export".to_string()));
                         return;
                     }
                 }
@@ -6875,7 +6948,7 @@ impl RenderQueue {
                                     break 'ranges;
                                 }
                             }
-                            err(("An error occured: %1".to_string(), e.to_string()));
+                            err(("%1".to_string(), format!("render_failed:{e}")));
                             render_ok = false;
                             break 'ranges;
                         } else {
@@ -7491,10 +7564,7 @@ impl RenderQueue {
                                                 t_thumb_call.elapsed().as_secs_f64() * 1000.0,
                                                 e
                                             );
-                                            err((
-                                                "An error occured: %1".to_string(),
-                                                e.to_string(),
-                                            ));
+                                            err(("%1".to_string(), "thumb_failed".to_string()));
                                         }
                                     }
 
@@ -7513,10 +7583,8 @@ impl RenderQueue {
                                     processing_done(());
                                 }
                                 Err(e) => {
-                                    err((
-                                        "An error occured: %1".to_string(),
-                                        format!("Error loading {}: {:?}", url, e),
-                                    ));
+                                    ::log::error!(target: "video.load", "project load failed job={job_id} url='{url}': {e:?}");
+                                    err(("%1".to_string(), "project_load_failed".to_string()));
                                 }
                             }
                         } else {
@@ -7942,10 +8010,8 @@ impl RenderQueue {
                                                 }
                                             }
                                             Err(e) => {
-                                                err((
-                                                    "An error occured: %1".to_string(),
-                                                    e.to_string(),
-                                                ));
+                                                ::log::error!(target: "video.load", "lens profile load failed job={job_id} id='{id_str}': {e:?}");
+                                                err(("%1".to_string(), "lens_profile_load_failed".to_string()));
                                                 return;
                                             }
                                         }
@@ -8043,7 +8109,7 @@ impl RenderQueue {
                                         t_thumb_call.elapsed().as_secs_f64() * 1000.0,
                                         e
                                     );
-                                    err(("An error occured: %1".to_string(), e.to_string()));
+                                    err(("%1".to_string(), "thumb_failed".to_string()));
                                 }
 
                                 ::log::info!(
@@ -8080,10 +8146,7 @@ impl RenderQueue {
                                         t_info.elapsed().as_secs_f64() * 1000.0,
                                         e
                                     );
-                                    err((
-                                        "An error occured: %1".to_string(),
-                                        "Unable to read the video file.".to_string(),
-                                    ));
+                                    err(("%1".to_string(), "video_read_failed".to_string()));
                                 }
                             }
                         }
@@ -8654,10 +8717,8 @@ impl RenderQueue {
                                                         e
                                                     );
                                                 } else {
-                                                    err2((
-                                                        "An error occured: %1".to_string(),
-                                                        e.to_string(),
-                                                    ));
+                                                    ::log::error!(target: "sync", "autosync frame conversion failed '{}': {}", frame_error_filename, e);
+                                                    err2(("%1".to_string(), "sync_decode_failed".to_string()));
                                                 }
                                             }
                                         }
@@ -8723,7 +8784,8 @@ impl RenderQueue {
                                     e
                                 );
                             } else {
-                                err(("An error occured: %1".to_string(), e.to_string()));
+                                ::log::error!(target: "sync", "autosync decoder failed job={job_id} '{}': {e}", filesystem::get_filename(&url));
+                                err(("%1".to_string(), "sync_decode_failed".to_string()));
                             }
                         }
                         sync.finished_feeding_frames();
@@ -8751,7 +8813,8 @@ impl RenderQueue {
                                             e
                                         );
                                     } else {
-                                        err(("An error occured: %1".to_string(), e.to_string()));
+                                        ::log::error!(target: "sync", "autosync probe decoder failed job={job_id} '{}': {e}", filesystem::get_filename(&url));
+                                        err(("%1".to_string(), "sync_decode_failed".to_string()));
                                     }
                                 }
                                 sync.finished_feeding_frames();
@@ -8768,7 +8831,7 @@ impl RenderQueue {
                         );
                         sync_failed.store(true, SeqCst);
                         if !collect_batch_points {
-                            err(("An error occured: %1".to_string(), detail));
+                            err(("%1".to_string(), "sync_params_invalid".to_string()));
                         }
                     }
 
@@ -10575,6 +10638,7 @@ impl RenderQueue {
             String,
             Vec<niyien_lens_presets::LensGroupConfig>,
             Option<usize>,
+            Option<f64>,
         )> = self
             .jobs
             .iter()
@@ -10609,6 +10673,7 @@ impl RenderQueue {
                     gyro_file_url,
                     effective_lens_group_configs(job, &global_configs),
                     job.lens_index_override,
+                    job.focal_length_override,
                 ))
             })
             .collect();
@@ -10671,6 +10736,7 @@ impl RenderQueue {
                             gyro_file_url,
                             effective_configs,
                             lens_index_override,
+                            focal_length_override,
                         )| {
                             let (lens_index, size) = {
                                 let gyro = stab.gyro.read();
@@ -10721,6 +10787,11 @@ impl RenderQueue {
                                     let cfg_for_build =
                                         niyien_lens_presets::effective_lens_group_config_for_build(
                                             manual_edit,
+                                            // 指组即强制: only an explicit user assignment
+                                            // unlocks the group manual focal over auto.
+                                            // The telemetry-derived fallback branch of
+                                            // `lens_index` above must NOT force.
+                                            lens_index_override.is_some(),
                                             group_config,
                                             &base_metadata,
                                         );
@@ -10733,6 +10804,7 @@ impl RenderQueue {
                                         size,
                                         cfg_for_build.as_ref(),
                                         Some(&clean_lens),
+                                        *focal_length_override,
                                     );
                                     if let Some(profile) = profile {
                                         if let Some(output_dim) = profile.output_dimension.clone() {
@@ -10767,6 +10839,25 @@ impl RenderQueue {
                                             applies_anamorphic,
                                         );
                                     stab.set_lens_correction_amount(correction_percent / 100.0);
+                                }
+                            } else if focal_length_override.is_some() {
+                                // focal-length-user-override: job-level focal override on
+                                // a job with no lens group assignment at all (no user
+                                // override, no telemetry lens_index). Rebuild from the
+                                // clean baseline so the override still applies — the
+                                // lens-group gate is not involved here.
+                                let clean_lens = base_lens_metadata
+                                    .clean_lens_profile()
+                                    .cloned()
+                                    .unwrap_or_else(|| stab.lens.read().clone());
+                                if let Some(profile) = niyien_lens_presets::build_lens_profile(
+                                    &base_metadata,
+                                    size,
+                                    None,
+                                    Some(&clean_lens),
+                                    *focal_length_override,
+                                ) {
+                                    *stab.lens.write() = profile;
                                 }
                             }
 
@@ -10850,6 +10941,11 @@ impl RenderQueue {
             original_output_size: (usize, usize),
             base_lens_metadata: Option<JobLensMetadataBackup>,
             effective_lens_group_configs: Vec<niyien_lens_presets::LensGroupConfig>,
+            // focal-length-user-override: explicit user lens-group assignment and
+            // job-level focal override, mirrored from the Job so the first-apply
+            // lens build honors them the same way reapply does.
+            lens_index_override: Option<usize>,
+            focal_length_override: Option<f64>,
             stab: Arc<StabilizationManager>,
         }
         #[derive(Clone)]
@@ -10902,6 +10998,8 @@ impl RenderQueue {
                 original_output_size,
                 base_lens_metadata,
                 effective_lens_group_configs,
+                lens_index_override,
+                focal_length_override,
             ) = match self.jobs.get(&job_id) {
                 Some(job) => match (&job.stab, self.gyro_files.get(gyro_files_idx)) {
                     (Some(stab), Some(gyro_info)) => (
@@ -10923,6 +11021,8 @@ impl RenderQueue {
                             Some(JobLensMetadataBackup::from_metadata_and_lens(&md, &lens))
                         }),
                         effective_lens_group_configs(job, &global_lens_group_config),
+                        job.lens_index_override,
+                        job.focal_length_override,
                     ),
                     _ => continue,
                 },
@@ -10976,6 +11076,8 @@ impl RenderQueue {
                 original_output_size,
                 base_lens_metadata,
                 effective_lens_group_configs,
+                lens_index_override,
+                focal_length_override,
                 stab,
             });
         }
@@ -11564,8 +11666,12 @@ impl RenderQueue {
                             niyien_lens_presets::update_status_from_metadata(&mut statuses, &md);
                         }
 
-                        let lens_index =
-                            niyien_lens_presets::extract_lens_index(&md.additional_data);
+                        // focal-length-user-override: an explicit user lens-group
+                        // assignment wins over the matched gyro's telemetry
+                        // lens_index, mirroring reapply_lens_group_config_filtered.
+                        let lens_index = item.lens_index_override.or_else(|| {
+                            niyien_lens_presets::extract_lens_index(&md.additional_data)
+                        });
                         item.lens_group_index = lens_index;
                         let group_config = lens_index
                             .and_then(|index| item.effective_lens_group_configs.get(index))
@@ -11577,6 +11683,9 @@ impl RenderQueue {
                             .and_then(|cfg| {
                                 niyien_lens_presets::effective_lens_group_config_for_build(
                                     manual_edit,
+                                    // 指组即强制: only the explicit user assignment
+                                    // unlocks the group manual focal over auto.
+                                    item.lens_index_override.is_some(),
                                     cfg,
                                     &md,
                                 )
@@ -11821,8 +11930,15 @@ impl RenderQueue {
                         // on the video gyro, not on the matched .bin `md`. Only stab.lens is
                         // replaced — output size and correction amount stay owned by the
                         // existing batch paths above.
-                        if let Some(lens_index) = lens_index {
-                            if item.effective_lens_group_configs.get(lens_index).is_some() {
+                        // focal-length-user-override: also enter the rebuild when a
+                        // job-level focal override exists without any lens group
+                        // (cfg_for_build is None then — the override alone drives
+                        // the focal via build_lens_profile's precedence).
+                        let group_resolves = lens_index
+                            .map(|li| item.effective_lens_group_configs.get(li).is_some())
+                            .unwrap_or(false);
+                        if group_resolves || item.focal_length_override.is_some() {
+                            {
                                 let build_md =
                                     item.stab.gyro.read().file_metadata.read().thin();
                                 // build_lens_profile replaces stab.lens wholesale, which
@@ -11836,6 +11952,7 @@ impl RenderQueue {
                                     size,
                                     cfg_for_build.as_ref(),
                                     Some(&clean_lens),
+                                    item.focal_length_override,
                                 ) {
                                     *item.stab.lens.write() = profile;
                                 }
@@ -11903,6 +12020,7 @@ impl RenderQueue {
                                     size,
                                     cfg_for_build.as_ref(),
                                     Some(&clean_lens),
+                                    item.focal_length_override,
                                 )
                             });
                             if let Some(profile) = custom_lens_profile {
@@ -12865,9 +12983,13 @@ impl RenderQueue {
                 .iter()
                 .find(|c| c.lens_index == lens_index)
                 .and_then(|config| {
+                    // Probe-scoped build stays byte-identical: this injection only
+                    // fires for bare manual-lens jobs (no auto focal), where the
+                    // fill-missing gate arm already passes without forcing.
                     let cfg_for_build =
                         niyien_lens_presets::effective_lens_group_config_for_build(
                             manual_edit,
+                            false,
                             config,
                             &snapshot_md,
                         );
@@ -12875,6 +12997,7 @@ impl RenderQueue {
                         &snapshot_md,
                         size,
                         cfg_for_build.as_ref(),
+                        None,
                         None,
                     )
                 });
@@ -13529,6 +13652,9 @@ impl RenderQueue {
             let reasons = niyien_lens_presets::lens_group_missing_reasons(
                 config,
                 video_focal_present,
+                // focal-length-user-override: a job-level focal override counts
+                // as a valid focal source — such jobs must not be gated.
+                job.focal_length_override.is_some(),
                 camera_matrix_bare,
             );
             if reasons.is_empty() {
@@ -16815,6 +16941,7 @@ mod tests {
                 base_lens_metadata: Some(base_lens_metadata),
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: Some(0),
                 video_created_at: None,
                 plugin_only: false,
@@ -16878,6 +17005,7 @@ mod tests {
             base_lens_metadata: None,
             lens_group_config_override,
             lens_index_override: None,
+            focal_length_override: None,
             lens_group_index,
             video_created_at: None,
             plugin_only: false,
@@ -16988,6 +17116,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -17042,6 +17171,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -19332,6 +19462,72 @@ mod tests {
         assert!(jobs(&queue, true).as_array().unwrap().is_empty());
     }
 
+    // focal-length-user-override: a job-level focal override satisfies the
+    // gate's focal requirement without touching any group config.
+    #[test]
+    fn lens_groups_missing_data_exempts_focal_override() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        add_motion_to_job(&mut queue, 1, false);
+        *queue.stabilizer.lens_group_config.write() =
+            niyien_lens_presets::default_lens_group_configs();
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(2);
+
+        // Baseline: bare group + no video focal + bare matrix -> focal hit.
+        let hits = queue.lens_groups_missing_data_impl(true)["jobs"].clone();
+        assert_eq!(hits.as_array().unwrap().len(), 1);
+        assert_eq!(hits[0]["reasons"], serde_json::json!(["focal"]));
+
+        // The job-level focal override clears it.
+        queue.jobs.get_mut(&1).unwrap().focal_length_override = Some(35.0);
+        assert!(queue.lens_groups_missing_data_impl(true)["jobs"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    // focal-length-user-override: the focal override writes ONLY the job-level
+    // field + its additional_data mirror. It must not touch lens group configs
+    // and must not set lens_index_override — an explicit focal edit is not an
+    // explicit lens-group assignment (that would trip the group-forcing gate).
+    #[test]
+    fn set_job_focal_length_override_writes_job_field_only() {
+        let mut queue = queue_with_eta_job(JobStatus::Queued);
+        queue.set_job_focal_length_override("[1]".to_string(), 35.0);
+        {
+            let job = queue.jobs.get(&1).unwrap();
+            assert_eq!(job.focal_length_override, Some(35.0));
+            assert_eq!(job.lens_index_override, None);
+            assert!(job.lens_group_config_override.is_none());
+            assert_eq!(
+                read_additional_data_focal_length_override(&job.additional_data),
+                Some(35.0)
+            );
+        }
+
+        // Below the manual-focal sanity threshold: rejected, state unchanged.
+        queue.set_job_focal_length_override("[1]".to_string(), 3.0);
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().focal_length_override,
+            Some(35.0)
+        );
+
+        // Changing the lens group afterwards keeps the focal override (the two
+        // overrides are independent by design).
+        queue.jobs.get_mut(&1).unwrap().lens_index_override = Some(4);
+        assert_eq!(
+            queue.jobs.get(&1).unwrap().focal_length_override,
+            Some(35.0)
+        );
+
+        // "Restore auto focal length": field and mirror both removed.
+        queue.clear_job_focal_length_override("[1]".to_string());
+        let job = queue.jobs.get(&1).unwrap();
+        assert_eq!(job.focal_length_override, None);
+        assert!(!job.additional_data.contains("focal_length_override"));
+        // The lens-group override set above is untouched by the focal clear.
+        assert_eq!(job.lens_index_override, Some(4));
+    }
+
     #[test]
     fn start_deep_gyro_match_refusal_reasons() {
         // Each branch is a read-only guard that returns before any state
@@ -20340,6 +20536,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -20455,6 +20652,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -20718,6 +20916,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -21335,6 +21534,7 @@ mod tests {
                 enabled_groups: vec![true, false, false, false, false, false],
             }),
             lens_index_override: None,
+            focal_length_override: None,
             lens_group_index: None,
             video_created_at: None,
             plugin_only: false,
@@ -21356,6 +21556,7 @@ mod tests {
         let group_config = effective_configs.get(lens_index).unwrap();
         let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
             manual_edit,
+            false,
             group_config,
             &metadata,
         );
@@ -21370,6 +21571,7 @@ mod tests {
             stab.params.read().size,
             cfg_for_build.as_ref(),
             Some(&clean_lens),
+            None,
         )
         .unwrap();
         *stab.lens.write() = profile;
@@ -21444,6 +21646,7 @@ mod tests {
             plugin_only: false,
             original_video_rotation: 0.0,
             lens_index_override: None,
+            focal_length_override: None,
         }
     }
 
@@ -21637,6 +21840,7 @@ mod tests {
             plugin_only: false,
             original_video_rotation: 0.0,
             lens_index_override: None,
+            focal_length_override: None,
         };
 
         let project_data = export_project_data_with_effective_job_lens_group(&job, true);
@@ -21686,6 +21890,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -21728,14 +21933,17 @@ mod tests {
             ..Default::default()
         };
         let cfg_for_build =
-            niyien_lens_presets::effective_lens_group_config_for_build(true, &config, &metadata)
-                .unwrap();
+            niyien_lens_presets::effective_lens_group_config_for_build(
+                true, false, &config, &metadata,
+            )
+            .unwrap();
 
         let profile = niyien_lens_presets::build_lens_profile(
             &snapshot,
             (1920, 1080),
             Some(&cfg_for_build),
             Some(&core::lens_profile::LensProfile::default()),
+            None,
         )
         .unwrap();
 
@@ -21798,13 +22006,16 @@ mod tests {
             ..Default::default()
         };
         let cfg_for_build =
-            niyien_lens_presets::effective_lens_group_config_for_build(true, &config, &snapshot)
-                .unwrap();
+            niyien_lens_presets::effective_lens_group_config_for_build(
+                true, false, &config, &snapshot,
+            )
+            .unwrap();
         let profile = niyien_lens_presets::build_lens_profile(
             &snapshot,
             (6144, 3240),
             Some(&cfg_for_build),
             Some(&core::lens_profile::LensProfile::default()),
+            None,
         )
         .expect("keep_video_gyro reapply must rebuild a non-empty camera_matrix");
 
@@ -21821,6 +22032,7 @@ mod tests {
             (6144, 3240),
             Some(&cfg_for_build),
             Some(&core::lens_profile::LensProfile::default()),
+            None,
         )
         .is_none());
     }
@@ -21908,6 +22120,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,
@@ -24909,6 +25122,34 @@ mod tests {
         assert_eq!(read_additional_data_lens_index_override(data), None);
     }
 
+    // focal-length-user-override: focal override round-trip mirrors the
+    // lens_index_override mechanism above.
+    #[test]
+    fn focal_length_override_round_trips_through_additional_data() {
+        let mut data = String::from(r#"{"lens_index":2,"foo":"bar"}"#);
+        set_additional_data_focal_length_override(&mut data, Some(35.0));
+        assert_eq!(read_additional_data_focal_length_override(&data), Some(35.0));
+
+        // Clear via None — key must be removed entirely, not left as null.
+        set_additional_data_focal_length_override(&mut data, None);
+        assert_eq!(read_additional_data_focal_length_override(&data), None);
+        assert!(!data.contains("focal_length_override"));
+    }
+
+    #[test]
+    fn focal_length_override_absent_on_legacy_additional_data() {
+        // Pre-change .gyroflow files have no `focal_length_override` key.
+        let data = r#"{"lens_index":1}"#;
+        assert_eq!(read_additional_data_focal_length_override(data), None);
+    }
+
+    #[test]
+    fn focal_length_override_read_rejects_below_threshold() {
+        // Values under MANUAL_FOCAL_LENGTH_MIN_MM are placeholders, not focals.
+        let data = r#"{"focal_length_override":3.0}"#;
+        assert_eq!(read_additional_data_focal_length_override(data), None);
+    }
+
     // --- image-sequence collapsing -----------------------------------------
 
     fn touch(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
@@ -25150,6 +25391,7 @@ mod tests {
                 base_lens_metadata: None,
                 lens_group_config_override: None,
                 lens_index_override: None,
+                focal_length_override: None,
                 lens_group_index: None,
                 video_created_at: None,
                 plugin_only: false,

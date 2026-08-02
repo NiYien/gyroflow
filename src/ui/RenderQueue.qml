@@ -1679,6 +1679,49 @@ Item {
                 }
             }
 
+            // focal-length-user-override: focal length input modal for the
+            // "Change focal length" context menu action (Manual edit OFF only).
+            // Writes the job-level focal override via set_job_focal_length_override;
+            // Cancel is a strict no-op. Mirrors framerateDialogComponent above.
+            Component {
+                id: focalLengthDialogComponent;
+                Modal {
+                    id: focalLengthDialog;
+                    property var jobIds: [];
+                    property real initialValue: 0;
+                    iconType: Modal.Question;
+                    text: qsTr("Focal length (mm)");
+                    buttons: [qsTr("OK"), qsTr("Cancel")];
+                    accentButton: 0;
+                    NumberField {
+                        id: focalLengthDialogField;
+                        width: 200 * dpiScale;
+                        anchors.horizontalCenter: parent.horizontalCenter;
+                        value: focalLengthDialog.initialValue > 0 ? focalLengthDialog.initialValue : 0;
+                        defaultValue: 0;
+                        from: 0; to: 1200;
+                        unit: "mm";
+                        precision: 1;
+                    }
+                    onClicked: (idx, dontShowAgain) => {
+                        if (idx === 0) {
+                            const v = focalLengthDialogField.value;
+                            // Below MANUAL_FOCAL_LENGTH_MIN_MM (5mm) the Rust side
+                            // rejects the value as a placeholder; skip the call so
+                            // an untouched dialog stays a no-op.
+                            if (v >= 5) {
+                                render_queue.set_job_focal_length_override(
+                                    JSON.stringify(focalLengthDialog.jobIds),
+                                    v
+                                );
+                                root.matchVersion++;
+                            }
+                        }
+                        focalLengthDialog.close();
+                    }
+                }
+            }
+
             Menu {
                 id: contextMenu;
                 font.pixelSize: 11.5 * dpiScale;
@@ -1751,6 +1794,69 @@ Item {
                     onTriggered: {
                         const popup = changeLensGroupPopupComponent.createObject(window);
                         if (popup) popup.popup();
+                    }
+                }
+                // focal-length-user-override: per-job focal override, Manual edit
+                // OFF only (mutually exclusive with "Change lens group" above).
+                // Metadata focal lengths can be wrong (user-set focal in camera,
+                // lens reporting bad data) — this is the correction entry point.
+                Menu.MenuItem {
+                    parentMenu: contextMenu;
+                    text: qsTr("Change focal length");
+                    visible: !controller.lens_group_manual_edit;
+                    height: visible ? implicitHeight : 0;
+                    enabled: !isInProgress && dlg.matchState !== "CalibrationPair";
+                    onTriggered: {
+                        const ids = (root.selectedCount > 1 && root.selectedJobs[job_id])
+                            ? Object.keys(root.selectedJobs).map(Number)
+                            : [job_id];
+                        const hasOverride = dlg.displayParams
+                            && typeof dlg.displayParams.focal_length_override === "number";
+                        const initial = hasOverride
+                            ? dlg.displayParams.focal_length_override
+                            : ((dlg.displayParams && dlg.displayParams.focal_length) || 0);
+                        const dialog = focalLengthDialogComponent.createObject(window, {
+                            "jobIds": ids,
+                            "initialValue": initial
+                        });
+                        if (dialog) dialog.opened = true;
+                    }
+                }
+                // focal-length-user-override: "Restore auto focal length" — only
+                // rendered while a focal override exists on this job.
+                Menu.MenuItem {
+                    parentMenu: contextMenu;
+                    text: qsTr("Restore auto focal length");
+                    visible: !controller.lens_group_manual_edit
+                        && dlg.displayParams
+                        && typeof dlg.displayParams.focal_length_override === "number";
+                    height: visible ? implicitHeight : 0;
+                    enabled: !isInProgress && dlg.matchState !== "CalibrationPair";
+                    onTriggered: {
+                        const ids = (root.selectedCount > 1 && root.selectedJobs[job_id])
+                            ? Object.keys(root.selectedJobs).map(Number)
+                            : [job_id];
+                        render_queue.clear_job_focal_length_override(JSON.stringify(ids));
+                        root.matchVersion++;
+                    }
+                }
+                // focal-length-user-override: "Restore auto lens group" — clears
+                // lens_index_override back to the telemetry-derived group. Fills
+                // the clear entry the Change-lens-group menu never had.
+                Menu.MenuItem {
+                    parentMenu: contextMenu;
+                    text: qsTr("Restore auto lens group");
+                    visible: controller.lens_group_manual_edit
+                        && dlg.displayParams
+                        && typeof dlg.displayParams.lens_index_override === "number";
+                    height: visible ? implicitHeight : 0;
+                    enabled: !isInProgress && dlg.matchState !== "CalibrationPair";
+                    onTriggered: {
+                        const ids = (root.selectedCount > 1 && root.selectedJobs[job_id])
+                            ? Object.keys(root.selectedJobs).map(Number)
+                            : [job_id];
+                        render_queue.set_job_lens_index_override(JSON.stringify(ids), "null");
+                        root.matchVersion++;
                     }
                 }
                 // [simple-mode-default-match-then-sync 10.1] The "Pair with Gyro" manual-pairing
@@ -2435,12 +2541,20 @@ Item {
                                     return dlg.displayParams.lens_index_effective;
                                 return -1;
                             }
+                            // focal-length-user-override: a job-level focal override
+                            // is shown with the user-overridden star marker instead
+                            // of the metadata focal.
+                            property bool hasFocalOverride: dlg.displayParams
+                                && typeof dlg.displayParams.focal_length_override === "number";
                             visible: isManualMode
+                                || hasFocalOverride
                                 || ((dlg.displayParams.focal_length || 0) > 0
                                     && (dlg.displayParams.lens_group_display_mode || "auto") === "auto");
                             text: isManualMode
                                 ? "<b>" + qsTr("Manual") + ": " + (effectiveLensIdx >= 0 ? "L" + (effectiveLensIdx + 1) : qsTr("Pending match")) + "</b>"
-                                : "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
+                                : hasFocalOverride
+                                    ? "<b>★" + dlg.displayParams.focal_length_override.toFixed(0) + "mm</b>"
+                                    : "<b>" + (dlg.displayParams.focal_length || 0).toFixed(0) + "mm</b>";
                             font.pixelSize: basicTextSize;
                         }
                     }

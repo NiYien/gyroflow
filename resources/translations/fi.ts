@@ -34,7 +34,7 @@
         <translation>Renderöi taustalla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1667"/>
+        <location filename="../../src/ui/App.qml" line="1797"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="174"/>
         <source>Theme</source>
         <translation>Teema</translation>
@@ -45,7 +45,7 @@
         <translation>Käyttöliittymän skaalaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1649"/>
+        <location filename="../../src/ui/App.qml" line="1779"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="215"/>
         <source>Language</source>
         <translation>Kieli</translation>
@@ -62,60 +62,60 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Kun näkökenttä on &gt; 1, näkyy suorakulmio joka simuloi näkökenttä = 1 asetusta esikatselun päällä. Huom, tämä on vain visuaalinen indikaattorit eikä vaikuta renderöinnissä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1690"/>
+        <location filename="../../src/ui/App.qml" line="1820"/>
         <location filename="../../src/ui/menu/Advanced.qml" line="270"/>
         <source>Use GPU decoding</source>
         <translation>Käytä GPU-dekoodausta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="288"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="291"/>
         <source>Format for R3D conversion</source>
         <translation>R3D-muunnosmuoto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="306"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="309"/>
         <source>Colors for R3D conversion</source>
         <translation>Värit R3D-muunnoksia varten</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="317"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="320"/>
         <source>Gamma curve for R3D conversion</source>
         <translation>Gammakäyrä R3D-muunnokselle</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="329"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="332"/>
         <source>Color space for R3D conversion</source>
         <translation>Väriavaruus R3D-muunnoksia varten</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="341"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="344"/>
         <source>Additional REDline params</source>
         <translation>Lisäparametrit REDline</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="350"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="353"/>
         <source>Preview pipeline</source>
         <translation>Esikatselu putki</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1710"/>
-        <location filename="../../src/ui/menu/Advanced.qml" line="374"/>
+        <location filename="../../src/ui/App.qml" line="1840"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="377"/>
         <source>Device for video processing</source>
         <translation>Laite videon käsittelyyn</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="388"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="391"/>
         <source>CPU only</source>
         <translation>Vain CPU</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="431"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="434"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="59"/>
         <source>Default file suffix</source>
         <translation>Tiedoston oletusliite</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="442"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="445"/>
         <source>Notification sounds</source>
         <translation>Ilmoitusäänet</translation>
     </message>
@@ -125,52 +125,52 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
         <translation>Käytä GPU koodausta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="447"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="450"/>
         <source>Check for updates</source>
         <translation>Tarkista päivitykset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="453"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="456"/>
         <source>Reset all settings to default</source>
         <translation>Palauta kaikki asetukset oletusasetuksiin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="457"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="460"/>
         <source>Are you sure you want to clear all settings and restore the defaults?</source>
         <translation>Haluatko varmasti tyhjentää kaikki asetukset ja palauttaa oletusasetukset?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="458"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="461"/>
         <source>Yes</source>
         <translation>Kyllä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="466"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="469"/>
         <source>Settings cleared, please restart Gyroflow for the changes to take effect.</source>
         <translation>Asetukset tyhjennetty, käynnistä Gyroflow uudelleen, jotta muutokset tulevat voimaan.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="467"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="470"/>
         <source>Exit</source>
         <translation>Poistu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="468"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="471"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="471"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="474"/>
         <source>No</source>
         <translation>Ei</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="477"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="480"/>
         <source>Open data folder</source>
         <translation>Avaa datakansio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Advanced.qml" line="484"/>
+        <location filename="../../src/ui/menu/Advanced.qml" line="487"/>
         <source>Report a problem</source>
         <translation>Ilmoita ongelmasta</translation>
     </message>
@@ -187,193 +187,214 @@ Note that this is only a visual indicator, it doesn&apos;t affect rendering.</so
     <name>App</name>
     <message>
         <source>Adjust smoothness, horizon lock and how much the frame is cropped.</source>
-        <translation>Säädä pehmeyttä, horisonttilukitusta ja sitä, kuinka paljon kuvaa rajataan.</translation>
+        <translation type="vanished">Säädä pehmeyttä, horisonttilukitusta ja sitä, kuinka paljon kuvaa rajataan.</translation>
     </message>
     <message>
-        <source>Batch processing of multiple videos happens here. Right-click a video and choose "Edit" to load it into the main preview and check the result.</source>
-        <translation>Useamman videon eräajo tapahtuu täällä. Napsauta videota hiiren oikealla ja valitse "Muokkaa", niin se ladataan pääesikatseluun ja voit tarkistaa tuloksen.</translation>
+        <source>Batch processing of multiple videos happens here. Right-click a video and choose &quot;Edit&quot; to load it into the main preview and check the result.</source>
+        <translation type="vanished">Useamman videon eräajo tapahtuu täällä. Napsauta videota hiiren oikealla ja valitse &quot;Muokkaa&quot;, niin se ladataan pääesikatseluun ja voit tarkistaa tuloksen.</translation>
     </message>
     <message>
-        <source>Batch processing of multiple videos happens here. Right-click a video for "Deep match with gyro" (finds the offset when the gyro is a separate file) or "Edit" (loads it into the main preview to check the result).</source>
-        <translation>Useamman videon eräajo tapahtuu täällä. Napsauta videota hiiren oikealla ja valitse "Syväsovitus gyroon" (etsii siirtymän, kun gyro on erillinen tiedosto) tai "Muokkaa" (lataa sen pääesikatseluun tuloksen tarkistamista varten).</translation>
+        <source>Batch processing of multiple videos happens here. Right-click a video for &quot;Deep match with gyro&quot; (finds the offset when the gyro is a separate file) or &quot;Edit&quot; (loads it into the main preview to check the result).</source>
+        <translation type="vanished">Useamman videon eräajo tapahtuu täällä. Napsauta videota hiiren oikealla ja valitse &quot;Syväsovitus gyroon&quot; (etsii siirtymän, kun gyro on erillinen tiedosto) tai &quot;Muokkaa&quot; (lataa sen pääesikatseluun tuloksen tarkistamista varten).</translation>
     </message>
     <message>
-        <source>Click "Export stabilized video" to render the result, or "Export for plugins" to produce a project file for the editor plugins.</source>
-        <translation>Napsauta "Vie vakautettu video", niin tulos renderöidään, tai "Vie liitännäisiä varten", niin saat projektitiedoston editorin liitännäisille.</translation>
+        <source>Click &quot;Export stabilized video&quot; to render the result, or &quot;Export for plugins&quot; to produce a project file for the editor plugins.</source>
+        <translation type="vanished">Napsauta &quot;Vie vakautettu video&quot;, niin tulos renderöidään, tai &quot;Vie liitännäisiä varten&quot;, niin saat projektitiedoston editorin liitännäisille.</translation>
     </message>
     <message>
-        <source>Click "Open file" (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
-        <translation>Napsauta vasemmassa yläkulmassa "Avaa tiedosto" ja valitse vakautettava leike. Voit valita useita kerralla. Useimmat kamerat tallentavat gyrotiedot videoon, joten ne tunnistetaan automaattisesti.</translation>
+        <source>Click &quot;Open file&quot; (top-left) to pick the clip you want to stabilize. You can select several at once. Most cameras embed gyro data in the video, so it is detected automatically.</source>
+        <translation type="vanished">Napsauta vasemmassa yläkulmassa &quot;Avaa tiedosto&quot; ja valitse vakautettava leike. Voit valita useita kerralla. Useimmat kamerat tallentavat gyrotiedot videoon, joten ne tunnistetaan automaattisesti.</translation>
     </message>
     <message>
         <source>Configure the lens and sensor so lens distortion is corrected correctly for your footage.</source>
-        <translation>Määritä objektiivi ja kenno, jotta objektiivin vääristymä korjataan oikein materiaalillesi.</translation>
+        <translation type="vanished">Määritä objektiivi ja kenno, jotta objektiivin vääristymä korjataan oikein materiaalillesi.</translation>
     </message>
     <message>
         <source>Deep match</source>
-        <translation>Syväsovitus</translation>
+        <translation type="vanished">Syväsovitus</translation>
     </message>
     <message>
-        <source>Drag a video into the main window or the render queue, or click "Open file" (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
-        <translation>Vedä video pääikkunaan tai renderöintijonoon, tai napsauta vasemmassa yläkulmassa "Avaa tiedosto". Useimmat kamerat tallentavat gyrotiedot, joten ne tunnistetaan automaattisesti.</translation>
+        <source>Drag a video into the main window or the render queue, or click &quot;Open file&quot; (top-left). Most cameras embed gyro data, so it is detected automatically.</source>
+        <translation type="vanished">Vedä video pääikkunaan tai renderöintijonoon, tai napsauta vasemmassa yläkulmassa &quot;Avaa tiedosto&quot;. Useimmat kamerat tallentavat gyrotiedot, joten ne tunnistetaan automaattisesti.</translation>
     </message>
     <message>
         <source>Editor plugins</source>
-        <translation>Editorin liitännäiset</translation>
+        <translation type="vanished">Editorin liitännäiset</translation>
     </message>
     <message>
         <source>Install the Gyroflow plugin into your editor (Premiere, DaVinci Resolve and more) to stabilize on the timeline.</source>
-        <translation>Asenna Gyroflow-liitännäinen editoriisi (Premiere, DaVinci Resolve ja muut), niin voit vakauttaa aikajanalla.</translation>
+        <translation type="vanished">Asenna Gyroflow-liitännäinen editoriisi (Premiere, DaVinci Resolve ja muut), niin voit vakauttaa aikajanalla.</translation>
     </message>
     <message>
         <source>Lens groups</source>
-        <translation>Objektiiviryhmät</translation>
+        <translation type="vanished">Objektiiviryhmät</translation>
     </message>
     <message>
         <source>Load your video</source>
-        <translation>Lataa videosi</translation>
+        <translation type="vanished">Lataa videosi</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2163"/>
         <source>Open Settings</source>
         <translation>Avaa asetukset</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2865"/>
         <source>Output folder access denied — enable Gyroflow in Settings → Files and Folders.</source>
         <translation>Pääsy tulostekansioon estetty. Salli Gyroflow kohdassa Asetukset &gt; Tiedostot ja kansiot.</translation>
     </message>
     <message>
-        <source>Pick any video in the render queue, right-click and choose "Edit" to load it into the main preview and check the stabilization in real time.</source>
-        <translation>Valitse mikä tahansa video renderöintijonosta, napsauta hiiren oikealla ja valitse "Muokkaa", niin se ladataan pääesikatseluun ja näet vakautuksen reaaliajassa.</translation>
+        <source>Pick any video in the render queue, right-click and choose &quot;Edit&quot; to load it into the main preview and check the stabilization in real time.</source>
+        <translation type="vanished">Valitse mikä tahansa video renderöintijonosta, napsauta hiiren oikealla ja valitse &quot;Muokkaa&quot;, niin se ladataan pääesikatseluun ja näet vakautuksen reaaliajassa.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2161"/>
         <source>Please enable folder access permission.</source>
         <translation>Salli kansion käyttöoikeus.</translation>
     </message>
     <message>
         <source>Preview the result</source>
-        <translation>Esikatsele tulos</translation>
+        <translation type="vanished">Esikatsele tulos</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1873"/>
         <source>Replay tutorial</source>
         <translation>Toista opastus uudelleen</translation>
     </message>
     <message>
         <source>Run into a bug? Click here to upload logs and send us feedback.</source>
-        <translation>Löysitkö virheen? Napsauta tästä lähettääksesi lokit ja palautetta meille.</translation>
+        <translation type="vanished">Löysitkö virheen? Napsauta tästä lähettääksesi lokit ja palautetta meille.</translation>
     </message>
     <message>
         <source>Sensor and lens</source>
-        <translation>Kenno ja objektiivi</translation>
+        <translation type="vanished">Kenno ja objektiivi</translation>
     </message>
     <message>
         <source>Set how the camera was mounted (a wrong orientation corrects the wrong way), then pick the lens group so distortion is corrected correctly.</source>
-        <translation>Aseta, miten kamera oli kiinnitetty (väärä asento korjaa väärään suuntaan), ja valitse sitten objektiiviryhmä, jotta vääristymä korjataan oikein.</translation>
+        <translation type="vanished">Aseta, miten kamera oli kiinnitetty (väärä asento korjaa väärään suuntaan), ja valitse sitten objektiiviryhmä, jotta vääristymä korjataan oikein.</translation>
     </message>
     <message>
         <source>Set the mounting orientation</source>
-        <translation>Aseta kiinnitysasento</translation>
+        <translation type="vanished">Aseta kiinnitysasento</translation>
     </message>
     <message>
         <source>Tell Gyroflow how the camera was mounted. A wrong orientation makes stabilization correct the wrong way.</source>
-        <translation>Kerro Gyroflowille, miten kamera oli kiinnitetty. Väärä asento saa vakautuksen korjaamaan väärään suuntaan.</translation>
+        <translation type="vanished">Kerro Gyroflowille, miten kamera oli kiinnitetty. Väärä asento saa vakautuksen korjaamaan väärään suuntaan.</translation>
     </message>
     <message>
         <source>Use this button to show or hide the render queue. Batch processing of multiple videos all happens in the queue.</source>
-        <translation>Tällä painikkeella voit näyttää tai piilottaa renderöintijonon. Useamman videon eräajo tapahtuu kokonaan jonossa.</translation>
+        <translation type="vanished">Tällä painikkeella voit näyttää tai piilottaa renderöintijonon. Useamman videon eräajo tapahtuu kokonaan jonossa.</translation>
     </message>
     <message>
-        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose "Deep match with gyro" to find the offset automatically.</source>
-        <translation>Kun gyrotiedot ovat erillisessä tiedostossa eivätkä ajoitukset täsmää, napsauta videota renderöintijonossa hiiren oikealla ja valitse "Syväsovitus gyroon", niin siirtymä löytyy automaattisesti.</translation>
+        <source>When the gyro data is in a separate file and the timing does not line up, right-click a video in the render queue and choose &quot;Deep match with gyro&quot; to find the offset automatically.</source>
+        <translation type="vanished">Kun gyrotiedot ovat erillisessä tiedostossa eivätkä ajoitukset täsmää, napsauta videota renderöintijonossa hiiren oikealla ja valitse &quot;Syväsovitus gyroon&quot;, niin siirtymä löytyy automaattisesti.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2700"/>
         <source>Load your footage</source>
         <translation>Lataa materiaalisi</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2701"/>
         <source>Drag your videos and gyro data right here.</source>
         <translation>Vedä videosi ja gyrodata tähän.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2704"/>
         <source>Check mounting and lens data</source>
         <translation>Tarkista asennus- ja objektiivitiedot</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2705"/>
         <source>Set the mounting orientation; for manual-focus or anamorphic lenses, also set the lens group.</source>
         <translation>Aseta asennussuunta; manuaalitarkennus- tai anamorfisille objektiiveille aseta myös objektiiviryhmä.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2708"/>
         <source>Stabilization settings</source>
         <translation>Vakautusasetukset</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2709"/>
         <source>Adjust smoothness, horizon lock and zoom mode. In the render queue you can multi-select or batch-edit clips.</source>
         <translation>Säädä pehmeyttä, horisonttilukkoa ja zoomaustilaa. Renderöintijonossa voit valita useita tai muokata leikkeitä eränä.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2712"/>
         <source>Deep search</source>
         <translation>Syvähaku</translation>
     </message>
     <message>
-        <source>Pick a clip with clear motion, then right-click and choose "Deep match with gyro" to align the video with the gyro data.</source>
-        <translation>Valitse leike, jossa on selvää liikettä, napsauta hiiren oikealla ja valitse "Syväsovitus gyroon", jolloin video kohdistuu gyrodataan.</translation>
+        <location filename="../../src/ui/App.qml" line="2713"/>
+        <source>Pick a clip with clear motion, then right-click and choose &quot;Deep match with gyro&quot; to align the video with the gyro data.</source>
+        <translation>Valitse leike, jossa on selvää liikettä, napsauta hiiren oikealla ja valitse &quot;Syväsovitus gyroon&quot;, jolloin video kohdistuu gyrodataan.</translation>
     </message>
     <message>
-        <source>Note: the video must fall within the gyro's recorded time range.</source>
+        <location filename="../../src/ui/App.qml" line="2714"/>
+        <source>Note: the video must fall within the gyro&apos;s recorded time range.</source>
         <translation>Huom: videon on oltava gyron tallentaman aikavälin sisällä.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2714"/>
         <source>One deep search per shooting day is enough, the other clips from that day are matched automatically.</source>
         <translation>Yksi syvähaku kuvauspäivää kohden riittää, saman päivän muut klipit sovitetaan automaattisesti.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2717"/>
         <source>Stabilize and export</source>
         <translation>Vakauta ja vie</translation>
     </message>
     <message>
-        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose "Stabilize (or use with plugins)" for the editor plugins, or "Export stabilized video" for a finished clip.</source>
-        <translation>Syvähaun jälkeen sinun on painettava jompaakumpaa näistä painikkeista, vasta sitten vakautus alkaa. Valitse "Vakauta (tai käytä liitännäisten kanssa)" editorin liitännäisille tai "Vie vakautettu video" valmiille klipille.</translation>
+        <location filename="../../src/ui/App.qml" line="2718"/>
+        <source>After deep search you must press one of these two buttons, only then does stabilization begin. Choose &quot;Stabilize (or use with plugins)&quot; for the editor plugins, or &quot;Export stabilized video&quot; for a finished clip.</source>
+        <translation>Syvähaun jälkeen sinun on painettava jompaakumpaa näistä painikkeista, vasta sitten vakautus alkaa. Valitse &quot;Vakauta (tai käytä liitännäisten kanssa)&quot; editorin liitännäisille tai &quot;Vie vakautettu video&quot; valmiille klipille.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2721"/>
         <source>Preview</source>
         <translation>Esikatselu</translation>
     </message>
     <message>
-        <source>Right-click a video in the queue and choose "Edit" to preview the result.</source>
-        <translation>Napsauta jonossa videota hiiren oikealla ja valitse "Muokkaa" esikatsellaksesi tulosta.</translation>
+        <location filename="../../src/ui/App.qml" line="2722"/>
+        <source>Right-click a video in the queue and choose &quot;Edit&quot; to preview the result.</source>
+        <translation>Napsauta jonossa videota hiiren oikealla ja valitse &quot;Muokkaa&quot; esikatsellaksesi tulosta.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2725"/>
         <source>Preview and adjust</source>
         <translation>Esikatselu ja säätö</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2726"/>
         <source>Click the stabilization-preview button to switch between Original, Stabilized and Overview. You can also fine-tune the stabilization settings per clip.</source>
         <translation>Napsauta vakautuksen esikatselupainiketta vaihtaaksesi tilojen Alkuperäinen, Vakautettu ja Yleiskatsaus välillä. Voit myös hienosäätää vakautusasetuksia leikekohtaisesti.</translation>
     </message>
     <message>
-        <source>Press Ctrl+S / Cmd+S to save once you're happy.</source>
+        <location filename="../../src/ui/App.qml" line="2727"/>
+        <source>Press Ctrl+S / Cmd+S to save once you&apos;re happy.</source>
         <translation>Paina Ctrl+S / Cmd+S tallentaaksesi, kun olet tyytyväinen.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="2734"/>
         <source>Open the queue to batch-manage videos; you can also reset processing or clear the queue.</source>
         <translation>Avaa jono hallitaksesi videoita eränä; voit myös nollata käsittelyn tai tyhjentää jonon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="791"/>
+        <location filename="../../src/ui/App.qml" line="876"/>
         <source>Stabilize (or use with plugins)</source>
         <translation>Vakauta (tai käytä liitännäisten kanssa)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="838"/>
         <source>Already synced</source>
-        <translation>Jo synkronoitu</translation>
+        <translation type="vanished">Jo synkronoitu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="816"/>
+        <location filename="../../src/ui/App.qml" line="1998"/>
         <source>Continue</source>
         <translation>Jatka</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2253"/>
+        <location filename="../../src/ui/App.qml" line="2968"/>
         <source>Canon CRM files are supported through the proxy workflow only.
 Export a project file and use it with your RAW workflow.</source>
         <translation>Canon CRM -tiedostoja tuetaan vain proxy-työnkulun kautta.
@@ -388,100 +409,107 @@ Vie projektitiedosto ja käytä sitä RAW-työnkulussasi.</translation>
         <translation type="vanished">Videotiedostot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="749"/>
+        <location filename="../../src/ui/App.qml" line="833"/>
         <source>Output path:</source>
         <translation>Tuotoksen polku:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="939"/>
+        <location filename="../../src/ui/App.qml" line="1013"/>
         <source>Export</source>
         <translation>Vie (export)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="937"/>
+        <location filename="../../src/ui/App.qml" line="1011"/>
         <source>Add to render queue</source>
         <translation>Add to render queue</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="999"/>
+        <location filename="../../src/ui/App.qml" line="1076"/>
         <source>This format is not available for rendering.
 The recommended workflow is to export project file and use one of [video editor plugins] (%1).</source>
         <translation>Tämä muoto ei ole käytettävissä renderöimiseen.
 Suositeltu työnkulku on viedä projektitiedosto ja käyttää jotakin [videonmuokkauslaajennuksista] (%1).</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1043"/>
-        <location filename="../../src/ui/App.qml" line="2194"/>
+        <location filename="../../src/ui/App.qml" line="1120"/>
+        <location filename="../../src/ui/App.qml" line="2901"/>
         <source>Output file already exists, do you want to overwrite it?</source>
         <translation>Tämä tiedosto on jo olemassa. Haluatko korvata sen?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1006"/>
-        <location filename="../../src/ui/App.qml" line="1014"/>
-        <location filename="../../src/ui/App.qml" line="1044"/>
-        <location filename="../../src/ui/App.qml" line="1195"/>
+        <location filename="../../src/ui/App.qml" line="1083"/>
+        <location filename="../../src/ui/App.qml" line="1091"/>
+        <location filename="../../src/ui/App.qml" line="1121"/>
+        <location filename="../../src/ui/App.qml" line="1276"/>
+        <location filename="../../src/ui/App.qml" line="1322"/>
+        <location filename="../../src/ui/App.qml" line="2027"/>
         <source>Yes</source>
         <translation>Kyllä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1045"/>
-        <location filename="../../src/ui/App.qml" line="2282"/>
+        <location filename="../../src/ui/App.qml" line="1122"/>
+        <location filename="../../src/ui/App.qml" line="2997"/>
         <source>Rename</source>
         <translation>Nimeä uudelleen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1007"/>
-        <location filename="../../src/ui/App.qml" line="1015"/>
-        <location filename="../../src/ui/App.qml" line="1046"/>
-        <location filename="../../src/ui/App.qml" line="1200"/>
+        <location filename="../../src/ui/App.qml" line="1084"/>
+        <location filename="../../src/ui/App.qml" line="1092"/>
+        <location filename="../../src/ui/App.qml" line="1123"/>
+        <location filename="../../src/ui/App.qml" line="1298"/>
+        <location filename="../../src/ui/App.qml" line="1327"/>
+        <location filename="../../src/ui/App.qml" line="2045"/>
         <source>No</source>
         <translation>Ei</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2075"/>
-        <location filename="../../src/ui/App.qml" line="2082"/>
-        <location filename="../../src/ui/App.qml" line="2091"/>
+        <location filename="../../src/ui/App.qml" line="2472"/>
+        <location filename="../../src/ui/App.qml" line="2479"/>
+        <location filename="../../src/ui/App.qml" line="2488"/>
         <source>Select file destination</source>
         <translation>Valitse tiedoston kohde</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="937"/>
+        <location filename="../../src/ui/App.qml" line="1011"/>
         <source>Save</source>
         <translation>Tallenna</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1005"/>
+        <location filename="../../src/ui/App.qml" line="1082"/>
         <source>Lens profile is not loaded, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation>Linssiprofiilia ei ole ladattu, tuloksesi on virheellinen. Haluatko varmasti hahmontaa tämän tiedoston?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1013"/>
+        <location filename="../../src/ui/App.qml" line="1090"/>
         <source>There are no sync points present, your result will be incorrect. Are you sure you want to render this file?</source>
         <translation>Synkronointipisteitä ei ole, tuloksesi on virheellinen. Haluatko varmasti hahmontaa tämän tiedoston?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1221"/>
+        <location filename="../../src/ui/App.qml" line="1348"/>
+        <location filename="../../src/ui/App.qml" line="2733"/>
         <source>Render queue</source>
         <translation>Renderöintijono</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1000"/>
-        <location filename="../../src/ui/App.qml" line="1055"/>
-        <location filename="../../src/ui/App.qml" line="1065"/>
-        <location filename="../../src/ui/App.qml" line="1072"/>
-        <location filename="../../src/ui/App.qml" line="1083"/>
-        <location filename="../../src/ui/App.qml" line="1147"/>
-        <location filename="../../src/ui/App.qml" line="1150"/>
-        <location filename="../../src/ui/App.qml" line="2007"/>
-        <location filename="../../src/ui/App.qml" line="2010"/>
-        <location filename="../../src/ui/App.qml" line="2120"/>
-        <location filename="../../src/ui/App.qml" line="2122"/>
-        <location filename="../../src/ui/App.qml" line="2254"/>
+        <location filename="../../src/ui/App.qml" line="1077"/>
+        <location filename="../../src/ui/App.qml" line="1132"/>
+        <location filename="../../src/ui/App.qml" line="1142"/>
+        <location filename="../../src/ui/App.qml" line="1149"/>
+        <location filename="../../src/ui/App.qml" line="1160"/>
+        <location filename="../../src/ui/App.qml" line="1224"/>
+        <location filename="../../src/ui/App.qml" line="1227"/>
+        <location filename="../../src/ui/App.qml" line="2062"/>
+        <location filename="../../src/ui/App.qml" line="2106"/>
+        <location filename="../../src/ui/App.qml" line="2371"/>
+        <location filename="../../src/ui/App.qml" line="2374"/>
+        <location filename="../../src/ui/App.qml" line="2753"/>
+        <location filename="../../src/ui/App.qml" line="2755"/>
+        <location filename="../../src/ui/App.qml" line="2969"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1061"/>
+        <location filename="../../src/ui/App.qml" line="1138"/>
         <source>Some AMD GPU encoders have a bug where it limits the bitrate to 20 Mbps, if the target bitrate is greater than 100 Mbps.
 
 Please check the file bitrate after rendering and if you&apos;re affected by this bug, you can either:
@@ -494,52 +522,100 @@ Tarkista tiedoston bittinopeus hahmontamisen jälkeen ja jos tämä virhe vaikut
 - Käytä &quot;Muokatut enkooderin asetukset&quot;: `-rc cqp -qp_i 28 -qp_p 28`</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2259"/>
+        <location filename="../../src/ui/App.qml" line="2974"/>
         <source>Saving...</source>
         <translation>Tallennetaan...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1144"/>
-        <location filename="../../src/ui/App.qml" line="1155"/>
-        <location filename="../../src/ui/App.qml" line="2098"/>
+        <location filename="../../src/ui/App.qml" line="1221"/>
+        <location filename="../../src/ui/App.qml" line="1232"/>
+        <location filename="../../src/ui/App.qml" line="2495"/>
         <source>Preset saved to %1</source>
         <translation>Esiasetus tallennettu kohteeseen %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1903"/>
-        <location filename="../../src/ui/App.qml" line="1941"/>
-        <location filename="../../src/ui/App.qml" line="1959"/>
-        <location filename="../../src/ui/App.qml" line="1994"/>
-        <location filename="../../src/ui/App.qml" line="2053"/>
-        <location filename="../../src/ui/App.qml" line="2059"/>
+        <location filename="../../src/ui/App.qml" line="2164"/>
+        <location filename="../../src/ui/App.qml" line="2265"/>
+        <location filename="../../src/ui/App.qml" line="2304"/>
+        <location filename="../../src/ui/App.qml" line="2322"/>
+        <location filename="../../src/ui/App.qml" line="2358"/>
+        <location filename="../../src/ui/App.qml" line="2428"/>
+        <location filename="../../src/ui/App.qml" line="2438"/>
+        <location filename="../../src/ui/App.qml" line="2443"/>
         <source>Close</source>
         <translation>Sulje</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2278"/>
+        <location filename="../../src/ui/App.qml" line="2888"/>
+        <source>Cannot write the output file: permission denied. Change the output path, or make sure the file is not in use by another application.</source>
+        <translation>Tulostiedostoa ei voi kirjoittaa: käyttö estetty. Vaihda tallennuspolkua tai varmista, ettei tiedosto ole toisen sovelluksen käytössä.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2889"/>
+        <source>NVIDIA driver is too old to GPU-encode this video. Update the GPU driver and try again.</source>
+        <translation>NVIDIA-ajuri on liian vanha tämän videon GPU-koodaukseen. Päivitä ajuri ja yritä uudelleen.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2898"/>
+        <source>GPU encoder doesn&apos;t support the pixel format %1.</source>
+        <translation>GPU-enkooderi ei tue pikselimuotoa %1.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2904"/>
+        <source>GPU encoder failed to initialize, rendering on CPU instead (slower).</source>
+        <translation>GPU-enkooderin alustus epäonnistui, renderöidään CPU:lla (hitaampi).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2907"/>
+        <source>This GPU cannot encode H.265, so GPU export is not possible for this video.</source>
+        <translation>Tämä GPU ei osaa koodata H.265:tä, GPU-vienti ei ole mahdollista tälle videolle.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2915"/>
+        <source>The GPU encoder doesn&apos;t support this video&apos;s encoding parameters. Update the GPU driver and try again; if it still fails, use &quot;%1&quot; to send logs.</source>
+        <translation>GPU-enkooderi ei tue tämän videon koodausparametreja. Päivitä ajuri ja yritä uudelleen; jos vika jatkuu, lähetä lokit kohdasta "%1".</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2918"/>
+        <source>GPU decoding failed for this file. Try again; if it keeps happening, use &quot;%1&quot; to send logs.</source>
+        <translation>Tiedoston GPU-dekoodaus epäonnistui. Yritä uudelleen; jos vika toistuu, lähetä lokit kohdasta "%1".</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2921"/>
+        <source>The output format is incompatible with the video codec. Use &quot;%1&quot; to send logs.</source>
+        <translation>Tulostusmuoto ei ole yhteensopiva videokoodekin kanssa. Lähetä lokit kohdasta "%1".</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2924"/>
+        <source>Audio encoding failed. Use &quot;%1&quot; to send logs.</source>
+        <translation>Äänen koodaus epäonnistui. Lähetä lokit kohdasta "%1".</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2993"/>
         <source>`.gyroflow` file already exists, what do you want to do?</source>
         <translation>`.gyroflow`-tiedosto on jo olemassa, mitä haluat tehdä?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2279"/>
+        <location filename="../../src/ui/App.qml" line="2994"/>
         <source>Overwrite</source>
         <translation>Korvaa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2297"/>
+        <location filename="../../src/ui/App.qml" line="3012"/>
         <source>Choose a different location</source>
         <translation>Valitse toinen sijainti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="815"/>
-        <location filename="../../src/ui/App.qml" line="1157"/>
-        <location filename="../../src/ui/App.qml" line="2171"/>
-        <location filename="../../src/ui/App.qml" line="2302"/>
+        <location filename="../../src/ui/App.qml" line="1234"/>
+        <location filename="../../src/ui/App.qml" line="1959"/>
+        <location filename="../../src/ui/App.qml" line="1997"/>
+        <location filename="../../src/ui/App.qml" line="2878"/>
+        <location filename="../../src/ui/App.qml" line="3017"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="206"/>
+        <location filename="../../src/ui/App.qml" line="228"/>
         <source>Version: %1</source>
         <translation>Versio: %1</translation>
     </message>
@@ -548,371 +624,434 @@ Tarkista tiedoston bittinopeus hahmontamisen jälkeen ja jos tämä virhe vaikut
         <translation type="vanished">Automaattinen synkronointi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="833"/>
+        <location filename="../../src/ui/App.qml" line="913"/>
         <source>Stop</source>
         <translation>Pysähdy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="833"/>
+        <location filename="../../src/ui/App.qml" line="913"/>
         <source>Export stabilized video</source>
         <translation>Vie vakautettu video</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="839"/>
+        <location filename="../../src/ui/App.qml" line="2062"/>
+        <location filename="../../src/ui/App.qml" line="2106"/>
         <source>Please load gyro data first.</source>
         <translation>Lataa ensin gyroskooppidata.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="935"/>
-        <location filename="../../src/ui/App.qml" line="1037"/>
-        <location filename="../../src/ui/App.qml" line="1041"/>
+        <location filename="../../src/ui/App.qml" line="1009"/>
+        <location filename="../../src/ui/App.qml" line="1114"/>
+        <location filename="../../src/ui/App.qml" line="1118"/>
         <source>Added to queue</source>
         <translation>Lisätty jonoon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1037"/>
+        <location filename="../../src/ui/App.qml" line="1114"/>
         <source>file %1 will be overwritten</source>
         <translation>tiedosto %1 korvataan</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1041"/>
+        <location filename="../../src/ui/App.qml" line="1118"/>
         <source>file will be rendered to %1</source>
         <translation>tiedosto hahmonnetaan muotoon %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1054"/>
+        <location filename="../../src/ui/App.qml" line="1131"/>
         <source>Gyroflow will use REDline to convert .R3D to ProRes before stabilizing in order to export from Gyroflow directly.
 If you want to work on RAW data instead, export project file (Ctrl+S) and use one of [video editor plugins] (%1).</source>
         <translation>Gyroflow käyttää koodia REDline muuntamaan .R3D muotoon ProRes ennen stabilointia viedäkseen suoraan tiedostosta Gyroflow.
 Jos haluat sen sijaan käsitellä RAW-tietoja, vie projektitiedosto (Ctrl+S) ja käytä jotakin [videonmuokkauslaajennuksista] (%1).</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1071"/>
+        <location filename="../../src/ui/App.qml" line="1148"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>Tiedostojen käyttörajoitusten vuoksi sinun on valittava kohdekansio manuaalisesti.
 Napsauta Ok ja valitse kohdekansio.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1082"/>
+        <location filename="../../src/ui/App.qml" line="1159"/>
         <source>Keep this app in the foreground and don&apos;t lock the screen.
 Due to limitations of the system video encoders, rendering in the background is not supported.</source>
         <translation>Pidä tämä sovellus etualalla äläkä lukitse näyttöä.
 Järjestelmän videoenkooderien rajoitusten vuoksi taustalla hahmontamista ei tueta.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1146"/>
+        <location filename="../../src/ui/App.qml" line="1223"/>
         <source>Enter the name for the preset: </source>
         <translation>Anna esiasetuksen nimi:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1150"/>
+        <location filename="../../src/ui/App.qml" line="1227"/>
         <source>Name cannot be empty.</source>
         <translation>Nimi ei voi olla tyhjä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1192"/>
+        <location filename="../../src/ui/App.qml" line="1319"/>
         <source>Clear render queue</source>
         <translation>Tyhjennä renderöintijono</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1194"/>
+        <location filename="../../src/ui/App.qml" line="1321"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Haluatko varmasti poistaa kaikki kohteet renderöintijonosta?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1217"/>
+        <location filename="../../src/ui/App.qml" line="1273"/>
         <source>Reset pairing</source>
         <translation>Nollaa parinmuodostus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1921"/>
+        <location filename="../../src/ui/App.qml" line="2026"/>
         <source>Already exported. Re-export?</source>
         <translation>Jo viety. Vie uudelleen?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1218"/>
+        <location filename="../../src/ui/App.qml" line="1275"/>
         <source>Are you sure you want to reset the status of all jobs?</source>
         <translation>Haluatko varmasti nollata kaikkien töiden tilan?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1396"/>
+        <location filename="../../src/ui/App.qml" line="1525"/>
         <source>Batch settings (%1)</source>
         <translation>Eräasetukset (%1)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1405"/>
+        <location filename="../../src/ui/App.qml" line="1534"/>
         <source>Apply</source>
         <translation>Käytä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1413"/>
+        <location filename="../../src/ui/App.qml" line="1542"/>
         <source>Exit</source>
         <translation>Poistu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1528"/>
+        <location filename="../../src/ui/App.qml" line="1658"/>
+        <location filename="../../src/ui/App.qml" line="1957"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="408"/>
         <source>Sensor &amp;&amp; Lens</source>
         <translation>Kenno &amp;&amp; Objektiivi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1634"/>
+        <location filename="../../src/ui/App.qml" line="1764"/>
         <source>Settings</source>
         <translation>Asetukset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1730"/>
+        <location filename="../../src/ui/App.qml" line="1860"/>
         <source>Check for updates</source>
         <translation>Tarkista päivitykset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1364"/>
-        <location filename="../../src/ui/App.qml" line="1374"/>
-        <location filename="../../src/ui/App.qml" line="1772"/>
+        <location filename="../../src/ui/App.qml" line="1492"/>
+        <location filename="../../src/ui/App.qml" line="1503"/>
+        <location filename="../../src/ui/App.qml" line="1911"/>
         <source>Full mode →</source>
         <translation>Täysi tila →</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="606"/>
+        <location filename="../../src/ui/App.qml" line="674"/>
         <source>Choose a video or motion data file</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="607"/>
+        <location filename="../../src/ui/App.qml" line="675"/>
         <source>Supported files</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1280"/>
-        <location filename="../../src/ui/App.qml" line="1290"/>
-        <location filename="../../src/ui/App.qml" line="1300"/>
-        <location filename="../../src/ui/App.qml" line="1468"/>
+        <location filename="../../src/ui/App.qml" line="1407"/>
+        <location filename="../../src/ui/App.qml" line="1417"/>
+        <location filename="../../src/ui/App.qml" line="1427"/>
+        <location filename="../../src/ui/App.qml" line="1597"/>
         <source>← Simple mode</source>
         <translation>← Yksinkertainen tila</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1646"/>
+        <location filename="../../src/ui/App.qml" line="1776"/>
         <source>Other settings</source>
         <translation>Muut asetukset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1736"/>
+        <location filename="../../src/ui/App.qml" line="1867"/>
+        <location filename="../../src/ui/App.qml" line="2915"/>
+        <location filename="../../src/ui/App.qml" line="2918"/>
+        <location filename="../../src/ui/App.qml" line="2921"/>
+        <location filename="../../src/ui/App.qml" line="2924"/>
         <source>Report a problem</source>
         <translation>Ilmoita ongelmasta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1902"/>
-        <location filename="../../src/ui/App.qml" line="2040"/>
+        <location filename="../../src/ui/App.qml" line="2264"/>
+        <location filename="../../src/ui/App.qml" line="2409"/>
         <source>Downloading update...</source>
         <translation>Ladataan päivitystä...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1914"/>
+        <location filename="../../src/ui/App.qml" line="2276"/>
         <source>Manual test version</source>
         <translation>Manuaalinen testiversio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1914"/>
+        <location filename="../../src/ui/App.qml" line="2276"/>
         <source>Stable update</source>
         <translation>Vakaa päivitys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1924"/>
+        <location filename="../../src/ui/App.qml" line="2287"/>
         <source>Test version available: %1.</source>
         <translation>Testiversio saatavilla: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1925"/>
+        <location filename="../../src/ui/App.qml" line="2288"/>
         <source>Stable update available: %1.</source>
         <translation>Vakaa päivitys saatavilla: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1940"/>
+        <location filename="../../src/ui/App.qml" line="2303"/>
         <source>Available updates</source>
         <translation>Saatavilla olevat päivitykset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="245"/>
+        <location filename="../../src/ui/App.qml" line="258"/>
         <source>See the full update history for earlier versions</source>
         <translation>Katso aiempien versioiden koko päivityshistoria</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1958"/>
-        <location filename="../../src/ui/App.qml" line="2058"/>
+        <location filename="../../src/ui/App.qml" line="2321"/>
+        <location filename="../../src/ui/App.qml" line="2442"/>
         <source>Update failed: %1</source>
         <translation>Päivitys epäonnistui: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1993"/>
+        <location filename="../../src/ui/App.qml" line="2357"/>
         <source>You are already on the latest version.</source>
         <translation>Käytössäsi on jo uusin versio.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2039"/>
+        <location filename="../../src/ui/App.qml" line="2408"/>
         <source>Downloading update... %1%</source>
         <translation>Ladataan päivitystä... %1%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2047"/>
+        <location filename="../../src/ui/App.qml" line="2419"/>
         <source>Installing the update will quit Gyroflow. Make sure your project is saved before continuing.</source>
         <translation>Päivityksen asennus sulkee Gyroflowin. Varmista, että projekti on tallennettu ennen jatkamista.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2279"/>
+        <location filename="../../src/ui/App.qml" line="2418"/>
         <source>The system installer will close Gyroflow while it updates. Make sure your project is saved before continuing.</source>
         <translation>Järjestelmän asennusohjelma sulkee Gyroflown päivityksen ajaksi. Varmista, että projektisi on tallennettu ennen jatkamista.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2285"/>
+        <location filename="../../src/ui/App.qml" line="2424"/>
         <source>Install</source>
         <translation>Asenna</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2298"/>
+        <location filename="../../src/ui/App.qml" line="2437"/>
         <source>Please allow Gyroflow to install apps in the system settings page that just opened, then press Install again.</source>
         <translation>Salli Gyroflown asentaa sovelluksia juuri avautuneella järjestelmäasetussivulla ja paina sitten Asenna uudelleen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2049"/>
+        <location filename="../../src/ui/App.qml" line="2421"/>
         <source>After the DMG opens, drag Gyroflow(NiYien).app to the Applications folder.</source>
         <translation>Kun DMG avautuu, vedä Gyroflow(NiYien).app Applications-kansioon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2051"/>
+        <location filename="../../src/ui/App.qml" line="2426"/>
         <source>Update is ready.</source>
         <translation>Päivitys on valmis.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2052"/>
+        <location filename="../../src/ui/App.qml" line="2423"/>
         <source>Open DMG and quit</source>
         <translation>Avaa DMG ja sulje</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2052"/>
+        <location filename="../../src/ui/App.qml" line="2425"/>
         <source>Install and quit</source>
         <translation>Asenna ja sulje</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2120"/>
+        <location filename="../../src/ui/App.qml" line="2753"/>
         <source>Thanks! Your feedback has been submitted.</source>
         <translation>Kiitos! Palautteesi on lähetetty.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2122"/>
+        <location filename="../../src/ui/App.qml" line="2755"/>
         <source>Submission failed: %1</source>
         <translation>Lähetys epäonnistui: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2150"/>
+        <location filename="../../src/ui/App.qml" line="2813"/>
         <source>An error occured: %1</source>
         <translation>Tapahtui virhe: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2151"/>
+        <location filename="../../src/ui/App.qml" line="2814"/>
         <source>Gyroflow file exported to %1.</source>
         <translation>Gyroflow tiedosto viety kohteeseen %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2152"/>
+        <location filename="../../src/ui/App.qml" line="2815"/>
         <source>--REPLACE_WITH_NATIVE_NAME_OF_YOUR_LANGUAGE_IN_YOUR_LANGUAGE--</source>
         <comment>Translate this to the native name of your language</comment>
         <translation>Suomi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2153"/>
+        <location filename="../../src/ui/App.qml" line="2816"/>
         <source>Gyroflow will shut down the computer in 60 seconds because all tasks have been completed.</source>
         <translation>Gyroflow sammuttaa tietokoneen 60 sekunnissa, koska kaikki tehtävät on suoritettu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2154"/>
+        <location filename="../../src/ui/App.qml" line="2817"/>
         <source>Gyroflow will reboot the computer in 60 seconds because all tasks have been completed.</source>
         <translation>Gyroflow käynnistää tietokoneen uudelleen 60 sekunnissa, koska kaikki tehtävät on suoritettu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2165"/>
+        <location filename="../../src/ui/App.qml" line="2847"/>
+        <source>Rendering failed: %1</source>
+        <translation>Renderöinti epäonnistui: %1</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2850"/>
+        <source>Failed to export gyro data.</source>
+        <translation>Gyrodatan vienti epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2851"/>
+        <source>Failed to write the STMAP file.</source>
+        <translation>STMAP-tiedoston kirjoitus epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2852"/>
+        <source>Failed to export the project file.</source>
+        <translation>Projektitiedoston vienti epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2853"/>
+        <source>Failed to load the project file.</source>
+        <translation>Projektitiedoston lataus epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2854"/>
+        <source>Failed to generate the video thumbnail.</source>
+        <translation>Pikkukuvan luonti epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2855"/>
+        <source>Video decoding failed, cannot synchronize.</source>
+        <translation>Videon dekoodaus epäonnistui, synkronointi ei onnistu.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2856"/>
+        <source>Invalid synchronization parameters.</source>
+        <translation>Virheelliset synkronointiparametrit.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2857"/>
+        <source>Failed to restore the job state.</source>
+        <translation>Työn tilan palautus epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2858"/>
+        <source>Unable to read the video file.</source>
+        <translation>Videotiedostoa ei voi lukea.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2859"/>
+        <source>Failed to load the lens profile.</source>
+        <translation>Objektiiviprofiilin lataus epäonnistui.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2860"/>
+        <source>This format cannot be exported directly. Use &quot;Stabilize&quot; with the video editor plugins instead.</source>
+        <translation>Tätä muotoa ei voi viedä suoraan. Käytä "Vakauta"-toimintoa videoeditorin liitännäisten kanssa.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/App.qml" line="2872"/>
         <source>This encoder requires an external library licensed as GPL.
 Do you agree with the [GPL license] and want to download the additional codec?</source>
         <translation>Tämä kooderi vaatii ulkoisen kirjaston, jonka käyttöoikeus on GPL.
 Hyväksytkö [GPL-lisenssin] ja haluat ladata ylimääräisen koodekin?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2166"/>
+        <location filename="../../src/ui/App.qml" line="2873"/>
         <source>Yes, I agree</source>
         <translation>Kyllä, olen samaa mieltä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2181"/>
         <source>Permission denied. Unable to create or write file.
 Change the output path or run the program as administrator.
 Make sure you have write permissions to the target directory and make sure target file is not used by any other application.</source>
-        <translation>Lupa evätty. Tiedostoa ei voi luoda tai kirjoittaa.
+        <translation type="vanished">Lupa evätty. Tiedostoa ei voi luoda tai kirjoittaa.
 Muuta tulostuspolkua tai suorita ohjelma järjestelmänvalvojana.
 Varmista, että sinulla on kirjoitusoikeudet kohdehakemistoon ja varmista, että mikään muu sovellus ei käytä kohdetiedostoa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2182"/>
         <source>NVIDIA GPU driver is too old, GPU encoding will not work for this format.
 Update your NVIDIA drivers to the newest version: %1.
 If the issue is still present after driver update, your GPU probably doesn&apos;t support GPU encoding with this format. Disable GPU encoding in this case.</source>
-        <translation>NVIDIA GPU-ohjain on liian vanha, GPU-koodaus ei toimi tässä muodossa.
+        <translation type="vanished">NVIDIA GPU-ohjain on liian vanha, GPU-koodaus ei toimi tässä muodossa.
 Päivitä NVIDIA-ohjaimesi uusimpaan versioon: %1.
 Jos ongelma jatkuu ohjaimen päivityksen jälkeen, GPU ei todennäköisesti tue GPU-koodausta tässä muodossa. Poista GPU-koodaus tässä tapauksessa käytöstä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2191"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
-        <translation>GPU nopeutettu enkooderi ei tue tätä pikselimuotoa (%1).
+        <translation type="vanished">GPU nopeutettu enkooderi ei tue tätä pikselimuotoa (%1).
 Haluatko muuntaa toiseen tuettuun pikselimuotoon vai säilyttää alkuperäisen ja hahmontaa CPU?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2197"/>
         <source>GPU encoder failed to initialize and rendering is done on the CPU, which is much slower.
 If you have a modern device, latest GPU drivers and you think this shouldn&apos;t happen, report this on GitHub including gyroflow.log file.</source>
-        <translation>GPU-enkooderin alustus epäonnistui ja renderöinti tehdään CPU-alustalla, joka on paljon hitaampi.
+        <translation type="vanished">GPU-enkooderin alustus epäonnistui ja renderöinti tehdään CPU-alustalla, joka on paljon hitaampi.
 Jos sinulla on nykyaikainen laite, uusimmat GPU-ajurit ja uskot, että näin ei pitäisi tapahtua, ilmoita tästä GitHubissa, mukaan lukien gyroflow.log-tiedosto.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2200"/>
         <source>Your GPU doesn&apos;t support H.265/HEVC encoding, try to use H.264/AVC or disable GPU encoding in Export settings.</source>
-        <translation>GPU ei tue H.265/HEVC-koodausta, yritä käyttää H.264/AVC-koodausta tai poistaa GPU-koodaus käytöstä vientiasetuksista.</translation>
+        <translation type="vanished">GPU ei tue H.265/HEVC-koodausta, yritä käyttää H.264/AVC-koodausta tai poistaa GPU-koodaus käytöstä vientiasetuksista.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2203"/>
         <source>Your GPU&apos;s hardware encoder rejected these export settings.
 This usually means the selected codec, resolution or bitrate is beyond what this GPU can encode.
 Try a different output codec (H.265/HEVC handles more cases than H.264/AVC), lower the bitrate, or disable GPU encoding in Export settings.</source>
-        <translation>Näytönohjaimesi laitteistokooderi hylkäsi nämä vientiasetukset.
+        <translation type="vanished">Näytönohjaimesi laitteistokooderi hylkäsi nämä vientiasetukset.
 Yleensä tämä tarkoittaa, että valittu koodekki, tarkkuus tai bittinopeus ylittää sen, mitä tämä näytönohjain pystyy koodaamaan.
 Kokeile toista lähtökoodekkia (H.265/HEVC tukee useampia tapauksia kuin H.264/AVC), pienennä bittinopeutta tai poista GPU-koodaus käytöstä vientiasetuksista.</translation>
     </message>
     <message>
         <source>GPU decoder failed to decode this file. Disable GPU decoding in &quot;Advanced&quot; and try again.</source>
-        <translation>GPU-dekooderi ei onnistunut purkamaan tätä tiedostoa. Poista GPU-dekoodaus käytöstä &quot;Lisäasetukset&quot;-kohdassa ja yritä uudelleen.</translation>
+        <translation type="vanished">GPU-dekooderi ei onnistunut purkamaan tätä tiedostoa. Poista GPU-dekoodaus käytöstä &quot;Lisäasetukset&quot;-kohdassa ja yritä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2206"/>
         <source>Make sure your output extension supports the selected codec. &quot;.mov&quot; should work in most cases.</source>
-        <translation>Varmista, että tulostuslaajennuksesi tukee valittua koodekkia. &quot;.mov&quot; toimii useimmissa tapauksissa.</translation>
+        <translation type="vanished">Varmista, että tulostuslaajennuksesi tukee valittua koodekkia. &quot;.mov&quot; toimii useimmissa tapauksissa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="2209"/>
         <source>Audio encoder couldn&apos;t process the input data. Try unchecking &quot;Export audio&quot; in Export settings.</source>
-        <translation>Äänikooderi ei voinut käsitellä syöttötietoja. Yritä poistaa Vie ääni -valintaruudun valinta Vientiasetuksista.</translation>
+        <translation type="vanished">Äänikooderi ei voinut käsitellä syöttötietoja. Yritä poistaa Vie ääni -valintaruudun valinta Vientiasetuksista.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1957"/>
         <source>Lens data is not set up correctly. Set the missing data in &quot;%1&quot; first, then process again.</source>
         <translation>Objektiivin tietoja ei ole määritetty oikein. Täytä ensin puuttuvat tiedot kohdassa &quot;%1&quot; ja käsittele sitten uudelleen.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1953"/>
         <source>missing focal length</source>
         <translation>polttoväli puuttuu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1954"/>
         <source>missing anamorphic parameters</source>
         <translation>anamorfiset parametrit puuttuvat</translation>
     </message>
     <message>
+        <location filename="../../src/ui/App.qml" line="1958"/>
         <source>Go to settings</source>
         <translation>Siirry asetuksiin</translation>
     </message>
@@ -1034,574 +1173,574 @@ Voit suurentaa terävyysrajaa Lisäasetukset-osiossa.</translation>
     <name>Device</name>
     <message>
         <location filename="../../src/ui/menu/SimpleDevice.qml" line="14"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="285"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="347"/>
         <source>Device</source>
         <translation>Laite</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="73"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="378"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="91"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="440"/>
         <source>Requesting device permission</source>
         <translation>Pyydetään laitteen käyttöoikeutta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="75"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="379"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="93"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="441"/>
         <source>Device permission denied</source>
         <translation>Laitteen käyttöoikeus evätty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="77"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="380"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="95"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="442"/>
         <source>Device connection unsupported</source>
         <translation>Laiteyhteyttä ei tueta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="79"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="381"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="97"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="443"/>
         <source>Device connection error</source>
         <translation>Virhe laiteyhteydessä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="225"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="287"/>
         <source>Checking for updates</source>
         <translation>Tarkistetaan päivityksiä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="226"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="288"/>
         <source>Update available</source>
         <translation>Päivitys saatavilla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="227"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="289"/>
         <source>Updating firmware</source>
         <translation>Päivitetään laiteohjelmistoa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="228"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="290"/>
         <source>Firmware updated</source>
         <translation>Firmware päivitetty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="229"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="291"/>
         <source>Update failed</source>
         <translation>Päivitys epäonnistui</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="230"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="292"/>
         <source>Firmware is up to date</source>
         <translation>Laiteohjelmisto on ajan tasalla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="231"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="293"/>
         <source>Waiting for device</source>
         <translation>Odotetaan laitetta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="246"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="364"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="308"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="426"/>
         <source>Current firmware: %1. Your device is already on the latest firmware.</source>
         <translation>Nykyinen laiteohjelmisto: %1. Laitteessasi on jo uusin laiteohjelmisto.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="248"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="365"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="310"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="427"/>
         <source>Current firmware: %1. Checking automatically after the device is connected...</source>
         <translation>Nykyinen laiteohjelmisto: %1. Tarkistetaan automaattisesti, kun laite on yhdistetty...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="250"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="366"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="312"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="428"/>
         <source>Current firmware: %1. Latest firmware: %2.</source>
         <translation>Nykyinen laiteohjelmisto: %1. Uusin laiteohjelmisto: %2.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="252"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="367"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="314"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="429"/>
         <source>Current firmware: %1. Firmware update completed successfully.</source>
         <translation>Nykyinen laiteohjelmisto: %1. Laiteohjelmiston päivitys suoritettu onnistuneesti.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="254"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="368"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="316"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="430"/>
         <source>Current firmware: %1. Do not disconnect the device during update.</source>
         <translation>Nykyinen laiteohjelmisto: %1. Älä irrota laitetta päivityksen aikana.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="256"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="369"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="318"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="431"/>
         <source>Current firmware: %1. %2</source>
         <translation>Nykyinen laiteohjelmisto: %1. %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="257"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="370"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="319"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="432"/>
         <source>Current firmware: %1. Waiting for automatic firmware check.</source>
         <translation>Nykyinen laiteohjelmisto: %1. Odotetaan automaattista laiteohjelmiston tarkistusta.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="286"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="348"/>
         <source>System</source>
         <translation>Järjestelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="287"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="445"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="349"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="507"/>
         <source>Model</source>
         <translation>Malli</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="288"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="505"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="350"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="567"/>
         <source>Device time</source>
         <translation>Laitteen aika</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="289"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="522"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="351"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="584"/>
         <source>Timezone</source>
         <translation>Aikavyöhyke</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="290"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="534"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="352"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="596"/>
         <source>Sync Time</source>
         <translation>Synkronointiaika</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="291"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="534"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="353"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="596"/>
         <source>Syncing...</source>
         <translation>Synkronoidaan...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="292"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="544"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="354"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="606"/>
         <source>Set timezone</source>
         <translation>Aseta aikavyöhyke</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="293"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="456"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="355"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="518"/>
         <source>Software</source>
         <translation>Ohjelmisto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="294"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="458"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="356"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="520"/>
         <source>Hardware</source>
         <translation>Laitteisto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="295"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="620"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="357"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="682"/>
         <source>Update Firmware</source>
         <translation>Päivitä laiteohjelmisto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="296"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="620"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="358"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="682"/>
         <source>Updating...</source>
         <translation>Päivitetään...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="297"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="652"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="359"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="714"/>
         <source>Set device timezone</source>
         <translation>Aseta laitteen aikavyöhyke</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="298"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="661"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="360"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="723"/>
         <source>Current selection</source>
         <translation>Nykyinen valinta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="299"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="733"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="361"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="795"/>
         <source>Nearest city</source>
         <translation>Lähin kaupunki</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="300"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="763"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="362"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="825"/>
         <source>Use system timezone</source>
         <translation>Käytä järjestelmän aikavyöhykettä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="301"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="770"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="363"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="832"/>
         <source>Close</source>
         <translation>Sulje</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="302"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="364"/>
         <source>Honolulu</source>
         <translation>Honolulu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="303"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="365"/>
         <source>Pago Pago</source>
         <translation>Pago Pago</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="304"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="366"/>
         <source>Taiohae</source>
         <translation>Taiohae</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="305"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="367"/>
         <source>Anchorage</source>
         <translation>Ankkuri</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="306"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="368"/>
         <source>Los Angeles</source>
         <translation>Los Angeles</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="307"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="369"/>
         <source>San Francisco</source>
         <translation>San Francisco</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="308"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="370"/>
         <source>Vancouver</source>
         <translation>Vancouver</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="309"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="371"/>
         <source>Denver</source>
         <translation>Denver</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="310"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="372"/>
         <source>Phoenix</source>
         <translation>Phoenix</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="311"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="373"/>
         <source>Chicago</source>
         <translation>Chicago</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="312"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="374"/>
         <source>Mexico City</source>
         <translation>Mexico City</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="313"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="375"/>
         <source>New York</source>
         <translation>New York</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="314"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="376"/>
         <source>Toronto</source>
         <translation>Toronto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="315"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="377"/>
         <source>Caracas</source>
         <translation>Caracas</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="316"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="378"/>
         <source>Halifax</source>
         <translation>Halifax</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="317"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="379"/>
         <source>St. Johns</source>
         <translation>St. Johns</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="318"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="380"/>
         <source>Sao Paulo</source>
         <translation>São Paulo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="319"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="381"/>
         <source>Buenos Aires</source>
         <translation>Buenos Aires</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="320"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="382"/>
         <source>Fernando de Noronha</source>
         <translation>Fernando de Noronha</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="321"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="383"/>
         <source>Praia</source>
         <translation>Praia</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="322"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="384"/>
         <source>Ponta Delgada</source>
         <translation>Ponta Delgada</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="323"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="385"/>
         <source>London</source>
         <translation>Lontoossa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="324"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="386"/>
         <source>Lisbon</source>
         <translation>Lissabon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="325"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="387"/>
         <source>Berlin</source>
         <translation>Berliini</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="326"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="388"/>
         <source>Paris</source>
         <translation>Pariisi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="327"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="389"/>
         <source>Cairo</source>
         <translation>Kairo</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="328"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="390"/>
         <source>Johannesburg</source>
         <translation>Johannesburg</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="329"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="391"/>
         <source>Moscow</source>
         <translation>Moskova</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="330"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="392"/>
         <source>Istanbul</source>
         <translation>Istanbul</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="331"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="393"/>
         <source>Tehran</source>
         <translation>Teheran</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="332"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="394"/>
         <source>Dubai</source>
         <translation>Dubai</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="333"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="395"/>
         <source>Abu Dhabi</source>
         <translation>Abu Dhabi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="334"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="396"/>
         <source>Kabul</source>
         <translation>Kabul</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="335"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="397"/>
         <source>Karachi</source>
         <translation>Karachi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="336"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="398"/>
         <source>Tashkent</source>
         <translation>Taškent</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="337"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="399"/>
         <source>Delhi</source>
         <translation>Delhi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="338"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="400"/>
         <source>Mumbai</source>
         <translation>Mumbai</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="339"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="401"/>
         <source>Kathmandu</source>
         <translation>Kathmandu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="340"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="402"/>
         <source>Dhaka</source>
         <translation>Dhaka</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="341"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="403"/>
         <source>Thimphu</source>
         <translation>Thimphu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="342"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="404"/>
         <source>Yangon</source>
         <translation>Yangon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="343"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="405"/>
         <source>Bangkok</source>
         <translation>Bangkok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="344"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="406"/>
         <source>Jakarta</source>
         <translation>Jakarta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="345"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="407"/>
         <source>Shanghai</source>
         <translation>Shanghai</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="346"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="408"/>
         <source>Beijing</source>
         <translation>Peking</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="347"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="409"/>
         <source>Tianjin</source>
         <translation>Tianjin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="348"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="410"/>
         <source>Eucla</source>
         <translation>Eucla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="349"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="411"/>
         <source>Tokyo</source>
         <translation>Tokio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="350"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="412"/>
         <source>Seoul</source>
         <translation>Soul</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="351"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="413"/>
         <source>Adelaide</source>
         <translation>Adelaide</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="352"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="414"/>
         <source>Darwin</source>
         <translation>Darwin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="353"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="415"/>
         <source>Sydney</source>
         <translation>Sydney</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="354"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="416"/>
         <source>Melbourne</source>
         <translation>Melbourne</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="355"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="417"/>
         <source>Lord Howe</source>
         <translation>Lord Howe</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="356"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="418"/>
         <source>Noumea</source>
         <translation>Noumea</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="357"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="419"/>
         <source>Honiara</source>
         <translation>Honiara</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="358"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="420"/>
         <source>Auckland</source>
         <translation>Auckland</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="359"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="421"/>
         <source>Wellington</source>
         <translation>Wellington</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="360"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="422"/>
         <source>Chatham</source>
         <translation>Chatham</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="361"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="423"/>
         <source>Nuku&apos;alofa</source>
         <translation>Nuku&apos;alofa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="362"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="424"/>
         <source>Apia</source>
         <translation>Apia</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="363"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="425"/>
         <source>Kiritimati</source>
         <translation>Kiritimati</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="371"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="433"/>
         <source>Device is not connected</source>
         <translation>Laitetta ei ole yhdistetty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="372"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="434"/>
         <source>Device manager is unavailable</source>
         <translation>Laitehallinta ei ole käytettävissä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="373"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="435"/>
         <source>No firmware update is available</source>
         <translation>Laiteohjelmistopäivitystä ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="374"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="436"/>
         <source>The device was disconnected</source>
         <translation>Laite irrotettiin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="375"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="437"/>
         <source>Device time synchronized successfully</source>
         <translation>Laitteen aika synkronoitu onnistuneesti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="376"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="438"/>
         <source>Failed to synchronize device time</source>
         <translation>Laitteen ajan synkronointi epäonnistui</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="377"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="439"/>
         <source>The device was disconnected during OTA transfer</source>
         <translation>Laite irrotettiin OTA-siirron aikana</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="382"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="444"/>
         <source>iOS cannot access the NiYien A1 real-time device channel on this build</source>
         <translation>iOS ei voi käyttää NiYien A1 -reaaliaikakanavaa tässä koonnoksessa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="383"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="445"/>
         <source>mobile device bridge is not connected</source>
         <translation>mobiililaitteen silta ei ole yhdistetty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="384"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="446"/>
         <source>Device command channel is unavailable</source>
         <translation>Laitteen komentokanava ei ole käytettävissä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="385"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="447"/>
         <source>Device event channel is unavailable</source>
         <translation>Laitteen tapahtumakanava ei ole käytettävissä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="386"/>
-        <location filename="../../src/ui/menu/SimpleDevice.qml" line="445"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="448"/>
+        <location filename="../../src/ui/menu/SimpleDevice.qml" line="507"/>
         <source>NiYien A1</source>
         <translation>NiYien A1</translation>
     </message>
@@ -1617,266 +1756,266 @@ Voit suurentaa terävyysrajaa Lisäasetukset-osiossa.</translation>
 <context>
     <name>Export</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1642"/>
+        <location filename="../../src/ui/App.qml" line="1772"/>
         <location filename="../../src/ui/menu/Export.qml" line="12"/>
         <source>Export settings</source>
         <translation>Vie asetukset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="358"/>
+        <location filename="../../src/ui/menu/Export.qml" line="440"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="119"/>
         <source>Output size</source>
         <translation>Tuotoksen koko</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="364"/>
+        <location filename="../../src/ui/menu/Export.qml" line="446"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="129"/>
         <source>Width</source>
         <translation>Leveys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="382"/>
+        <location filename="../../src/ui/menu/Export.qml" line="464"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="178"/>
         <source>Height</source>
         <translation>Korkeus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="414"/>
+        <location filename="../../src/ui/menu/Export.qml" line="496"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="166"/>
         <source>Lock aspect ratio</source>
         <translation>Lukitse kuvasuhde</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="426"/>
+        <location filename="../../src/ui/menu/Export.qml" line="508"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="205"/>
         <source>Output size preset</source>
         <translation>Esiasetettu lähtökoko</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="455"/>
+        <location filename="../../src/ui/menu/Export.qml" line="537"/>
         <source>Proportional</source>
         <translation>Suhteellinen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="461"/>
+        <location filename="../../src/ui/menu/Export.qml" line="543"/>
         <source>Based on &quot;Max zoom&quot;</source>
         <translation>Perustuu &quot;Max zoom&quot;</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="533"/>
+        <location filename="../../src/ui/menu/Export.qml" line="615"/>
         <source>This resolution is not supported by the selected codec.</source>
         <translation>Valittu koodekki ei tue tätä resoluutiota.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="534"/>
+        <location filename="../../src/ui/menu/Export.qml" line="616"/>
         <source>Maximum supported resolution is %1.</source>
         <translation>Suurin tuettu resoluutio on %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="540"/>
+        <location filename="../../src/ui/menu/Export.qml" line="622"/>
         <source>Resolution must be divisible by 2.</source>
         <translation>Resoluution on oltava jaollinen 2.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="545"/>
+        <location filename="../../src/ui/menu/Export.qml" line="627"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="219"/>
         <source>Bitrate</source>
         <translation>Bittinopeus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="552"/>
+        <location filename="../../src/ui/menu/Export.qml" line="634"/>
         <source>Mbps</source>
         <translation>Mbps</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1699"/>
-        <location filename="../../src/ui/menu/Export.qml" line="564"/>
+        <location filename="../../src/ui/App.qml" line="1829"/>
+        <location filename="../../src/ui/menu/Export.qml" line="646"/>
         <source>Use GPU encoding</source>
         <translation>Käytä GPU koodausta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="573"/>
+        <location filename="../../src/ui/menu/Export.qml" line="655"/>
         <source>GPU encoders typically generate output of lower quality than software encoders, but are significantly faster.</source>
         <translation>GPU enkooderit yleensä tuottavat huonompaa laatua kuin ohjelmistoenkooderit, mutta ovat huomattavasti nopeampia.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="574"/>
+        <location filename="../../src/ui/menu/Export.qml" line="656"/>
         <source>They require a higher bitrate to make output with the same perceptual quality, or they make output with a lower perceptual quality at the same bitrate.</source>
         <translation>Ne vaativat korkeampaa bittinopeutta tehdäkseen samaa laatua, tai ne tekevät huonompaa laatua samassa bittinopeudessa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="575"/>
+        <location filename="../../src/ui/menu/Export.qml" line="657"/>
         <source>Uncheck this option for maximum possible quality.</source>
         <translation>Poista tämä valinta parhaan mahdollisen laadun saamiseksi.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="577"/>
+        <location filename="../../src/ui/menu/Export.qml" line="659"/>
         <source>GPU acceleration is not available for the pixel format of this video.</source>
         <translation>GPU kiihtyvyys ei ole käytettävissä tämän videon pikselimuotoon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="581"/>
+        <location filename="../../src/ui/menu/Export.qml" line="663"/>
         <source>Export audio</source>
         <translation>Vie ääni</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="585"/>
+        <location filename="../../src/ui/menu/Export.qml" line="667"/>
         <source>Audio export not available when changing video speed.</source>
         <translation>Äänen vienti ei ole käytettävissä videon nopeutta muutettaessa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="592"/>
+        <location filename="../../src/ui/menu/Export.qml" line="674"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="19"/>
         <source>Render queue output path</source>
         <translation>Renderöi jonon lähtöpolku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="595"/>
+        <location filename="../../src/ui/menu/Export.qml" line="677"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="23"/>
         <source>Same as source file</source>
         <translation>Sama kuin lähdetiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="595"/>
+        <location filename="../../src/ui/menu/Export.qml" line="677"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="23"/>
         <source>Fixed path</source>
         <translation>Kiinteä polku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="608"/>
+        <location filename="../../src/ui/menu/Export.qml" line="693"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="40"/>
         <source>Select output folder...</source>
         <translation>Valitse tulostuskansio...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="616"/>
+        <location filename="../../src/ui/menu/Export.qml" line="704"/>
         <location filename="../../src/ui/menu/SimpleExport.qml" line="47"/>
         <source>Browse</source>
         <translation>Selaa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="624"/>
+        <location filename="../../src/ui/menu/Export.qml" line="712"/>
         <source>Custom encoder options</source>
         <translation>Mukautetut kooderivaihtoehdot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="647"/>
+        <location filename="../../src/ui/menu/Export.qml" line="735"/>
         <source>Show available options</source>
         <translation>Näytä käytettävissä olevat vaihtoehdot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="693"/>
+        <location filename="../../src/ui/menu/Export.qml" line="781"/>
         <source>Export trim ranges as separate videos</source>
         <translation>Vie leikkausalueet erillisinä videoina</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="712"/>
+        <location filename="../../src/ui/menu/Export.qml" line="800"/>
         <source>Interpolation method</source>
         <translation>Interpolointimenetelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="776"/>
+        <location filename="../../src/ui/menu/Export.qml" line="864"/>
         <source>Preserve export settings</source>
         <translation>Säilytä vientiasetukset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="778"/>
+        <location filename="../../src/ui/menu/Export.qml" line="866"/>
         <source>Save output size and bitrate in settings and use it for all files.</source>
         <translation>Tallenna lähtökoko ja bittinopeus asetuksiin ja käytä sitä kaikille tiedostoille.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="789"/>
+        <location filename="../../src/ui/menu/Export.qml" line="877"/>
         <source>Preserve export path</source>
         <translation>Säilytä vientipolku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="791"/>
+        <location filename="../../src/ui/menu/Export.qml" line="879"/>
         <source>Save output path in settings and use it for all files.</source>
         <translation>Tallenna lähtöpolku asetuksiin ja käytä sitä kaikille tiedostoille.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="802"/>
+        <location filename="../../src/ui/menu/Export.qml" line="890"/>
         <source>Use experimental Vulkan encoder (HEVC only)</source>
         <translation>Käytä kokeellista Vulkan-enkooderia (vain HEVC)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="811"/>
+        <location filename="../../src/ui/menu/Export.qml" line="899"/>
         <source>Use experimental D3D12 encoder (HEVC and AVC)</source>
         <translation>Käytä kokeellista D3D12-enkooderia (HEVC ja AVC)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="501"/>
-        <location filename="../../src/ui/menu/Export.qml" line="650"/>
+        <location filename="../../src/ui/menu/Export.qml" line="583"/>
+        <location filename="../../src/ui/menu/Export.qml" line="738"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="436"/>
+        <location filename="../../src/ui/menu/Export.qml" line="518"/>
         <source>Edit sizes</source>
         <translation>Muokkaa kokoja</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="440"/>
+        <location filename="../../src/ui/menu/Export.qml" line="522"/>
         <source>Original</source>
         <translation>Alkuperäinen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="493"/>
+        <location filename="../../src/ui/menu/Export.qml" line="575"/>
         <source>You can edit the output size presets here:</source>
         <translation>Voit muokata lähtökoon esiasetuksia täällä:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="494"/>
+        <location filename="../../src/ui/menu/Export.qml" line="576"/>
         <source>Save</source>
         <translation>Tallenna</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="501"/>
+        <location filename="../../src/ui/menu/Export.qml" line="583"/>
         <source>Invalid JSON format!</source>
         <translation>Virheellinen JSON-muoto!</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="504"/>
+        <location filename="../../src/ui/menu/Export.qml" line="586"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="657"/>
+        <location filename="../../src/ui/menu/Export.qml" line="745"/>
         <source>Metadata comment</source>
         <translation>Metatietojen kommentti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="665"/>
+        <location filename="../../src/ui/menu/Export.qml" line="753"/>
         <source>Keyframe distance</source>
         <translation>Avainkehyksen etäisyys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="674"/>
+        <location filename="../../src/ui/menu/Export.qml" line="762"/>
         <source>s</source>
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="679"/>
+        <location filename="../../src/ui/menu/Export.qml" line="767"/>
         <source>Preserve other tracks</source>
         <translation>Säilytä muut jäljet</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="681"/>
+        <location filename="../../src/ui/menu/Export.qml" line="769"/>
         <source>This disables trim range and you need to use the .mov output file extension</source>
         <translation>Tämä poistaa trimmausalueen käytöstä ja sinun on käytettävä .mov-tulostustiedostotunnistetta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="686"/>
+        <location filename="../../src/ui/menu/Export.qml" line="774"/>
         <source>Use black frames outside trim range and keep original file duration</source>
         <translation>Käytä mustia kehyksiä leikkausalueen ulkopuolella ja säilytä tiedoston alkuperäinen kesto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="700"/>
+        <location filename="../../src/ui/menu/Export.qml" line="788"/>
         <source>Audio codec</source>
         <translation>Äänikoodekki</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Export.qml" line="723"/>
+        <location filename="../../src/ui/menu/Export.qml" line="811"/>
         <source>Device for rendering</source>
         <translation>Laite renderöintiin</translation>
     </message>
@@ -2176,38 +2315,52 @@ Haluatko lähettää profiilisi tähän?</translation>
 <context>
     <name>LensGroupConfig</name>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
+        <source>Display on Device</source>
+        <translation>Näytä laitteessa</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="765"/>
+        <source>Clear Device Display</source>
+        <translation>Tyhjennä laitteen näyttö</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="759"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="769"/>
+        <source>Sent to the device.</source>
+        <translation>Lähetetty laitteelle.</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="12"/>
         <source>Lens groups</source>
         <translation>Objektiiviryhmät</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="610"/>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="685"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="625"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="700"/>
         <source>Mixed</source>
         <translation>Sekoitettu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="237"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="231"/>
         <source>No focus</source>
         <translation>Ei tarkennusta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="255"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="249"/>
         <source>Manual setup</source>
         <translation>Manuaalinen määritys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="475"/>
         <source>Manually set lens focal length or anamorphic info.</source>
-        <translation>Aseta polttoväli tai anamorfiset tiedot manuaalisesti.</translation>
+        <translation type="vanished">Aseta polttoväli tai anamorfiset tiedot manuaalisesti.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="488"/>
         <source>Manual edit</source>
-        <translation>Muokkaa käsin</translation>
+        <translation type="vanished">Muokkaa käsin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="484"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="483"/>
         <source>Auto-focus lens</source>
         <translation>Automaattitarkennusobjektiivi</translation>
     </message>
@@ -2222,9 +2375,8 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Kytke päälle käsitarkennus- tai anamorfisille objektiiveille: käsin syötettyä polttoväliä (&gt; 5mm) käytetään, kun videolla ei ole telemetrian polttoväliä, ja anamorfisia asetuksia käytetään, kun ne ovat käytössä. Pois kytkeminen piilottaa kentät, mutta syötetyt arvot säilyvät.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="489"/>
         <source>When on, each lens group falls back to its manually-entered focal length / anamorphic if the video has no telemetry focal length, or anamorphic is enabled. Focal length must be &gt; 5mm to take effect.</source>
-        <translation>Kun käytössä, kukin objektiiviryhmä käyttää manuaalisesti syötettyä polttoväliä / anamorfista arvoa, jos videolla ei ole polttovälitelemetriää tai jos anamorfinen on käytössä. Polttovälin on oltava &gt; 5 mm, jotta se tulee voimaan.</translation>
+        <translation type="vanished">Kun käytössä, kukin objektiiviryhmä käyttää manuaalisesti syötettyä polttoväliä / anamorfista arvoa, jos videolla ei ole polttovälitelemetriää tai jos anamorfinen on käytössä. Polttovälin on oltava &gt; 5 mm, jotta se tulee voimaan.</translation>
     </message>
     <message>
         <source>Changes only affect the selected video.</source>
@@ -2235,47 +2387,47 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation type="vanished">Muutokset vaikuttavat vain %1 valittuun videoon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="517"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="532"/>
         <source>Lens group</source>
         <translation>Objektiiviryhmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="538"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="553"/>
         <source>Focal length</source>
         <translation>Polttoväli</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="549"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="564"/>
         <source>mm</source>
         <translation>mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="566"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="581"/>
         <source>Anamorphic lens</source>
         <translation>Anamorfinen objektiivi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="615"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="630"/>
         <source>Preset</source>
         <translation>Esiasetus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="653"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="668"/>
         <source>Horizontal</source>
         <translation>Vaakasuora</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="663"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="678"/>
         <source>Vertical</source>
         <translation>Pystysuora</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="673"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="688"/>
         <source>Squeeze ratio</source>
         <translation>Puristussuhde</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="710"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="725"/>
         <source>%</source>
         <translation>%</translation>
     </message>
@@ -2478,22 +2630,22 @@ Haluatko lähettää profiilisi tähän?</translation>
 <context>
     <name>LoaderOverlay</name>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="110"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="117"/>
         <source> @ %1fps</source>
         <translation>@ %1fps</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="111"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="118"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>Kulunut: %1. Jäljellä: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="125"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="132"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/LoaderOverlay.qml" line="145"/>
+        <location filename="../../src/ui/components/LoaderOverlay.qml" line="152"/>
         <source>Hide</source>
         <translation>Piilota</translation>
     </message>
@@ -2501,17 +2653,17 @@ Haluatko lähettää profiilisi tähän?</translation>
 <context>
     <name>Modal</name>
     <message>
-        <location filename="../../src/ui/components/Modal.qml" line="200"/>
+        <location filename="../../src/ui/components/Modal.qml" line="213"/>
         <source>Troubleshooting</source>
         <translation>Vianetsintä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Modal.qml" line="212"/>
+        <location filename="../../src/ui/components/Modal.qml" line="225"/>
         <source>Don&apos;t show again</source>
         <translation>Älä näytä uudelleen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/components/Modal.qml" line="212"/>
+        <location filename="../../src/ui/components/Modal.qml" line="225"/>
         <source>Remember this choice</source>
         <translation>Muista tämä valinta</translation>
     </message>
@@ -2524,227 +2676,227 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Liikkeen tiedot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="31"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="37"/>
         <source>Choose a motion data file</source>
         <translation>Valitse liikettä koskeva tiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="32"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="38"/>
         <source>Motion data files</source>
         <translation>Liike tiedostot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="41"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="47"/>
         <source>Video file is not loaded.</source>
         <translation>Videotiedostoa ei ladata.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="41"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="47"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="177"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="183"/>
         <source>Open file</source>
         <translation>Avaa tiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="185"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="191"/>
         <source>In order to detect multiple motion data files, click here and grant access to the directory with files.</source>
         <translation>Jos haluat havaita useita liikedatatiedostoja, napsauta tätä ja anna pääsy tiedostoineen hakemistoon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="213"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="219"/>
         <source>Select log</source>
         <translation>Valitse loki</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="231"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="237"/>
         <source>Load all metadata</source>
         <translation>Lataa kaikki metatiedot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="245"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="251"/>
         <source>Frame offset</source>
         <translation>Kehyksen siirtymä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="252"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="258"/>
         <source>frames</source>
         <translation>kehyksiä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="258"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="264"/>
         <source>Add or subtract frames from the video to align with motion data</source>
         <translation>Lisää tai vähennä videosta kehyksiä kohdistaaksesi ne liikedataan</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="266"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="272"/>
         <source>Low pass filter</source>
         <translation>Alipäästösuodatin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="274"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="280"/>
         <source>Hz</source>
         <translation>Hz</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="279"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="285"/>
         <source>Lower cutoff frequency means more filtering</source>
         <translation>Pienempi rajataajuus tarkoittaa enemmän suodatusta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="288"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="294"/>
         <source>Median filter</source>
         <translation>Mediaanisuodatin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="296"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="302"/>
         <source>samples</source>
         <translation>näytteitä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="312"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="318"/>
         <source>Rotation</source>
         <translation>Kierto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="329"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="379"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="336"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="387"/>
         <source>Pitch</source>
         <translation>Pystykallistus (Pitch)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="333"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="340"/>
         <source>Pitch is camera angle up/down when using FPV blackbox data</source>
         <translation>Pystykierto (Pitch) on kameran kulma ylös/alas kun käytetään FPV blackbox tietoja</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="337"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="387"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="344"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="395"/>
         <source>Roll</source>
         <translation>Sivukallistus (Roll)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="345"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="395"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="352"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="403"/>
         <source>Yaw</source>
         <translation>Kierto (Yaw)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="359"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="366"/>
         <source>Separate accelerometer rotation</source>
         <translation>Erillinen kiihtyvyysmittarin kierto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="367"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="374"/>
         <source>Accelerometer rotation</source>
         <translation>Kiihtyvyysmittarin kierto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="405"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="413"/>
         <source>Gyro bias</source>
         <translation>Gyro-harha</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="417"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="425"/>
         <source>X</source>
         <translation>X</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="425"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="433"/>
         <source>Y</source>
         <translation>Y</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="433"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="441"/>
         <source>Z</source>
         <translation>Z</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="443"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="451"/>
         <source>IMU orientation</source>
         <translation>IMU orientaatio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="450"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="458"/>
         <source>Uppercase is positive, lowercase is negative. eg. zYX</source>
         <translation>Isokirjain on positiivinen, pienet kirjaimet ovat negatiivisia. esim. zYX</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="456"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="464"/>
         <source>Integration method</source>
         <translation>Integrointi menetelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
         <source>Use built-in quaternions instead of IMU data</source>
         <translation>Käytä sisäänrakennettuja quaternioneja IMU-tietojen sijaan</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="465"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="473"/>
         <source>IMU integration method for calculating motion data</source>
         <translation>IMU integraatiomenetelmä liiketietojen laskennassa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="481"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="489"/>
         <source>Orientation indicator</source>
         <translation>Suuntailmaisin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="697"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="705"/>
         <source>Statistics</source>
         <translation>Tilastot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="705"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="713"/>
         <source>Export</source>
         <translation>Vie (export)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="716"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="724"/>
         <source>Select file destination</source>
         <translation>Valitse tiedoston kohde</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="730"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="738"/>
         <source>Export camera data (CSV/JSON/USD/AE)</source>
         <translation>Vie kameratiedot (CSV/JSON/USD/AE)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="779"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="787"/>
         <source>Which format do you want to use?</source>
         <translation>Mitä muotoa haluat käyttää?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="782"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="792"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="790"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="800"/>
         <source>Universal Scene Description</source>
         <translation>Universaali kohtauksen kuvaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="783"/>
-        <location filename="../../src/ui/menu/MotionData.qml" line="793"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="791"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="801"/>
         <source>After Effects Script</source>
         <translation>After Effects Script</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="784"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="792"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="801"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="809"/>
         <source>Export full metadata</source>
         <translation>Vie kaikki metatiedot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="820"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="828"/>
         <source>Export parsed metadata</source>
         <translation>Vie jäsennetyt metatiedot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="838"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="846"/>
         <source>Export project file (including processed gyro data)</source>
         <translation>Vie projektitiedosto (mukaan lukien käsitellyt gyrotiedot)</translation>
     </message>
@@ -2757,42 +2909,42 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Kiinnitysasento</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="31"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Top</source>
         <translation>Ylhäällä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="31"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Bottom</source>
         <translation>Alhaalla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="31"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Left</source>
         <translation>Vasen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="31"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Right</source>
         <translation>Oikea</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="31"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="61"/>
         <source>Custom</source>
         <translation>Mukautettu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="109"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="279"/>
         <source>Pitch</source>
         <translation>Pystykallistus (Pitch)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="130"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="303"/>
         <source>Roll</source>
         <translation>Sivukallistus (Roll)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="151"/>
+        <location filename="../../src/ui/menu/MountingPresetSelector.qml" line="324"/>
         <source>Yaw</source>
         <translation>Kierto (Yaw)</translation>
     </message>
@@ -2805,7 +2957,7 @@ Haluatko lähettää profiilisi tähän?</translation>
         <translation>Videonmuokkauslaajennukset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="104"/>
         <source>Unable to install the plugin because the plugin file is in use.
 If %1 is currently running, please close it and then click install again.</source>
         <translation>Liitännäistä ei voi asentaa, koska liitännäistiedosto on käytössä.
@@ -2823,11 +2975,12 @@ Jos %1 on parhaillaan käynnissä, sulje se ja napsauta sitten asennusta uudelle
     </message>
     <message>
         <location filename="../../src/ui/menu/NlePlugins.qml" line="70"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="109"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="134"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="163"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="171"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="104"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="110"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="119"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="144"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="173"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="181"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
@@ -2839,33 +2992,33 @@ Make sure to select %1.</source>
 Muista valita %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="100"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="110"/>
         <source>Unable to copy the plugin due to sandbox limitations.
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
         <translation>Laajennusta ei voi kopioida hiekkalaatikon rajoitusten vuoksi.
 Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="221"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="127"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="155"/>
+        <location filename="../../src/ui/App.qml" line="266"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="137"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="165"/>
         <source>Update</source>
         <translation>Päivitä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="127"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="155"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="137"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="165"/>
         <source>Install</source>
         <translation>Asenna</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="134"/>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="171"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="144"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="181"/>
         <source>At the next prompt, click &lt;b&gt;&quot;Open&quot;&lt;/b&gt; to grant access to the %1 folder in order for Gyroflow to install the plugin.</source>
         <translation>Napsauta seuraavassa kehotteessa &lt;b&gt;&quot;Avaa&quot;&lt;/b&gt; myöntääksesi pääsyn %1-kansioon, jotta Gyroflow voi asentaa laajennuksen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="163"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="173"/>
         <source>%1 folder doesn&apos;t exist.
 Due to sandbox limitations, you have to create it yourself.
 Open &lt;b&gt;Terminal&lt;/b&gt; and enter the following command:</source>
@@ -2874,7 +3027,7 @@ Hiekkalaatikon rajoitusten vuoksi sinun on luotava se itse.
 Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/NlePlugins.qml" line="165"/>
+        <location filename="../../src/ui/menu/NlePlugins.qml" line="175"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
@@ -2914,42 +3067,42 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
 <context>
     <name>Popup</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="968"/>
+        <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Export</source>
         <translation>Vie (export)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="968"/>
+        <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Save</source>
         <translation>Tallenna</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="968"/>
+        <location filename="../../src/ui/App.qml" line="1042"/>
         <source>Add to render queue</source>
         <translation>Add to render queue</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="969"/>
+        <location filename="../../src/ui/App.qml" line="1043"/>
         <source>Create settings preset</source>
         <translation>Luo asetukset valmiiksi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="970"/>
+        <location filename="../../src/ui/App.qml" line="1044"/>
         <source>Apply selected settings to all items in the render queue</source>
         <translation>Ota valitut asetukset käyttöön kaikissa renderöintijonon kohteissa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="971"/>
+        <location filename="../../src/ui/App.qml" line="1045"/>
         <source>Export project file (including gyro data)</source>
         <translation>Vie projektitiedosto (mukaan lukien gyrotiedot)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="972"/>
+        <location filename="../../src/ui/App.qml" line="1046"/>
         <source>Export project file</source>
         <translation>Vie projektitiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="974"/>
+        <location filename="../../src/ui/App.qml" line="1048"/>
         <source>Save project file</source>
         <translation>Tallenna projektitiedosto</translation>
     </message>
@@ -2957,7 +3110,7 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
         <location filename="../../src/ui/menu/Advanced.qml" line="88"/>
         <location filename="../../src/ui/menu/LensCalibrate.qml" line="557"/>
         <location filename="../../src/ui/menu/LensCalibrate.qml" line="579"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="339"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="372"/>
         <source>Full</source>
         <translation>Täysi</translation>
     </message>
@@ -3002,103 +3155,106 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
         <translation>Mobiili tumma</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="219"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="225"/>
         <source>All logs combined</source>
         <translation>Kaikki lokit yhdistetty</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="462"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="470"/>
         <source>None</source>
         <translation>Ei mitään</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="278"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="285"/>
         <source>No smoothing</source>
         <translation>Ei tasoitusta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="279"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
         <source>Default</source>
         <translation>Oletus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="280"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="287"/>
         <source>Plain 3D</source>
         <translation>Tavallinen 3D</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="281"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="288"/>
         <source>Fixed camera</source>
         <translation>Kiinteä kamera</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="82"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="332"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="645"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2518"/>
         <source>No zooming</source>
         <translation>Ei zoomausta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="81"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="332"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="645"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2518"/>
         <source>Dynamic zooming</source>
         <translation>Dynaaminen zoomaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="291"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="638"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2091"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="80"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="332"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="645"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2518"/>
         <source>Static zoom</source>
         <translation>Staattinen zoom</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="414"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>rs-sync</source>
         <translation>rs-sync</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="414"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Essential matrix</source>
         <translation>Olennainen matriisi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="414"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="447"/>
         <source>Visual features</source>
         <translation>Visuaaliset ominaisuudet</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2694"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3199"/>
         <source>Do nothing</source>
         <translation>Älä tee mitään</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2695"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3200"/>
         <source>Shut down the computer</source>
         <translation>Sammuta tietokone</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2696"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3201"/>
         <source>Restart the computer</source>
         <translation>Käynnistä tietokone uudelleen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2697"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3202"/>
         <source>Sleep</source>
         <translation>Nuku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2698"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3203"/>
         <source>Hibernate</source>
         <translation>Lepotila</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2699"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3204"/>
         <source>Logout</source>
         <translation>Kirjaudu ulos</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2700"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3205"/>
         <source>Close Gyroflow</source>
         <translation>Sulje Gyroflow</translation>
     </message>
@@ -3134,14 +3290,35 @@ Avaa &lt;b&gt;Terminal&lt;/b&gt; ja kirjoita seuraava komento:</translation>
 <context>
     <name>RenderQueue</name>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1444"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="358"/>
+        <source>Edit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="360"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1773"/>
         <source>Change framerate</source>
         <translation>Muuta kuvataajuutta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1465"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1794"/>
         <source>Change lens group</source>
         <translation>Muuta objektiiviryhmää</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1809"/>
+        <source>Change focal length</source>
+        <translation>Muuta polttoväliä</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1833"/>
+        <source>Restore auto focal length</source>
+        <translation>Palauta automaattinen polttoväli</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1852"/>
+        <source>Restore auto lens group</source>
+        <translation>Palauta automaattinen objektiiviryhmä</translation>
     </message>
     <message>
         <source>**Batch synchronization did not produce a reliable result.** Please check:
@@ -3174,143 +3351,149 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
 - Tai kuvaa uusi kalibrointivideo ja lisää se jonoon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="814"/>
+        <location filename="../../src/ui/App.qml" line="1996"/>
         <source>%1 video(s) will use Anamorphic lens</source>
         <translation>%1 videota käyttää anamorfista objektiivia</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1477"/>
         <source>Pair with Gyro</source>
-        <translation>Yhdistä gyroon</translation>
+        <translation type="vanished">Yhdistä gyroon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1565"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1928"/>
         <source>Unpair gyro</source>
         <translation>Pura gyron yhdistäminen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2188"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2243"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2626"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2682"/>
         <source>Sync complete</source>
         <translation>Synkronointi valmis</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2059"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2486"/>
         <source>Sync complete: %1</source>
         <translation>Synkronointi valmis: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2454"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2875"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation>Canon CRM -tiedostot on ladattava yhdessä samannimisen proxy-videon kanssa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="840"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1234"/>
         <source>Pause</source>
         <translation>Keskeytä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
         <source>This video has no lens information. The correct lens group makes deep match much more accurate.</source>
-        <translation>Tällä videolla ei ole objektiivitietoja. Oikea objektiiviryhmä tekee syväsovituksesta paljon tarkemman.</translation>
+        <translation type="vanished">Tällä videolla ei ole objektiivitietoja. Oikea objektiiviryhmä tekee syväsovituksesta paljon tarkemman.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="414"/>
         <source>No match found. The gyro file may not cover this video, or the video&apos;s motion may be unreliable. Try another gyro file or another video.</source>
-        <translation>Osumaa ei löytynyt. Gyrotiedosto ei ehkä kata tätä videota, tai videon liike on epäluotettava. Kokeile toista gyrotiedostoa tai toista videota.</translation>
+        <translation type="vanished">Osumaa ei löytynyt. Gyrotiedosto ei ehkä kata tätä videota, tai videon liike on epäluotettava. Kokeile toista gyrotiedostoa tai toista videota.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="478"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="707"/>
         <source>%1 video(s) not matched. Right-click a video with clear camera motion and select &quot;Deep match with gyro&quot;.</source>
         <translation>%1 videota ilman osumaa. Napsauta hiiren oikealla videota, jossa on selkeää kameran liikettä, ja valitse &quot;Syväsovitus gyroon&quot;.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="509"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="785"/>
         <source>Could not establish time sync. Right-click a video with clear camera motion and select &quot;Deep match with gyro&quot;.</source>
         <translation>Aikasynkronointia ei voitu muodostaa. Napsauta hiiren oikealla videota, jossa on selkeää kameran liikettä, ja valitse &quot;Syväsovitus gyroon&quot;.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="567"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="848"/>
         <source>Render queue</source>
         <translation>Renderöintijono</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2312"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2773"/>
         <source>Selected: %1</source>
         <translation>Valittu: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2320"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2781"/>
         <source>Select all</source>
         <translation>Valitse kaikki</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2326"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2787"/>
         <source>Deselect</source>
         <translation>Poista valinta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2332"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2793"/>
         <source>Done</source>
         <translation>Valmis</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="453"/>
-        <source>No further deep search needed for this day's clips.</source>
-        <translation>Tämän päivän klipeille ei tarvita enää syvähakua.</translation>
+        <source>No further deep search needed for this day&apos;s clips.</source>
+        <translation type="vanished">Tämän päivän klipeille ei tarvita enää syvähakua.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Stabilize (or use with plugins)</source>
         <translation>Vakauta (tai käytä liitännäisten kanssa)</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Export stabilized video</source>
         <translation>Vie vakautettu video</translation>
     </message>
     <message>
-        <source>This day's footage has already been deep-searched. Clips from the same day are matched automatically when you press "%1", no need to deep search each one.</source>
-        <translation>Tämän päivän materiaali on jo syvähaettu. Saman päivän klipit sovitetaan automaattisesti, kun painat "%1", jokaista ei tarvitse hakea erikseen.</translation>
+        <source>This day&apos;s footage has already been deep-searched. Clips from the same day are matched automatically when you press &quot;%1&quot;, no need to deep search each one.</source>
+        <translation type="vanished">Tämän päivän materiaali on jo syvähaettu. Saman päivän klipit sovitetaan automaattisesti, kun painat &quot;%1&quot;, jokaista ei tarvitse hakea erikseen.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="384"/>
         <source>Stabilize now</source>
         <translation>Vakauta nyt</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="385"/>
         <source>Deep search anyway</source>
         <translation>Hae silti</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Later</source>
         <translation>Myöhemmin</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="96"/>
         <source>%1 video(s) (R3D / N-RAW) cannot be exported directly and were skipped.</source>
         <translation>%1 videota (R3D / N-RAW) ei voi viedä suoraan ja ne ohitettiin.</translation>
     </message>
     <message>
-        <source>Press "%1" instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
-        <translation>Paina sen sijaan "%1" ja viimeistele nämä klipit videoeditorissa Gyroflow-liitännäisellä.</translation>
+        <location filename="../../src/ui/RenderQueue.qml" line="97"/>
+        <source>Press &quot;%1&quot; instead, then finish these clips in your video editor with the Gyroflow plugin.</source>
+        <translation>Paina sen sijaan &quot;%1&quot; ja viimeistele nämä klipit videoeditorissa Gyroflow-liitännäisellä.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2639"/>
         <source>Plugin only - video export skipped</source>
         <translation>Vain liitännäinen - videon vienti ohitettu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2473"/>
         <source>Plugin only</source>
         <translation>Vain liitännäinen</translation>
     </message>
     <message>
-        <source>This format cannot be exported directly. Use "Stabilize" and the video editor plugins instead.%1</source>
-        <translation>Tätä muotoa ei voi viedä suoraan. Käytä "Vakauta"-painiketta ja videoeditorin liitännäisiä.%1</translation>
+        <source>This format cannot be exported directly. Use &quot;Stabilize&quot; and the video editor plugins instead.%1</source>
+        <translation type="vanished">Tätä muotoa ei voi viedä suoraan. Käytä &quot;Vakauta&quot;-painiketta ja videoeditorin liitännäisiä.%1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2702"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3207"/>
         <source>When rendering is finished: %1</source>
         <translation>Kun renderöinti on valmis: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="700"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2239"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1063"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2678"/>
         <source> @ %1fps</source>
         <translation>@ %1fps</translation>
     </message>
@@ -3319,51 +3502,56 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation type="vanished">Kalibrointiparia ei löytynyt %1-videolle. Muodosta laitepari manuaalisesti.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="711"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1074"/>
         <source>Elapsed: %1</source>
         <translation>Kulunut: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="729"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1092"/>
         <source>Remaining: %1</source>
         <translation>Jäljellä: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="243"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="273"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="402"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="409"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="414"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="416"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="418"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="510"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="514"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="760"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="792"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2454"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2525"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="98"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="361"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="408"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="428"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="639"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="641"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="643"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="742"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="786"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="795"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1144"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1178"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2875"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2946"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3170"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="776"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1162"/>
         <source>Rendering %1...</source>
         <translation>Renderöidään %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="776"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1162"/>
         <source>Converting to %1 %2...</source>
         <translation>Muunnetaan muotoon %1 %2...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="794"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1180"/>
         <source>Rendering completed. The file was written to: %1.</source>
         <translation>Renderöinti valmis. Tiedosto kirjoitettiin osoitteeseen: %1.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="787"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2278"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1173"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2717"/>
         <source>Open rendered file</source>
         <translation>Avaa renderöity tiedosto</translation>
     </message>
@@ -3376,17 +3564,17 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation type="vanished">%1 videota ilman osumaa. Napsauta hiiren oikealla videota, jossa on selkeää kameran liikettä → &quot;Syväsovitus gyroon&quot;.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="501"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="772"/>
         <source>Some videos could not be reliably synchronized. Try to repair them automatically?</source>
         <translation>Joitain videoita ei voitu synkronoida luotettavasti. Yritetäänkö korjata ne automaattisesti?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="502"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="773"/>
         <source>Repair</source>
         <translation>Korjaa</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="503"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="774"/>
         <source>Skip</source>
         <translation>Ohita</translation>
     </message>
@@ -3395,103 +3583,103 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation type="vanished">Aikasynkronointia ei voitu muodostaa. Napsauta hiiren oikealla videota, jossa on selkeää kameran liikettä → &quot;Syväsovitus gyroon&quot;.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="513"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="794"/>
         <source>Some videos are still not reliably synchronized after repair.</source>
         <translation>Joitain videoita ei vieläkään ole synkronoitu luotettavasti korjauksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="589"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="952"/>
         <source>Choose files</source>
         <translation>Valitse tiedostot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="590"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="953"/>
         <source>Video files</source>
         <translation>Videotiedostot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="606"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="969"/>
         <source>Choose folder</source>
         <translation>Valitse kansio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="639"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1002"/>
         <source>0s</source>
         <translation>0 s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="790"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2284"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1176"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2723"/>
         <source>Open file location</source>
         <translation>Avaa tiedoston sijainti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="809"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1928"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1950"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1195"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2334"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2374"/>
         <source>Render using CPU</source>
         <translation>Renderöi käyttämällä CPU</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="293"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="354"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="816"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="891"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1360"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="428"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="524"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1203"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1285"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2339"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3177"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3352"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="243"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="351"/>
         <source>Cannot start deep match while the queue is busy.</source>
         <translation>Syväsovitusta ei voi aloittaa, kun jono on varattu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="246"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="353"/>
         <source>Another deep match is already running. Please wait for it to finish.</source>
         <translation>Toinen syväsovitus on jo käynnissä. Odota, että se valmistuu.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="248"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="356"/>
         <source>This gyro file is no longer available.</source>
         <translation>Tämä gyrotiedosto ei ole enää käytettävissä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="250"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="358"/>
         <source>The gyro data is still being parsed. Please try again shortly.</source>
         <translation>Gyrotietoja käsitellään edelleen. Yritä hetken kuluttua uudelleen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="252"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="360"/>
         <source>This job is no longer in the render queue.</source>
         <translation>Tämä työ ei ole enää jonossa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="273"/>
         <source>No lens group focal lengths are configured. Set them in Sensor &amp; Lens first, then run deep match.</source>
-        <translation>Objektiiviryhmien polttovälejä ei ole määritetty. Aseta ne ensin kohdassa &quot;Kenno &amp; Objektiivi&quot; ja suorita sitten syväsovitus.</translation>
+        <translation type="vanished">Objektiiviryhmien polttovälejä ei ole määritetty. Aseta ne ensin kohdassa &quot;Kenno &amp; Objektiivi&quot; ja suorita sitten syväsovitus.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="292"/>
         <source>Which lens group was this video shot with?</source>
-        <translation>Millä objektiiviryhmällä tämä video kuvattiin?</translation>
+        <translation type="vanished">Millä objektiiviryhmällä tämä video kuvattiin?</translation>
     </message>
     <message>
         <source>This video has no lens information — the correct lens group makes deep match much more accurate.</source>
         <translation type="vanished">Tällä videolla ei ole objektiivitietoja — oikea objektiiviryhmä tekee syväsovituksesta paljon tarkemman.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="389"/>
         <source>Scanning segment %1 of %2</source>
-        <translation>Skannataan osaa %1/%2</translation>
+        <translation type="vanished">Skannataan osaa %1/%2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="401"/>
         <source>Click Ok to run Auto match and assign the data.</source>
-        <translation>Napsauta Ok suorittaaksesi automaattisen sovituksen ja määrittääksesi tiedot.</translation>
+        <translation type="vanished">Napsauta Ok suorittaaksesi automaattisen sovituksen ja määrittääksesi tiedot.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="409"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="631"/>
         <source>Not enough camera motion. Try a video with more movement.</source>
         <translation>Kameran liikettä ei ole tarpeeksi. Kokeile videota, jossa on enemmän liikettä.</translation>
     </message>
@@ -3500,73 +3688,72 @@ Voit yhdistää manuaalisesti: napsauta videota hiiren oikealla → **&quot;Yhdi
         <translation type="vanished">Tästä gyrotiedostosta ei löytynyt osumaa. Kokeile toista gyrotiedostoa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="416"/>
         <source>Deep match could not run. Check the logs for details.</source>
-        <translation>Syväsovitusta ei voitu suorittaa. Katso lisätiedot lokeista.</translation>
+        <translation type="vanished">Syväsovitusta ei voitu suorittaa. Katso lisätiedot lokeista.</translation>
     </message>
     <message>
         <source>No match found for %1 video(s). Try a deep search: pick a video with camera motion, right-click it → &quot;Deep match with gyro&quot;, then select a gyro file.</source>
         <translation type="vanished">Osumaa ei löytynyt %1 videolle. Kokeile syvähakua: valitse video, jossa on kameran liikettä, napsauta sitä hiiren oikealla painikkeella → &quot;Syväsovitus gyroon&quot; ja valitse gyrotiedosto.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="818"/>
         <source>GPU accelerated encoder doesn&apos;t support this pixel format (%1).
 Do you want to convert to a different supported pixel format or keep the original one and render on the CPU?</source>
-        <translation>GPU nopeutettu enkooderi ei tue tätä pikselimuotoa (%1).
+        <translation type="vanished">GPU nopeutettu enkooderi ei tue tätä pikselimuotoa (%1).
 Haluatko muuntaa toiseen tuettuun pikselimuotoon vai säilyttää alkuperäisen ja hahmontaa CPU?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="838"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1232"/>
         <source>Start exporting</source>
         <translation>Aloita vienti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="839"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1233"/>
         <source>Resume</source>
         <translation>Jatka</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="954"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="864"/>
         <source>Add files</source>
         <translation>Lisää tiedostoja</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="972"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="885"/>
         <source>Add folder</source>
         <translation>Lisää kansio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1397"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="356"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1738"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2742"/>
         <source>Render now</source>
         <translation>Renderöi nyt</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1407"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1750"/>
         <source>Play</source>
         <translation>Toista</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1425"/>
         <source>Reset status</source>
-        <translation>Nollaa tila</translation>
+        <translation type="vanished">Nollaa tila</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1425"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2732"/>
         <source>Stop</source>
         <translation>Pysähdy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1904"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2281"/>
         <source>Missing required components.</source>
         <translation>Vaaditut komponentit puuttuvat.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1916"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2311"/>
         <source>Applying pixel format: %1</source>
         <translation>Käytetään pikseliformaattia: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1936"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2360"/>
         <source>Selected encoder does not support the source pixel format.
 Choose a target pixel format or render on CPU.
 This choice applies to all remaining jobs in this batch.</source>
@@ -3575,93 +3762,148 @@ Valitse kohdeformaatti tai renderöi CPU:lla.
 Valinta koskee kaikkia jäljellä olevia tämän erän töitä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1939"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2321"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2363"/>
         <source>Waiting for pixel format selection…</source>
         <translation>Odotetaan pikseliformaatin valintaa…</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1963"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2827"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="383"/>
+        <source>This day&apos;s footage has already been deep-searched; clips from the same day are matched automatically.</source>
+        <translation>Tämän päivän materiaali on jo syväsovitettu; saman päivän klipit sovitetaan automaattisesti.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="427"/>
+        <source>Which lens group was this video shot with? (The correct lens group makes deep match much more accurate.)</source>
+        <translation>Millä objektiiviryhmällä tämä video kuvattiin? (Oikea ryhmä tekee syväsovituksesta paljon tarkemman.)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="514"/>
+        <source>Candidate %1 of %2 (%3)</source>
+        <translation>Ehdokas %1/%2 (%3)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="517"/>
+        <source>Segment %1 of %2</source>
+        <translation>Segmentti %1/%2</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="611"/>
+        <source>Deep match succeeded (offset %1 s). Clips from the same day will be matched automatically.</source>
+        <translation>Syväsovitus onnistui (siirtymä %1 s). Saman päivän klipit sovitetaan automaattisesti.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="638"/>
+        <source>No match found (the gyro file may not cover this video, or the video&apos;s motion is too weak).</source>
+        <translation>Osumaa ei löytynyt (gyrotiedosto ei ehkä kata tätä videota, tai kuvan liike on liian vähäistä).</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="641"/>
+        <source>Deep match could not run.</source>
+        <translation>Syväsovitusta ei voitu suorittaa.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1212"/>
+        <source>GPU encoder doesn&apos;t support the pixel format %1.</source>
+        <translation>GPU-enkooderi ei tue pikselimuotoa %1.</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1697"/>
+        <source>Focal length (mm)</source>
+        <translation type="unfinished">Polttoväli (mm)</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2387"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3356"/>
         <source>Yes</source>
         <translation>Kyllä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1964"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2388"/>
         <source>Rename</source>
         <translation>Nimeä uudelleen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2834"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2389"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3357"/>
         <source>No</source>
         <translation>Ei</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2058"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2485"/>
         <source>ETA %1</source>
         <translation>ETA %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2060"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2487"/>
         <source>Synchronizing: %1</source>
         <translation>Synkronoidaan: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2061"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2488"/>
         <source>Rendering: %1</source>
         <translation>Renderöinti: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2138"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2576"/>
         <source>Mode</source>
         <translation>Tila</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2138"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2576"/>
         <source>Local</source>
         <translation>Paikallinen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2138"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2576"/>
         <source>Global</source>
         <translation>Yleinen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2143"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2581"/>
         <source>Lens</source>
         <translation>Linssi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2148"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2586"/>
         <source>Focal</source>
         <translation>Polttoväli</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2153"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2591"/>
         <source>Anamorphic</source>
         <translation>Anamorfinen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2122"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2180"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3424"/>
+        <source>%1 files could not be read and were skipped.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3429"/>
+        <source>%1 file(s) are already in the render queue.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2618"/>
         <source>Manual</source>
         <translation>Manuaalinen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="418"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="643"/>
         <source>Failed to load the gyro file.</source>
         <translation>Gyrotiedoston lataus epäonnistui.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="353"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="387"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="508"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="523"/>
         <source>Deep matching gyro data...</source>
         <translation>Gyrodatan syväsovitus käynnissä...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="400"/>
         <source>Deep match succeeded. Offset: %1 s</source>
-        <translation>Syväsovitus onnistui. Offset: %1 s</translation>
+        <translation type="vanished">Syväsovitus onnistui. Offset: %1 s</translation>
     </message>
     <message>
         <source>The video has too little camera motion for deep matching. Try a video with more movement.</source>
@@ -3710,239 +3952,259 @@ Jos käyttökelpoista aikasynkronointidataa ei ole lainkaan, napsauta videota hi
 - Tai kuvaa uusi kalibrointivideo ja lisää se jonoon.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1359"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1653"/>
         <source>Frame rate (0=unchanged)</source>
         <translation type="unfinished">Kuvataajuus (0 = muuttumaton)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1360"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1654"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1698"/>
         <source>OK</source>
         <translation type="unfinished">OK</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1520"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="362"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1875"/>
         <source>Deep match with gyro</source>
         <translation>Syväsovitus gyroon</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2178"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="267"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2616"/>
         <source>Deep</source>
         <translation>Syvä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2183"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2621"/>
         <source>Calibration</source>
         <translation>Kalibrointi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2187"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="272"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2625"/>
         <source>Sync confirmed</source>
         <translation>Synkronointi vahvistettu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2189"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2627"/>
         <source>Sync not confirmed</source>
         <translation>Synkronointia ei vahvistettu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2199"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2637"/>
         <source>Skipped - no gyro data</source>
         <translation>Ohitettu – ei gyrotietoja</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2200"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2638"/>
         <source>Skipped - calibration pair</source>
         <translation>Ohitettu - kalibrointipari</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2359"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2370"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="152"/>
         <source>Matching...</source>
         <translation>Vastaa...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2359"/>
         <source>Auto match</source>
-        <translation>Automaattinen ottelu</translation>
+        <translation type="vanished">Automaattinen ottelu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2383"/>
         <source>Clear</source>
-        <translation>Selkeä</translation>
+        <translation type="vanished">Selkeä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2400"/>
-        <location filename="../../src/ui/VideoArea.qml" line="1086"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2814"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1269"/>
         <source>Drop video files or gyroscope data here</source>
         <translation>Pudota videotiedostot tai gyroskoopin tiedot tähän</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2524"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2945"/>
         <source>Due to file access restrictions, you need to select the destination folder manually.
 Click Ok and select the destination folder.</source>
         <translation>Tiedostojen käyttörajoitusten vuoksi sinun on valittava kohdekansio manuaalisesti.
 Napsauta Ok ja valitse kohdekansio.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2724"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3125"/>
+        <source>No supported files were found in the selection.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3169"/>
+        <source>Image sequence has been detected.
+Please provide frame rate: </source>
+        <translation type="unfinished">Kuvasarja on havaittu.
+Anna kuvanopeus:</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="3229"/>
         <source>Queue settings</source>
         <translation>Jonoasetukset</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2780"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3285"/>
         <source>Number of parallel renders</source>
         <translation>Rinnakkaisten renderöintien määrä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2791"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3296"/>
         <source>Default overwrite action</source>
         <translation>Oletuskorvaustoiminto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2792"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3297"/>
         <source>Ask</source>
         <translation>Kysy</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2794"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3299"/>
         <source>Overwrite file</source>
         <translation>Korvaa tiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2795"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3300"/>
         <source>Rename file</source>
         <translation>Nimeä tiedosto uudelleen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2796"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3301"/>
         <source>Skip file</source>
         <translation>Ohita tiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2815"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3320"/>
         <source>Export mode</source>
         <translation>Vientitila</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2816"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3321"/>
         <source>Stabilized video</source>
         <translation>Stabiloitu video</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2817"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3322"/>
         <source>Project file</source>
         <translation>Projektitiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2818"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3323"/>
         <source>Project file (including gyro data)</source>
         <translation>Projektitiedosto (mukaan lukien gyrotiedot)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2819"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3324"/>
         <source>Project file (including processed gyro data)</source>
         <translation>Projektitiedosto (mukaan lukien käsitellyt gyrotiedot)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2820"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3325"/>
         <source>Stabilized video + Project file with gyro data</source>
         <translation>Stabiloitu video + projektitiedosto gyrodatalla</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2824"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3329"/>
         <source>Show queue when adding an item</source>
         <translation>Näytä jono, kun lisäät kohdetta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2825"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3330"/>
         <source>Clear render queue</source>
         <translation>Tyhjennä renderöintijono</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2826"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3355"/>
         <source>Are you sure you want to remove all items from the render queue?</source>
         <translation>Haluatko varmasti poistaa kaikki kohteet renderöintijonosta?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="3105"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3350"/>
         <source>A render is in progress. Clearing the queue will stop the whole queue and interrupt the running job. Stop and clear?</source>
         <translation>Renderöinti on käynnissä. Jonon tyhjentäminen pysäyttää koko jonon ja keskeyttää käynnissä olevan työn. Pysäytä ja tyhjennä?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="3106"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="3351"/>
         <source>Stop and clear</source>
         <translation>Pysäytä ja tyhjennä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1960"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="1965"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2384"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2389"/>
         <source>Output file already exists.</source>
         <translation>Tulostiedosto on jo olemassa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="885"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="408"/>
+        <source>No lens group focal lengths are configured. Set them in &quot;%1&quot; first.</source>
+        <translation>Objektiiviryhmien polttovälejä ei ole määritetty. Aseta ne ensin kohdassa "%1".</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="1279"/>
         <source>Pairing: %1 — Click a video to pair</source>
         <translation>Pariliitos: %1 — Muodosta laitepari napsauttamalla videota</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2244"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2683"/>
         <source>Synchronizing...</source>
         <translation>Synkronoidaan...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2245"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2684"/>
         <source>Elapsed: %1. Remaining: %2</source>
         <translation>Kulunut: %1. Jäljellä: %2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2288"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2749"/>
         <source>Remove</source>
         <translation>Poista</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="2067"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2494"/>
         <source>Save to: %1</source>
         <translation>Tallenna osoitteeseen: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="1647"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="1883"/>
         <source>Search all gyro data</source>
         <translation>Hae kaikesta gyrodatasta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="301"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="355"/>
         <source>No gyro data files are available to search.</source>
         <translation>Haettavia gyrodatatiedostoja ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="441"/>
         <source>Searching candidate %1 of %2</source>
-        <translation>Haetaan ehdokasta %1/%2</translation>
+        <translation type="vanished">Haetaan ehdokasta %1/%2</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>full scan</source>
         <translation>täysi skannaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="440"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="513"/>
         <source>timestamp guess</source>
         <translation>aikaleima-arvio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/RenderQueue.qml" line="549"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="637"/>
         <source>No match found in any gyro file. The recordings may not cover this video, or the video&apos;s motion may be unreliable.</source>
         <translation>Osumaa ei löytynyt yhdestäkään gyrotiedostosta. Tallenteet eivät ehkä kata tätä videota, tai videon liike on epäluotettava.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="2558"/>
         <source>Pending match</source>
         <translation>Odottaa sovitusta</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="615"/>
         <source>Review lens numbers</source>
         <translation>Tarkista objektiivinumerot</translation>
     </message>
     <message>
+        <location filename="../../src/ui/RenderQueue.qml" line="742"/>
         <source>Check the lens number on each video in the queue. Right-click to change it, then stabilize.</source>
         <translation>Tarkista jokaisen jonossa olevan videon objektiivinumero. Muuta napsauttamalla hiiren oikealla painikkeella ja vakauta sitten.</translation>
     </message>
@@ -4255,28 +4517,28 @@ Napsauta Ok ja valitse kohdekansio.</translation>
 <context>
     <name>SimpleStabilization</name>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="195"/>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="224"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="235"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="265"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="245"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="286"/>
         <source>°</source>
         <translation>°</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="327"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="370"/>
         <source>Frame rate (0=unchanged)</source>
         <translation>Kuvataajuus (0 = muuttumaton)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="359"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="402"/>
         <source>ms</source>
         <translation>ms</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="378"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="427"/>
         <source>AI SYNC</source>
         <translation>AI-synkronointi</translation>
     </message>
@@ -4302,365 +4564,368 @@ Napsauta Ok ja valitse kohdekansio.</translation>
 <context>
     <name>Stabilization</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1616"/>
+        <location filename="../../src/ui/App.qml" line="1746"/>
         <location filename="../../src/ui/menu/Stabilization.qml" line="10"/>
         <source>Stabilization</source>
         <translation>Vakauttaminen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="283"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="290"/>
         <source>Pitch smoothness</source>
         <translation>Kallistus (Pitch) sileys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="284"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="291"/>
         <source>Yaw smoothness</source>
         <translation>Kääntymä (Yaw) sileys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="285"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="292"/>
         <source>Roll smoothness</source>
         <translation>Kierto (Roll) sileys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="186"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="286"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2078"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="223"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="226"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="293"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2505"/>
         <source>Smoothness</source>
         <translation>Pehmeys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="287"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="294"/>
         <source>Per axis</source>
         <translation>Per akseli</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="288"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="295"/>
         <source>Max smoothness</source>
         <translation>Max sileys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="289"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="296"/>
         <source>Max smoothness at high velocity</source>
         <translation>Suurin sileys suurella nopeudella</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="290"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="297"/>
         <source>Second smoothing pass</source>
         <translation>Toinen tasoituskierros</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="291"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="298"/>
         <source>Only within trim range</source>
         <translation>Vain trimmausalueella</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="292"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="299"/>
         <source>Yaw angle correction</source>
         <translation>Kääntymä akselin (Yaw) korjaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="293"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="455"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="300"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="462"/>
         <source>Pitch angle correction</source>
         <translation>Pysty akselin (Pitch) korjaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="235"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="294"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="429"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="276"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="301"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="436"/>
         <source>Roll angle correction</source>
         <translation>Kierto akselin (Roll) korjaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="295"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="302"/>
         <source>Yaw angle</source>
         <translation>Pyöristyskulma (Yaw)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="296"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="303"/>
         <source>Pitch angle</source>
         <translation>Pystykulma (Pitch,)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="297"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="304"/>
         <source>Roll angle</source>
         <translation>Kallistuskulma (Roll)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="446"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="453"/>
         <source>Lock pitch angle</source>
         <translation>Lukitse nousukulma</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="499"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="506"/>
         <source>Automatic lock</source>
         <translation>Automaattinen lukitus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="508"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="515"/>
         <source>Turn threshold</source>
         <translation>Kääntökynnys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="509"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="516"/>
         <source>When roll rate exceeds this threshold, horizon tilts proportionally to roll rate (°/s → °)</source>
         <translation>Kun kallistusnopeus ylittää tämän kynnyksen, horisontti kallistuu suhteessa rullausnopeuteen (°/s → °)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="518"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="525"/>
         <source>°/s</source>
         <translation>°/s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="531"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="538"/>
         <source>Turn smoothness</source>
         <translation>Käännä sileys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="532"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="539"/>
         <source>Smoothing time constant for turn detection (ms)</source>
         <translation>Käännöstunnistuksen tasoitusaikavakio (ms)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="552"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="559"/>
         <source>Turn multiplier</source>
         <translation>Käännä kerroin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="553"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="560"/>
         <source>Multiplier for dynamic tilt: tilt = multiplier * roll_rate (°/s → °)</source>
         <translation>Dynaamisen kallistuksen kerroin: kallistus = kerroin * roll_rate (°/s → °)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="572"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="579"/>
         <source>Limit tilt acceleration</source>
         <translation>Rajoita kallistuksen kiihtyvyyttä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="578"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="585"/>
         <source>Tilt acceleration limit</source>
         <translation>Kallistuksen kiihtyvyysraja</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="579"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="586"/>
         <source>Limits how fast the tilt can accelerate or decelerate (°/s²). Prevents jerky horizon movements.</source>
         <translation>Rajoittaa, kuinka nopeasti kallistus voi kiihtyä tai hidastua (°/s²). Estää nykiviä horisontin liikkeitä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="587"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="594"/>
         <source>°/s²</source>
         <translation>°/s²</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="728"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="735"/>
         <source>Frame rate (0=unchanged)</source>
         <translation>Kuvataajuus (0 = muuttumaton)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="746"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="753"/>
         <source>FOV is greater than 1.0, you may see black borders</source>
         <translation>FOV on suurempi kuin 1.0, saatat nähdä mustat reunat</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="751"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="758"/>
         <source>FOV</source>
         <translation>Näkökenttä (FOV)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="867"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="874"/>
         <source>Link with zooming limit</source>
         <translation>Linkki zoomausrajoituksella</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="940"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="947"/>
         <source>Additional 3D rotation</source>
         <translation>Ylimääräinen 3D-kierto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="944"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="951"/>
         <source>Pitch</source>
         <translation>Pystykallistus (Pitch)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="949"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="956"/>
         <source>Yaw</source>
         <translation>Kierto (Yaw)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="954"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="961"/>
         <source>Roll</source>
         <translation>Sivukallistus (Roll)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="961"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="968"/>
         <source>Additional 3D translation</source>
         <translation>Ylimääräinen 3D-käännös</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="976"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="983"/>
         <source>Z</source>
         <translation>Z</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="212"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="405"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2082"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="228"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="253"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="412"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2509"/>
         <source>Lock horizon</source>
         <translation>Lukitse horisontti</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="217"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="410"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="258"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="417"/>
         <source>Lock amount</source>
         <comment>Horizon locking amount</comment>
         <translation>Lukituksen määrä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="256"/>
-        <location filename="../../src/ui/RenderQueue.qml" line="2086"/>
+        <location filename="../../src/ui/components/TutorialQueueRow.qml" line="232"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="297"/>
+        <location filename="../../src/ui/RenderQueue.qml" line="2513"/>
         <source>Auto rotate</source>
         <translation>Automaattinen kierto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="418"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="913"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="930"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="425"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="920"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="937"/>
         <source>%</source>
         <translation>%</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="437"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="464"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="444"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="471"/>
         <source>°</source>
         <translation>°</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="472"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="479"/>
         <source>Use gravity vectors</source>
         <translation>Käytä painovoimavektoreita</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="481"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="488"/>
         <source>Integration method</source>
         <translation>Integrointi menetelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="492"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="499"/>
         <source>IMU integration method for keeping track of the horizon and adjust built-in quaternions</source>
         <translation>IMU-integraatiomenetelmä horisontin seuraamiseen ja sisäänrakennettujen kvaternionien säätämiseen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="604"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="611"/>
         <source>If the horizon is not locked well, try a different integration method in the &quot;Motion data&quot; section.</source>
         <translation>Jos horisontti ei ole lukittu hyvin, kokeile toista integrointimenetelmää &quot;Liiketiedot&quot;-osiossa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="625"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="632"/>
         <source>Max rotation: Pitch: %1, Yaw: %2, Roll: %3</source>
         <translation>Suurin kierrosnopeus: Pysty (Pitch): %1, Vaaka (Yaw): %2, Kierto (Roll): %3</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="630"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="637"/>
         <source>Max zoom: %1</source>
         <translation>Maksimi zoomaus: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="657"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="664"/>
         <source>Zoom limit</source>
         <translation>Zoomausraja</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="660"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="667"/>
         <source>Zoom limit is calculated approximately.
 If you need more accuracy, increase the number of iterations in &quot;Advanced&quot; below.</source>
         <translation>Zoomausraja lasketaan likimääräisesti.
 Jos tarvitset lisää tarkkuutta, lisää iteraatioiden määrää alla olevassa &quot;Lisäasetukset&quot; -kohdassa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="677"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="684"/>
         <source>Zooming speed</source>
         <translation>Zoomausnopeus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="687"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="694"/>
         <source>s</source>
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="700"/>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="308"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="696"/>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="715"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="350"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="703"/>
         <source>Lens correction</source>
         <translation>Linssin korjaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="874"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="881"/>
         <source>When keyframing zooming speed, it is recommended to use the Envelope follower method. Gaussian filter might lead to black borders in view.</source>
         <translation>Zoomausnopeutta avainkehystettäessä on suositeltavaa käyttää Envelope Follower -menetelmää. Gauss-suodatin saattaa johtaa mustiin reunuksiin näkyvissä.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="879"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="886"/>
         <source>Zooming method</source>
         <translation>Zoomausmenetelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="899"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="906"/>
         <source>Zooming center offset</source>
         <translation>Zoomauksen keskipoikkeama</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="904"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="966"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="911"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="973"/>
         <source>X</source>
         <translation>X</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="921"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="971"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="928"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="978"/>
         <source>Y</source>
         <translation>Y</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="984"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="991"/>
         <source>Zoom limit iterations</source>
         <translation>Zoomausrajoituksen iteraatiot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="985"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="992"/>
         <source>More iterations = more accurate limit, but also slower to calculate.</source>
         <translation>Enemmän iteraatioita = tarkempi raja, mutta myös hitaampi laskea.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="343"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="766"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="386"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="773"/>
         <source>Rolling shutter correction</source>
         <translation>Vierintäsulkimen korjaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="351"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="773"/>
+        <location filename="../../src/ui/menu/SimpleStabilization.qml" line="394"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="780"/>
         <source>Frame readout time</source>
         <translation>Kehyksen lukuaika</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="539"/>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="780"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="546"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="787"/>
         <source>ms</source>
         <translation>ms</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="795"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="802"/>
         <source>Video speed</source>
         <translation>Videon nopeus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="841"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="848"/>
         <source>Link with smoothing</source>
         <translation>Linkki tasoitukseen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Stabilization.qml" line="854"/>
+        <location filename="../../src/ui/menu/Stabilization.qml" line="861"/>
         <source>Link with zooming speed</source>
         <translation>Yhteys zoomausnopeuteen</translation>
     </message>
@@ -4721,106 +4986,106 @@ Jos tarvitset lisää tarkkuutta, lisää iteraatioiden määrää alla olevassa
         <translation>Synkronisaatio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="182"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="215"/>
         <source>Auto sync</source>
         <translation>Automaattinen synkronointi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="54"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="74"/>
         <source>No IMU data is loaded. Load gyro data before synchronizing.</source>
         <translation>IMU-tietoja ei ole ladattu. Lataa gyrodata ennen synkronointia.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="75"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="186"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="219"/>
         <source>No motion data loaded, cannot sync.</source>
         <translation>Ei liike dataa ladattu, ei voida synkronoida.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="51"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="80"/>
         <source>Lens profile is not loaded, synchronization will most likely give wrong results. Are you sure you want to continue?</source>
         <translation>Linssin profiilia ei ole ladattu, synkronointi antaa todennäköisesti vääriä tuloksia. Oletko varma, että haluat jatkaa?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="52"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="81"/>
         <source>Yes</source>
         <translation>Kyllä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="55"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="84"/>
         <source>No</source>
         <translation>Ei</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="231"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="264"/>
         <source>Experimental automatic sync point selection.</source>
         <translation>Kokeellinen automaattinen synkronointipisteen valinta.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="238"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="271"/>
         <source>This file uses synced motion data, additional sync points are not needed and can make the output look worse.</source>
         <translation>Tämä tiedosto käyttää synkronoitua liike dataa, ylimääräisiä synkronointipisteitä ei tarvita ja ne voivat tehdä tuloksesta huonomman.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="244"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="277"/>
         <source>Rough gyro offset</source>
         <translation>Karkea gyron siirtymä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="252"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="276"/>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="330"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="285"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="309"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="363"/>
         <source>s</source>
         <translation>s</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="261"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="294"/>
         <source>Analyze both positive and negative offset.
 This doubles the calculation time, so check this only for the initial point and uncheck once you know the offset.</source>
         <translation>Analysoi sekä positiivinen että negatiivinen poikkeama.
 Tämä kaksinkertaistaa laskenta-ajan, joten tarkista tämä vain alkupisteen osalta ja poista valinta, kun tiedät siirtymän.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="267"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="300"/>
         <source>Sync search size</source>
         <translation>Synkronoi haun koko</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="287"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="320"/>
         <source>Calculate initial offset first (using essential matrix method), then refine using slower but more accurate rs-sync method.</source>
         <translation>Laske ensin alkusiirtymä (käyttämällä olennaisen matriisimenetelmää) ja tarkenna sitten käyttämällä hitaampaa mutta tarkempaa rs-sync-menetelmää.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="292"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="325"/>
         <source>Max sync points</source>
         <translation>Maksimi synkronointipisteet</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="308"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="341"/>
         <source>Analyze every n-th frame</source>
         <translation>Analysoi joka n:s kehys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="321"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="354"/>
         <source>Time to analyze per sync point</source>
         <translation>Aika synkronointipisteen analysoimiseen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="336"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="369"/>
         <source>Processing resolution</source>
         <translation>Käsittelyn resoluutio</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="359"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="392"/>
         <source>The AKAZE method may be more accurate but is significantly slower than OpenCV. Use only if OpenCV doesn&apos;t produce good results</source>
         <translation>AKAZE-menetelmä voi olla tarkempi, mutta huomattavasti hitaampi kuin OpenCV. Käytä vain, jos OpenCV ei tuota hyviä tuloksia</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="363"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="396"/>
         <source>Optical flow method</source>
         <translation>Optisen virtauksen menetelmä</translation>
     </message>
@@ -4829,29 +5094,29 @@ Tämä kaksinkertaistaa laskenta-ajan, joten tarkista tämä vain alkupisteen os
         <translation type="vanished">NeuFlow v2 CUDA</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="378"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="411"/>
         <source>NeuFlow v2 Burn</source>
         <translation>NeuFlow v2 Burn</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="396"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="429"/>
         <source>Pose method</source>
         <translation>Asemamenetelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="409"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="442"/>
         <source>Offset method</source>
         <translation>Offset-menetelmä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="419"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="452"/>
         <source>Calculate camera transformation matrix from optical flow to get the rotation angles of the camera.
 Then try to match these angles to gyroscope angles.</source>
         <translation>Laske kameran transformaatiomatriisi optisesta virrasta saadaksesi kameran kiertokulmat.
 Yritä sitten sovittaa nämä kulmat gyroskooppisiin kulmiin.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="420"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="453"/>
         <source>Undistort optical flow points using gyro and candidate offset.
 Then calculate lengths of the optical flow lines.
 Resulting offset is the one where lines were the shortest, meaning the video was moving the least visually.</source>
@@ -4860,29 +5125,29 @@ Laske sitten optisten virtauslinjojen pituudet.
 Tuloksena oleva offset on se, jossa viivat olivat lyhyimmät, mikä tarkoittaa, että video liikkui visuaalisesti vähiten.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="421"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="454"/>
         <source>Rolling shutter video to gyro synchronization algorithm.
 Make sure you have proper rolling shutter value set before syncing.</source>
         <translation>Rolling shutter -video gyroskooppisynkronointialgoritmiin.
 Varmista, että olet asettanut oikean rullasulkimen arvon ennen synkronointia.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="428"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="461"/>
         <source>Low pass filter</source>
         <translation>Alipäästösuodatin</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="433"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="466"/>
         <source>Hz</source>
         <translation>Hz</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="446"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="485"/>
         <source>Show detected features</source>
         <translation>Näytä havaitut ominaisuudet</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/Synchronization.qml" line="452"/>
+        <location filename="../../src/ui/menu/Synchronization.qml" line="491"/>
         <source>Show optical flow</source>
         <translation>Näytä optinen virtaus</translation>
     </message>
@@ -4890,13 +5155,13 @@ Varmista, että olet asettanut oikean rullasulkimen arvon ennen synkronointia.</
 <context>
     <name>TableList</name>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="202"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="208"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="30"/>
         <source>File name</source>
         <translation>Tiedostonimi</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/MotionData.qml" line="203"/>
+        <location filename="../../src/ui/menu/MotionData.qml" line="209"/>
         <source>Detected format</source>
         <translation>Havaittu formaatti</translation>
     </message>
@@ -5123,27 +5388,27 @@ Varmista, että olet asettanut oikean rullasulkimen arvon ennen synkronointia.</
 <context>
     <name>Tabs</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1272"/>
+        <location filename="../../src/ui/App.qml" line="1399"/>
         <source>Inputs</source>
         <translation>Tulot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1272"/>
+        <location filename="../../src/ui/App.qml" line="1399"/>
         <source>Parameters</source>
         <translation>Parametrit</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1272"/>
+        <location filename="../../src/ui/App.qml" line="1399"/>
         <source>Export</source>
         <translation>Vie (export)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1356"/>
+        <location filename="../../src/ui/App.qml" line="1483"/>
         <source>Video &amp;&amp; Gyro</source>
         <translation>Video &amp;&amp; gyro</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1356"/>
+        <location filename="../../src/ui/App.qml" line="1483"/>
         <source>Stabilize &amp;&amp; Settings</source>
         <translation>Vakautus &amp;&amp; asetukset</translation>
     </message>
@@ -5505,6 +5770,34 @@ Oletko varma, että haluat jatkaa?</translation>
     </message>
 </context>
 <context>
+    <name>TutorialOverlay</name>
+    <message>
+        <location filename="../../src/ui/components/TutorialOverlay.qml" line="408"/>
+        <source>Back</source>
+        <translation>Takaisin</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/TutorialOverlay.qml" line="414"/>
+        <source>Done</source>
+        <translation>Valmis</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/TutorialOverlay.qml" line="414"/>
+        <source>Next</source>
+        <translation>Seuraava</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/TutorialOverlay.qml" line="398"/>
+        <source>Skip</source>
+        <translation>Ohita</translation>
+    </message>
+    <message>
+        <location filename="../../src/ui/components/TutorialOverlay.qml" line="335"/>
+        <source>Step %1 of %2</source>
+        <translation>Vaihe %1 / %2</translation>
+    </message>
+</context>
+<context>
     <name>Util</name>
     <message>
         <location filename="../../src/ui/Util.js" line="10"/>
@@ -5535,98 +5828,102 @@ Oletko varma, että haluat jatkaa?</translation>
 <context>
     <name>VideoArea</name>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1040"/>
         <source>Not stabilized yet. Click &quot;Stabilize (or use with plugins)&quot; first.</source>
         <translation>Ei vielä vakautettu. Napsauta ensin &quot;Vakauta (tai käytä liitännäisten kanssa)&quot;.</translation>
     </message>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1640"/>
         <source>Preview: original</source>
         <translation>Esikatselu: alkuperäinen</translation>
     </message>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1642"/>
         <source>Preview: stabilized</source>
         <translation>Esikatselu: vakautettu</translation>
     </message>
     <message>
+        <location filename="../../src/ui/VideoArea.qml" line="1641"/>
         <source>Preview: overview</source>
         <translation>Esikatselu: yleiskatsaus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="420"/>
-        <location filename="../../src/ui/VideoArea.qml" line="597"/>
-        <location filename="../../src/ui/VideoArea.qml" line="655"/>
-        <location filename="../../src/ui/VideoArea.qml" line="659"/>
+        <location filename="../../src/ui/VideoArea.qml" line="484"/>
+        <location filename="../../src/ui/VideoArea.qml" line="678"/>
+        <location filename="../../src/ui/VideoArea.qml" line="784"/>
+        <location filename="../../src/ui/VideoArea.qml" line="788"/>
         <source>Canon CRM files must be loaded together with a same-name proxy video.</source>
         <translation>Canon CRM -tiedostot on ladattava yhdessä samannimisen proxy-videon kanssa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="587"/>
+        <location filename="../../src/ui/VideoArea.qml" line="668"/>
         <source>There&apos;s a %1 file associated with this video, do you want to load it?</source>
         <translation>Tähän videoon liittyy tiedosto: %1 , haluatko ladata sen?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="374"/>
-        <location filename="../../src/ui/VideoArea.qml" line="492"/>
-        <location filename="../../src/ui/VideoArea.qml" line="588"/>
-        <location filename="../../src/ui/VideoArea.qml" line="949"/>
+        <location filename="../../src/ui/VideoArea.qml" line="435"/>
+        <location filename="../../src/ui/VideoArea.qml" line="569"/>
+        <location filename="../../src/ui/VideoArea.qml" line="669"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1118"/>
         <source>Yes</source>
         <translation>Kyllä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="500"/>
-        <location filename="../../src/ui/VideoArea.qml" line="591"/>
-        <location filename="../../src/ui/VideoArea.qml" line="955"/>
+        <location filename="../../src/ui/VideoArea.qml" line="577"/>
+        <location filename="../../src/ui/VideoArea.qml" line="672"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1124"/>
         <source>No</source>
         <translation>Ei</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="899"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1054"/>
         <source>Zoom: %1</source>
         <translation>Zoom: %1</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="987"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1169"/>
         <source>Failed to load the selected file, it may be unsupported or invalid.</source>
         <translation>Valitun tiedoston lataaminen epäonnistui, sitä ei ehkä tueta tai se voi olla virheellinen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="92"/>
-        <location filename="../../src/ui/VideoArea.qml" line="225"/>
-        <location filename="../../src/ui/VideoArea.qml" line="236"/>
-        <location filename="../../src/ui/VideoArea.qml" line="255"/>
-        <location filename="../../src/ui/VideoArea.qml" line="278"/>
-        <location filename="../../src/ui/VideoArea.qml" line="304"/>
-        <location filename="../../src/ui/VideoArea.qml" line="408"/>
-        <location filename="../../src/ui/VideoArea.qml" line="420"/>
-        <location filename="../../src/ui/VideoArea.qml" line="475"/>
-        <location filename="../../src/ui/VideoArea.qml" line="597"/>
-        <location filename="../../src/ui/VideoArea.qml" line="655"/>
-        <location filename="../../src/ui/VideoArea.qml" line="659"/>
-        <location filename="../../src/ui/VideoArea.qml" line="729"/>
-        <location filename="../../src/ui/VideoArea.qml" line="987"/>
+        <location filename="../../src/ui/VideoArea.qml" line="127"/>
+        <location filename="../../src/ui/VideoArea.qml" line="286"/>
+        <location filename="../../src/ui/VideoArea.qml" line="297"/>
+        <location filename="../../src/ui/VideoArea.qml" line="316"/>
+        <location filename="../../src/ui/VideoArea.qml" line="339"/>
+        <location filename="../../src/ui/VideoArea.qml" line="365"/>
+        <location filename="../../src/ui/VideoArea.qml" line="472"/>
+        <location filename="../../src/ui/VideoArea.qml" line="484"/>
+        <location filename="../../src/ui/VideoArea.qml" line="552"/>
+        <location filename="../../src/ui/VideoArea.qml" line="678"/>
+        <location filename="../../src/ui/VideoArea.qml" line="784"/>
+        <location filename="../../src/ui/VideoArea.qml" line="788"/>
+        <location filename="../../src/ui/VideoArea.qml" line="867"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1169"/>
         <source>Ok</source>
         <translation>Ok</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="474"/>
+        <location filename="../../src/ui/VideoArea.qml" line="551"/>
         <source>Image sequence has been detected.
 Please provide frame rate: </source>
         <translation>Kuvasarja on havaittu.
 Anna kuvanopeus:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="379"/>
-        <location filename="../../src/ui/VideoArea.qml" line="482"/>
-        <location filename="../../src/ui/VideoArea.qml" line="742"/>
+        <location filename="../../src/ui/VideoArea.qml" line="440"/>
+        <location filename="../../src/ui/VideoArea.qml" line="559"/>
+        <location filename="../../src/ui/VideoArea.qml" line="880"/>
         <source>Cancel</source>
         <translation>Peruuta</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="214"/>
+        <location filename="../../src/ui/VideoArea.qml" line="275"/>
         <source>Downloading %1 (%2)</source>
         <translation>Ladataan %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="225"/>
+        <location filename="../../src/ui/VideoArea.qml" line="286"/>
         <source>Component was installed successfully.
 You need to restart Gyroflow for changes to take effect.
 Your render queue and current file is saved automatically.</source>
@@ -5635,34 +5932,34 @@ Sinun on käynnistettävä Gyroflow uudelleen, jotta muutokset tulevat voimaan.
 Renderöintijonosi ja nykyinen tiedosto tallennetaan automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="247"/>
+        <location filename="../../src/ui/VideoArea.qml" line="308"/>
         <source>Merging files to %1 (%2)</source>
         <translation>Tiedostojen yhdistäminen tiedostoon %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="373"/>
+        <location filename="../../src/ui/VideoArea.qml" line="434"/>
         <source>This format requires an external SDK. Do you want to download it now?</source>
         <translation>Tämä muoto vaatii ulkoisen SDK:n. Haluatko ladata sen nyt?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="491"/>
+        <location filename="../../src/ui/VideoArea.qml" line="568"/>
         <source>Split recording has been detected, do you want to automatically join the files (%1) to create one full clip?</source>
         <translation>Jaettu tallennus on havaittu. Haluatko yhdistää tiedostot automaattisesti (%1) luodaksesi yhden kokonaisen leikkeen?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="304"/>
+        <location filename="../../src/ui/VideoArea.qml" line="365"/>
         <source>Motion data sampling rate is too low (%1 Hz).
 50 Hz is an absolute minimum and we recommend at least 200 Hz.</source>
         <translation>Liikedatan näytteenottotaajuus on liian alhainen (%1 Hz).
 50 Hz on ehdoton minimi ja suosittelemme vähintään 200 Hz.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1529"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1816"/>
         <source>Lens profile is not loaded, the results will not look correct. Please load a lens profile for your camera.</source>
         <translation>Linssin profiilia ei ole ladattu, tulokset eivät välttämättä näytä oikeilta. Lataa linssiprofiili kameralle.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1086"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1269"/>
         <source>Loading %1...</source>
         <translation>Ladataan %1...</translation>
     </message>
@@ -5671,158 +5968,158 @@ Renderöintijonosi ja nykyinen tiedosto tallennetaan automaattisesti.</translati
         <translation type="vanished">Pudota video tiedosto tähän</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="350"/>
+        <location filename="../../src/ui/VideoArea.qml" line="411"/>
         <source>Analyzing %1...</source>
         <translation>Analysoidaan %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="231"/>
+        <location filename="../../src/ui/VideoArea.qml" line="292"/>
         <source>This is often caused by read-only file system.
 Make sure you copied the Gyroflow app to your Applications folder, instead of running from the .dmg directly.</source>
         <translation>Tämä johtuu usein vain luku -tiedostojärjestelmästä.
 Varmista, että kopioit sovelluksen Gyroflow Sovellukset-kansioon sen sijaan, että olisit suorittanut sen suoraan .dmg-tiedostosta.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="234"/>
+        <location filename="../../src/ui/VideoArea.qml" line="295"/>
         <source>This is often caused by read-only file system.
 If you have Gyroflow in C:Program Files, then you&apos;ll need to run Gyroflow as Administrator in order to extract the SDK to the Gyroflow folder.</source>
         <translation>Tämä johtuu usein vain luku -tiedostojärjestelmästä.
 Jos sinulla on Gyroflow C:Program Filesissa, sinun on suoritettava Gyroflow järjestelmänvalvojana, jotta voit purkaa SDK:n kansioon Gyroflow.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="359"/>
+        <location filename="../../src/ui/VideoArea.qml" line="420"/>
         <source>Loading gyro data %1...</source>
         <translation>Ladataan gyrotietoja %1...</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="754"/>
+        <location filename="../../src/ui/VideoArea.qml" line="892"/>
         <source>Same as the original file</source>
         <translation>Sama kuin alkuperäinen tiedosto</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="755"/>
+        <location filename="../../src/ui/VideoArea.qml" line="893"/>
         <source>Custom path</source>
         <translation>Mukautettu polku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="728"/>
+        <location filename="../../src/ui/VideoArea.qml" line="866"/>
         <source>Please enter the output path:</source>
         <translation>Anna lähtöpolku:</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="92"/>
+        <location filename="../../src/ui/VideoArea.qml" line="127"/>
         <source>Preset can be applied only after loading a video.</source>
         <translation>Esiasetus voidaan ottaa käyttöön vasta videon lataamisen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="278"/>
+        <location filename="../../src/ui/VideoArea.qml" line="339"/>
         <source>This video cannot be stabilized, because this lens doesn&apos;t support OSS metadata.
 Disable lens stabilization (Optical SteadyShot) in order to use Gyroflow.</source>
         <translation>Tätä videota ei voida vakauttaa, koska tämä objektiivi ei tue OSS-metatietoja.
 Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käyttää Gyroflow-toimintoa.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="408"/>
+        <location filename="../../src/ui/VideoArea.qml" line="472"/>
         <source>Previous video is still loading, please wait...</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="450"/>
+        <location filename="../../src/ui/VideoArea.qml" line="524"/>
         <source>In order to load all R3D parts, you need to select the entire .RDC folder.</source>
         <translation>Jotta voit ladata kaikki R3D-osat, sinun on valittava koko .RDC-kansio.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="451"/>
+        <location filename="../../src/ui/VideoArea.qml" line="525"/>
         <source>OK</source>
         <translation>OK</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="903"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1058"/>
         <source>Focal length: %1 mm</source>
         <translation>Polttoväli: %1 mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="905"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1060"/>
         <source>full frame equiv.: %1 mm</source>
         <translation>täysikokoinen vastine: %1 mm</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="948"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1117"/>
         <source>Files merged successfully, do you want to delete the original ones?</source>
         <translation>Tiedostojen yhdistäminen onnistui. Haluatko poistaa alkuperäiset?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1086"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1269"/>
         <source>Click here to open a video file</source>
         <translation>Napsauta tätä avataksesi videotiedoston</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1265"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1508"/>
         <source>Turn Speed (Roll):</source>
         <translation>Käännösnopeus (rulla):</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1296"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1539"/>
         <source>Trim start</source>
         <translation>Leikkaa alku</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1299"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1542"/>
         <source>Previous frame</source>
         <translation>Edellinen kuva</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1316"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1559"/>
         <source>Pause</source>
         <translation>Keskeytä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1316"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1559"/>
         <source>Play</source>
         <translation>Toista</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1322"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1565"/>
         <source>Next frame</source>
         <translation>Seuraava kuva</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1337"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1580"/>
         <source>Trim end</source>
         <translation>Leikkaa loppu</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1338"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1581"/>
         <source>Show timeline menu</source>
         <translation>Näytä aikajanavalikko</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1377"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1675"/>
         <source>Toggle stabilization overview</source>
         <translation>Stabiloinnin yleiskatsaus päälle/pois</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1388"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1662"/>
         <source>Toggle stabilization</source>
         <translation>Valitse vakauttaminen</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1394"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1681"/>
         <source>Mute</source>
         <translation>Hiljennä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1394"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1681"/>
         <source>Unmute</source>
         <translation>Poista mykistys</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1412"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1699"/>
         <source>Volume</source>
         <translation>Äänenvoimakkuus</translation>
     </message>
     <message>
-        <location filename="../../src/ui/VideoArea.qml" line="1442"/>
+        <location filename="../../src/ui/VideoArea.qml" line="1729"/>
         <source>Playback speed</source>
         <translation>Toistonopeus</translation>
     </message>
@@ -5830,19 +6127,19 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
 <context>
     <name>VideoInformation</name>
     <message>
-        <location filename="../../src/ui/App.qml" line="1494"/>
+        <location filename="../../src/ui/App.qml" line="1623"/>
         <location filename="../../src/ui/menu/VideoInformation.qml" line="11"/>
         <source>Video information</source>
         <translation>Videon tiedot</translation>
     </message>
     <message>
-        <location filename="../../src/ui/menu/VideoInformation.qml" line="230"/>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="242"/>
         <source>In order to detect project files, video sequences or image sequences, click here and select the directory with input files.</source>
         <translation>Tunnistaaksesi projektitiedostot, videojaksot tai kuvajaksot napsauta tästä ja valitse hakemisto syötetiedostoineen.</translation>
     </message>
     <message>
-        <location filename="../../src/ui/App.qml" line="1501"/>
-        <location filename="../../src/ui/menu/VideoInformation.qml" line="221"/>
+        <location filename="../../src/ui/App.qml" line="1631"/>
+        <location filename="../../src/ui/menu/VideoInformation.qml" line="233"/>
         <source>Open file</source>
         <translation>Avaa tiedosto</translation>
     </message>
@@ -5850,42 +6147,19 @@ Poista objektiivin stabilointi (Optical SteadyShot) käytöstä, jotta voit käy
 <context>
     <name>main_window</name>
     <message>
-        <location filename="../../src/ui/main_window.qml" line="100"/>
+        <location filename="../../src/ui/main_window.qml" line="112"/>
         <source>Are you sure you want to exit?</source>
         <translation>Haluatko varmasti poistua?</translation>
     </message>
     <message>
-        <location filename="../../src/ui/main_window.qml" line="101"/>
+        <location filename="../../src/ui/main_window.qml" line="113"/>
         <source>Yes</source>
         <translation>Kyllä</translation>
     </message>
     <message>
-        <location filename="../../src/ui/main_window.qml" line="102"/>
+        <location filename="../../src/ui/main_window.qml" line="114"/>
         <source>No</source>
         <translation>Ei</translation>
-    </message>
-</context>
-<context>
-    <name>TutorialOverlay</name>
-    <message>
-        <source>Back</source>
-        <translation>Takaisin</translation>
-    </message>
-    <message>
-        <source>Done</source>
-        <translation>Valmis</translation>
-    </message>
-    <message>
-        <source>Next</source>
-        <translation>Seuraava</translation>
-    </message>
-    <message>
-        <source>Skip</source>
-        <translation>Ohita</translation>
-    </message>
-    <message>
-        <source>Step %1 of %2</source>
-        <translation>Vaihe %1 / %2</translation>
     </message>
 </context>
 </TS>

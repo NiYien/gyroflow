@@ -242,29 +242,38 @@ impl LensGroupConfig {
 }
 
 /// Decide whether to generate the lens profile via the lens-group path for this group.
-/// Either condition is sufficient:
+/// Any condition is sufficient:
 ///   A. Fill missing focal length: video has no telemetry focal length AND the group's
 ///      focal length is above the MANUAL_FOCAL_LENGTH_MIN_MM sanity threshold.
 ///   B. Apply anamorphic: manual_edit is on AND group has anamorphic enabled. Focal
 ///      length can still come from telemetry in this case.
+///   C. User-forced: the job's lens group was explicitly assigned by the user
+///      (right-click "Change lens group") AND the group has a valid manual focal
+///      length. The manual focal then overrides the telemetry auto focal.
+///      `user_forced` MUST only be true for an explicit user assignment
+///      (`Job.lens_index_override`), never for a telemetry-derived lens index —
+///      otherwise every clip with a detectable lens index and a filled group
+///      focal would silently flip from auto to manual.
 pub fn should_use_manual_config(
     manual_edit: bool,
+    user_forced: bool,
     config: &LensGroupConfig,
     metadata: &FileMetadata,
 ) -> bool {
-    let (fills_missing_focal, applies_anamorphic) =
-        lens_group_build_decision(manual_edit, config, metadata);
-    fills_missing_focal || applies_anamorphic
+    let (uses_manual_focal, applies_anamorphic) =
+        lens_group_build_decision(manual_edit, user_forced, config, metadata);
+    uses_manual_focal || applies_anamorphic
 }
 
 pub fn effective_lens_group_config_for_build(
     manual_edit: bool,
+    user_forced: bool,
     config: &LensGroupConfig,
     metadata: &FileMetadata,
 ) -> Option<LensGroupConfig> {
-    let (fills_missing_focal, applies_anamorphic) =
-        lens_group_build_decision(manual_edit, config, metadata);
-    if !fills_missing_focal && !applies_anamorphic {
+    let (uses_manual_focal, applies_anamorphic) =
+        lens_group_build_decision(manual_edit, user_forced, config, metadata);
+    if !uses_manual_focal && !applies_anamorphic {
         return None;
     }
 
@@ -292,6 +301,7 @@ pub fn effective_lens_correction_amount_percent(
 
 fn lens_group_build_decision(
     manual_edit: bool,
+    user_forced: bool,
     config: &LensGroupConfig,
     metadata: &FileMetadata,
 ) -> (bool, bool) {
@@ -299,8 +309,9 @@ fn lens_group_build_decision(
     let manual_focal_sufficient =
         sanitize_manual_focal_length_mm(config.focal_length_mm).is_some();
     let fills_missing_focal = !auto_has_focal && manual_focal_sufficient;
+    let forces_manual_focal = user_forced && manual_focal_sufficient;
     let applies_anamorphic = manual_edit && config.anamorphic_enabled;
-    (fills_missing_focal, applies_anamorphic)
+    (fills_missing_focal || forces_manual_focal, applies_anamorphic)
 }
 
 /// Missing-data check for the batch pre-processing gate. Returns the reasons why
@@ -309,15 +320,17 @@ fn lens_group_build_decision(
 ///   - "anamorphic": anamorphic is enabled but resolve_anamorphic_config cannot
 ///     satisfy it (empty/unknown preset and no valid manual squeeze ratio), so the
 ///     desqueeze would be silently skipped.
-///   - "focal": no usable focal length anywhere (group manual focal and video
-///     telemetry focal both missing). Only reported when the lens-group profile is
-///     actually load-bearing: with anamorphic intent (a profile build failure drops
-///     the desqueeze too, regardless of any existing profile), or when the current
-///     camera matrix is bare (nothing else provides lens geometry).
+///   - "focal": no usable focal length anywhere (group manual focal, video
+///     telemetry focal and the job-level focal override all missing). Only
+///     reported when the lens-group profile is actually load-bearing: with
+///     anamorphic intent (a profile build failure drops the desqueeze too,
+///     regardless of any existing profile), or when the current camera matrix
+///     is bare (nothing else provides lens geometry).
 /// The manual_edit gate and lens-number resolution live at the queue layer.
 pub fn lens_group_missing_reasons(
     config: &LensGroupConfig,
     video_focal_present: bool,
+    job_focal_override_present: bool,
     camera_matrix_bare: bool,
 ) -> Vec<&'static str> {
     let mut reasons = Vec::new();
@@ -325,7 +338,7 @@ pub fn lens_group_missing_reasons(
         reasons.push("anamorphic");
     }
     let manual_focal_present = sanitize_manual_focal_length_mm(config.focal_length_mm).is_some();
-    if !manual_focal_present && !video_focal_present
+    if !manual_focal_present && !video_focal_present && !job_focal_override_present
         && (config.anamorphic_enabled || camera_matrix_bare)
     {
         reasons.push("focal");
@@ -418,10 +431,18 @@ pub fn update_status_from_metadata(statuses: &mut [LensGroupStatus], metadata: &
     }
 }
 
+/// Focal length precedence: job-level user override > group manual focal > auto.
+/// `job_focal_override` is the per-job value set via the queue's right-click
+/// "Change focal length" action; it always wins, independent of whether a lens
+/// group config made it through the build gate.
 pub fn select_focal_length(
+    job_focal_override: Option<f64>,
     auto_focus_length_mm: Option<f64>,
     config: Option<&LensGroupConfig>,
 ) -> Option<(f64, FocalLengthSource)> {
+    if let Some(value) = sanitize_manual_focal_length_mm(job_focal_override) {
+        return Some((value, FocalLengthSource::Manual));
+    }
     let manual_focus_length_mm =
         config.and_then(|cfg| sanitize_manual_focal_length_mm(cfg.focal_length_mm));
     if let Some(value) = manual_focus_length_mm {
@@ -608,9 +629,11 @@ pub fn build_lens_profile(
     size: (usize, usize),
     config: Option<&LensGroupConfig>,
     fallback_lens: Option<&LensProfile>,
+    job_focal_override: Option<f64>,
 ) -> Option<LensProfile> {
     let auto_focus_length_mm = extract_video_focus_length_mm(metadata);
-    let Some((focal_length_mm, _)) = select_focal_length(auto_focus_length_mm, config)
+    let Some((focal_length_mm, _)) =
+        select_focal_length(job_focal_override, auto_focus_length_mm, config)
     else {
         return None;
     };
@@ -1132,6 +1155,7 @@ mod tests {
     #[test]
     fn focal_length_prefers_manual_when_present() {
         let selected = select_focal_length(
+            None,
             Some(35.0),
             Some(&LensGroupConfig {
                 lens_index: 0,
@@ -1147,6 +1171,7 @@ mod tests {
     #[test]
     fn focal_length_uses_auto_when_no_manual_value() {
         let selected = select_focal_length(
+            None,
             Some(35.0),
             Some(&LensGroupConfig {
                 lens_index: 0,
@@ -1162,6 +1187,7 @@ mod tests {
     fn focal_length_falls_back_to_manual_when_auto_missing() {
         let selected = select_focal_length(
             None,
+            None,
             Some(&LensGroupConfig {
                 lens_index: 0,
                 focal_length_mm: Some(28.0),
@@ -1173,13 +1199,46 @@ mod tests {
         assert_eq!(selected.1, FocalLengthSource::Manual);
     }
 
+    // ── focal-length-user-override: job-level override precedence ──
+
+    #[test]
+    fn focal_length_job_override_beats_group_manual_and_auto() {
+        let selected = select_focal_length(
+            Some(35.0),
+            Some(24.0),
+            Some(&LensGroupConfig {
+                lens_index: 0,
+                focal_length_mm: Some(50.0),
+                ..Default::default()
+            }),
+        )
+        .unwrap();
+        assert_eq!(selected.0, 35.0);
+        assert_eq!(selected.1, FocalLengthSource::Manual);
+    }
+
+    #[test]
+    fn focal_length_job_override_applies_without_any_group_config() {
+        let selected = select_focal_length(Some(35.0), Some(24.0), None).unwrap();
+        assert_eq!(selected.0, 35.0);
+        assert_eq!(selected.1, FocalLengthSource::Manual);
+    }
+
+    #[test]
+    fn focal_length_job_override_below_threshold_is_ignored() {
+        // Below MANUAL_FOCAL_LENGTH_MIN_MM the override is treated as absent.
+        let selected = select_focal_length(Some(3.5), Some(24.0), None).unwrap();
+        assert_eq!(selected.0, 24.0);
+        assert_eq!(selected.1, FocalLengthSource::Auto);
+    }
+
     // ── lens_group_missing_reasons (batch pre-processing gate) ──
 
     #[test]
     fn missing_reasons_mode_a_bare_group_bare_matrix() {
         // Mode A: no focal anywhere, no anamorphic intent, bare camera matrix.
         let config = LensGroupConfig::default();
-        assert_eq!(lens_group_missing_reasons(&config, false, true), vec!["focal"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, true), vec!["focal"]);
     }
 
     #[test]
@@ -1191,7 +1250,7 @@ mod tests {
             focal_length_mm: Some(50.0),
             ..Default::default()
         };
-        assert_eq!(lens_group_missing_reasons(&config, false, false), vec!["anamorphic"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, false), vec!["anamorphic"]);
     }
 
     #[test]
@@ -1203,7 +1262,7 @@ mod tests {
             squeeze_ratio: Some(1.5),
             ..Default::default()
         };
-        assert_eq!(lens_group_missing_reasons(&config, false, false), vec!["focal"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, false), vec!["focal"]);
     }
 
     #[test]
@@ -1213,7 +1272,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            lens_group_missing_reasons(&config, false, true),
+            lens_group_missing_reasons(&config, false, false, true),
             vec!["anamorphic", "focal"]
         );
     }
@@ -1221,7 +1280,7 @@ mod tests {
     #[test]
     fn missing_reasons_exempt_video_telemetry_focal() {
         let config = LensGroupConfig::default();
-        assert!(lens_group_missing_reasons(&config, true, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, true, false, true).is_empty());
     }
 
     #[test]
@@ -1229,7 +1288,7 @@ mod tests {
         // Existing profile provides valid geometry and there is no anamorphic
         // intent that a failed build would drop.
         let config = LensGroupConfig::default();
-        assert!(lens_group_missing_reasons(&config, false, false).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, false).is_empty());
     }
 
     #[test]
@@ -1240,7 +1299,7 @@ mod tests {
             squeeze_ratio: Some(1.5),
             ..Default::default()
         };
-        assert!(lens_group_missing_reasons(&config, false, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, true).is_empty());
     }
 
     #[test]
@@ -1251,7 +1310,7 @@ mod tests {
             preset_id: Some(BUILTIN_1_50X_TEST_PRESET_ID.to_string()),
             ..Default::default()
         };
-        assert!(lens_group_missing_reasons(&config, false, true).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, true).is_empty());
     }
 
     #[test]
@@ -1265,7 +1324,7 @@ mod tests {
             squeeze_ratio: Some(1.33),
             ..Default::default()
         };
-        assert!(lens_group_missing_reasons(&config, false, false).is_empty());
+        assert!(lens_group_missing_reasons(&config, false, false, false).is_empty());
 
         // Without the fallback ratio the intent is unsatisfiable.
         let config = LensGroupConfig {
@@ -1274,7 +1333,7 @@ mod tests {
             preset_id: Some("no_such_preset".to_string()),
             ..Default::default()
         };
-        assert_eq!(lens_group_missing_reasons(&config, false, false), vec!["anamorphic"]);
+        assert_eq!(lens_group_missing_reasons(&config, false, false, false), vec!["anamorphic"]);
     }
 
     #[test]
@@ -1289,7 +1348,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(should_use_manual_config(false, &config, &metadata));
+        assert!(should_use_manual_config(false, false, &config, &metadata));
     }
 
     #[test]
@@ -1311,7 +1370,7 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(should_use_manual_config(false, &config, &metadata));
+        assert!(should_use_manual_config(false, false, &config, &metadata));
     }
 
     #[test]
@@ -1329,7 +1388,7 @@ mod tests {
         };
 
         let effective =
-            effective_lens_group_config_for_build(false, &config, &metadata).unwrap();
+            effective_lens_group_config_for_build(false, false, &config, &metadata).unwrap();
 
         assert_eq!(effective.focal_length_mm, Some(28.0));
         assert!(!effective.anamorphic_enabled);
@@ -1367,8 +1426,8 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(!should_use_manual_config(false, &config, &metadata));
-        assert!(should_use_manual_config(true, &config, &metadata));
+        assert!(!should_use_manual_config(false, false, &config, &metadata));
+        assert!(should_use_manual_config(true, false, &config, &metadata));
     }
 
     #[test]
@@ -1385,7 +1444,7 @@ mod tests {
         };
 
         assert_eq!(extract_video_focus_length_mm(&metadata), None);
-        assert!(should_use_manual_config(true, &config, &metadata));
+        assert!(should_use_manual_config(true, false, &config, &metadata));
     }
 
     #[test]
@@ -1408,8 +1467,110 @@ mod tests {
         };
 
         assert_eq!(extract_video_focus_length_mm(&metadata), Some(3.5));
-        assert!(!should_use_manual_config(true, &config, &metadata));
-        assert_eq!(select_focal_length(Some(3.5), None).unwrap().0, 3.5);
+        assert!(!should_use_manual_config(true, false, &config, &metadata));
+        assert_eq!(select_focal_length(None, Some(3.5), None).unwrap().0, 3.5);
+    }
+
+    // ── focal-length-user-override: user-forced gate condition ──
+
+    fn metadata_with_auto_focal(focal_mm: f32) -> FileMetadata {
+        let mut metadata = FileMetadata {
+            unit_pixel_focal_length: Some(100.0),
+            ..Default::default()
+        };
+        metadata.lens_params.insert(
+            0,
+            LensParams {
+                focal_length: Some(focal_mm),
+                pixel_focal_length: Some(focal_mm * 100.0),
+                ..Default::default()
+            },
+        );
+        metadata
+    }
+
+    #[test]
+    fn user_forced_unlocks_group_focal_over_auto() {
+        // Auto focal present + group manual focal present: the default path must
+        // keep ignoring the manual focal (telemetry-derived lens index does not
+        // force), while an explicit user assignment unlocks it.
+        let metadata = metadata_with_auto_focal(24.0);
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+
+        assert!(!should_use_manual_config(false, false, &config, &metadata));
+        assert!(should_use_manual_config(false, true, &config, &metadata));
+
+        let effective =
+            effective_lens_group_config_for_build(false, true, &config, &metadata).unwrap();
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None, None).unwrap();
+        assert_eq!(profile.focal_length, Some(50.0));
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 50.0 * 100.0);
+    }
+
+    #[test]
+    fn user_forced_without_group_focal_keeps_auto() {
+        // 指组即强制 only forces when the group actually has a manual focal;
+        // an empty group keeps the telemetry auto focal.
+        let metadata = metadata_with_auto_focal(24.0);
+        let config = LensGroupConfig {
+            lens_index: 0,
+            ..Default::default()
+        };
+
+        assert!(!should_use_manual_config(false, true, &config, &metadata));
+        let profile = build_lens_profile(&metadata, (1920, 1080), None, None, None).unwrap();
+        assert_eq!(profile.focal_length, Some(24.0));
+    }
+
+    #[test]
+    fn build_lens_profile_job_override_wins_over_auto_and_group() {
+        let metadata = metadata_with_auto_focal(24.0);
+        let config = LensGroupConfig {
+            lens_index: 0,
+            focal_length_mm: Some(50.0),
+            ..Default::default()
+        };
+        let effective =
+            effective_lens_group_config_for_build(false, true, &config, &metadata).unwrap();
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None, Some(35.0))
+                .unwrap();
+        assert_eq!(profile.focal_length, Some(35.0));
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 35.0 * 100.0);
+    }
+
+    #[test]
+    fn build_lens_profile_job_override_applies_without_lens_group() {
+        // Override on a job with no lens group assignment at all: config is None
+        // and the override alone drives the focal.
+        let metadata = metadata_with_auto_focal(24.0);
+        let profile =
+            build_lens_profile(&metadata, (1920, 1080), None, None, Some(35.0)).unwrap();
+        assert_eq!(profile.focal_length, Some(35.0));
+        assert_eq!(profile.fisheye_params.camera_matrix[0][0], 35.0 * 100.0);
+    }
+
+    #[test]
+    fn missing_reasons_focal_exempt_with_job_override() {
+        // A job-level focal override counts as a valid focal source for the
+        // batch missing-data gate.
+        let config = LensGroupConfig::default();
+        assert!(lens_group_missing_reasons(&config, false, true, true).is_empty());
+        // Anamorphic-intent variant: focal side satisfied by the override, only
+        // the anamorphic reason remains.
+        let config = LensGroupConfig {
+            anamorphic_enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            lens_group_missing_reasons(&config, false, true, true),
+            vec!["anamorphic"]
+        );
     }
 
     #[test]
@@ -1891,7 +2052,7 @@ mod tests {
         };
 
         let profile =
-            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback)).unwrap();
+            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback), None).unwrap();
 
         assert_eq!(profile.focal_length, Some(30.0));
         assert_eq!(profile.frame_readout_time, Some(12.5));
@@ -1928,7 +2089,7 @@ mod tests {
             ..Default::default()
         };
 
-        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None, None).unwrap();
 
         assert_eq!(profile.frame_readout_time, Some(8.4));
         assert_eq!(
@@ -1951,7 +2112,7 @@ mod tests {
             ..Default::default()
         };
 
-        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None, None).unwrap();
 
         assert_eq!(profile.lens_model, "Blazar Viper 35mm 1.50x");
     }
@@ -1970,7 +2131,7 @@ mod tests {
             ..Default::default()
         };
 
-        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None, None).unwrap();
 
         assert_eq!(profile.lens_model, "Manual anamorphic 1.50x H");
     }
@@ -1989,7 +2150,7 @@ mod tests {
             ..Default::default()
         };
 
-        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None).unwrap();
+        let profile = build_lens_profile(&metadata, (1920, 1080), Some(&config), None, None).unwrap();
 
         assert_eq!(profile.lens_model, "Manual anamorphic 1.33x V");
     }
@@ -2009,7 +2170,7 @@ mod tests {
         };
 
         let profile =
-            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback)).unwrap();
+            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback), None).unwrap();
 
         assert_eq!(profile.lens_model, "Fallback Lens");
     }
@@ -2027,10 +2188,10 @@ mod tests {
             squeeze_ratio: Some(1.5),
             ..Default::default()
         };
-        let effective = effective_lens_group_config_for_build(false, &config, &metadata).unwrap();
+        let effective = effective_lens_group_config_for_build(false, false, &config, &metadata).unwrap();
 
         let profile =
-            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None).unwrap();
+            build_lens_profile(&metadata, (1920, 1080), Some(&effective), None, None).unwrap();
 
         assert_ne!(profile.lens_model, "Manual anamorphic 1.50x H");
         assert_eq!(profile.input_horizontal_stretch, 1.0);
@@ -2112,9 +2273,9 @@ mod tests {
         };
 
         let horizontal_profile =
-            build_lens_profile(&metadata, (1920, 1080), Some(&horizontal_config), None).unwrap();
+            build_lens_profile(&metadata, (1920, 1080), Some(&horizontal_config), None, None).unwrap();
         let vertical_profile =
-            build_lens_profile(&metadata, (1920, 1080), Some(&vertical_config), None).unwrap();
+            build_lens_profile(&metadata, (1920, 1080), Some(&vertical_config), None, None).unwrap();
 
         assert_eq!(
             horizontal_profile.fisheye_params.distortion_coeffs,
@@ -2185,7 +2346,7 @@ mod tests {
         };
 
         let profile =
-            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback)).unwrap();
+            build_lens_profile(&metadata, (1920, 1080), Some(&config), Some(&fallback), None).unwrap();
 
         assert_eq!(profile.input_horizontal_stretch, 1.0);
         assert_eq!(profile.input_vertical_stretch, 1.5);

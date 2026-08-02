@@ -982,10 +982,16 @@ impl StabilizationManager {
             if let Some(lens_index) = niyien_lens_presets::extract_lens_index(&md.additional_data) {
                 let manual_edit = self.lens_group_manual_edit.load(SeqCst);
                 let group_cfg = self.lens_group_config.read().get(lens_index).cloned();
+                // Main preview has no job context: the queue's per-job focal
+                // override never applies here (known asymmetry, see the
+                // focal-length-user-override design doc). Manual edit ON is the
+                // main preview's forcing signal instead (design D10): the group
+                // manual focal then overrides the telemetry auto focal.
                 let cfg_for_build = group_cfg
                     .as_ref()
                     .and_then(|cfg| {
                         niyien_lens_presets::effective_lens_group_config_for_build(
+                            manual_edit,
                             manual_edit,
                             cfg,
                             md,
@@ -997,6 +1003,7 @@ impl StabilizationManager {
                     size,
                     cfg_for_build.as_ref(),
                     Some(&baseline),
+                    None,
                 ) {
                     *self.lens.write() = profile;
                 }
@@ -2786,7 +2793,11 @@ impl StabilizationManager {
             let p = self.params.read();
             (md, (p.size.0, p.size.1), p.video_rotation)
         };
+        // Manual edit ON forces the group manual focal over auto in the main
+        // preview (focal-length-user-override design D10). Queue paths keep
+        // their own per-job forcing rules and do not go through here.
         let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
+            manual_edit,
             manual_edit,
             cfg,
             &metadata_snapshot,
@@ -2819,6 +2830,7 @@ impl StabilizationManager {
             size,
             cfg_for_build.as_ref(),
             Some(&baseline),
+            None,
         ) {
             let out_dim = profile.output_dimension.clone();
             *self.lens.write() = profile;
@@ -2867,7 +2879,10 @@ impl StabilizationManager {
             let p = self.params.read();
             (metadata_snapshot, (p.size.0, p.size.1))
         };
+        // Mirror apply_lens_group_to_main: Manual edit ON forces the group
+        // manual focal in the main-preview panel preview too (design D10).
         let cfg_for_build = niyien_lens_presets::effective_lens_group_config_for_build(
+            manual_edit,
             manual_edit,
             cfg,
             &metadata_snapshot,
@@ -2879,6 +2894,7 @@ impl StabilizationManager {
             size,
             cfg_for_build.as_ref(),
             Some(&baseline),
+            None,
         )
         .and_then(|profile| profile.get_json().ok())
     }
@@ -5140,7 +5156,7 @@ mod tests {
         }
 
         let profile =
-            niyien_lens_presets::build_lens_profile(&metadata, size, Some(&config), None)
+            niyien_lens_presets::build_lens_profile(&metadata, size, Some(&config), None, None)
                 .unwrap();
         *manager.lens.write() = profile;
         manager
@@ -5942,7 +5958,51 @@ mod tests {
     }
 
     #[test]
-    fn apply_lens_group_to_main_keeps_auto_focal_without_anamorphic() {
+    fn apply_lens_group_to_main_keeps_auto_focal_when_manual_edit_off() {
+        // focal-length-user-override D10: with Manual edit OFF the pre-change
+        // fill-only semantics stay byte-identical — auto focal wins.
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = (1920, 1080);
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 1 }),
+                unit_pixel_focal_length: Some(100.0),
+                lens_params: BTreeMap::from([(
+                    0,
+                    gyro_source::LensParams {
+                        focal_length: Some(31.0),
+                        pixel_focal_length: Some(3100.0),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            }
+            .into();
+        }
+        manager.lens_group_manual_edit.store(false, SeqCst);
+
+        let mut configs = niyien_lens_presets::default_lens_group_configs();
+        configs[1].focal_length_mm = Some(50.0);
+        *manager.lens_group_config.write() = configs;
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((1920, 1080)));
+
+        let lens = manager.lens.read();
+        assert_eq!(lens.focal_length, Some(31.0));
+        assert_eq!(lens.fisheye_params.camera_matrix[0], [3100.0, 0.0, 960.0]);
+        assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 3100.0, 540.0]);
+        assert!(!lens.lens_group_override);
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_forces_group_focal_when_manual_edit_on() {
+        // focal-length-user-override D10: Manual edit ON is the main preview's
+        // forcing signal — the group manual focal overrides the auto focal
+        // even without anamorphic.
         let manager = StabilizationManager::default();
         {
             let mut params = manager.params.write();
@@ -5974,9 +6034,45 @@ mod tests {
         assert_eq!(manager.apply_lens_group_to_main(1), Some((1920, 1080)));
 
         let lens = manager.lens.read();
+        assert_eq!(lens.focal_length, Some(50.0));
+        assert_eq!(lens.fisheye_params.camera_matrix[0], [5000.0, 0.0, 960.0]);
+        assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 5000.0, 540.0]);
+        assert!(lens.lens_group_override);
+    }
+
+    #[test]
+    fn apply_lens_group_to_main_manual_edit_on_without_group_focal_keeps_auto() {
+        // Manual edit ON with an empty group focal must NOT force anything —
+        // the auto focal stays (指组即强制 semantics: forcing needs a value).
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = (1920, 1080);
+        }
+        {
+            let mut gyro = manager.gyro.write();
+            gyro.file_metadata = gyro_source::FileMetadata {
+                additional_data: serde_json::json!({ "lens_index": 1 }),
+                unit_pixel_focal_length: Some(100.0),
+                lens_params: BTreeMap::from([(
+                    0,
+                    gyro_source::LensParams {
+                        focal_length: Some(31.0),
+                        pixel_focal_length: Some(3100.0),
+                        ..Default::default()
+                    },
+                )]),
+                ..Default::default()
+            }
+            .into();
+        }
+        manager.lens_group_manual_edit.store(true, SeqCst);
+        *manager.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
+
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((1920, 1080)));
+
+        let lens = manager.lens.read();
         assert_eq!(lens.focal_length, Some(31.0));
-        assert_eq!(lens.fisheye_params.camera_matrix[0], [3100.0, 0.0, 960.0]);
-        assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 3100.0, 540.0]);
         assert!(!lens.lens_group_override);
     }
 
@@ -6132,6 +6228,21 @@ mod tests {
         configs[1].focal_length_mm = Some(50.0);
         *manager.lens_group_config.write() = configs;
 
+        assert_eq!(manager.apply_lens_group_to_main(1), Some((1920, 1080)));
+
+        {
+            // focal-length-user-override D10: with Manual edit still ON, the
+            // group manual focal stays forced after anamorphic is disabled.
+            let lens = manager.lens.read();
+            assert_eq!(lens.focal_length, Some(50.0));
+            assert_eq!(lens.fisheye_params.camera_matrix[0], [5000.0, 0.0, 960.0]);
+            assert_eq!(lens.fisheye_params.camera_matrix[1], [0.0, 5000.0, 540.0]);
+            assert!(lens.lens_group_override);
+        }
+
+        // Turning Manual edit OFF drops the forcing — the auto focal is
+        // restored on the next apply (the pre-D10 restore contract).
+        manager.lens_group_manual_edit.store(false, SeqCst);
         assert_eq!(manager.apply_lens_group_to_main(1), Some((1920, 1080)));
 
         let lens = manager.lens.read();
