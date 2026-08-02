@@ -1298,6 +1298,26 @@ impl GyroSource {
                 .as_ref()
                 .map(|c| format!("{} {}", c.brand, c.model))
         );
+        // Shape of the lens parameter series, not just its size. Canon bodies without a
+        // built-in IMU produce a single CNDM sample and therefore exactly one entry at
+        // timestamp 0, while per-frame bodies emit one per frame. Consumers that look
+        // parameters up by timestamp behave very differently between the two, so the
+        // span is a required diagnostic rather than a nicety.
+        {
+            let first_ts = md.lens_params.keys().next().copied();
+            let last_ts = md.lens_params.keys().next_back().copied();
+            log::info!(
+                target: "lens",
+                "lens_params shape: count={} first_ts_us={:?} last_ts_us={:?} span_us={:?}",
+                md.lens_params.len(),
+                first_ts,
+                last_ts,
+                match (first_ts, last_ts) {
+                    (Some(a), Some(b)) => Some(b - a),
+                    _ => None,
+                }
+            );
+        }
         if let Some((_ts, lp)) = md.lens_params.iter().next() {
             log::info!(
                 "First lens_param: pixel_focal_length={:?}, focal_length={:?}, pixel_pitch={:?}",

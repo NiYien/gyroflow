@@ -8376,8 +8376,27 @@ impl RenderQueue {
                         let first_lp = md_ref.lens_params.iter().next().map(|(ts, v)| {
                             (*ts, v.pixel_focal_length, v.focal_length)
                         });
+                        // Focal-length probe: FrameTransform::get_lens_data_at_timestamp
+                        // looks lens params up per frame with a 100ms hard tolerance
+                        // (util::MapClosest returns None past max_diff, there is no
+                        // nearest-neighbour fallback). A single-entry series — Canon
+                        // bodies without a built-in IMU emit exactly one entry at ts=0 —
+                        // therefore only covers the first 100ms of the clip, and every
+                        // later frame silently falls back to the lens profile's matrix.
+                        // Report what a lookup at the first sync window's centre actually
+                        // returns, next to the fx that the profile supplies on a miss.
+                        use gyroflow_core::util::MapClosest;
+                        let probe_ts_ms = timestamps_fract
+                            .first()
+                            .map(|f| f * p_ref.duration_ms)
+                            .unwrap_or(0.0);
+                        let probe_lp_px_fl = md_ref
+                            .lens_params
+                            .get_closest(&((probe_ts_ms * 1000.0).round() as i64), 100_000)
+                            .and_then(|v| v.pixel_focal_length);
+                        let profile_fx = lens_ref.get_camera_matrix(p_ref.size, false)[(0, 0)];
                         ::log::debug!(
-                            "[sync_diag_entry] file={} | params.size={:?} fro={:.3} | lens.calib={:?} orig={:?} out={:?} | lens.cm={:?} dist_n={} group_ov={} h_str={:.3} v_str={:.3} crop={:?} asym={} | md.lp_n={} md.first_lp={:?} md.fro={:?} md.upfl={:?}",
+                            "[sync_diag_entry] file={} | params.size={:?} fro={:.3} | lens.calib={:?} orig={:?} out={:?} | lens.cm={:?} dist_n={} group_ov={} h_str={:.3} v_str={:.3} crop={:?} asym={} | md.lp_n={} md.first_lp={:?} md.fro={:?} md.upfl={:?} | probe_ts={:.1}ms probe_lp_px_fl={:?} profile_fx={:.2}",
                             filesystem::get_filename(&url),
                             p_ref.size,
                             p_ref.frame_readout_time,
@@ -8395,6 +8414,9 @@ impl RenderQueue {
                             first_lp,
                             md_ref.frame_readout_time,
                             md_ref.unit_pixel_focal_length,
+                            probe_ts_ms,
+                            probe_lp_px_fl,
+                            profile_fx,
                         );
                     }
 
