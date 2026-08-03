@@ -2707,24 +2707,41 @@ impl StabilizationManager {
 
     pub fn set_lens_param(&self, param: &str, value: f64) {
         let mut lens = self.lens.write();
-        if lens.fisheye_params.distortion_coeffs.len() >= 4
-            && lens.fisheye_params.camera_matrix.len() == 3
+        // Bounds guards, one per target field. These used to be a single `&&`
+        // chain covering both fields, which meant a lens without 4 distortion
+        // coefficients could not have its camera matrix edited either - fx/fy/
+        // cx/cy writes were dropped along with k1..k4. That combination is
+        // exactly what the synthetic camera_db lenses produce (valid 3x3 matrix,
+        // empty coefficients), so on those bodies every field in the Lens
+        // profile panel silently did nothing while still kicking off a
+        // recompute. Keep the two conditions independent.
+        let matrix_ok = lens.fisheye_params.camera_matrix.len() == 3
             && lens.fisheye_params.camera_matrix[0].len() == 3
             && lens.fisheye_params.camera_matrix[1].len() == 3
-            && lens.fisheye_params.camera_matrix[2].len() == 3
-        {
-            match param {
-                "fx" => lens.fisheye_params.camera_matrix[0][0] = value,
-                "fy" => lens.fisheye_params.camera_matrix[1][1] = value,
-                "cx" => lens.fisheye_params.camera_matrix[0][2] = value,
-                "cy" => lens.fisheye_params.camera_matrix[1][2] = value,
-                "k1" => lens.fisheye_params.distortion_coeffs[0] = value,
-                "k2" => lens.fisheye_params.distortion_coeffs[1] = value,
-                "k3" => lens.fisheye_params.distortion_coeffs[2] = value,
-                "k4" => lens.fisheye_params.distortion_coeffs[3] = value,
-                _ => {}
-            }
+            && lens.fisheye_params.camera_matrix[2].len() == 3;
+        let coeffs_ok = lens.fisheye_params.distortion_coeffs.len() >= 4;
+        let applied = match param {
+            "fx" if matrix_ok => { lens.fisheye_params.camera_matrix[0][0] = value; true }
+            "fy" if matrix_ok => { lens.fisheye_params.camera_matrix[1][1] = value; true }
+            "cx" if matrix_ok => { lens.fisheye_params.camera_matrix[0][2] = value; true }
+            "cy" if matrix_ok => { lens.fisheye_params.camera_matrix[1][2] = value; true }
+            "k1" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[0] = value; true }
+            "k2" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[1] = value; true }
+            "k3" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[2] = value; true }
+            "k4" if coeffs_ok => { lens.fisheye_params.distortion_coeffs[3] = value; true }
+            _ => false,
+        };
+        if !applied {
+            // Never drop a write silently: the recompute below runs either way,
+            // so without this the UI looks responsive while nothing changed.
+            ::log::warn!(
+                target: "lens",
+                "set_lens_param('{param}') dropped: matrix_ok={matrix_ok} coeffs_ok={coeffs_ok} (matrix rows={}, coeffs={})",
+                lens.fisheye_params.camera_matrix.len(),
+                lens.fisheye_params.distortion_coeffs.len()
+            );
         }
+        drop(lens);
         self.invalidate_smoothing();
     }
 
@@ -6117,6 +6134,90 @@ mod tests {
         assert_eq!(manager.smoothing_checksum.load(SeqCst), 0);
         assert_eq!(manager.zooming_checksum.load(SeqCst), 0);
         assert_eq!(*manager.lens_group_config.read(), stored_configs_before);
+    }
+
+    // Builds the shape produced by `niyien_lens_presets::build_lens_profile`:
+    // a valid 3x3 camera matrix with no distortion coefficients. That is what
+    // camera_db-synthesised lenses look like (Sony a6400 and friends).
+    fn manager_with_synthetic_lens() -> StabilizationManager {
+        let manager = StabilizationManager::default();
+        {
+            let mut lens = manager.lens.write();
+            lens.fisheye_params.camera_matrix = vec![
+                [4000.0, 0.0, 1920.0],
+                [0.0, 4000.0, 1080.0],
+                [0.0, 0.0, 1.0],
+            ];
+            lens.fisheye_params.distortion_coeffs = Vec::new();
+        }
+        manager
+    }
+
+    #[test]
+    fn set_lens_param_writes_matrix_without_distortion_coeffs() {
+        // The guard used to require 4 distortion coefficients before allowing
+        // ANY write, so on synthetic lenses fx/fy/cx/cy were silently dropped
+        // and the Lens profile panel did nothing.
+        let manager = manager_with_synthetic_lens();
+
+        manager.set_lens_param("fx", 9999.0);
+        manager.set_lens_param("fy", 8888.0);
+        manager.set_lens_param("cx", 777.0);
+        manager.set_lens_param("cy", 666.0);
+
+        let lens = manager.lens.read();
+        assert_eq!(lens.fisheye_params.camera_matrix[0][0], 9999.0);
+        assert_eq!(lens.fisheye_params.camera_matrix[1][1], 8888.0);
+        assert_eq!(lens.fisheye_params.camera_matrix[0][2], 777.0);
+        assert_eq!(lens.fisheye_params.camera_matrix[1][2], 666.0);
+    }
+
+    #[test]
+    fn set_lens_param_rejects_coeffs_when_vec_is_empty() {
+        // Deliberate: growing the vec here would flip the
+        // `distortion_coeffs.len() < 4` gate in FrameTransform and stop the
+        // per-frame telemetry override. Coefficient edits keep going through
+        // `set_distortion_coeffs`, which resizes on purpose.
+        let manager = manager_with_synthetic_lens();
+
+        manager.set_lens_param("k1", 0.5);
+
+        let lens = manager.lens.read();
+        assert!(lens.fisheye_params.distortion_coeffs.is_empty());
+    }
+
+    #[test]
+    fn set_lens_param_still_writes_coeffs_on_calibrated_lens() {
+        let manager = manager_with_synthetic_lens();
+        {
+            let mut lens = manager.lens.write();
+            lens.fisheye_params.distortion_coeffs = vec![0.0; 4];
+        }
+
+        manager.set_lens_param("k1", 0.25);
+        manager.set_lens_param("k4", -0.125);
+        manager.set_lens_param("fx", 1234.0);
+
+        let lens = manager.lens.read();
+        assert_eq!(lens.fisheye_params.distortion_coeffs[0], 0.25);
+        assert_eq!(lens.fisheye_params.distortion_coeffs[3], -0.125);
+        assert_eq!(lens.fisheye_params.camera_matrix[0][0], 1234.0);
+    }
+
+    #[test]
+    fn set_lens_param_drops_write_on_empty_camera_matrix() {
+        // Bounds guard must still hold: indexing an empty matrix would panic.
+        let manager = StabilizationManager::default();
+        {
+            let mut lens = manager.lens.write();
+            lens.fisheye_params.camera_matrix = Vec::new();
+            lens.fisheye_params.distortion_coeffs = vec![0.0; 4];
+        }
+
+        manager.set_lens_param("fx", 4321.0);
+
+        let lens = manager.lens.read();
+        assert!(lens.fisheye_params.camera_matrix.is_empty());
     }
 
     #[test]
