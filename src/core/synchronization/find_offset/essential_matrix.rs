@@ -425,6 +425,32 @@ fn forward_rescore(
         );
         return;
     }
+    // Fast path: the pre-existing posterior already accepts this chunk. Forward
+    // re-scoring is confirm-only, so it could only agree with that — running it
+    // would bolt seconds of rs-sync work onto a path that already succeeded.
+    // Skipping keeps every previously-working clip exactly as fast as before.
+    // Re-deciding here can differ from the queue-side verdict only through
+    // `scaled_duration_ms` vs `duration_ms` (video speed), and either way the
+    // outcome is unchanged: a spurious skip lands on the same Accepted verdict,
+    // a spurious run merely costs time it cannot misuse.
+    if matches!(
+        dm::decide_posterior(
+            &curves,
+            params.scaled_duration_ms,
+            dm::post_conf_min(),
+            dm::post_ci95_base_ms(),
+            dm::drift_rate_ms_per_min(),
+            dm::drift_floor_ms(),
+        ),
+        dm::DeepMatchVerdict::Accepted { .. }
+    ) {
+        ::log::info!(
+            target: "sync",
+            "[deep-match] forward skipped: posterior already accepts this chunk"
+        );
+        return;
+    }
+
     let top_n = dm::fwd_top_n();
     let nms_ms = dm::fwd_nms_ms();
     let lattice_ms = dm::fwd_lattice_ms();
