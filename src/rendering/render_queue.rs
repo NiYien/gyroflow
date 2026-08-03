@@ -13162,6 +13162,13 @@ impl RenderQueue {
             current_chunk + 1, chunk_count, job_id, gyro_filename, g_start, g_end, init_ms, search_ms, pattern
         );
         deep_match::arm(scan_k);
+        // Forward re-scoring applies to the chunk scan only
+        // (deep-match-forward-rescoring): verification probes re-arm without
+        // it, and the headless auto-probe keeps its pre-existing posterior
+        // decision profile (mirrors the verification pass's auto_probe skip).
+        if !is_auto_probe {
+            deep_match::arm_forward();
+        }
         // Run the job through the same sync-only path batch repair uses:
         // export_project=2 + expected membership routes the worker into the
         // defer branch (sync, then stop — no encode); batch_sync_job_ids
@@ -13301,6 +13308,11 @@ impl RenderQueue {
     ) {
         use gyroflow_core::synchronization::deep_match;
         let curves = deep_match::take_curves();
+        // Forward re-scoring outcome (deep-match-forward-rescoring) — drained
+        // unconditionally so no outcome can leak across runs; only recorded by
+        // forward-armed chunk scans (never by verification probes or the
+        // auto-probe).
+        let forward = deep_match::take_forward();
         let stats = deep_match::take();
         let Some((current_chunk, chunk_count, current_probe, probe_count)) = self
             .deep_match_pending
@@ -13351,14 +13363,56 @@ impl RenderQueue {
                 if gyroflow_core::synchronization::sync_diag::is_enabled() {
                     gyroflow_core::synchronization::sync_diag::record_deep_match_posterior(&curves, clip_ms);
                 }
-                deep_match::decide_posterior(
-                    &curves,
-                    clip_ms,
-                    deep_match::post_conf_min(),
-                    deep_match::post_ci95_base_ms(),
-                    deep_match::drift_rate_ms_per_min(),
-                    deep_match::drift_floor_ms(),
-                )
+                let decide_posterior = || {
+                    deep_match::decide_posterior(
+                        &curves,
+                        clip_ms,
+                        deep_match::post_conf_min(),
+                        deep_match::post_ci95_base_ms(),
+                        deep_match::drift_rate_ms_per_min(),
+                        deep_match::drift_floor_ms(),
+                    )
+                };
+                // Forward re-scoring owns the chunk decision when it ran
+                // (deep-match-forward-rescoring): the joint posterior then
+                // served only as its candidate generator — its own
+                // argmax/conf/ci95 do not accept a chunk by themselves.
+                // Abstained (dispersed floor etc.) or not-run falls through to
+                // the pre-existing posterior verdict path unchanged.
+                match forward {
+                    Some(deep_match::ForwardOutcome::Confirmed {
+                        offset_ms, fwd_ratio, full_cost, spread_ms, windows,
+                    }) => {
+                        ::log::info!(
+                            target: "sync",
+                            "[deep-match] forward confirmed: offset={:.1}ms full_cost={:.3} spread={:.1}ms windows={} fwd_ratio={:.3}",
+                            offset_ms, full_cost, spread_ms, windows, fwd_ratio
+                        );
+                        deep_match::DeepMatchVerdict::Accepted { offset_ms }
+                    }
+                    Some(deep_match::ForwardOutcome::Rejected { best_ratio }) => {
+                        // Advisory only: forward scoring may confirm a chunk but
+                        // never veto one. A wrong "no candidate here" would turn
+                        // a chunk the pre-existing path could still accept into a
+                        // failure, so the rejection is logged and the posterior
+                        // path decides — this keeps the cascade purely additive.
+                        ::log::info!(
+                            target: "sync",
+                            "[deep-match] forward rejected chunk (advisory): best_ratio={:.3} (no candidate significantly below the noise floor) — posterior path decides",
+                            best_ratio
+                        );
+                        decide_posterior()
+                    }
+                    Some(deep_match::ForwardOutcome::Abstained { reason }) => {
+                        ::log::info!(
+                            target: "sync",
+                            "[deep-match] forward abstained ({}) — posterior path decides",
+                            reason
+                        );
+                        decide_posterior()
+                    }
+                    None => decide_posterior(),
+                }
             } else {
                 deep_match::evaluate(
                     &offsets_ms,

@@ -42,14 +42,20 @@ pub struct DeepMatchWindowCurve {
 static COLLECTOR: Mutex<Option<Vec<DeepMatchSegStats>>> = Mutex::new(None);
 static CURVE_COLLECTOR: Mutex<Option<Vec<DeepMatchWindowCurve>>> = Mutex::new(None);
 static SCAN_K: Mutex<usize> = Mutex::new(0);
+static FORWARD_ARMED: Mutex<bool> = Mutex::new(false);
+static FORWARD_RESULT: Mutex<Option<ForwardOutcome>> = Mutex::new(None);
 
 /// Arm both collectors and record the scan-K target the essential scan uses to
 /// cap how many (highest-motion) windows it fully scans. Only one deep match
 /// runs at a time (render queue enforces), so single global slots suffice.
+/// Forward re-scoring is disarmed here; the chunk-scan launch opts in via
+/// `arm_forward()` (verification probes and the auto-probe never do).
 pub fn arm(scan_k: usize) {
     *COLLECTOR.lock() = Some(Vec::new());
     *CURVE_COLLECTOR.lock() = Some(Vec::new());
     *SCAN_K.lock() = scan_k;
+    *FORWARD_ARMED.lock() = false;
+    *FORWARD_RESULT.lock() = None;
 }
 
 pub fn is_armed() -> bool {
@@ -78,11 +84,14 @@ pub fn record_curve(c: DeepMatchWindowCurve) {
     }
 }
 
-/// Take the collected stats and disarm (both collectors + scan-K reset).
-/// Call `take_curves()` BEFORE this if you need the curves — this resets them.
+/// Take the collected stats and disarm (both collectors + scan-K + forward
+/// slots reset). Call `take_curves()` (and `take_forward()`) BEFORE this if
+/// you need them — this resets everything.
 pub fn take() -> Vec<DeepMatchSegStats> {
     *SCAN_K.lock() = 0;
     *CURVE_COLLECTOR.lock() = None;
+    *FORWARD_ARMED.lock() = false;
+    *FORWARD_RESULT.lock() = None;
     COLLECTOR.lock().take().unwrap_or_default()
 }
 
@@ -92,6 +101,70 @@ pub fn take() -> Vec<DeepMatchSegStats> {
 /// legacy POSTERIOR=0 path.
 pub fn take_curves() -> Vec<DeepMatchWindowCurve> {
     CURVE_COLLECTOR.lock().take().unwrap_or_default()
+}
+
+/// Read the collected curves WITHOUT draining them (the forward re-scoring
+/// tail inside the essential scan reads them before the run finishes — the
+/// normal consumer still gets its curves via `take_curves()`).
+pub fn peek_curves() -> Vec<DeepMatchWindowCurve> {
+    CURVE_COLLECTOR.lock().clone().unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Forward re-scoring side channel (change deep-match-forward-rescoring)
+// ---------------------------------------------------------------------------
+
+/// Outcome of the per-chunk forward re-scoring cascade, recorded by the
+/// essential scan tail and consumed by the chunk orchestration
+/// (`finish_deep_match`). All quantities are per-chunk: forward costs and the
+/// noise floor are NEVER comparable across chunks (different chunks are
+/// different gyro data — the same discipline that forbids cross-window
+/// `cost_min` comparison).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ForwardOutcome {
+    /// A forward-accepted candidate was confirmed by a full rs-sync call.
+    /// `offset_ms` is the median of the confirmation's per-window offsets
+    /// (LBFGS precision — this is what gets written back).
+    Confirmed {
+        offset_ms: f64,
+        /// Forward cost of the confirmed candidate over this chunk's noise floor.
+        fwd_ratio: f64,
+        /// Mean per-window cost of the full rs-sync confirmation run.
+        full_cost: f64,
+        /// Cross-window spread of the confirmation run (consistency side-gate
+        /// only — never the acceptance criterion on its own).
+        spread_ms: f64,
+        windows: usize,
+    },
+    /// The forward stage scored the candidates and none sat significantly
+    /// below this chunk's noise floor (or confirmation failed) — no hit here.
+    Rejected { best_ratio: f64 },
+    /// The forward stage declined to decide (dispersed floor / too few
+    /// candidates / no scorable windows) — the pre-existing verdict path
+    /// drives orchestration unchanged.
+    Abstained { reason: &'static str },
+}
+
+/// Opt the current armed run into forward re-scoring. Called only by the
+/// chunk-scan launch; verification probes and the headless auto-probe re-arm
+/// without it (their decision profiles stay unchanged).
+pub fn arm_forward() {
+    *FORWARD_ARMED.lock() = true;
+}
+
+pub fn forward_armed() -> bool {
+    is_armed() && *FORWARD_ARMED.lock()
+}
+
+pub fn record_forward(outcome: ForwardOutcome) {
+    if is_armed() {
+        *FORWARD_RESULT.lock() = Some(outcome);
+    }
+}
+
+/// Drain the forward outcome. Call BEFORE `take()` (which resets the slot).
+pub fn take_forward() -> Option<ForwardOutcome> {
+    FORWARD_RESULT.lock().take()
 }
 
 /// Compute the global (run-level) essential search domain so that every
@@ -392,6 +465,9 @@ pub fn build_probe_plan(
     let by_index: std::collections::HashMap<usize, &GyroPoolEntry> =
         pool.iter().map(|e| (e.gyro_index, e)).collect();
     let mut plan: Vec<ProbeTask> = Vec::new();
+    // Focused probes dropped because their window covers the entire file and
+    // would therefore duplicate the tier-3 fallback verbatim.
+    let mut degenerate = 0usize;
 
     if prelocate && tol_ms > 0.0 {
         if let Some(vc) = video_created_at_ms {
@@ -420,6 +496,16 @@ pub fn build_probe_plan(
                     else {
                         continue;
                     };
+                    // A focused window clamped to the whole file is the exact
+                    // same search as the tier-3 fallback appended below — the
+                    // tolerance is simply wider than the file. Running both
+                    // scans the file twice for byte-identical results, so drop
+                    // the focused probe and let tier 3 cover it. Search
+                    // coverage is unchanged; only the duplicate is removed.
+                    if w.0 <= 0.0 && w.1 >= gd {
+                        degenerate += 1;
+                        continue;
+                    }
                     let p = predicted_gyro_position_ms(vc, gc, shift);
                     if centers
                         .iter()
@@ -437,6 +523,13 @@ pub fn build_probe_plan(
     // without timestamps already sort last).
     for &gi in &ranked {
         plan.push(ProbeTask { gyro_index: gi, tier: 3, window_ms: None });
+    }
+    if degenerate > 0 {
+        log::info!(
+            target: "sync",
+            "[deep-match] probe plan: dropped {} focused probe(s) whose window spans the whole file (tol {:.0}ms exceeds the file) — tier 3 covers them",
+            degenerate, tol_ms
+        );
     }
     plan
 }
@@ -708,6 +801,193 @@ pub fn posterior_peaks(
         }
     }
     kept
+}
+
+/// Linear interpolation of a sorted `(x, y)` curve at `x`, clamped at the ends.
+fn interp_curve_at(curve: &[(f64, f64)], x: f64) -> f64 {
+    match curve.binary_search_by(|p| p.0.partial_cmp(&x).unwrap_or(std::cmp::Ordering::Equal)) {
+        Ok(i) => curve[i].1,
+        Err(0) => curve[0].1,
+        Err(i) if i >= curve.len() => curve[curve.len() - 1].1,
+        Err(i) => {
+            let (x0, y0) = curve[i - 1];
+            let (x1, y1) = curve[i];
+            if (x1 - x0).abs() < f64::EPSILON {
+                y0
+            } else {
+                y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+            }
+        }
+    }
+}
+
+/// Candidate extraction for the forward re-scoring cascade (change
+/// deep-match-forward-rescoring): the per-window curves are combined into a
+/// joint log-likelihood on a `lattice_step_ms` lattice over the windows'
+/// shared offset domain, and the top-N lattice positions are kept with greedy
+/// non-maximum suppression at `nms_radius_ms`. Returned centers are ordered by
+/// descending joint value.
+///
+/// Deliberately different from `posterior_peaks` (verification hypotheses:
+/// only genuine peaks above the joint floor): the forward stage NEEDS
+/// noise-floor candidates too — they form this chunk's per-chunk reference
+/// statistics for the relative acceptance criterion. N, the NMS radius and
+/// the lattice step are configured together because the true offset's
+/// candidate rank depends on all three.
+pub fn forward_candidates(
+    curves: &[DeepMatchWindowCurve],
+    lattice_step_ms: f64,
+    nms_radius_ms: f64,
+    top_n: usize,
+) -> Vec<f64> {
+    use crate::synchronization::posterior::approx_window_log_likelihood;
+    if curves.len() < 2
+        || top_n == 0
+        || !lattice_step_ms.is_finite()
+        || lattice_step_ms <= 0.0
+        || !nms_radius_ms.is_finite()
+        || nms_radius_ms < 0.0
+    {
+        return Vec::new();
+    }
+    // Sorted copies (recorded curves interleave the coarse lattice, the dense
+    // refinement points and the refined argmin — order is not guaranteed).
+    let sorted: Vec<Vec<(f64, f64)>> = curves
+        .iter()
+        .map(|c| {
+            let mut v: Vec<(f64, f64)> = c
+                .curve
+                .iter()
+                .copied()
+                .filter(|(x, y)| x.is_finite() && y.is_finite())
+                .collect();
+            v.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            v
+        })
+        .collect();
+    let lo = sorted
+        .iter()
+        .filter_map(|c| c.first().map(|p| p.0))
+        .fold(f64::NEG_INFINITY, f64::max);
+    let hi = sorted
+        .iter()
+        .filter_map(|c| c.last().map(|p| p.0))
+        .fold(f64::INFINITY, f64::min);
+    if !(hi > lo) {
+        return Vec::new();
+    }
+    let n = ((hi - lo) / lattice_step_ms) as usize + 1;
+    let mut joint = vec![0.0f64; n];
+    for (c, sc) in curves.iter().zip(sorted.iter()) {
+        if sc.is_empty() || !c.cost_min.is_finite() || c.cost_min <= 0.0 {
+            continue;
+        }
+        for (k, j) in joint.iter_mut().enumerate() {
+            let cost = interp_curve_at(sc, lo + k as f64 * lattice_step_ms);
+            let l = approx_window_log_likelihood(cost, c.cost_min, c.n_eff);
+            if l.is_finite() {
+                *j += l;
+            }
+        }
+    }
+    // Greedy NMS: walk lattice positions by descending joint value, keep a
+    // position only when nothing within the NMS radius was kept before it.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| joint[b].partial_cmp(&joint[a]).unwrap_or(std::cmp::Ordering::Equal));
+    let rpts = (nms_radius_ms / lattice_step_ms).ceil() as usize;
+    let mut avail = vec![true; n];
+    let mut kept: Vec<f64> = Vec::new();
+    for i in order {
+        if !avail[i] {
+            continue;
+        }
+        kept.push(lo + i as f64 * lattice_step_ms);
+        for a in avail[i.saturating_sub(rpts)..(i + rpts + 1).min(n)].iter_mut() {
+            *a = false;
+        }
+        if kept.len() >= top_n {
+            break;
+        }
+    }
+    kept
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ForwardFloorDecision {
+    /// The best candidate sits significantly below the noise floor.
+    Accept,
+    /// No candidate separates from the floor — no hit in this chunk.
+    Reject,
+    /// The floor is unusable (dispersed / too few candidates) — the relative
+    /// criterion cannot judge; the pre-existing verdict path decides.
+    Abstain,
+}
+
+/// Statistics behind a forward floor decision (all per-chunk; NaN when the
+/// input was unusable).
+#[derive(Debug, Clone, Copy)]
+pub struct ForwardFloorVerdict {
+    pub decision: ForwardFloorDecision,
+    /// Median of the non-best candidates' forward costs (the noise floor).
+    pub floor: f64,
+    /// Relative IQR of the non-best candidates: (p75 - p25) / median.
+    pub dispersion: f64,
+    /// Best forward cost over the floor.
+    pub best_ratio: f64,
+}
+
+fn percentile_sorted(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return f64::NAN;
+    }
+    let idx = ((sorted.len() - 1) as f64 * q).round() as usize;
+    sorted[idx.min(sorted.len() - 1)]
+}
+
+/// Relative acceptance criterion for the forward re-scoring stage (change
+/// deep-match-forward-rescoring, design D2): the decision is whether the best
+/// candidate is significantly below the noise floor formed by the REMAINING
+/// candidates of the same chunk — never an absolute cost threshold (forward
+/// cost magnitude varies with footage and gyro segment). A dispersed floor
+/// (relative IQR above `dispersion_max`) abstains instead of guessing;
+/// fewer than `min_candidates` usable costs also abstain (no floor statistics).
+pub fn forward_floor_decision(
+    costs: &[f64],
+    accept_max_ratio: f64,
+    dispersion_max: f64,
+    min_candidates: usize,
+) -> ForwardFloorVerdict {
+    let mut v: Vec<f64> = costs
+        .iter()
+        .copied()
+        .filter(|c| c.is_finite() && *c > 0.0)
+        .collect();
+    let abstain = |floor: f64, dispersion: f64, best_ratio: f64| ForwardFloorVerdict {
+        decision: ForwardFloorDecision::Abstain,
+        floor,
+        dispersion,
+        best_ratio,
+    };
+    if v.len() < min_candidates.max(3) {
+        return abstain(f64::NAN, f64::NAN, f64::NAN);
+    }
+    v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let best = v[0];
+    let others = &v[1..];
+    let floor = percentile_sorted(others, 0.5);
+    if !floor.is_finite() || floor <= 0.0 {
+        return abstain(floor, f64::NAN, f64::NAN);
+    }
+    let dispersion = (percentile_sorted(others, 0.75) - percentile_sorted(others, 0.25)) / floor;
+    let best_ratio = best / floor;
+    let decision = if dispersion > dispersion_max {
+        ForwardFloorDecision::Abstain
+    } else if best_ratio <= accept_max_ratio {
+        ForwardFloorDecision::Accept
+    } else {
+        ForwardFloorDecision::Reject
+    };
+    ForwardFloorVerdict { decision, floor, dispersion, best_ratio }
 }
 
 /// Pick verification-window positions (video timestamps, ms) by scanning the
@@ -1102,6 +1382,88 @@ pub fn verify_gyro_hot_min_dps() -> f64 {
     env_f64("GYROFLOW_DEEP_MATCH_VERIFY_GYRO_HOT_MIN_DPS", 5.0)
 }
 
+/// Master switch for the forward re-scoring cascade (change
+/// deep-match-forward-rescoring). `GYROFLOW_DEEP_MATCH_FORWARD=0|off|false|no`
+/// disables it byte-for-byte (no forward scoring, no rs-sync problem assembled;
+/// the chunk verdict comes from the pre-existing joint-posterior path); any
+/// other value (or unset) enables. OnceLock-cached; first resolve logs to
+/// `target="lifecycle"`.
+pub fn forward_enabled() -> bool {
+    static RESOLVED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *RESOLVED.get_or_init(|| {
+        let raw = std::env::var("GYROFLOW_DEEP_MATCH_FORWARD").ok();
+        let (v, source) = match raw.as_deref().map(str::trim) {
+            None | Some("") => (true, "default"),
+            Some(s) => match s.to_ascii_lowercase().as_str() {
+                "1" | "true" | "yes" | "on" => (true, "env"),
+                "0" | "false" | "no" | "off" => (false, "env"),
+                _ => {
+                    log::warn!(
+                        target: "lifecycle",
+                        "GYROFLOW_DEEP_MATCH_FORWARD={} invalid, falling back to default (on)",
+                        s
+                    );
+                    (true, "default")
+                }
+            },
+        };
+        log::info!(target: "lifecycle", "deep_match_forward resolved: enabled={} source={}", v, source);
+        v
+    })
+}
+
+/// Candidate count extracted from the joint posterior (clamp 4-400). Coupled
+/// with the NMS radius and lattice step: the observed true-offset candidate
+/// rank was #29 on a 25ms lattice with ±10s NMS — 50 leaves headroom.
+pub fn fwd_top_n() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_FWD_TOP_N", 50.0) as usize).clamp(4, 400)
+}
+/// Non-maximum-suppression radius for candidate extraction; also the default
+/// full-confirmation search radius (candidates are distinct at this scale).
+pub fn fwd_nms_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_NMS_MS", 10_000.0)
+}
+/// Joint-posterior lattice step for candidate extraction. 25ms matches the
+/// recorded coarse curves; peak positions only need to land inside the
+/// forward local-grid radius.
+pub fn fwd_lattice_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_LATTICE_MS", 25.0)
+}
+/// Forward `pre_sync` local-grid radius around each candidate (±ms).
+pub fn fwd_radius_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_RADIUS_MS", 100.0)
+}
+/// Forward `pre_sync` local-grid step (ms).
+pub fn fwd_step_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_STEP_MS", 5.0)
+}
+/// How many forward-accepted candidates may be tried with a full rs-sync
+/// confirmation call (design D4: top 1-3 by forward rank).
+pub fn fwd_confirm_n() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_FWD_CONFIRM_N", 2.0) as usize).clamp(1, 3)
+}
+/// Search radius of the full rs-sync confirmation call around a candidate.
+pub fn fwd_confirm_radius_ms() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_CONFIRM_RADIUS_MS", 10_000.0)
+}
+/// Relative acceptance ceiling: best forward cost over the chunk's noise
+/// floor must be at or below this. Conservative starting point from the
+/// single calibrated case (true hit 0.63, noise-only best ~0.97); pending
+/// corpus calibration (tasks 5.4).
+pub fn fwd_accept_ratio() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_ACCEPT_RATIO", 0.8)
+}
+/// Floor-dispersion abstain threshold: relative IQR of the non-best
+/// candidates above this means the "tight noise floor" assumption does not
+/// hold — abstain instead of guessing (observed tight floors span ~4.5%).
+pub fn fwd_floor_dispersion_max() -> f64 {
+    env_f64("GYROFLOW_DEEP_MATCH_FWD_FLOOR_DISPERSION", 0.25)
+}
+/// Minimum scored candidates required for usable floor statistics (clamp >=3).
+pub fn fwd_min_candidates() -> usize {
+    (env_f64("GYROFLOW_DEEP_MATCH_FWD_MIN_CANDIDATES", 8.0) as usize).max(3)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1354,6 +1716,176 @@ mod tests {
         assert!(!is_armed());
         // take() when disarmed yields empty
         assert!(take().is_empty());
+    }
+
+    #[test]
+    fn forward_slot_roundtrip_and_arming() {
+        let _g = TEST_MTX.lock().unwrap_or_else(|e| e.into_inner());
+        arm(2);
+        // arm() alone must NOT arm the forward stage (verify probes and the
+        // auto-probe re-arm without it).
+        assert!(!forward_armed());
+        arm_forward();
+        assert!(forward_armed());
+        record_forward(ForwardOutcome::Rejected { best_ratio: 0.95 });
+        assert_eq!(take_forward(), Some(ForwardOutcome::Rejected { best_ratio: 0.95 }));
+        assert_eq!(take_forward(), None, "take_forward drains");
+        // take() resets the forward arming for the next run.
+        let _ = take();
+        assert!(!forward_armed());
+        // Recording while disarmed is dropped.
+        record_forward(ForwardOutcome::Abstained { reason: "test" });
+        assert_eq!(take_forward(), None);
+        // Re-arming resets any stale outcome.
+        arm(2);
+        arm_forward();
+        record_forward(ForwardOutcome::Abstained { reason: "stale" });
+        arm(2);
+        assert_eq!(take_forward(), None, "arm() clears the previous outcome");
+        let _ = take();
+    }
+
+    // Synthetic window curve: flat plateau `plateau` with a triangular valley
+    // of half-width `valley_half_ms` down to `valley_cost` at `valley_at`.
+    fn synth_curve(
+        range_idx: usize,
+        valley_at: f64,
+        lo: f64,
+        hi: f64,
+        step: f64,
+        plateau: f64,
+        valley_cost: f64,
+        valley_half_ms: f64,
+    ) -> DeepMatchWindowCurve {
+        let mut curve = Vec::new();
+        let mut x = lo;
+        while x <= hi {
+            let d = (x - valley_at).abs();
+            let cost = if d < valley_half_ms {
+                valley_cost + (plateau - valley_cost) * d / valley_half_ms
+            } else {
+                plateau
+            };
+            curve.push((x, cost));
+            x += step;
+        }
+        DeepMatchWindowCurve {
+            range_idx,
+            t_center_ms: 0.0,
+            argmin_ms: valley_at,
+            cost_min: valley_cost,
+            n_eff: 100.0,
+            curve,
+        }
+    }
+
+    #[test]
+    fn forward_candidates_top_candidate_hits_shared_valley() {
+        let c0 = synth_curve(0, -5000.0, -100_000.0, 100_000.0, 100.0, 100.0, 10.0, 300.0);
+        let c1 = synth_curve(1, -5000.0, -100_000.0, 100_000.0, 100.0, 100.0, 10.0, 300.0);
+        let cands = forward_candidates(&[c0, c1], 25.0, 10_000.0, 50);
+        assert!(!cands.is_empty());
+        assert!(cands.len() <= 50);
+        // Strongest joint peak lands on the shared valley (within one lattice step).
+        assert!(
+            (cands[0] + 5000.0).abs() <= 25.0 + 1e-9,
+            "top candidate {} not at the valley",
+            cands[0]
+        );
+        // NMS separation holds pairwise.
+        for i in 0..cands.len() {
+            for j in (i + 1)..cands.len() {
+                assert!(
+                    (cands[i] - cands[j]).abs() >= 10_000.0 - 1e-6,
+                    "candidates {} and {} violate the NMS radius",
+                    cands[i],
+                    cands[j]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn forward_candidates_lattice_nms_topn_configured_together() {
+        let c0 = synth_curve(0, 0.0, -50_000.0, 50_000.0, 100.0, 100.0, 10.0, 300.0);
+        let c1 = synth_curve(1, 0.0, -50_000.0, 50_000.0, 100.0, 100.0, 10.0, 300.0);
+        let curves = vec![c0, c1];
+        // top_n caps the count.
+        assert!(forward_candidates(&curves, 25.0, 5_000.0, 5).len() <= 5);
+        // A wider NMS radius spreads the candidates further apart.
+        let wide = forward_candidates(&curves, 25.0, 30_000.0, 10);
+        for i in 0..wide.len() {
+            for j in (i + 1)..wide.len() {
+                assert!((wide[i] - wide[j]).abs() >= 30_000.0 - 1e-6);
+            }
+        }
+        // Candidates sit on the configured lattice.
+        let coarse = forward_candidates(&curves, 200.0, 5_000.0, 10);
+        let lo = -50_000.0;
+        for c in &coarse {
+            let steps = (c - lo) / 200.0;
+            assert!(
+                (steps - steps.round()).abs() < 1e-9,
+                "candidate {} off the 200ms lattice",
+                c
+            );
+        }
+    }
+
+    #[test]
+    fn forward_candidates_degenerate_inputs_yield_empty() {
+        let c0 = synth_curve(0, 0.0, -10_000.0, 10_000.0, 100.0, 100.0, 10.0, 300.0);
+        // Fewer than 2 curves.
+        assert!(forward_candidates(&[c0.clone()], 25.0, 10_000.0, 50).is_empty());
+        // Disjoint domains (no shared offset span).
+        let far = synth_curve(1, 90_000.0, 80_000.0, 100_000.0, 100.0, 100.0, 10.0, 300.0);
+        assert!(forward_candidates(&[c0.clone(), far], 25.0, 10_000.0, 50).is_empty());
+        // Invalid lattice/top_n.
+        let c1 = synth_curve(1, 0.0, -10_000.0, 10_000.0, 100.0, 100.0, 10.0, 300.0);
+        assert!(forward_candidates(&[c0.clone(), c1.clone()], 0.0, 10_000.0, 50).is_empty());
+        assert!(forward_candidates(&[c0, c1], 25.0, 10_000.0, 0).is_empty());
+    }
+
+    #[test]
+    fn forward_floor_accepts_the_case_study_shape() {
+        // 2026-08-02 Fuji case: true candidate 197, 49 noise candidates
+        // clustered in 312..=326 (floor span ~4.5%).
+        let mut costs = vec![197.0];
+        costs.extend((0..49).map(|i| 312.0 + 14.0 * i as f64 / 48.0));
+        let v = forward_floor_decision(&costs, 0.8, 0.25, 8);
+        assert_eq!(v.decision, ForwardFloorDecision::Accept);
+        assert!(v.best_ratio < 0.65, "ratio {}", v.best_ratio);
+        assert!(v.dispersion < 0.05, "dispersion {}", v.dispersion);
+    }
+
+    #[test]
+    fn forward_floor_abstains_on_dispersed_floor() {
+        let costs = vec![100.0, 150.0, 250.0, 400.0, 700.0, 1200.0, 2000.0, 3300.0, 5000.0];
+        let v = forward_floor_decision(&costs, 0.8, 0.25, 8);
+        assert_eq!(v.decision, ForwardFloorDecision::Abstain);
+        assert!(v.dispersion > 0.25);
+    }
+
+    #[test]
+    fn forward_floor_rejects_when_no_candidate_separates() {
+        let costs: Vec<f64> = (0..17).map(|i| 310.0 + i as f64).collect();
+        let v = forward_floor_decision(&costs, 0.8, 0.25, 8);
+        assert_eq!(v.decision, ForwardFloorDecision::Reject);
+        assert!(v.best_ratio > 0.9);
+    }
+
+    #[test]
+    fn forward_floor_abstains_without_enough_candidates() {
+        let v = forward_floor_decision(&[1.0, 2.0, 3.0], 0.8, 0.25, 8);
+        assert_eq!(v.decision, ForwardFloorDecision::Abstain);
+        // Non-finite / non-positive entries are filtered before the count gate.
+        let v = forward_floor_decision(
+            &[f64::NAN, -1.0, 0.0, 197.0, 312.0, 315.0, 318.0, 321.0, 324.0],
+            0.8,
+            0.25,
+            8,
+        );
+        assert_eq!(v.decision, ForwardFloorDecision::Abstain);
     }
 
     #[test]
@@ -1770,7 +2302,10 @@ mod tests {
         // (all pool-shift candidates collapse to ~0 -> no tier-2 probes).
         // Learned shift ~0 -> tier 0 takes the slot, tier 1's identical
         // prediction dedups away. Tier 3 covers every file.
-        let pool = vec![entry(0, 9, 2.0), entry(1, 20, 2.0)];
+        // File 0 is 10h long so the ±2h focused window genuinely narrows the
+        // search (a window clamped to the whole file is dropped as a tier-3
+        // duplicate, which would hide the tier ordering this test asserts).
+        let pool = vec![entry(0, 9, 10.0), entry(1, 20, 2.0)];
         let videos: Vec<(i64, f64)> =
             vec![(10 * HOUR, 1_800_000.0), (20 * HOUR + HOUR / 2, 1_800_000.0)];
         let plan = build_probe_plan(
@@ -1805,10 +2340,50 @@ mod tests {
     }
 
     #[test]
+    fn build_probe_plan_drops_focused_probes_that_span_the_whole_file() {
+        // Field case (2026-08-02 Fujifilm + 1.81h gyro bin): the ±2h tolerance
+        // is wider than the file, so every focused window clamps to [0, dur]
+        // and re-runs the tier-3 scan verbatim — three probes returning
+        // byte-identical results. The planner must drop those duplicates while
+        // leaving search coverage intact.
+        const F0: f64 = 1.81 * HOUR as f64;
+        let pool = vec![entry(0, 9, 1.81), entry(1, 11, 1.5)];
+        let videos: Vec<(i64, f64)> = vec![(10 * HOUR, 1_800_000.0)];
+        let plan = build_probe_plan(Some(10 * HOUR), 1_800_000.0, &pool, &videos, None, TOL, true);
+
+        // The invariant: no surviving focused probe may span its entire file —
+        // such a window IS the tier-3 scan and would run the file twice.
+        for t in plan.iter().filter(|t| t.gyro_index == 0) {
+            if let Some((s, e)) = t.window_ms {
+                assert!(s > 0.0 || e < F0, "probe spans the whole file: {t:?}");
+            }
+        }
+        // Zero-shift (tier 1) is the degenerate one here and must be gone.
+        assert!(
+            !plan.iter().any(|t| t.tier == 1),
+            "degenerate tier-1 probe survived: {plan:?}"
+        );
+        // A shift that moves the prediction off the file start still yields a
+        // genuinely narrowed window, which must be kept.
+        assert!(
+            plan.iter().any(|t| matches!(t.window_ms, Some((s, _)) if s > 0.0)),
+            "a genuinely focused probe must survive: {plan:?}"
+        );
+        // Coverage unchanged: every pool file still gets its tier-3 scan.
+        let mut covered: Vec<usize> =
+            plan.iter().filter(|t| t.tier == 3).map(|t| t.gyro_index).collect();
+        covered.sort_unstable();
+        assert_eq!(covered, vec![0, 1]);
+    }
+
+    #[test]
     fn build_probe_plan_timezone_case_hits_tier_2() {
         // Gyro clocks 8h ahead: tier 1 finds no intersection anywhere, the
-        // pool-alignment shift (8h) predicts file 0 -> tier 2 focused probe.
-        let pool = vec![entry(0, 17, 2.0), entry(1, 40, 2.0)];
+        // pool-alignment shift predicts file 0 -> tier 2 focused probe.
+        // File 0 is 10h long so that focused window genuinely narrows the
+        // search; a window clamped to the whole file is dropped as a tier-3
+        // duplicate and would leave nothing for this test to assert on.
+        let pool = vec![entry(0, 17, 10.0), entry(1, 40, 2.0)];
         let videos: Vec<(i64, f64)> = vec![(10 * HOUR, 1_800_000.0), (33 * HOUR, 1_800_000.0)];
         let gyro_pool_wall: Vec<(i64, f64)> = Vec::new();
         let _ = gyro_pool_wall;

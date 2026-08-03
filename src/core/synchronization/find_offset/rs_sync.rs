@@ -1308,6 +1308,50 @@ impl FindOffsetsRssync<'_> {
         ret
     }
 
+    /// Forward-only candidate scoring for the deep-match cascade probe.
+    ///
+    /// Builds the gyro spline once and then scores every candidate with a small
+    /// local `pre_sync` grid — no LBFGS, and a radius orders of magnitude
+    /// smaller than a real sync call. The expensive parts of `full_sync` are
+    /// the 4000-point grid scan (radius/step) and LBFGS, not the setup, so a
+    /// tight local grid is what makes this cheap.
+    ///
+    /// Returns, per candidate, per sync point: `(external_offset_ms, cost)`.
+    /// Candidates whose window has no gyro overlap yield an empty inner vec.
+    pub fn forward_probe(
+        &mut self,
+        centers_ext_ms: &[f64],
+        radius_ms: f64,
+        step_ms: f64,
+    ) -> Vec<Vec<(f64, f64)>> {
+        {
+            let gyro = self.gyro_source.read();
+            set_quats(&mut self.sync, &gyro.quaternions);
+        }
+        let frt_half_ms = self.frame_readout_time * 1000.0 / 2.0;
+        let sync_points = self.sync_points.clone();
+        centers_ext_ms
+            .iter()
+            .map(|&ext| {
+                let delay_s = delay_s_from_ext_ms(ext, frt_half_ms);
+                sync_points
+                    .iter()
+                    .filter_map(|(from_ts, to_ts)| {
+                        self.sync
+                            .pre_sync(
+                                delay_s,
+                                *from_ts,
+                                *to_ts,
+                                step_ms / 1000.0,
+                                radius_ms / 1000.0,
+                            )
+                            .map(|(cost, d)| (ext_ms_from_delay_s(d, frt_half_ms), cost))
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
     pub fn full_sync(&mut self) -> Vec<(f64, f64, f64, f64)> {
         // Vec<(timestamp, offset, cost, confidence)>
         // Initial confidence = 0.5 (placeholder, updated by subsequent fusion/rerank stage)
@@ -4285,6 +4329,20 @@ impl FindOffsetsRssync<'_> {
     }
 }
 
+/// External-offset (ms) → rs-sync internal delay (s). Inverse of the
+/// `ext_of` closures used throughout this file — the ONE offset convention:
+/// `ext_ms = -delay_s * 1000 - frame_readout_time_ms / 2`.
+#[inline]
+pub(crate) fn delay_s_from_ext_ms(ext_ms: f64, frt_half_ms: f64) -> f64 {
+    (-ext_ms - frt_half_ms) / 1000.0
+}
+
+/// rs-sync internal delay (s) → external offset (ms); see `delay_s_from_ext_ms`.
+#[inline]
+pub(crate) fn ext_ms_from_delay_s(delay_s: f64, frt_half_ms: f64) -> f64 {
+    -delay_s * 1000.0 - frt_half_ms
+}
+
 fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {
     let mut quats = Vec::new();
     let mut timestamps = Vec::new();
@@ -4298,6 +4356,54 @@ fn set_quats(sync: &mut SyncProblem, source_quats: &TimeQuat) {
         timestamps.push(*ts);
     }
     sync.set_gyro_quaternions(&timestamps, &quats);
+}
+
+#[cfg(test)]
+mod forward_probe_tests {
+    use super::*;
+
+    /// Task 1.3: the external-offset ↔ internal-delay conversion must be an
+    /// exact round trip (it is the single offset convention shared with every
+    /// `ext_of` closure in this file).
+    #[test]
+    fn ext_delay_conversion_roundtrips() {
+        for &frt_half_ms in &[0.0, 8.333, 16.667, 30.0] {
+            for &ext in &[-332_446.0, -2_113_365.0, -1000.0, 0.0, 3.5, 250_000.0] {
+                let delay_s = delay_s_from_ext_ms(ext, frt_half_ms);
+                let back = ext_ms_from_delay_s(delay_s, frt_half_ms);
+                assert!(
+                    (back - ext).abs() < 1e-9,
+                    "ext {ext} frt_half {frt_half_ms} -> delay {delay_s} -> {back}"
+                );
+            }
+        }
+    }
+
+    /// Task 1.3: an empty problem (no sync points, no gyro) must yield empty
+    /// per-candidate results, never panic.
+    #[test]
+    fn forward_probe_empty_problem_yields_empty_costs() {
+        let ranges: Vec<(i64, i64)> = Vec::new();
+        let sync_results = Arc::new(RwLock::new(BTreeMap::new()));
+        let sp = SyncParams::default();
+        let mut cp = ComputeParams::default();
+        cp.scaled_fps = 30.0; // keep the derived frame_readout_time finite
+        let noop: Arc<dyn Fn(f64) + Send + Sync> = Arc::new(|_| {});
+        let mut finder = FindOffsetsRssync::new(
+            &ranges,
+            sync_results,
+            &sp,
+            &cp,
+            noop,
+            Arc::new(AtomicBool::new(false)),
+        );
+        let out = finder.forward_probe(&[0.0, -250_000.0], 100.0, 5.0);
+        assert_eq!(out.len(), 2, "one entry per candidate");
+        assert!(
+            out.iter().all(|w| w.is_empty()),
+            "no sync points / no gyro overlap must yield empty inner results"
+        );
+    }
 }
 
 #[cfg(test)]
