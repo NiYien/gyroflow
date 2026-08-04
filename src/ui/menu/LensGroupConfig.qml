@@ -311,20 +311,18 @@ MenuItem {
         }
         syncing = previousSyncing
     }
-    function persistConfigs(next: var): void {
-        // Skip persistence during boot — NumberField default-value initial
-        // change events would otherwise wipe lens_group_configs_v1 to "[]".
-        if (!_bootDone) return
-        // The manual-edit flag is user-controlled only (the lens-type switch above);
-        // config values never flip it automatically.
-        // simple-mode-ux-overhaul: write goes to global config unconditionally.
-        // batchScope path removed — per-job overrides are now read-only data carried
-        // from .gyroflow load, edited via the render-queue right-click menu.
-        controller.set_lens_group_config(JSON.stringify(next))
-        // Push focal length + anamorphic squeeze of the currently-edited group into the
-        // main stabilizer so the live canvas preview actually reflects new fx/fy.
-        // Returns JSON {"w":W,"h":H} when anamorphic pushes an output dimension so we
-        // can propagate it to Export settings' output width/height NumberFields too.
+    // Push focal length + anamorphic squeeze of the currently-selected group into the
+    // main stabilizer so the live canvas preview actually reflects new fx/fy.
+    // apply_lens_group_to_main returns JSON {"w":W,"h":H} when anamorphic pushes an
+    // output dimension so we can propagate it to Export settings' output width/height
+    // NumberFields too.
+    //
+    // Shared by two callers with deliberately different scopes:
+    //   - persistConfigs()          value edit: also writes the global config and
+    //                               clears per-job overrides across the queue
+    //   - lensGroupCombo.onActivated  group switch: main preview only, the queue is
+    //                               left completely untouched
+    function applySelectedGroupToMain(): void {
         const outJson = controller.apply_lens_group_to_main(selectedLensIndex) + ""
         if (outJson.length > 0 && window.exportSettings) {
             try {
@@ -343,6 +341,18 @@ MenuItem {
                 console.warn("apply_lens_group_to_main parse error:", e, outJson)
             }
         }
+    }
+    function persistConfigs(next: var): void {
+        // Skip persistence during boot — NumberField default-value initial
+        // change events would otherwise wipe lens_group_configs_v1 to "[]".
+        if (!_bootDone) return
+        // The manual-edit flag is user-controlled only (the lens-type switch above);
+        // config values never flip it automatically.
+        // simple-mode-ux-overhaul: write goes to global config unconditionally.
+        // batchScope path removed — per-job overrides are now read-only data carried
+        // from .gyroflow load, edited via the render-queue right-click menu.
+        controller.set_lens_group_config(JSON.stringify(next))
+        applySelectedGroupToMain()
         // simple-mode-ux-overhaul: enforce global-wins by clearing the per-job
         // override entry for every lens group on every job. Granularity is per-index
         // (clears L1..L6 wholesale) — acceptable per design.md Decision 2.
@@ -543,6 +553,12 @@ MenuItem {
                                 // Lock auto-selection — the user's pick is now sticky.
                                 root.userPickedLens = true
                                 root.selectedLensIndex = currentIndex
+                                // Switching groups must take effect on the main preview
+                                // immediately — without this the canvas only updates when
+                                // a value is edited (persistConfigs). Main preview only:
+                                // this path deliberately does NOT write the global config
+                                // nor clear/reapply per-job lens groups on queued jobs.
+                                root.applySelectedGroupToMain()
                             }
                         }
                     }

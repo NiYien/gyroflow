@@ -32,6 +32,24 @@ Rectangle {
     // Simple-mode batch sync dirty flag (window-level because the AI sync toggle lives in
     // SimpleStabilization.qml). true = never synced / inputs changed since last sync.
     property bool syncDirty: true;
+    // project-save-button: true = the main preview holds edits that are not in any
+    // saved project file yet. Set by controller.request_recompute (the broadest
+    // "a parameter changed" signal available - it covers lens / stabilization /
+    // gyro / sync params but deliberately not export settings, which never trigger
+    // a recompute). Cleared on a successful project export and once a video load
+    // has fully settled. Runtime-only, never persisted. There is no value-level
+    // comparison: reverting a parameter by hand does NOT clear the flag.
+    property bool projectDirty: false;
+    // [project-save-button] Clearing the flag must be deferred by one event loop
+    // turn. Every clear trigger is followed synchronously by at least one
+    // request_recompute: controller.rs emits message() and then request_recompute()
+    // inside the same export-finished closure, and a video load applies the default
+    // preset from within onTelemetry_loaded. Clearing inline would be undone
+    // microseconds later and the button would never go grey. Passing a stable named
+    // function to Qt.callLater also collapses the burst of clear requests that a
+    // single load produces into one.
+    function clearProjectDirty(): void { window.projectDirty = false; }
+    function deferClearProjectDirty(): void { Qt.callLater(window.clearProjectDirty); }
     // play-hint-after-deep-match: set on deep match success, cleared when a batch
     // sync settles (the three syncDirty=false terminal sites in RenderQueue.qml)
     // or the queue is cleared. Runtime-only, never persisted. While set, playback
@@ -122,11 +140,13 @@ Rectangle {
                 // so the Column positioner takes over without anchor warnings.
                 queueBtn.anchors.right       = undefined;
                 queueBtn.anchors.rightMargin = 0;
-                pushToEnd(resetPairingBtn, mobileQueueBtnCol);  // top of Column
-                pushToEnd(clearQueueBtn,   mobileQueueBtnCol);  // middle of Column
-                pushToEnd(queueBtn,        mobileQueueBtnCol);  // bottom of Column
+                pushToEnd(resetPairingBtn,  mobileQueueBtnCol);  // top of Column
+                pushToEnd(clearQueueBtn,    mobileQueueBtnCol);
+                pushToEnd(saveProjectBtn,   mobileQueueBtnCol);
+                pushToEnd(queueBtn,         mobileQueueBtnCol);  // bottom of Column
                 resetPairingBtn.x = 0;
                 clearQueueBtn.x = 0;
+                saveProjectBtn.x = 0;
                 queueBtn.x = 0;
             } else {
                 queueBtn.anchors.right       = undefined;
@@ -135,9 +155,11 @@ Rectangle {
                 pushToEnd(simpleExportStabilizedBtn, simpleExportBtnRow);
                 simpleAutoSyncBtn.width         = Qt.binding(function() { return simpleAutoSyncBtn.implicitWidth; });
                 simpleExportStabilizedBtn.width = Qt.binding(function() { return simpleExportStabilizedBtn.implicitWidth; });
-                // Restore original child order in renderBtnRow: resetPairingBtn, clearQueueBtn, queueBtn.
+                // Restore original child order in renderBtnRow:
+                // resetPairingBtn, clearQueueBtn, saveProjectBtn, queueBtn.
                 pushToEnd(resetPairingBtn, renderBtnRow);
                 pushToEnd(clearQueueBtn,   renderBtnRow);
+                pushToEnd(saveProjectBtn,  renderBtnRow);
                 pushToEnd(queueBtn,        renderBtnRow);
             }
         }
@@ -1334,6 +1356,50 @@ Rectangle {
                             }
                         }
                     }
+                    // [project-save-button] Save the current project. Complementary to
+                    // resetPairingBtn / clearQueueBtn above (which are visible only while
+                    // the queue panel is open): this one shows in the main preview state,
+                    // so the bottom bar never carries both sets at once.
+                    // Clicking is exactly Ctrl+S / Cmd+S - no second save semantic.
+                    Item {
+                        id: saveProjectBtn;
+                        // Sized to match queueBtn, not clearQueueBtn: the save button is
+                        // only ever on screen while the queue tool buttons are hidden, so
+                        // its only visual neighbour is the queue icon and it must not read
+                        // as a smaller, secondary control next to it.
+                        width: 44 * dpiScale;
+                        height: 44 * dpiScale;
+                        // Mobile Simple reparents this into mobileQueueBtnCol (Column),
+                        // where verticalCenter anchors are ignored by the positioner.
+                        anchors.verticalCenter: (window.isMobileLayout && window.isSimpleMode) ? undefined : parent.verticalCenter;
+                        visible: !videoArea.queue.shown;
+                        LinkButton {
+                            anchors.centerIn: parent;
+                            // save.svg bakes in a wide dead margin: its glyph spans
+                            // 7690..32490 of a 42100 viewBox (58.9% fill), while queue.svg
+                            // fills 76.9% of its own. Rendered at the same icon size the
+                            // save glyph comes out ~23% smaller, so it is scaled up here to
+                            // land at the same optical size as the queue icon next to it.
+                            // Padding shrinks to match so the button still fits its Item.
+                            leftPadding: 6 * dpiScale;
+                            rightPadding: 6 * dpiScale;
+                            icon.width: 36 * dpiScale;
+                            icon.height: 36 * dpiScale;
+                            iconName: "save";
+                            // Reuse the string already translated for the Export
+                            // split-button menu item (QT_TRANSLATE_NOOP("Popup", ...)
+                            // at the updateModel above) - same action, same wording,
+                            // and all 22 languages already carry it.
+                            tooltip: qsTranslate("Popup", "Save project file");
+                            enabled: window.projectDirty && window.videoArea.vid.loaded;
+                            // LinkButton derives from QQC.Button, whose disabled state only
+                            // dims the background rectangle - the icon keeps full opacity.
+                            // Dim the whole item explicitly so "no unsaved changes" reads as
+                            // greyed out rather than as an identical, silently dead button.
+                            opacity: enabled ? 1.0 : 0.35;
+                            onClicked: window.saveProject("");
+                        }
+                    }
                     // [queue-gyro-column T12] 渲染队列入口按钮：增大图标 + 数量角标 + 移动端暗色主题增强
                     Item {
                         id: queueBtn;
@@ -2377,9 +2443,35 @@ Rectangle {
         }
         function onMessage(text: string, arg: string, callback: string, id: string): void {
             messageBox(Modal.Info, qsTr(text).arg(arg), [ { text: qsTr("Ok"), clicked: window[callback] } ], null, undefined, id);
+            // [project-save-button] "gyroflow-exported" is the only emitter of a
+            // successful project export in the whole codebase, and every save entry
+            // point (Ctrl+S, the save button, and the three Export split-button menu
+            // items) funnels through it, so one hook covers them all. The render
+            // queue writes job .gyroflow files through the job's own stab copy and
+            // never emits this id - by design it must not clear the main preview flag.
+            if (id === "gyroflow-exported") window.deferClearProjectDirty();
         }
         function onRequest_recompute(): void {
             Qt.callLater(controller.recompute_threaded);
+            // [project-save-button] Broadest available "a parameter changed" signal.
+            // Deliberately noisy: loads and syncs trigger it too, which is why every
+            // load-settled path below clears the flag again.
+            window.projectDirty = true;
+        }
+        // [project-save-button] A video load fires several recomputes on its way
+        // (telemetry, gyro, lens, default preset), so a freshly loaded video would
+        // otherwise start out dirty without the user touching anything.
+        function onTelemetry_loaded(is_main_video: bool, filename: string, camera: string, additional_data: var): void {
+            if (is_main_video) window.deferClearProjectDirty();
+        }
+        // Covers the paths that settle after telemetry_loaded: an associated project
+        // file, queue "Play", the save-and-open-next shortcut, and do_load's UI reset
+        // broadcast. Every emitter of this signal is a load event - controller's
+        // import_gyroflow_data is reachable from QML only via
+        // VideoArea.loadGyroflowData, which is never used to apply a preset
+        // mid-session - so clearing here cannot swallow a user edit.
+        function onGyroflow_file_loaded(obj: var): void {
+            window.deferClearProjectDirty();
         }
         function openUpdatePage(url: string): void {
             if (url && url.length > 0) {
