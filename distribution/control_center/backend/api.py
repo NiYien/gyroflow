@@ -20,6 +20,7 @@ from . import cargo as cargo_ops
 from . import config as config_module
 from . import git as git_ops
 from . import telemetry as telemetry_api
+from .changelog_archive import version_sort_key
 from .github import GitHubClient
 from .helpers import mask_sensitive, normalize_version
 from .pan123 import TASKS, Pan123Client, run_publish_subprocess, load_bundle_cache, save_bundle_cache
@@ -2815,6 +2816,14 @@ class Api:
         newest-first before serializing, so the first `keep` are the most
         recent.
 
+        Ordering MUST come from `version_sort_key` (which mirrors the client's
+        `compare_app_versions`), never from raw string comparison: the string
+        order only matches the numeric one while every sequence has the same
+        digit count. `1.6.3-ni.100` compares BELOW `1.6.3-ni.81` as a string
+        ('1' < '8'), so it lands last and gets pruned as if it were the oldest
+        entry — the publish reports success and the version silently never
+        reaches the manifest.
+
         The currently-served `auto_version` is ALWAYS retained even if it
         falls outside the window — dropping it would leave the docs manifest
         unable to resolve the in-service build. When that happens the oldest
@@ -2836,7 +2845,7 @@ class Api:
                 # Evict the oldest kept entry to make room, then restore the
                 # newest-first ordering callers expect.
                 kept = kept[: keep - 1] + [auto_entry]
-                kept.sort(key=lambda x: x.get("version", ""), reverse=True)
+                kept.sort(key=lambda x: version_sort_key(x.get("version", "")), reverse=True)
         policy["versions"] = kept
         return original - len(kept)
 
@@ -3661,7 +3670,9 @@ class Api:
         else:
             return {"ok": False, "error": f"未知发布动作: {action}"}
 
-        policy["versions"].sort(key=lambda x: x.get("version", ""), reverse=True)
+        # Newest-first via the client-mirroring comparator — `_prune_policy_versions`
+        # trusts this order and keeps only the leading `keep` entries.
+        policy["versions"].sort(key=lambda x: version_sort_key(x.get("version", "")), reverse=True)
         pruned_count = self._prune_policy_versions(policy, keep=10)
         staged_policy_json = _json.dumps(policy, ensure_ascii=False, indent=2)
 
@@ -3917,11 +3928,11 @@ class Api:
             elif action == "hide_version":
                 policy["versions"] = [v for v in versions if v.get("version") != version]
 
-            # Sort versions desc by version string, like legacy did. We sort
-            # FIRST and only then pick the auto_version fallback for hide —
-            # otherwise hide_version ends up promoting whatever happened to
-            # be unsorted-first instead of the highest remaining version.
-            policy["versions"].sort(key=lambda x: x.get("version", ""), reverse=True)
+            # Sort versions newest-first with the client-mirroring comparator.
+            # We sort FIRST and only then pick the auto_version fallback for
+            # hide — otherwise hide_version ends up promoting whatever happened
+            # to be unsorted-first instead of the highest remaining version.
+            policy["versions"].sort(key=lambda x: version_sort_key(x.get("version", "")), reverse=True)
 
             if action == "hide_version" and policy.get("auto_version") == version:
                 policy["auto_version"] = (
@@ -4241,7 +4252,7 @@ class Api:
                     v for v in versions
                     if str(v.get("version", "")).strip() not in hide_set
                 ]
-            versions.sort(key=lambda x: x.get("version", ""), reverse=True)
+            versions.sort(key=lambda x: version_sort_key(x.get("version", "")), reverse=True)
             policy["versions"] = versions
             pruned_count = self._prune_policy_versions(policy, keep=10)
 
