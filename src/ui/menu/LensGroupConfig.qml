@@ -18,8 +18,21 @@ MenuItem {
     property var statuses: []
     property var configs: []
     property var presets: []
+    // The lens the loaded .gyroflow carries, or null. Read-only: it never merges
+    // into `configs` and is never written back — `configs` is the global L1-L6
+    // table, and the panel reads and writes exactly that one source.
+    property var projectLens: null
     property int selectedLensIndex: 0
     property bool syncing: false
+    // `selectedLensIndex` doubles as the real lens index (0..5), so `Now` needs a
+    // value that can never collide with one.
+    readonly property int nowSentinel: -1
+    // batchScope hides `Now`: with a job selected the lens index is assigned, so it
+    // is necessarily one of the six groups.
+    readonly property bool hasNowEntry: !!projectLens && !batchScope
+    // Tracks presence across reloads so a *refresh* of the same project (what a
+    // save does) can be told apart from a project *arriving*.
+    property bool _projectLensWasPresent: false
     // Lock auto-selection after the user has manually picked a lens group from
     // the dropdown — otherwise loadConfigs / loadStatuses would re-run
     // updateSelection on every persist and snap selection back to whichever
@@ -148,11 +161,108 @@ MenuItem {
         if (!Array.isArray(presets))
             presets = []
     }
+    function loadProjectLens(): void {
+        const raw = controller.project_lens + ""
+        const parsed = raw.length > 0 ? parseJson(raw, null) : null
+        const arrived = !!parsed && !_projectLensWasPresent
+        projectLens = parsed
+        _projectLensWasPresent = !!parsed
+        // A project just arrived — let auto-selection have a fresh say so the panel
+        // shows what the project actually put on screen. A refresh of an already
+        // loaded project (what saving does) deliberately does NOT steal the user's
+        // current pick.
+        if (arrived) userPickedLens = false
+        syncing = true
+        updateSelection()
+        refreshUiFromSelection()
+        syncing = false
+    }
+    function isNowSelected(): bool {
+        return selectedLensIndex === nowSentinel
+    }
+    // Lens group the loaded project belongs to, or -1 when telemetry gave none.
+    function projectLensGroupIndex(): int {
+        const value = projectLens ? projectLens.lens_index : null
+        if (value === null || value === undefined) return -1
+        const index = +value
+        return (index >= 0 && index < 6) ? index : -1
+    }
+    // The dropdown lists `Now` first when present, so its indices are offset from
+    // the real lens indices by one — and the offset flips at runtime as the project
+    // loads/clears and as batchScope toggles. Both directions go through these two
+    // functions; nothing in this file may hand-roll the ±1.
+    function comboIndexToLensIndex(comboIndex: int): int {
+        if (!hasNowEntry) return comboIndex
+        return comboIndex === 0 ? nowSentinel : comboIndex - 1
+    }
+    function lensIndexToComboIndex(lensIndex: int): int {
+        if (!hasNowEntry) return Math.max(0, lensIndex)
+        return lensIndex === nowSentinel ? 0 : lensIndex + 1
+    }
+    // The project lens rendered in the shape the editor controls consume, so the
+    // read-only fields can be filled by the same refresh path as a real group.
+    function projectLensAsConfig(): var {
+        if (!projectLens) return defaultConfig(0)
+        return Object.assign(defaultConfig(0), {
+            focal_length_mm: projectLens.focal_length_mm,
+            anamorphic_enabled: !!projectLens.anamorphic_enabled,
+            preset_id: projectLens.preset_id,
+            squeeze_direction: projectLens.squeeze_direction,
+            squeeze_ratio: projectLens.squeeze_ratio,
+            lens_correction_amount: projectLens.lens_correction_amount
+        })
+    }
+    // "Now · ★45.0mm · Sirui Atar 50mm 1.33x" — every segment after the first is
+    // dropped when the project does not carry it.
+    //
+    // Deliberately NO lens group number, even though the project lens carries one:
+    // that index is the clip's identity (which group its gyro data says it belongs
+    // to), while the focal length beside it is whatever lens is actually applied.
+    // The two drift apart the moment the user switches groups and saves, and side
+    // by side they read as "group L2's focal length is 50mm" — which would be
+    // wrong. The index is still kept on `projectLens`; it is what the selection
+    // lands on when `Now` disappears in batchScope.
+    function nowLabel(): string {
+        let parts = [qsTr("Now")]
+        const focal = (projectLens ? projectLens.focal_length_mm : 0) || 0
+        if (focal > 0) {
+            // ★ marks a focal length that was user-owned when the project was
+            // saved, matching the render queue's per-job override badge.
+            const star = (projectLens && projectLens.focal_overridden) ? "★" : ""
+            parts.push(star + focal.toFixed(1) + "mm")
+        }
+        return parts.join(" · ") + anamorphicSuffix(projectLensAsConfig())
+    }
     function updateSelection(): void {
+        // `Now` may have gone away since the last pass (a job got selected, or a new
+        // video cleared the project), and a stale sentinel selection has to land on
+        // something real. The project's own group beats the heuristic below: the
+        // project knows which group it belongs to.
+        if (isNowSelected() && !hasNowEntry) {
+            const projectGroup = projectLensGroupIndex()
+            if (projectGroup >= 0) {
+                selectedLensIndex = projectGroup
+                // Sticky, and the early return matters: loadStatuses() and
+                // loadConfigs() each call this function, so without both the second
+                // pass would drop straight through to the heuristics and overwrite
+                // the landing we just made.
+                userPickedLens = true
+                return
+            }
+            // Nothing to land on (project carried no lens index, or the project is
+            // gone entirely) — let the heuristics below choose.
+            userPickedLens = false
+        }
         // If the user already picked a lens group manually, do not let auto-select
         // override it on every persist (Part B fix A: editing focal in L3 was
         // snapping back to L1 because L1 had a persisted manual focal value).
         if (userPickedLens) return
+        // A loaded project is the strongest available statement about what the main
+        // preview is currently showing, so it wins over every heuristic below.
+        if (hasNowEntry) {
+            selectedLensIndex = nowSentinel
+            return
+        }
         for (let i = 0; i < statuses.length; ++i) {
             const status = statuses[i]
             if (status.used && status.has_missing_focus) {
@@ -176,9 +286,11 @@ MenuItem {
         selectedLensIndex = 0
     }
     function currentStatus(): var {
+        if (isNowSelected()) return defaultStatus(0)
         return statuses[selectedLensIndex] || defaultStatus(selectedLensIndex)
     }
     function currentConfig(): var {
+        if (isNowSelected()) return projectLensAsConfig()
         return configs[selectedLensIndex] || defaultConfig(selectedLensIndex)
     }
     function hasManualFocusValue(config: var): bool {
@@ -233,6 +345,15 @@ MenuItem {
     }
     function lensGroupOptions(): var {
         let result = []
+        // `Now` first: it describes what is on screen right now, the six groups
+        // below it are the user's own library.
+        if (hasNowEntry) {
+            result.push({
+                value: nowSentinel,
+                label: nowLabel(),
+                enabled: true
+            })
+        }
         for (let i = 0; i < 6; ++i) {
             result.push({
                 value: i,
@@ -285,8 +406,9 @@ MenuItem {
         const config = currentConfig()
         const direction = config.mixed_squeeze_direction ? "horizontal" : (config.squeeze_direction || "horizontal")
 
-        if (lensGroupCombo.currentIndex !== selectedLensIndex)
-            lensGroupCombo.currentIndex = selectedLensIndex
+        const comboIndex = lensIndexToComboIndex(selectedLensIndex)
+        if (lensGroupCombo.currentIndex !== comboIndex)
+            lensGroupCombo.currentIndex = comboIndex
         if (!focalLengthField.activeFocus && focalLengthField.value !== focusFieldValue(config))
             focalLengthField.value = focusFieldValue(config)
         if (anamorphicBox.checked !== !!config.anamorphic_enabled)
@@ -323,7 +445,22 @@ MenuItem {
     //   - lensGroupCombo.onActivated  group switch: main preview only, the queue is
     //                               left completely untouched
     function applySelectedGroupToMain(): void {
-        const outJson = controller.apply_lens_group_to_main(selectedLensIndex) + ""
+        // `Now` is not a lens group — restoring the project lens is a different core
+        // entry point. Guard here too so no caller can push the sentinel into
+        // apply_lens_group_to_main(usize).
+        if (isNowSelected()) {
+            restoreProjectLensToMain()
+            return
+        }
+        syncExportDimension(controller.apply_lens_group_to_main(selectedLensIndex) + "")
+    }
+    // Put the loaded project's lens back on the main preview. This is what makes the
+    // "switch group, lose the project's lens" behaviour reversible — without it the
+    // only way back is reloading the .gyroflow.
+    function restoreProjectLensToMain(): void {
+        syncExportDimension(controller.restore_project_lens() + "")
+    }
+    function syncExportDimension(outJson: string): void {
         if (outJson.length > 0 && window.exportSettings) {
             try {
                 const dim = JSON.parse(outJson)
@@ -338,7 +475,7 @@ MenuItem {
                     }
                 }
             } catch (e) {
-                console.warn("apply_lens_group_to_main parse error:", e, outJson)
+                console.warn("lens group output dimension parse error:", e, outJson)
             }
         }
     }
@@ -346,6 +483,10 @@ MenuItem {
         // Skip persistence during boot — NumberField default-value initial
         // change events would otherwise wipe lens_group_configs_v1 to "[]".
         if (!_bootDone) return
+        // `Now` is read-only project data with no slot in the six-group table.
+        // Belt-and-braces alongside the disabled controls: anything that still
+        // manages to fire a value change must not reach the global config.
+        if (isNowSelected()) return
         // The manual-edit flag is user-controlled only (the lens-type switch above);
         // config values never flip it automatically.
         // simple-mode-ux-overhaul: write goes to global config unconditionally.
@@ -364,6 +505,9 @@ MenuItem {
     }
     function updateCurrentConfig(mutator): void {
         if (syncing) return
+        // See persistConfigs: `Now` has no slot to write into, and letting the
+        // sentinel index through would append an out-of-range entry.
+        if (isNowSelected()) return
         syncing = true
         let next = normalizeConfigs(configs)
         let config = Object.assign({}, next[selectedLensIndex] || defaultConfig(selectedLensIndex))
@@ -418,6 +562,11 @@ MenuItem {
             root.loadPresets()
             root.refreshUiFromSelection()
         }
+        // Fires when a project is imported, when a new video clears it, and after a
+        // successful save (which re-derives it from what was written to disk).
+        function onProject_lens_changed(): void {
+            root.loadProjectLens()
+        }
     }
     Connections {
         target: render_queue
@@ -442,6 +591,9 @@ MenuItem {
 
     Component.onCompleted: {
         loadPresets()
+        // Before the two loads below: they call updateSelection(), which needs to
+        // know whether a `Now` entry exists.
+        loadProjectLens()
         loadStatuses()
         loadConfigs()
         // After the initial load + the cascade of NumberField initial-value
@@ -497,13 +649,55 @@ MenuItem {
                         onCheckedChanged: {
                             if (checked === controller.lens_group_manual_edit) return
                             controller.lens_group_manual_edit = checked
-                            if (root.batchScope && root.selectedJobIds().length === 1)
+                            // isNowSelected guard: preview_lens_group_config takes a
+                            // usize, so the sentinel must never reach it. (`Now` is
+                            // hidden in batchScope, but the selection can lag a frame
+                            // behind the scope change.)
+                            if (root.batchScope && !root.isNowSelected() && root.selectedJobIds().length === 1)
                                 controller.preview_lens_group_config(JSON.stringify(root.configs), root.selectedLensIndex)
                             // Toggling the global gate must re-decide auto/manual for every
                             // queued job too — the per-job render path reads the same
                             // settings flag, but only when reapply is invoked.
                             if (typeof render_queue !== "undefined" && render_queue.has_match_results())
                                 render_queue.reapply_lens_group_config()
+                        }
+                    }
+                }
+            }
+
+            // Deliberately OUTSIDE editorColumn: the dropdown is what tells the user
+            // which group is in use and what lens the loaded project carries, so it
+            // must not be folded away by the manual-edit switch. Only the editing
+            // fields below collapse.
+            Label {
+                position: Label.LeftPosition
+                text: qsTr("Lens group")
+                width: parent.width
+
+                ComboBox {
+                    id: lensGroupCombo
+                    width: parent.width
+                    textRole: "label"
+                    model: root.lensGroupOptions()
+                    // Disabled rather than hidden in auto mode: switching groups has
+                    // essentially no effect on the picture there (should_use_manual_config
+                    // is false), so an enabled control would just look broken. The
+                    // labels — including `Now` — stay readable.
+                    enabled: controller.lens_group_manual_edit
+                    opacity: enabled ? 1.0 : 0.5
+                    currentIndex: Math.max(0, Math.min(root.lensIndexToComboIndex(root.selectedLensIndex), model.length - 1))
+                    onActivated: {
+                        if (!root.syncing) {
+                            // Lock auto-selection — the user's pick is now sticky.
+                            root.userPickedLens = true
+                            root.selectedLensIndex = root.comboIndexToLensIndex(currentIndex)
+                            // Switching must take effect on the main preview immediately —
+                            // without this the canvas only updates when a value is edited
+                            // (persistConfigs). Main preview only: this path deliberately
+                            // does NOT write the global config nor clear/reapply per-job
+                            // lens groups on queued jobs. `Now` routes to the project-lens
+                            // restore inside applySelectedGroupToMain.
+                            root.applySelectedGroupToMain()
                         }
                     }
                 }
@@ -539,33 +733,6 @@ MenuItem {
 
                 Label {
                     position: Label.LeftPosition
-                    text: qsTr("Lens group")
-                    width: parent.width
-
-                    ComboBox {
-                        id: lensGroupCombo
-                        width: parent.width
-                        textRole: "label"
-                        model: root.lensGroupOptions()
-                        currentIndex: Math.max(0, Math.min(root.selectedLensIndex, model.length - 1))
-                        onActivated: {
-                            if (!root.syncing) {
-                                // Lock auto-selection — the user's pick is now sticky.
-                                root.userPickedLens = true
-                                root.selectedLensIndex = currentIndex
-                                // Switching groups must take effect on the main preview
-                                // immediately — without this the canvas only updates when
-                                // a value is edited (persistConfigs). Main preview only:
-                                // this path deliberately does NOT write the global config
-                                // nor clear/reapply per-job lens groups on queued jobs.
-                                root.applySelectedGroupToMain()
-                            }
-                        }
-                    }
-                }
-
-                Label {
-                    position: Label.LeftPosition
                     text: qsTr("Focal length")
                     width: parent.width
 
@@ -582,7 +749,8 @@ MenuItem {
                         placeholderText: ""
                         // All 6 lens groups are editable at all times. The per-group Manual
                         // checkbox decides whether the value is actually applied.
-                        enabled: true
+                        // `Now` is project data being reported back, not an input.
+                        enabled: !root.isNowSelected()
                         onValueChanged: {
                             if (root.syncing) return
                             root.updateCurrentConfig(config => {
@@ -596,7 +764,8 @@ MenuItem {
                     id: anamorphicBox
                     text: qsTr("Anamorphic lens")
                     // Always editable — applied only when the group's Manual toggle is on.
-                    cb.enabled: true
+                    // Except for `Now`, which is read-only project data.
+                    cb.enabled: !root.isNowSelected()
                     cb.onCheckedChanged: {
                         if (root.syncing) return
                         root.updateCurrentConfig(config => {
@@ -651,6 +820,7 @@ MenuItem {
                             width: parent.width
                             textRole: "name"
                             model: root.presetOptions()
+                            enabled: !root.isNowSelected()
                             onActivated: {
                                 if (root.syncing) return
                                 const option = model[currentIndex]
@@ -682,6 +852,7 @@ MenuItem {
                             id: horizontalDirection
                             width: (parent.width - parent.spacing) / 2
                             text: qsTr("Horizontal")
+                            enabled: !root.isNowSelected()
                             onCheckedChanged: {
                                 if (root.syncing || !checked) return
                                 root.updateCurrentConfig(config => config.squeeze_direction = "horizontal")
@@ -692,6 +863,7 @@ MenuItem {
                             id: verticalDirection
                             width: (parent.width - parent.spacing) / 2
                             text: qsTr("Vertical")
+                            enabled: !root.isNowSelected()
                             onCheckedChanged: {
                                 if (root.syncing || !checked) return
                                 root.updateCurrentConfig(config => config.squeeze_direction = "vertical")
@@ -712,7 +884,7 @@ MenuItem {
                             from: 1.0
                             to: 3.0
                             precision: 2
-                            readOnly: !!root.currentConfig().preset_id
+                            readOnly: root.isNowSelected() || !!root.currentConfig().preset_id
                             placeholderText: root.currentConfig().mixed_squeeze_ratio ? qsTr("Mixed") : ""
                             opacity: readOnly ? 0.6 : 1.0
                             onValueChanged: {
@@ -740,6 +912,7 @@ MenuItem {
                             defaultValue: 100
                             unit: qsTr("%")
                             precision: 0
+                            enabled: !root.isNowSelected()
                             onValueChanged: {
                                 if (root.syncing) return
                                 root.updateCurrentConfig(config => {

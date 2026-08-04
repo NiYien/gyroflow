@@ -2314,6 +2314,11 @@ Vuoi inviare il tuo profilo?</translation>
 <context>
     <name>LensGroupConfig</name>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
+        <source>Now</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
         <source>Display on Device</source>
         <translation>Mostra sul dispositivo</translation>

@@ -2316,6 +2316,11 @@ Do you want to submit your profile?</source>
 <context>
     <name>LensGroupConfig</name>
     <message>
+        <location filename="../../src/ui/menu/LensGroupConfig.qml" line="226"/>
+        <source>Now</source>
+        <translation>當前</translation>
+    </message>
+    <message>
         <location filename="../../src/ui/menu/LensGroupConfig.qml" line="755"/>
         <source>Display on Device</source>
         <translation>在裝置中顯示</translation>

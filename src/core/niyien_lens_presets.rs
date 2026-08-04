@@ -61,6 +61,82 @@ pub struct LensGroupStatus {
     pub video_count: usize,
 }
 
+/// The lens carried by a loaded `.gyroflow`, backing the `Now` entry in the lens
+/// group dropdown.
+///
+/// Two halves that must always describe the same project, hence one struct
+/// established and cleared as a unit:
+///   - the display fields feed the `Now` label and its read-only controls;
+///   - `profile` + `lens_correction_amount` are what "switch back to Now" restores.
+///
+/// `profile` is kept verbatim rather than rebuilt from the display fields on
+/// demand: `build_lens_profile` would recompute the camera matrix from the
+/// *current* metadata and drop `lens_group_override`, so a rebuilt profile is not
+/// the lens the project was saved with.
+// No PartialEq: `LensProfile` does not implement it. Compare the display half
+// (`ProjectLensDisplay`) when equality is what you want.
+#[derive(Clone, Debug)]
+pub struct ProjectLens {
+    /// Lens group the project's video belongs to. `None` when telemetry carries no
+    /// lens index — the label then omits the group segment instead of claiming L1.
+    pub lens_index: Option<usize>,
+    pub focal_length_mm: Option<f64>,
+    /// `profile.lens_group_override`: the focal length / camera matrix was
+    /// user-owned when the project was saved. Drives the `★` prefix on the label.
+    pub focal_overridden: bool,
+    pub anamorphic_enabled: bool,
+    pub preset_id: Option<String>,
+    pub squeeze_direction: Option<SqueezeDirection>,
+    pub squeeze_ratio: Option<f64>,
+    pub profile: LensProfile,
+    /// Lens correction amount (0..1) in effect once the import finished. Lives on
+    /// `params`, not on the profile, and gets overwritten by lens group switches —
+    /// so restoring the profile alone would leave it at the switched-to value.
+    pub lens_correction_amount: f64,
+}
+
+/// QML-facing payload for [`ProjectLens`]. Deliberately excludes `profile`, which
+/// is restore-only state and has no business crossing into the UI.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ProjectLensDisplay {
+    pub lens_index: Option<usize>,
+    pub focal_length_mm: Option<f64>,
+    pub focal_overridden: bool,
+    pub anamorphic_enabled: bool,
+    pub preset_id: Option<String>,
+    pub squeeze_direction: Option<SqueezeDirection>,
+    pub squeeze_ratio: Option<f64>,
+    /// Percent (0-100), matching the lens group panel's slider unit.
+    pub lens_correction_amount: f64,
+}
+
+impl ProjectLens {
+    pub fn display(&self) -> ProjectLensDisplay {
+        ProjectLensDisplay {
+            lens_index: self.lens_index,
+            focal_length_mm: self.focal_length_mm,
+            focal_overridden: self.focal_overridden,
+            anamorphic_enabled: self.anamorphic_enabled,
+            preset_id: self.preset_id.clone(),
+            squeeze_direction: self.squeeze_direction,
+            squeeze_ratio: self.squeeze_ratio,
+            lens_correction_amount: self.lens_correction_amount * 100.0,
+        }
+    }
+}
+
+/// Serialize the `Now` payload for QML. Empty string when no project is loaded —
+/// the QML side treats that as "no `Now` entry".
+pub fn project_lens_display_to_json(project: Option<&ProjectLens>) -> String {
+    match project {
+        Some(project) => {
+            serde_json::to_string(&project.display()).unwrap_or_else(|_| String::new())
+        }
+        None => String::new(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FocalLengthSource {
     Auto,
@@ -571,14 +647,26 @@ pub fn effective_anamorphic_label(config: Option<&LensGroupConfig>) -> Option<St
     resolve_anamorphic_config(config).and_then(|anamorphic| anamorphic.lens_model_label)
 }
 
-pub fn lens_group_config_from_lens_profile(
+/// Describe the lens an imported `.gyroflow` carries, for the `Now` dropdown entry.
+///
+/// This is a *display* extraction, not a lens-group build: it never rejects a
+/// profile. Every project carrying calibration data yields a description; a
+/// non-anamorphic project simply reports `anamorphic_enabled: false`. (Earlier this
+/// function doubled as "can this profile be understood as an anamorphic lens group
+/// config" and bailed out otherwise — that gate belonged to the old use, not this
+/// one.)
+///
+/// Focal length is judged with `sanitize_positive`, NOT
+/// `sanitize_manual_focal_length_mm`: the latter's 5mm floor is input validation for
+/// hand-typed values and would report sub-5mm lenses as having no focal length.
+///
+/// `lens_index` stays `Option` all the way to the UI — an absent lens index means
+/// the label omits the group segment, never that the project belongs to L1.
+pub fn project_lens_from_lens_profile(
     profile: &LensProfile,
-    lens_index: usize,
-) -> Option<LensGroupConfig> {
-    if lens_index >= LENS_GROUP_COUNT {
-        return None;
-    }
-
+    lens_index: Option<usize>,
+    lens_correction_amount: f64,
+) -> ProjectLens {
     let horizontal_stretch =
         sanitize_positive(Some(profile.input_horizontal_stretch)).unwrap_or(1.0);
     let vertical_stretch = sanitize_positive(Some(profile.input_vertical_stretch)).unwrap_or(1.0);
@@ -591,36 +679,27 @@ pub fn lens_group_config_from_lens_profile(
     } else if vertical_stretch > 1.01 {
         (true, Some(SqueezeDirection::Vertical), Some(vertical_stretch))
     } else {
-        return None;
+        (false, None, None)
     };
 
-    let preset_id = find_preset_by_name(&profile.lens_model).map(|preset| preset.id);
-    let manual_label = is_manual_anamorphic_label(&profile.lens_model);
-    if preset_id.is_none() && !manual_label {
-        return None;
-    }
+    // Only meaningful for an anamorphic profile: `lens_model` on an ordinary lens is
+    // the camera's own lens name and must not be matched against anamorphic presets.
+    let preset_id = if anamorphic_enabled {
+        find_preset_by_name(&profile.lens_model).map(|preset| preset.id)
+    } else {
+        None
+    };
 
-    let mut config = LensGroupConfig {
-        lens_index,
-        focal_length_mm: sanitize_manual_focal_length_mm(profile.focal_length),
-        pre_anamorphic_focal_length_mm: None,
-        pre_anamorphic_focal_length_captured: false,
+    ProjectLens {
+        lens_index: lens_index.filter(|index| *index < LENS_GROUP_COUNT),
+        focal_length_mm: sanitize_positive(profile.focal_length),
+        focal_overridden: profile.lens_group_override,
         anamorphic_enabled,
         preset_id,
         squeeze_direction,
         squeeze_ratio,
-        lens_correction_amount: None,
-    };
-
-    if config.anamorphic_enabled && config.preset_id.is_none() && config.squeeze_ratio.is_none() {
-        config.anamorphic_enabled = false;
-        config.squeeze_direction = None;
-    }
-
-    if config.anamorphic_enabled {
-        Some(config)
-    } else {
-        None
+        profile: profile.clone(),
+        lens_correction_amount,
     }
 }
 
@@ -1110,15 +1189,6 @@ fn manual_anamorphic_label(squeeze_ratio: f64, direction: SqueezeDirection) -> S
         SqueezeDirection::Vertical => "V",
     };
     format!("Manual anamorphic {squeeze_ratio:.2}x {direction}")
-}
-
-fn is_manual_anamorphic_label(label: &str) -> bool {
-    let mut parts = label.split_whitespace();
-    matches!(parts.next(), Some("Manual"))
-        && matches!(parts.next(), Some("anamorphic"))
-        && matches!(parts.next(), Some(ratio) if ratio.ends_with('x'))
-        && matches!(parts.next(), Some("H" | "V"))
-        && parts.next().is_none()
 }
 
 fn value_to_u64(value: &serde_json::Value) -> Option<u64> {
@@ -2319,60 +2389,175 @@ mod tests {
     }
 
     #[test]
-    fn lens_group_config_from_lens_profile_matches_builtin_preset_name() {
+    fn project_lens_from_lens_profile_matches_builtin_preset_name() {
         let mut profile = LensProfile::default();
-        profile.lens_model = "Sirui star 50mm 1.33x".to_owned();
+        profile.lens_model = "Sirui Atar 50mm 1.33x".to_owned();
         profile.focal_length = Some(16.0);
         profile.set_input_stretch(1.33, 1.0);
 
-        let config = lens_group_config_from_lens_profile(&profile, 0).unwrap();
+        let project = project_lens_from_lens_profile(&profile, Some(0), 1.0);
 
-        assert_eq!(config.lens_index, 0);
-        assert_eq!(config.focal_length_mm, Some(16.0));
-        assert!(config.anamorphic_enabled);
-        assert_eq!(
-            config.preset_id.as_deref(),
-            Some("sirui_xingchen_50mm_1_33x")
-        );
-        assert_eq!(config.squeeze_direction, Some(SqueezeDirection::Horizontal));
-        assert_eq!(config.squeeze_ratio, Some(1.33));
+        assert_eq!(project.lens_index, Some(0));
+        assert_eq!(project.focal_length_mm, Some(16.0));
+        assert!(project.anamorphic_enabled);
+        assert_eq!(project.preset_id.as_deref(), Some("sirui_astra_50mm_1_33x"));
+        assert_eq!(project.squeeze_direction, Some(SqueezeDirection::Horizontal));
+        assert_eq!(project.squeeze_ratio, Some(1.33));
     }
 
+    // Was "ignores focal length only": a project whose lens is an ordinary
+    // non-anamorphic lens is exactly the common case the `Now` entry has to cover.
     #[test]
-    fn lens_group_config_from_lens_profile_ignores_focal_length_only() {
+    fn project_lens_from_lens_profile_keeps_focal_length_only_project() {
         let mut profile = LensProfile::default();
         profile.lens_model = "Ordinary lens".to_owned();
         profile.focal_length = Some(35.0);
         profile.set_input_stretch(1.0, 1.0);
 
-        assert!(lens_group_config_from_lens_profile(&profile, 0).is_none());
+        let project = project_lens_from_lens_profile(&profile, Some(2), 1.0);
+
+        assert_eq!(project.focal_length_mm, Some(35.0));
+        assert!(!project.anamorphic_enabled);
+        assert_eq!(project.preset_id, None);
+        assert_eq!(project.squeeze_direction, None);
+        assert_eq!(project.squeeze_ratio, None);
     }
 
     #[test]
-    fn lens_group_config_from_lens_profile_matches_manual_anamorphic_label() {
+    fn project_lens_from_lens_profile_manual_anamorphic_reports_ratio_without_preset() {
         let mut profile = LensProfile::default();
         profile.lens_model = "Manual anamorphic 1.50x H".to_owned();
         profile.focal_length = Some(35.0);
         profile.set_input_stretch(1.5, 1.0);
 
-        let config = lens_group_config_from_lens_profile(&profile, 0).unwrap();
+        let project = project_lens_from_lens_profile(&profile, Some(0), 1.0);
 
-        assert_eq!(config.lens_index, 0);
-        assert_eq!(config.focal_length_mm, Some(35.0));
-        assert!(config.anamorphic_enabled);
-        assert_eq!(config.preset_id, None);
-        assert_eq!(config.squeeze_direction, Some(SqueezeDirection::Horizontal));
-        assert_eq!(config.squeeze_ratio, Some(1.5));
+        assert_eq!(project.focal_length_mm, Some(35.0));
+        assert!(project.anamorphic_enabled);
+        assert_eq!(project.preset_id, None);
+        assert_eq!(project.squeeze_direction, Some(SqueezeDirection::Horizontal));
+        assert_eq!(project.squeeze_ratio, Some(1.5));
     }
 
+    // Was "ignores unknown anamorphic label": for display purposes a stretched
+    // profile IS anamorphic regardless of what its lens_model says. Reporting the
+    // ratio is honest; the label gate belonged to the old build-oriented use.
     #[test]
-    fn lens_group_config_from_lens_profile_ignores_unknown_anamorphic_label() {
+    fn project_lens_from_lens_profile_unknown_label_still_reports_stretch() {
         let mut profile = LensProfile::default();
         profile.lens_model = "Ordinary stretched lens".to_owned();
         profile.focal_length = Some(35.0);
         profile.set_input_stretch(1.5, 1.0);
 
-        assert!(lens_group_config_from_lens_profile(&profile, 0).is_none());
+        let project = project_lens_from_lens_profile(&profile, Some(0), 1.0);
+
+        assert!(project.anamorphic_enabled);
+        assert_eq!(project.preset_id, None);
+        assert_eq!(project.squeeze_ratio, Some(1.5));
+    }
+
+    #[test]
+    fn project_lens_from_lens_profile_vertical_stretch() {
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(35.0);
+        profile.set_input_stretch(1.0, 1.5);
+
+        let project = project_lens_from_lens_profile(&profile, None, 1.0);
+
+        assert!(project.anamorphic_enabled);
+        assert_eq!(project.squeeze_direction, Some(SqueezeDirection::Vertical));
+        assert_eq!(project.squeeze_ratio, Some(1.5));
+    }
+
+    // The manual-focal 5mm floor is input validation for hand-typed values. Applying
+    // it to the project readout would report action-cam / drone lenses as having no
+    // focal length at all.
+    #[test]
+    fn project_lens_from_lens_profile_keeps_sub_manual_threshold_focal() {
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(2.7);
+
+        let project = project_lens_from_lens_profile(&profile, Some(0), 1.0);
+
+        assert!(2.7 > MANUAL_FOCAL_LENGTH_MIN_MM - 3.0);
+        assert_eq!(project.focal_length_mm, Some(2.7));
+    }
+
+    #[test]
+    fn project_lens_from_lens_profile_keeps_absent_lens_index_absent() {
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(45.0);
+
+        let project = project_lens_from_lens_profile(&profile, None, 1.0);
+
+        // Must not become Some(0): the label would then claim the project belongs
+        // to L1 when telemetry never said so.
+        assert_eq!(project.lens_index, None);
+    }
+
+    #[test]
+    fn project_lens_from_lens_profile_rejects_out_of_range_lens_index() {
+        let profile = LensProfile::default();
+
+        let project = project_lens_from_lens_profile(&profile, Some(LENS_GROUP_COUNT), 1.0);
+
+        assert_eq!(project.lens_index, None);
+    }
+
+    #[test]
+    fn project_lens_from_lens_profile_carries_focal_override_flag() {
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(45.0);
+        profile.lens_group_override = true;
+
+        let project = project_lens_from_lens_profile(&profile, Some(1), 1.0);
+
+        assert!(project.focal_overridden);
+
+        profile.lens_group_override = false;
+        let project = project_lens_from_lens_profile(&profile, Some(1), 1.0);
+        assert!(!project.focal_overridden);
+    }
+
+    #[test]
+    fn project_lens_from_lens_profile_keeps_full_profile_for_restore() {
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(45.0);
+        profile.lens_group_override = true;
+        profile.fisheye_params.camera_matrix = vec![
+            [1234.5, 0.0, 960.0],
+            [0.0, 1234.5, 540.0],
+            [0.0, 0.0, 1.0],
+        ];
+
+        let project = project_lens_from_lens_profile(&profile, Some(0), 0.42);
+
+        assert_eq!(project.profile.fisheye_params.camera_matrix[0][0], 1234.5);
+        assert!(project.profile.lens_group_override);
+        assert_eq!(project.lens_correction_amount, 0.42);
+    }
+
+    #[test]
+    fn project_lens_display_to_json_is_empty_without_project() {
+        assert_eq!(project_lens_display_to_json(None), "");
+    }
+
+    #[test]
+    fn project_lens_display_to_json_omits_profile_and_scales_correction() {
+        let mut profile = LensProfile::default();
+        profile.focal_length = Some(45.0);
+        profile.lens_group_override = true;
+        let project = project_lens_from_lens_profile(&profile, Some(1), 0.42);
+
+        let json = project_lens_display_to_json(Some(&project));
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(value["lens_index"], 1);
+        assert_eq!(value["focal_length_mm"], 45.0);
+        assert_eq!(value["focal_overridden"], true);
+        assert_eq!(value["lens_correction_amount"], 42.0);
+        // The restore-only profile has no business crossing into QML.
+        assert!(value.get("profile").is_none());
     }
 
     #[test]

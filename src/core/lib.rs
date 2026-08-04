@@ -326,7 +326,10 @@ pub struct StabilizationManager {
     pub input_file: Arc<RwLock<InputFile>>,
 
     pub lens_group_config: Arc<RwLock<Vec<LensGroupConfig>>>,
-    pub project_lens_group_config: Arc<RwLock<Option<Vec<LensGroupConfig>>>>,
+    // Lens carried by the loaded `.gyroflow`, backing the `Now` dropdown entry.
+    // Read-only as far as the panel is concerned: it never merges into
+    // `lens_group_config` and is never written back to settings.
+    pub project_lens: Arc<RwLock<Option<niyien_lens_presets::ProjectLens>>>,
     pub lens_group_status: Arc<RwLock<Vec<LensGroupStatus>>>,
     // Global "Manual edit" toggle for the lens group panel. Missing focal length
     // can still be filled from the group config; anamorphic replacement requires
@@ -420,7 +423,7 @@ impl Default for StabilizationManager {
                     niyien_lens_presets::lens_group_configs_from_json(&stored)
                 }
             })),
-            project_lens_group_config: Arc::new(RwLock::new(None)),
+            project_lens: Arc::new(RwLock::new(None)),
             lens_group_status: Arc::new(RwLock::new(
                 niyien_lens_presets::default_lens_group_statuses(),
             )),
@@ -2821,7 +2824,9 @@ impl StabilizationManager {
         let configs = niyien_lens_presets::lens_group_configs_from_json(json);
         // Persist normalized JSON (not the raw input — raw input may be stale or malformed).
         let normalized = niyien_lens_presets::lens_group_config_to_json(&configs);
-        *self.project_lens_group_config.write() = None;
+        // Deliberately does NOT drop the project lens: editing the global table is
+        // an edit of L1-L6, not of the loaded project. Only `clear()` (new video)
+        // drops it.
         *self.lens_group_config.write() = configs;
         settings::set(
             "lens_group_configs_v1",
@@ -2831,7 +2836,7 @@ impl StabilizationManager {
     }
 
     pub fn set_lens_group_manual_edit(&self, enabled: bool) {
-        *self.project_lens_group_config.write() = None;
+        // Deliberately does NOT drop the project lens — see set_lens_group_config_json.
         self.lens_group_manual_edit.store(enabled, SeqCst);
         settings::set("lens_group_manual_edit", serde_json::Value::Bool(enabled));
         settings::flush();
@@ -2841,8 +2846,37 @@ impl StabilizationManager {
         self.lens_group_manual_edit.load(SeqCst)
     }
 
-    pub fn has_project_lens_group_config(&self) -> bool {
-        self.project_lens_group_config.read().is_some()
+    pub fn has_project_lens(&self) -> bool {
+        self.project_lens.read().is_some()
+    }
+
+    /// `Now` dropdown payload. Empty string when no project is loaded.
+    pub fn get_project_lens_display_json(&self) -> String {
+        niyien_lens_presets::project_lens_display_to_json(self.project_lens.read().as_ref())
+    }
+
+    /// Re-derive the project lens from the current main-preview state, so `Now`
+    /// keeps describing what the project file on disk contains instead of the lens
+    /// it was loaded with. Called after a successful project save.
+    ///
+    /// No-op when no project lens is established: saving is not importing, so a
+    /// plain video that never had a project loaded does not gain a `Now` entry.
+    pub fn refresh_project_lens_from_current(&self) {
+        if self.project_lens.read().is_none() {
+            return;
+        }
+        let lens_index = {
+            let gyro = self.gyro.read();
+            let md = gyro.file_metadata.read();
+            niyien_lens_presets::extract_lens_index(&md.additional_data)
+        };
+        let lens_correction_amount = self.params.read().lens_correction_amount;
+        let refreshed = niyien_lens_presets::project_lens_from_lens_profile(
+            &self.lens.read(),
+            lens_index,
+            lens_correction_amount,
+        );
+        *self.project_lens.write() = Some(refreshed);
     }
 
     fn lens_group_baseline_for_build(&self, applies_anamorphic: bool) -> LensProfile {
@@ -2880,6 +2914,44 @@ impl StabilizationManager {
         let cfg = cfg?;
 
         self.apply_lens_group_config_to_main(lens_index, &cfg)
+    }
+
+    /// Put the lens the loaded `.gyroflow` came with back on the main preview —
+    /// what selecting the `Now` dropdown entry does.
+    ///
+    /// The profile is written back verbatim rather than rebuilt from the project's
+    /// focal length / anamorphic values: rebuilding recomputes the camera matrix
+    /// from the *current* metadata and drops `lens_group_override`, so the guard
+    /// that keeps per-frame telemetry from overwriting a user-owned matrix would be
+    /// silently lost (`frame_transform.rs::get_lens_data_at_timestamp`).
+    ///
+    /// Returns the output dimension pushed, mirroring `apply_lens_group_to_main` so
+    /// the caller can sync the Export panel's width/height the same way.
+    pub fn restore_project_lens_to_main(&self) -> Option<(usize, usize)> {
+        let project = self.project_lens.read().clone()?;
+
+        let (size, video_rotation) = {
+            let p = self.params.read();
+            ((p.size.0, p.size.1), p.video_rotation)
+        };
+
+        let out_dim = project.profile.output_dimension.clone();
+        *self.lens.write() = project.profile;
+        // The whole lens is being replaced, so the baseline captured when anamorphic
+        // was first enabled no longer describes anything reachable.
+        *self.pre_anamorphic_backup.write() = None;
+        self.set_lens_correction_amount(project.lens_correction_amount);
+        self.invalidate_smoothing();
+
+        // Same sensor-space -> display-space swap as apply_lens_group_config_to_main:
+        // handing set_output_size a sensor-space request for a rotated clip yields a
+        // landscape target for portrait content.
+        let display_dim = match out_dim {
+            Some(od) => rotated_output_dim((od.w, od.h), video_rotation),
+            None => rotated_output_dim(size, video_rotation),
+        };
+        self.set_output_size(display_dim.0, display_dim.1);
+        Some(display_dim)
     }
 
     pub fn apply_lens_group_config_json_to_main(
@@ -3016,14 +3088,17 @@ impl StabilizationManager {
         )
         .and_then(|profile| profile.get_json().ok())
     }
+    /// The lens group panel's L1-L6 readback. This is deliberately the *global*
+    /// table and nothing else: the panel reads through here and writes back
+    /// through `set_lens_group_config_json`, so any other source leaking in here
+    /// would be written back into the user's persisted table on the next edit.
+    /// Project-local lens data is exposed separately through
+    /// `get_project_lens_display_json`.
     pub fn get_lens_group_config_json(&self) -> String {
-        if let Some(configs) = self.project_lens_group_config.read().as_ref() {
-            return niyien_lens_presets::lens_group_config_to_json(configs);
-        }
         niyien_lens_presets::lens_group_config_to_json(&self.lens_group_config.read())
     }
     pub fn clear_lens_group_config(&self) {
-        *self.project_lens_group_config.write() = None;
+        *self.project_lens.write() = None;
         *self.lens_group_config.write() = niyien_lens_presets::default_lens_group_configs();
     }
     pub fn set_lens_group_status(&self, statuses: Vec<LensGroupStatus>) {
@@ -3110,9 +3185,7 @@ impl StabilizationManager {
             smoothing: Arc::new(RwLock::new(self.smoothing.read().clone())),
             input_file: Arc::new(RwLock::new(self.input_file.read().clone())),
             lens_group_config: self.lens_group_config.clone(),
-            project_lens_group_config: Arc::new(RwLock::new(
-                self.project_lens_group_config.read().clone(),
-            )),
+            project_lens: Arc::new(RwLock::new(self.project_lens.read().clone())),
             lens_group_status: self.lens_group_status.clone(),
             lens_group_manual_edit: self.lens_group_manual_edit.clone(),
             lens_profile_db: self.lens_profile_db.clone(),
@@ -3156,7 +3229,9 @@ impl StabilizationManager {
         // Drop the anamorphic baseline snapshot so a new project doesn't inherit the
         // previous video's distortion coefficients when the user toggles anamorphic on.
         *self.pre_anamorphic_backup.write() = None;
-        *self.project_lens_group_config.write() = None;
+        // The only place the project lens is dropped. Panel edits and Manual-edit
+        // toggles deliberately leave it alone — see set_lens_group_config_json.
+        *self.project_lens.write() = None;
 
         self.pose_estimator.clear();
     }
@@ -3521,6 +3596,12 @@ impl StabilizationManager {
         let mut load_options = gyro_source::FileLoadOptions::default();
         if let serde_json::Value::Object(ref mut obj) = obj {
             let mut output_size = None;
+            // The `Now` entry / restore snapshot is established at the very end of
+            // this function, not here in the `calibration_data` branch: the lens
+            // correction amount it captures lives in the `stabilization` section,
+            // which is applied later, so capturing early would snapshot the
+            // pre-import value.
+            let mut has_calibration_data = false;
             load_options.project_version = obj.get("version").and_then(|x| x.as_u64()).unwrap_or(2);
             let mut org_video_url = obj
                 .get("videofile")
@@ -3900,20 +3981,8 @@ impl StabilizationManager {
                 l.load_from_json_value(&lens);
                 let db = self.lens_profile_db.read();
                 l.resolve_interpolations(&db);
-                let lens_index = {
-                    let gyro = self.gyro.read();
-                    let md = gyro.file_metadata.read();
-                    niyien_lens_presets::extract_lens_index(&md.additional_data).unwrap_or(0)
-                };
-                let project_config =
-                    niyien_lens_presets::lens_group_config_from_lens_profile(&l, lens_index);
                 drop(l);
-                *self.project_lens_group_config.write() = project_config.map(|config| {
-                    let mut configs = niyien_lens_presets::default_lens_group_configs();
-                    let lens_index = config.lens_index;
-                    configs[lens_index] = config;
-                    configs
-                });
+                has_calibration_data = true;
             }
             if let Some(serde_json::Value::Object(obj)) = obj.get_mut("stabilization") {
                 if crate::settings::project_import_gate() {
@@ -4314,6 +4383,31 @@ impl StabilizationManager {
                 }
                 self.init_size();
                 self.recompute_blocking();
+            }
+
+            // Establish the project lens once every section has been applied, so the
+            // captured lens correction amount is the project's rather than whatever
+            // was in effect before the import.
+            //
+            // Presets are excluded: they travel through the same import path and a
+            // user-authored preset may well carry `calibration_data`, but a preset is
+            // not a project and must not produce a `Now` entry.
+            // A real project always defines this state, so importing one without
+            // calibration data clears whatever a previous project left behind.
+            if !*is_preset {
+                *self.project_lens.write() = has_calibration_data.then(|| {
+                    let lens_index = {
+                        let gyro = self.gyro.read();
+                        let md = gyro.file_metadata.read();
+                        niyien_lens_presets::extract_lens_index(&md.additional_data)
+                    };
+                    let lens_correction_amount = self.params.read().lens_correction_amount;
+                    niyien_lens_presets::project_lens_from_lens_profile(
+                        &self.lens.read(),
+                        lens_index,
+                        lens_correction_amount,
+                    )
+                });
             }
         }
         Ok(obj)
@@ -5646,201 +5740,356 @@ mod tests {
         settings::set_project_import_gate(false);
     }
 
+    /// A `.gyroflow` whose calibration data describes `lens_model` with the given
+    /// stretch. `extra` is merged into the top level (e.g. a `stabilization` block).
+    fn project_json_with_calibration(
+        lens_model: &str,
+        focal_length: f64,
+        horizontal_stretch: f64,
+        extra: serde_json::Value,
+    ) -> serde_json::Value {
+        // A non-empty `videofile` is what makes import classify the payload as a
+        // real project rather than a preset. Tests that want a preset clear it.
+        let mut project = serde_json::json!({
+            "title": "Gyroflow data file",
+            "version": 4,
+            "videofile": "file:///video.mp4",
+            "calibration_data": {
+                "lens_model": lens_model,
+                "focal_length": focal_length,
+                "input_horizontal_stretch": horizontal_stretch,
+                "input_vertical_stretch": 1.0,
+                "fisheye_params": {
+                    "camera_matrix": [
+                        [1307.2340425531916, 0.0, 1277.0],
+                        [0.0, 1307.2340425531916, 540.0],
+                        [0.0, 0.0, 1.0]
+                    ],
+                    "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
+                }
+            }
+        });
+        if let (Some(target), Some(extra)) = (project.as_object_mut(), extra.as_object()) {
+            for (key, value) in extra {
+                target.insert(key.clone(), value.clone());
+            }
+        }
+        project
+    }
+
+    fn import_project(target: &StabilizationManager, project: &serde_json::Value) -> bool {
+        let mut is_preset = false;
+        target
+            .import_gyroflow_data(
+                project.to_string().as_bytes(),
+                false,
+                None,
+                |_| (),
+                Arc::new(AtomicBool::new(false)),
+                &mut is_preset,
+                false,
+            )
+            .unwrap();
+        is_preset
+    }
+
+    // The panel's L1-L6 readback is the global table and nothing else. Before this
+    // change the project's lens replaced the whole table, so five groups read back
+    // blank and the panel's next write persisted that blank table over the user's.
     #[test]
     #[serial]
-    fn import_gyroflow_data_exposes_project_lens_group_config_from_calibration_data() {
+    fn import_gyroflow_data_keeps_global_lens_group_readback_intact() {
         let tmp = tempfile::tempdir().unwrap();
         let settings_file = tmp.path().join("settings.json");
 
         settings::with_test_settings_file(settings_file, || {
             let target = StabilizationManager::default();
             target.set_lens_group_config_json(
-                r#"[{
-                    "lens_index": 0,
-                    "focal_length_mm": 35.0
-                }]"#,
+                r#"[
+                    { "lens_index": 0, "focal_length_mm": 24.0 },
+                    { "lens_index": 1, "focal_length_mm": 35.0 },
+                    { "lens_index": 2, "focal_length_mm": 50.0 },
+                    { "lens_index": 3, "focal_length_mm": 85.0 },
+                    { "lens_index": 4, "focal_length_mm": 105.0 },
+                    { "lens_index": 5, "focal_length_mm": 135.0 }
+                ]"#,
             );
             target.set_lens_group_manual_edit(false);
             let global_configs_before = target.lens_group_config.read().clone();
 
-            let project = serde_json::json!({
-                "title": "Gyroflow data file",
-                "version": 4,
-                "videofile": "",
-                "calibration_data": {
-                    "lens_model": "Sirui star 50mm 1.33x",
-                    "focal_length": 16.0,
-                    "input_horizontal_stretch": 1.33,
-                    "input_vertical_stretch": 1.0,
-                    "output_dimension": { "w": 2554, "h": 1080 },
-                    "calib_dimension": { "w": 2554, "h": 1080 },
-                    "orig_dimension": { "w": 2554, "h": 1080 },
-                    "distortion_model": "opencv_fisheye",
-                    "fisheye_params": {
-                        "camera_matrix": [
-                            [1307.2340425531916, 0.0, 1277.0],
-                            [0.0, 1307.2340425531916, 540.0],
-                            [0.0, 0.0, 1.0]
-                        ],
-                        "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
-                    }
-                }
-            });
-
-            let mut is_preset = false;
-            target
-                .import_gyroflow_data(
-                    project.to_string().as_bytes(),
-                    false,
-                    None,
-                    |_| (),
-                    Arc::new(AtomicBool::new(false)),
-                    &mut is_preset,
-                    false,
-                )
-                .unwrap();
-
-            let displayed =
-                niyien_lens_presets::lens_group_configs_from_json(&target.get_lens_group_config_json());
-            assert_eq!(
-                displayed[0].preset_id.as_deref(),
-                Some("sirui_xingchen_50mm_1_33x")
+            import_project(
+                &target,
+                &project_json_with_calibration(
+                    "Sirui Atar 50mm 1.33x",
+                    16.0,
+                    1.33,
+                    serde_json::json!({}),
+                ),
             );
-            assert_eq!(displayed[0].focal_length_mm, Some(16.0));
-            assert!(displayed[0].anamorphic_enabled);
-            assert_eq!(
-                displayed[0].squeeze_direction,
-                Some(niyien_lens_presets::SqueezeDirection::Horizontal)
+
+            let displayed = niyien_lens_presets::lens_group_configs_from_json(
+                &target.get_lens_group_config_json(),
             );
-            assert_eq!(displayed[0].squeeze_ratio, Some(1.33));
+            for (index, expected) in [24.0, 35.0, 50.0, 85.0, 105.0, 135.0].iter().enumerate() {
+                assert_eq!(displayed[index].focal_length_mm, Some(*expected));
+                assert!(!displayed[index].anamorphic_enabled);
+            }
             assert_eq!(*target.lens_group_config.read(), global_configs_before);
-            assert!(!target.get_lens_group_manual_edit());
             assert_eq!(
                 settings::get_str("lens_group_configs_v1", ""),
                 niyien_lens_presets::lens_group_config_to_json(&global_configs_before)
             );
-            assert!(!settings::get_bool("lens_group_manual_edit", true));
-        });
-    }
-
-    #[test]
-    #[serial]
-    fn import_gyroflow_data_ignores_focal_only_calibration_for_project_lens_group_config() {
-        let tmp = tempfile::tempdir().unwrap();
-        let settings_file = tmp.path().join("settings.json");
-
-        settings::with_test_settings_file(settings_file, || {
-            let target = StabilizationManager::default();
-            target.set_lens_group_config_json(
-                r#"[{
-                    "lens_index": 0,
-                    "focal_length_mm": 35.0
-                }]"#,
-            );
-            target.set_lens_group_manual_edit(false);
-            let global_configs_before = target.lens_group_config.read().clone();
-
-            let project = serde_json::json!({
-                "title": "Gyroflow data file",
-                "version": 4,
-                "videofile": "",
-                "calibration_data": {
-                    "lens_model": "Ordinary lens",
-                    "focal_length": 35.0,
-                    "input_horizontal_stretch": 1.0,
-                    "input_vertical_stretch": 1.0,
-                    "fisheye_params": {
-                        "camera_matrix": [
-                            [1307.2340425531916, 0.0, 1277.0],
-                            [0.0, 1307.2340425531916, 540.0],
-                            [0.0, 0.0, 1.0]
-                        ],
-                        "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
-                    }
-                }
-            });
-
-            let mut is_preset = false;
-            target
-                .import_gyroflow_data(
-                    project.to_string().as_bytes(),
-                    false,
-                    None,
-                    |_| (),
-                    Arc::new(AtomicBool::new(false)),
-                    &mut is_preset,
-                    false,
-                )
-                .unwrap();
-
-            assert!(!target.has_project_lens_group_config());
-            assert_eq!(*target.lens_group_config.read(), global_configs_before);
+            // The project's lens is reachable only through the separate channel.
+            let project_lens = target.project_lens.read().clone().unwrap();
             assert_eq!(
-                target.get_lens_group_config_json(),
-                niyien_lens_presets::lens_group_config_to_json(&global_configs_before)
+                project_lens.preset_id.as_deref(),
+                Some("sirui_astra_50mm_1_33x")
             );
+            assert_eq!(project_lens.focal_length_mm, Some(16.0));
+            assert!(project_lens.anamorphic_enabled);
+            assert_eq!(project_lens.squeeze_ratio, Some(1.33));
+            // A loaded project must not force the Manual edit toggle on.
             assert!(!target.get_lens_group_manual_edit());
             assert!(!settings::get_bool("lens_group_manual_edit", true));
         });
     }
 
+    // Was "ignores focal-only calibration": an ordinary lens is the common case the
+    // `Now` entry has to cover, so it now establishes a project lens too.
     #[test]
     #[serial]
-    fn set_lens_group_manual_edit_clears_project_lens_group_display_config() {
+    fn import_gyroflow_data_establishes_project_lens_for_non_anamorphic_project() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            import_project(
+                &target,
+                &project_json_with_calibration("Ordinary lens", 35.0, 1.0, serde_json::json!({})),
+            );
+
+            assert!(target.has_project_lens());
+            let project_lens = target.project_lens.read().clone().unwrap();
+            assert_eq!(project_lens.focal_length_mm, Some(35.0));
+            assert!(!project_lens.anamorphic_enabled);
+            assert_eq!(project_lens.preset_id, None);
+        });
+    }
+
+    // Presets travel through the same import path. A user-authored preset can carry
+    // calibration_data, but a preset is not a project and must not produce a `Now`.
+    #[test]
+    #[serial]
+    fn import_gyroflow_data_skips_project_lens_for_preset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            // An empty `videofile` is what makes import classify the payload as a
+            // preset — and a user-authored preset may well carry calibration_data.
+            let mut preset =
+                project_json_with_calibration("Ordinary lens", 35.0, 1.0, serde_json::json!({}));
+            preset["videofile"] = serde_json::Value::String(String::new());
+
+            let is_preset = import_project(&target, &preset);
+
+            assert!(is_preset);
+            assert!(!target.has_project_lens());
+            assert_eq!(target.get_project_lens_display_json(), "");
+        });
+    }
+
+    // The lens correction amount lives in the `stabilization` section, which is
+    // applied after `calibration_data`. Capturing the snapshot in the calibration
+    // branch would grab the pre-import value.
+    #[test]
+    #[serial]
+    fn import_gyroflow_data_captures_post_import_lens_correction_amount() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            target.set_lens_correction_amount(1.0);
+
+            let mut project = project_json_with_calibration(
+                "Ordinary lens",
+                35.0,
+                1.0,
+                serde_json::json!({ "stabilization": { "lens_correction_amount": 0.25 } }),
+            );
+            // Non-preset: a project with a video file.
+            project["videofile"] = serde_json::Value::String("file:///video.mp4".into());
+
+            import_project(&target, &project);
+
+            assert_eq!(target.params.read().lens_correction_amount, 0.25);
+            assert_eq!(
+                target.project_lens.read().as_ref().unwrap().lens_correction_amount,
+                0.25
+            );
+        });
+    }
+
+    // The two former droppers: writing the global table and toggling Manual edit.
+    // Both are edits of L1-L6, not of the loaded project.
+    #[test]
+    #[serial]
+    fn project_lens_survives_global_config_write_and_manual_edit_toggle() {
         let tmp = tempfile::tempdir().unwrap();
         let settings_file = tmp.path().join("settings.json");
 
         settings::with_test_settings_file(settings_file, || {
             let target = StabilizationManager::default();
             target.set_lens_group_config_json(
-                r#"[{
-                    "lens_index": 0,
-                    "focal_length_mm": 35.0
-                }]"#,
+                r#"[{ "lens_index": 0, "focal_length_mm": 35.0 }]"#,
             );
 
-            let project = serde_json::json!({
-                "title": "Gyroflow data file",
-                "version": 4,
-                "videofile": "",
-                "calibration_data": {
-                    "lens_model": "Sirui star 50mm 1.33x",
-                    "focal_length": 16.0,
-                    "input_horizontal_stretch": 1.33,
-                    "input_vertical_stretch": 1.0,
-                    "fisheye_params": {
-                        "camera_matrix": [
-                            [1307.2340425531916, 0.0, 1277.0],
-                            [0.0, 1307.2340425531916, 540.0],
-                            [0.0, 0.0, 1.0]
-                        ],
-                        "distortion_coeffs": [-0.02, 1.0, -0.2, -6.0]
-                    }
-                }
-            });
+            let mut project = project_json_with_calibration(
+                "Sirui Atar 50mm 1.33x",
+                16.0,
+                1.33,
+                serde_json::json!({}),
+            );
+            project["videofile"] = serde_json::Value::String("file:///video.mp4".into());
+            import_project(&target, &project);
+            assert!(target.has_project_lens());
+            let display_before = target.get_project_lens_display_json();
 
-            let mut is_preset = false;
-            target
-                .import_gyroflow_data(
-                    project.to_string().as_bytes(),
-                    false,
-                    None,
-                    |_| (),
-                    Arc::new(AtomicBool::new(false)),
-                    &mut is_preset,
-                    false,
-                )
-                .unwrap();
-            assert!(target.has_project_lens_group_config());
+            target.set_lens_group_config_json(
+                r#"[{ "lens_index": 1, "focal_length_mm": 60.0 }]"#,
+            );
+            assert!(target.has_project_lens());
+            assert_eq!(target.get_project_lens_display_json(), display_before);
 
+            target.set_lens_group_manual_edit(true);
+            assert!(target.has_project_lens());
             target.set_lens_group_manual_edit(false);
+            assert!(target.has_project_lens());
+            assert_eq!(target.get_project_lens_display_json(), display_before);
 
-            assert!(!target.has_project_lens_group_config());
-            let displayed =
-                niyien_lens_presets::lens_group_configs_from_json(&target.get_lens_group_config_json());
-            assert_eq!(displayed[0].preset_id, None);
-            assert_eq!(displayed[0].focal_length_mm, Some(35.0));
+            // Toggling the switch must not disturb the L1-L6 readback either.
+            let displayed = niyien_lens_presets::lens_group_configs_from_json(
+                &target.get_lens_group_config_json(),
+            );
+            assert_eq!(displayed[1].focal_length_mm, Some(60.0));
         });
+    }
+
+    #[test]
+    #[serial]
+    fn clear_drops_project_lens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let settings_file = tmp.path().join("settings.json");
+
+        settings::with_test_settings_file(settings_file, || {
+            let target = StabilizationManager::default();
+            let mut project = project_json_with_calibration(
+                "Sirui Atar 50mm 1.33x",
+                16.0,
+                1.33,
+                serde_json::json!({}),
+            );
+            project["videofile"] = serde_json::Value::String("file:///video.mp4".into());
+            import_project(&target, &project);
+            assert!(target.has_project_lens());
+
+            target.clear();
+
+            assert!(!target.has_project_lens());
+            assert_eq!(target.get_project_lens_display_json(), "");
+        });
+    }
+
+    // The point of keeping the whole profile: rebuilding it from the display values
+    // would recompute the camera matrix from current metadata and drop the guard
+    // flag, so per-frame telemetry would silently take the matrix back over.
+    #[test]
+    fn restore_project_lens_to_main_restores_profile_guard_flag_and_correction() {
+        let manager = StabilizationManager::default();
+        {
+            let mut params = manager.params.write();
+            params.size = (1920, 1080);
+        }
+
+        let mut project_profile = LensProfile::default();
+        project_profile.focal_length = Some(45.0);
+        project_profile.lens_group_override = true;
+        project_profile.fisheye_params.camera_matrix = vec![
+            [7748.879, 0.0, 960.0],
+            [0.0, 7748.879, 540.0],
+            [0.0, 0.0, 1.0],
+        ];
+        *manager.project_lens.write() = Some(niyien_lens_presets::project_lens_from_lens_profile(
+            &project_profile,
+            Some(1),
+            0.25,
+        ));
+
+        // Stand in for "user switched to another lens group": a different lens on the
+        // main preview, a stale anamorphic baseline, a different correction amount.
+        *manager.lens.write() = LensProfile::default();
+        *manager.pre_anamorphic_backup.write() = Some(LensProfile::default());
+        manager.set_lens_correction_amount(1.0);
+        manager.smoothing_checksum.store(123, SeqCst);
+
+        assert_eq!(manager.restore_project_lens_to_main(), Some((1920, 1080)));
+
+        let lens = manager.lens.read();
+        assert_eq!(lens.focal_length, Some(45.0));
+        assert_eq!(lens.fisheye_params.camera_matrix[0][0], 7748.879);
+        assert!(lens.lens_group_override);
+        drop(lens);
+        assert!(manager.pre_anamorphic_backup.read().is_none());
+        assert_eq!(manager.params.read().lens_correction_amount, 0.25);
+        assert_eq!(manager.smoothing_checksum.load(SeqCst), 0);
+    }
+
+    #[test]
+    fn restore_project_lens_to_main_is_a_noop_without_a_project() {
+        let manager = StabilizationManager::default();
+        assert_eq!(manager.restore_project_lens_to_main(), None);
+    }
+
+    // Saving writes the main preview's current lens to disk, so `Now` has to follow
+    // it — otherwise switching back to `Now` would undo the save.
+    #[test]
+    fn refresh_project_lens_from_current_follows_the_saved_lens() {
+        let manager = StabilizationManager::default();
+        let mut original = LensProfile::default();
+        original.focal_length = Some(45.0);
+        *manager.project_lens.write() = Some(niyien_lens_presets::project_lens_from_lens_profile(
+            &original,
+            Some(1),
+            1.0,
+        ));
+
+        let mut saved = LensProfile::default();
+        saved.focal_length = Some(50.0);
+        *manager.lens.write() = saved;
+
+        manager.refresh_project_lens_from_current();
+
+        assert_eq!(
+            manager.project_lens.read().as_ref().unwrap().focal_length_mm,
+            Some(50.0)
+        );
+    }
+
+    // Saving is not importing: a plain video that never had a project loaded must
+    // not gain a `Now` entry just because the user pressed save.
+    #[test]
+    fn refresh_project_lens_from_current_is_a_noop_without_a_project() {
+        let manager = StabilizationManager::default();
+        let mut saved = LensProfile::default();
+        saved.focal_length = Some(50.0);
+        *manager.lens.write() = saved;
+
+        manager.refresh_project_lens_from_current();
+
+        assert!(!manager.has_project_lens());
     }
 
     #[test]

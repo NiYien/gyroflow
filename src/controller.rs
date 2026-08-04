@@ -90,6 +90,12 @@ pub struct Controller {
     set_lens_group_config: qt_method!(fn(&self, json: String)),
     apply_lens_group_to_main: qt_method!(fn(&self, lens_index: usize) -> QString),
     preview_lens_group_config: qt_method!(fn(&self, json: String, lens_index: usize) -> bool),
+    // Lens carried by the loaded `.gyroflow`, backing the `Now` dropdown entry.
+    // Empty string when no project is loaded => no `Now` entry. Read-only: this
+    // never merges into `lens_group_config`.
+    project_lens: qt_property!(QString; READ get_project_lens NOTIFY project_lens_changed),
+    project_lens_changed: qt_signal!(),
+    restore_project_lens: qt_method!(fn(&self) -> QString),
     lens_group_status: qt_property!(QString; READ get_lens_group_status NOTIFY lens_group_status_changed),
     lens_group_status_changed: qt_signal!(),
     get_lens_group_status: qt_method!(fn(&self) -> QString),
@@ -812,6 +818,9 @@ impl Controller {
                 // in the enabled branch `g` is moved into the Mutex; in
                 // the disabled branch `g` lives to closure end.
                 this.stabilizer.clear();
+                // clear() dropped the previous project's lens, so the `Now` entry has
+                // to disappear from the panel.
+                this.project_lens_changed();
                 *this.stabilizer.lens.write() = Default::default();
                 *this.stabilizer.input_file.write() = gyroflow_core::InputFile {
                     url: encoded_url.clone(),
@@ -2282,6 +2291,38 @@ impl Controller {
             None => QString::default(),
         }
     }
+    fn get_project_lens(&self) -> QString {
+        QString::from(self.stabilizer.get_project_lens_display_json())
+    }
+    /// Put the loaded project's lens back on the main preview (the `Now` entry).
+    /// Signal sequence mirrors `apply_lens_group_to_main` so the panels refresh the
+    /// same way; returns `{"w":W,"h":H}` for the Export width/height sync.
+    fn restore_project_lens(&self) -> QString {
+        let Some((w, h)) = self.stabilizer.restore_project_lens_to_main() else {
+            return QString::default();
+        };
+        // Same 4-OR guard as reload_lens: don't hand QML a default/empty profile.
+        let lens = self.stabilizer.lens.read();
+        if self.lens_loaded
+            || !lens.path_to_file.is_empty()
+            || !lens.fisheye_params.camera_matrix.is_empty()
+            || !lens.camera_brand.is_empty()
+        {
+            let lens_json = lens.get_json().unwrap_or_default();
+            drop(lens);
+            self.lens_profile_loaded(
+                QString::from(lens_json),
+                QString::default(),
+                QString::default(),
+            );
+        } else {
+            drop(lens);
+        }
+        self.lens_changed();
+        self.chart_data_changed();
+        self.request_recompute();
+        QString::from(format!("{{\"w\":{},\"h\":{}}}", w, h))
+    }
     fn preview_lens_group_config(&self, json: String, lens_index: usize) -> bool {
         let Some(_) = self
             .stabilizer
@@ -2320,16 +2361,15 @@ impl Controller {
     fn refresh_lens_group_status(&self) {
         self.lens_group_status_changed();
     }
+    // Always the user's own preference. A loaded project MUST NOT force this on:
+    // the project's lens is shown through the `Now` dropdown entry instead, and
+    // forcing the flag here would make the switch impossible to turn off (the
+    // setter's no-op guard would bounce it straight back).
     fn get_lens_group_manual_edit(&self) -> bool {
-        if self.stabilizer.has_project_lens_group_config() {
-            return true;
-        }
         self.stabilizer.get_lens_group_manual_edit()
     }
     fn set_lens_group_manual_edit(&self, enabled: bool) {
-        if !self.stabilizer.has_project_lens_group_config()
-            && self.stabilizer.get_lens_group_manual_edit() == enabled
-        {
+        if self.stabilizer.get_lens_group_manual_edit() == enabled {
             return;
         }
         self.stabilizer.set_lens_group_manual_edit(enabled);
@@ -3044,12 +3084,19 @@ impl Controller {
             QPointer::from(self as &Self),
             move |this, (res, arg): (&str, String)| {
                 match res {
-                    "ok" => this.message(
-                        QString::from("Gyroflow file exported to %1."),
-                        QString::from(format!("<b>{}</b>", filesystem::display_url(&arg))),
-                        QString::default(),
-                        QString::from("gyroflow-exported"),
-                    ),
+                    "ok" => {
+                        // The file on disk now carries the lens currently on the main
+                        // preview, so `Now` has to follow it — otherwise switching back
+                        // to `Now` would undo what was just saved.
+                        this.stabilizer.refresh_project_lens_from_current();
+                        this.project_lens_changed();
+                        this.message(
+                            QString::from("Gyroflow file exported to %1."),
+                            QString::from(format!("<b>{}</b>", filesystem::display_url(&arg))),
+                            QString::default(),
+                            QString::from("gyroflow-exported"),
+                        );
+                    }
                     "location" => this.request_location(QString::from(arg), typ_str.clone()),
                     "err" => this.error(
                         QString::from("An error occured: %1"),
@@ -3376,6 +3423,10 @@ impl Controller {
                     self.lens_group_config_changed();
                     self.lens_group_manual_edit_changed();
                 }
+                // Outside the calibration_data branch on purpose: a project without
+                // calibration data clears any previously established project lens,
+                // and the panel has to hear about that too.
+                self.project_lens_changed();
                 self.gyro_loaded = self.gyro_has_raw_imu() || self.gyro_has_quaternions();
                 self.gyro_changed();
                 self.update_offset_model();
@@ -5695,6 +5746,127 @@ impl Controller {
 mod tests {
     use super::*;
 
+    // ---- lens-group-now-slot QML structure guards.
+    //
+    // Structural, not behavioural: they cannot prove the mapping is arithmetically
+    // right, only that the ±1 offset stays funnelled through the two named
+    // functions. That is the property worth locking — the offset flips at runtime
+    // with both "is a project loaded" and "is a job selected", so a hand-rolled ±1
+    // anywhere else misfires silently (switch to L3, get L2, no error).
+
+    fn lens_group_config_qml() -> &'static str {
+        include_str!("ui/menu/LensGroupConfig.qml")
+    }
+
+    #[test]
+    fn lens_group_panel_funnels_combo_index_mapping_through_named_functions() {
+        let qml = lens_group_config_qml();
+        assert!(
+            qml.contains("function comboIndexToLensIndex(")
+                && qml.contains("function lensIndexToComboIndex("),
+            "both mapping directions must exist as named functions"
+        );
+
+        // Every read of the combo's index has to be mapped, and every write to it
+        // has to come from the mapper.
+        assert!(
+            qml.contains("root.comboIndexToLensIndex(currentIndex)"),
+            "onActivated must map the combo index back to a lens index"
+        );
+        assert!(
+            qml.contains("root.lensIndexToComboIndex(root.selectedLensIndex)")
+                && qml.contains("lensIndexToComboIndex(selectedLensIndex)"),
+            "both the currentIndex binding and refreshUiFromSelection must map through lensIndexToComboIndex"
+        );
+
+        // No hand-rolled offsets outside the two mapping functions.
+        for forbidden in [
+            "selectedLensIndex + 1",
+            "selectedLensIndex - 1",
+            "currentIndex + 1",
+            "currentIndex - 1",
+        ] {
+            assert!(
+                !qml.contains(forbidden),
+                "hand-written offset `{forbidden}` — the ±1 belongs in comboIndexToLensIndex / lensIndexToComboIndex only"
+            );
+        }
+    }
+
+    #[test]
+    fn lens_group_panel_refuses_writes_while_now_is_selected() {
+        let qml = lens_group_config_qml();
+        for func in ["function updateCurrentConfig(", "function persistConfigs("] {
+            let start = qml.find(func).unwrap_or_else(|| panic!("{func} exists"));
+            // The guard has to be near the top of the body, before any mutation.
+            let head = &qml[start..(start + 700).min(qml.len())];
+            assert!(
+                head.contains("if (isNowSelected()) return"),
+                "{func} must early-return on the Now sentinel — it has no slot in the six-group table"
+            );
+        }
+    }
+
+    #[test]
+    fn lens_group_panel_keeps_dropdown_outside_the_collapsible_editor() {
+        let qml = lens_group_config_qml();
+        let combo = qml
+            .find("id: lensGroupCombo")
+            .expect("lensGroupCombo exists");
+        let editor = qml.find("id: editorColumn").expect("editorColumn exists");
+        assert!(
+            combo < editor,
+            "the lens group dropdown must sit before editorColumn — inside it, the manual-edit \
+             switch would hide the Now entry and the current group label"
+        );
+        assert!(
+            qml.contains("enabled: controller.lens_group_manual_edit"),
+            "the dropdown must be disabled (not hidden) while manual edit is off"
+        );
+    }
+
+    #[test]
+    fn lens_group_now_label_carries_no_lens_group_number() {
+        let qml = lens_group_config_qml();
+        let start = qml.find("function nowLabel(").expect("nowLabel exists");
+        let end = start
+            + qml[start..]
+                .find("\n    function ")
+                .expect("nowLabel ends at the next function");
+        let body = &qml[start..end];
+
+        // The label mixes two different things if it names a group: lens_index is
+        // the clip's identity (which group its gyro data claims), while the focal
+        // length beside it is whatever lens is currently applied. They diverge as
+        // soon as the user switches groups and saves, and side by side they read as
+        // "group L2's focal length is 50mm" — a wrong conclusion from two true
+        // facts. Easy to "helpfully" add back, hence this guard.
+        assert!(
+            !body.contains("\"L\""),
+            "nowLabel must not render a lens group number"
+        );
+        assert!(
+            !body.contains("projectLensGroupIndex()"),
+            "nowLabel must not consult the lens index at all"
+        );
+        // ...while the index itself stays available for the batchScope landing.
+        assert!(
+            qml.contains("function projectLensGroupIndex()")
+                && qml.contains("selectedLensIndex = projectGroup"),
+            "the lens index must still drive where the selection lands when Now disappears"
+        );
+    }
+
+    #[test]
+    fn lens_group_panel_hides_now_in_batch_scope() {
+        let qml = lens_group_config_qml();
+        assert!(
+            qml.contains("readonly property bool hasNowEntry: !!projectLens && !batchScope"),
+            "Now must be suppressed in batchScope — a selected job's lens index is assigned, \
+             so it is necessarily one of the six groups"
+        );
+    }
+
     // ---- wait_for_import_slot three-state tests (project-import-lifecycle).
     // Each timed-out round costs ~2s (wait_until_idle default); tests are
     // kept to a single round.
@@ -5779,15 +5951,16 @@ mod tests {
     }
 
     #[test]
-    fn lens_profile_emit_guard_4or_appears_exactly_5_times() {
+    fn lens_profile_emit_guard_4or_appears_exactly_6_times() {
         // Sentinel for lens-profile-empty-emit-guard change: every
         // lens_profile_loaded emit site MUST share the same 4-OR literal so
-        // future drift trips this test. Expected 5 sites:
+        // future drift trips this test. Expected 6 sites:
         //   - reload_lens (pre-existing, 1514-1518)
         //   - apply_lens_group_to_main
         //   - preview_lens_group_config
         //   - import_gyroflow_internal
         //   - set_user_focal_length
+        //   - restore_project_lens (lens-group-now-slot)
         // The other two emit sites (load_lens_profile via stabilizer
         // validation, and the lens_profile_loaded qt_signal declaration) do
         // NOT carry the guard so are not counted.
@@ -5806,19 +5979,19 @@ mod tests {
 
         assert_eq!(
             src.matches(&matrix_needle).count(),
-            5,
-            "expected 4-OR camera_matrix clause in 5 emit sites; rerun \
+            6,
+            "expected 4-OR camera_matrix clause in 6 emit sites; rerun \
              grep -n 'self.lens_profile_loaded(' to locate any added or \
              refactored site",
         );
         assert_eq!(
             src.matches(&brand_needle).count(),
-            5,
+            6,
             "camera_brand clause count drifted from camera_matrix clause",
         );
         assert_eq!(
             src.matches(&path_needle).count(),
-            5,
+            6,
             "path_to_file clause count drifted from camera_matrix clause",
         );
     }
