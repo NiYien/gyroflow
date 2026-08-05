@@ -75,3 +75,4 @@ distribution/log_center/log_center.config.json
 /local-build-tools
 /Gyroflow-macOS-*build-notes*.md
 /tmp
+*.pyc
